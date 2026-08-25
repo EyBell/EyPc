@@ -1,5 +1,7 @@
 'use strict'
 
+const { COMPANION_V7_REVISIONS } = require('../companion/contracts-v7.cjs')
+
 /**
  * Reads a Codex rollout JSONL tail and answers two questions about the thread:
  * is it waiting on the user, and does it hold a ready Plan.
@@ -20,7 +22,7 @@
  * they stay there, where a load failure cannot reach them.
  */
 
-const CODEX_ROLLOUT_EVIDENCE_REVISION = 'codex-rollout-evidence-v1'
+const CODEX_ROLLOUT_EVIDENCE_REVISION = COMPANION_V7_REVISIONS.rolloutEvidence
 
 /** A rollout line is another process's output; refuse to read pathological ones. */
 const MAX_ROLLOUT_LINE_BYTES = 1_000_000
@@ -162,7 +164,9 @@ function createCodexRolloutEvidence(dependencies = {}) {
       // native Plan-card lifecycle. Rollout text has no exact cancel receipt,
       // so only a completed Plan establishes lifecycle knowledge here.
       known: sawPlanCompletion,
-      pending: planReady,
+      // A completed Plan establishes an actionable artifact. It does not
+      // prove that a current input interaction is still open.
+      pending: false,
       planReady,
       planLifecycleState: planReady ? 'ready' : 'unknown',
       planLifecycleRevision,

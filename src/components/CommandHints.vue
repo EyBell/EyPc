@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { formatShortcutList } from '../domain/shortcuts'
-import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
+import type { TabShellRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
 import { DEFAULT_KEYBINDINGS, buildShortcutCommandRows } from '../runtime/keybinding/keybindingRuntime'
 
-const props = defineProps<{ snapshot: AppRuntimeSnapshot }>()
+const props = defineProps<{ snapshot: TabShellRuntimeSliceV7 }>()
 const defaultRows = buildShortcutCommandRows(DEFAULT_KEYBINDINGS)
 const defaultShortcutLabels = new Map(defaultRows.map((row) => [row.commandId, formatShortcutList(row.defaultShortcutIds)]))
 

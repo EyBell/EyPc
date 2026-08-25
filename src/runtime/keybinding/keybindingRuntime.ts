@@ -1,59 +1,12 @@
 import type { AppTabId, FeatureConfig, KeybindingOverride, ShortcutProfileId, ShortcutProfileMap } from '../../domain/types'
 import { normalizeShortcutId } from '../../domain/shortcuts'
+import { createCommandCatalogV7, type CommandCatalogV7 } from '../command/commandCatalog'
+import { LAYER_LABELS, LAYER_PRIORITY, resolveLayerStackV7 } from '../command/layerStack'
+import type { CommandDescriptorV7, CommandExecutionOwner, CommandSurfaceExecutionOwnersV7, CommandSurfaceIdV7, KeybindingLayerId } from '../command/types'
 import { visibleFeatures } from '../feature/featureRegistry'
 
-export type KeybindingLayerId =
-  | 'app'
-  | 'confirm'
-  | 'settings-shortcut-record'
-  | 'settings-when-edit'
-  | 'mqtt-editor'
-  | 'mqtt-connection-group-editor'
-  | 'mqtt-config-subscription-editor'
-  | 'mqtt-config-publish-editor'
-  | 'mqtt-publish-editor'
-  | 'mqtt-publish-options'
-  | 'mqtt-publish-draft'
-  | 'mqtt-publish-draft-editor'
-  | 'mqtt-subscription-editor'
-  | 'mqtt-favorite-editor'
-  | 'mqtt-record-editor'
-  | 'mqtt-preview'
-  | 'mqtt-search'
-  | 'mqtt-topic-filter'
-  | 'mqtt-connections'
-  | 'mqtt-subscriptions'
-  | 'mqtt-drawer'
-  | 'mqtt-detail'
-  | 'mqtt-log-drawer'
-  | 'port-group-editor'
-  | 'port-group-detail'
-  | 'port-drawer'
-  | 'port-detail'
-  | 'favorites-drawer'
-  | 'favorite-detail'
-  | 'favorites-pick-review'
-  | 'ports-selection'
-  | 'ports-search'
-  | 'favorites-search'
-  | 'favorites-editor'
-  | 'window-editor'
-  | 'window-actions'
-  | 'windows-search'
-  | 'codex-composer'
-  | 'codex-model'
-  | 'codex-quick-jump'
-  | 'codex-preview'
-  | 'codex-inline-editor'
-  | 'codex-drawer'
-  | 'codex-detail'
-  | 'codex'
-  | 'settings'
-  | 'ports'
-  | 'mqtt'
-  | 'favorites'
-  | 'windows'
-  | 'global'
+export type { KeybindingLayerId } from '../command/types'
+export { LAYER_PRIORITY } from '../command/layerStack'
 
 export interface KeybindingContext {
   tab?: AppTabId
@@ -90,6 +43,8 @@ export interface KeybindingContext {
   /** Float 快速筛选模式：`Ctrl+数字` 从抽屉动作改读可见任务编号。 */
   codexQuickMode?: boolean
   codexDrawerActive?: boolean
+  favoriteRunPromptOpen?: boolean
+  favoriteSlotManagerOpen?: boolean
   activeLayers?: KeybindingLayerId[]
 }
 
@@ -111,6 +66,8 @@ export interface KeybindingDefinition {
   internal?: boolean
   disabled?: boolean
   profileId?: ShortcutProfileId
+  executionOwner: CommandExecutionOwner
+  surfaceExecutionOwners?: CommandSurfaceExecutionOwnersV7
 }
 
 export interface ShortcutCommandRow {
@@ -161,6 +118,8 @@ interface ShortcutCommandProfile {
   description?: string
   internal?: boolean
   profileId?: ShortcutProfileId
+  executionOwner?: CommandExecutionOwner
+  surfaceExecutionOwners?: CommandSurfaceExecutionOwnersV7
 }
 
 interface ShortcutCommandProfileConfig {
@@ -174,114 +133,8 @@ interface ShortcutCommandProfileConfig {
   description?: string
   internal?: boolean
   profileId?: ShortcutProfileId
-}
-
-export const LAYER_PRIORITY: Record<KeybindingLayerId, number> = {
-  app: 1100,
-  confirm: 1000,
-  'settings-shortcut-record': 960,
-  'settings-when-edit': 950,
-  'mqtt-editor': 930,
-  'mqtt-connection-group-editor': 930,
-  'mqtt-config-subscription-editor': 929,
-  'mqtt-config-publish-editor': 929,
-  'mqtt-publish-editor': 931,
-  'mqtt-publish-options': 932,
-  'mqtt-publish-draft': 933,
-  'mqtt-publish-draft-editor': 934,
-  'mqtt-subscription-editor': 940,
-  'mqtt-favorite-editor': 945,
-  'mqtt-record-editor': 946,
-  'mqtt-preview': 815,
-  'mqtt-search': 680,
-  'mqtt-topic-filter': 700,
-  'mqtt-connections': 690,
-  'mqtt-subscriptions': 690,
-  'mqtt-drawer': 820,
-  'mqtt-detail': 800,
-  'mqtt-log-drawer': 810,
-  'port-group-editor': 930,
-  'port-group-detail': 830,
-  'port-drawer': 820,
-  'port-detail': 800,
-  'favorites-drawer': 820,
-  'favorite-detail': 800,
-  'favorites-pick-review': 930,
-  'ports-selection': 700,
-  'ports-search': 680,
-  'favorites-search': 680,
-  'favorites-editor': 930,
-  'window-editor': 930,
-  'window-actions': 820,
-  'windows-search': 680,
-  'codex-composer': 950,
-  'codex-model': 951,
-  'codex-quick-jump': 900,
-  'codex-preview': 840,
-  'codex-inline-editor': 930,
-  'codex-drawer': 820,
-  'codex-detail': 800,
-  codex: 500,
-  settings: 500,
-  ports: 500,
-  mqtt: 500,
-  favorites: 500,
-  windows: 500,
-  global: 100
-}
-
-const LAYER_LABELS: Record<KeybindingLayerId, string> = {
-  app: '应用窗口',
-  confirm: '确认层',
-  'settings-shortcut-record': '快捷键录制',
-  'settings-when-edit': 'When 编辑',
-  'mqtt-editor': 'MQTT 编辑',
-  'mqtt-connection-group-editor': 'MQTT 连接分组编辑',
-  'mqtt-config-subscription-editor': 'MQTT 配置订阅行',
-  'mqtt-config-publish-editor': 'MQTT 配置发布行',
-  'mqtt-publish-editor': 'MQTT 发送编辑',
-  'mqtt-publish-options': 'MQTT 发送选项',
-  'mqtt-publish-draft': 'MQTT 发送草稿',
-  'mqtt-publish-draft-editor': 'MQTT 草稿编辑',
-  'mqtt-subscription-editor': 'MQTT 订阅编辑',
-  'mqtt-favorite-editor': 'MQTT 收藏编辑',
-  'mqtt-record-editor': 'MQTT 记录编辑',
-  'mqtt-preview': 'MQTT 预览',
-  'mqtt-search': 'MQTT 搜索',
-  'mqtt-topic-filter': 'MQTT topic 筛选',
-  'mqtt-connections': 'MQTT 连接栏',
-  'mqtt-subscriptions': 'MQTT 订阅栏',
-  'mqtt-drawer': 'MQTT 动作抽屉',
-  'mqtt-detail': 'MQTT 详情',
-  'mqtt-log-drawer': 'MQTT 日志抽屉',
-  'port-group-editor': '端口组编辑',
-  'port-group-detail': '端口组详情',
-  'port-drawer': '端口动作抽屉',
-  'port-detail': '端口详情',
-  'favorites-drawer': '收藏动作抽屉',
-  'favorite-detail': '收藏详情',
-  'favorites-pick-review': '收藏点选审核',
-  'ports-selection': '端口多选',
-  'ports-search': '端口搜索',
-  'favorites-search': '收藏搜索',
-  'favorites-editor': '收藏编辑',
-  'window-editor': '窗口目标编辑',
-  'window-actions': '窗口操作面板',
-  'windows-search': '窗口搜索',
-  'codex-composer': 'Codex 新会话编辑器',
-  'codex-model': 'Codex 模型选择',
-  'codex-quick-jump': 'Codex 快捷跳转',
-  'codex-preview': 'Codex Shift 预览',
-  'codex-inline-editor': 'Codex 行内编辑',
-  'codex-drawer': 'Codex 操作抽屉',
-  'codex-detail': 'Codex 详情',
-  codex: 'Codex',
-  settings: '设置',
-  ports: '端口',
-  mqtt: 'MQTT',
-  favorites: '收藏',
-  windows: '窗口跳转',
-  global: '全局'
+  executionOwner?: CommandExecutionOwner
+  surfaceExecutionOwners?: CommandSurfaceExecutionOwnersV7
 }
 
 const SOURCE_WEIGHT = {
@@ -292,16 +145,17 @@ const SOURCE_WEIGHT = {
 
 export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'app.hide': { title: '隐藏插件窗口', group: '全局', layer: 'app', shortcutIds: ['Shift+Escape'], when: 'true', weight: 1000 },
+  'action.runner.hide': { title: '隐藏 Action Runner', group: 'Codex Actions', layer: 'app', shortcutIds: ['Ctrl+W'], when: 'true', weight: 1003, internal: true, executionOwner: 'action-local' },
   'confirm.cancel': { title: '关闭确认弹窗', group: '全局', layer: 'confirm', shortcutIds: ['Escape'], when: 'confirmOpen', weight: 400 },
   'confirm.accept': { title: '确认当前弹窗', group: '全局', layer: 'confirm', shortcutIds: ['Enter'], when: 'confirmOpen', weight: 400, risk: 'data-write' },
   'tab.next': { title: '下一个主 Tab', group: '全局', layer: 'global', shortcutIds: ['Tab'], when: "tab != 'ports' && !textInputFocused", weight: 100 },
   'tab.prev': { title: '上一个主 Tab', group: '全局', layer: 'global', shortcutIds: ['Shift+Tab'], when: "tab != 'ports' && !textInputFocused", weight: 100 },
   'search.focus': { title: '聚焦搜索', group: '全局', layer: 'global', shortcutIds: ['Ctrl+F'], when: '!confirmOpen', weight: 100 },
   'settings.open': { title: '打开设置', group: '全局', layer: 'global', shortcutIds: ['Ctrl+Alt+S'], when: '!confirmOpen', weight: 100 },
-  'codex.float.toggle': { title: '显示/隐藏 Codex 悬浮球', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Q'], when: 'true', weight: 1000, description: '插件窗口激活时立即切换；系统级快捷键请在 uTools 全局功能中绑定。', profileId: 'codex' },
+  'codex.float.toggle': { title: '显示/隐藏 Codex 悬浮球', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Q'], when: 'true', weight: 1000, risk: 'data-write', description: '插件窗口激活时立即切换；系统级快捷键请在 uTools 全局功能中绑定。', profileId: 'codex' },
   'codex.float.activate': { title: '进入 Codex 卡片', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Enter'], when: 'true', weight: 1001, description: '显示并展开悬浮卡片，直接进入会话选择和完整操作。', profileId: 'codex' },
-  'codex.tab.prev': { title: '上一个 Codex 页签', group: 'Codex', layer: 'codex', shortcutIds: ['ArrowLeft'], when: "tab == 'codex' && !textInputFocused", weight: 140, profileId: 'codex' },
-  'codex.tab.next': { title: '下一个 Codex 页签', group: 'Codex', layer: 'codex', shortcutIds: ['ArrowRight'], when: "tab == 'codex' && !textInputFocused", weight: 140, profileId: 'codex' },
+  'codex.tab.prev': { title: '上一个 Codex 页签', group: 'Codex', layer: 'codex', shortcutIds: ['ArrowLeft'], when: "tab == 'codex' && !textInputFocused", weight: 140, risk: 'data-write', profileId: 'codex' },
+  'codex.tab.next': { title: '下一个 Codex 页签', group: 'Codex', layer: 'codex', shortcutIds: ['ArrowRight'], when: "tab == 'codex' && !textInputFocused", weight: 140, risk: 'data-write', profileId: 'codex' },
   'codex.thread.createFocused': { title: '在当前项目新建会话', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+T'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 160, profileId: 'codex', description: '打开新会话编辑器；优先归属当前高亮会话或项目。' },
   'codex.list.up': { title: '会话焦点上移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowUp'], when: "tab == 'codex' && (!textInputFocused || activeInputRole == 'codex-search')", weight: 130, profileId: 'codex' },
   'codex.list.down': { title: '会话焦点下移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowDown'], when: "tab == 'codex' && (!textInputFocused || activeInputRole == 'codex-search')", weight: 130, profileId: 'codex' },
@@ -331,6 +185,7 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
       shortcutIds: [`Ctrl+Shift+${slot}`],
       when: "tab == 'codex' && !textInputFocused && !confirmOpen",
       weight: 125,
+      risk: 'data-write' as const,
       profileId: 'codex' as const,
       description: 'EyPc 等价执行项目 Environment Action（非 Codex 顶栏原生 Action）。'
     }]
@@ -568,6 +423,7 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'mqtt.subscription.deleteSelected': { title: '删除选中 MQTT 订阅', group: 'MQTT', layer: 'mqtt-subscriptions', shortcutIds: ['Ctrl+Delete', 'Ctrl+Backspace'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscriptions'", weight: 430, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.subscription.clearAll': { title: '清空 MQTT 订阅', group: 'MQTT', layer: 'mqtt-subscriptions', shortcutIds: [], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscriptions'", weight: 420, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.layout.toggle': { title: '切换 MQTT 收发布局', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+Shift+S'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 138, profileId: 'mqtt' },
+  'mqtt.followLatest.toggle': { title: '切换跟随最新消息', group: 'MQTT', layer: 'mqtt', shortcutIds: [], when: "tab == 'mqtt'", weight: 137, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.log.drawer.open': { title: '打开 MQTT 日志抽屉', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+Shift+L'], when: "tab == 'mqtt' && !confirmOpen && !mqttLogDrawerOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 137, profileId: 'mqtt' },
   'mqtt.log.drawer.close': { title: '关闭 MQTT 日志抽屉', group: 'MQTT', layer: 'mqtt-log-drawer', shortcutIds: ['Escape'], when: "tab == 'mqtt' && mqttLogDrawerOpen", weight: 410, profileId: 'mqtt' },
   'mqtt.receive.filter.all': { title: 'MQTT 接收筛选全部', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+1'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search' || activeInputRole == 'mqtt-publish-editor' || activeInputRole == 'mqtt-topic-filter' || activeInputRole == 'mqtt-publish-options' || activeInputRole == 'mqtt-publish-draft')", weight: 136, profileId: 'mqtt' },
@@ -662,6 +518,9 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'favorites.drawer.select.8': { title: '执行收藏抽屉第 8 个动作', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['Ctrl+8'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
   'favorites.drawer.select.9': { title: '执行收藏抽屉第 9 个动作', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['Ctrl+9'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
   'favorites.drawer.select.10': { title: '执行收藏抽屉第 10 个动作', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['Ctrl+0'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
+  'favorites.run.prompt.submit': { title: '确认运行参数', group: '收藏', layer: 'favorites-run-prompt', shortcutIds: ['Ctrl+Enter'], when: "tab == 'favorites' && favoriteRunPromptOpen", weight: 470 },
+  'favorites.run.prompt.cancel': { title: '取消本次运行', group: '收藏', layer: 'favorites-run-prompt', shortcutIds: ['Escape'], when: "tab == 'favorites' && favoriteRunPromptOpen", weight: 470 },
+  'favorites.slot.manager.close': { title: '关闭文件槽管理器', group: '收藏', layer: 'favorites-slot-manager', shortcutIds: ['Escape'], when: "tab == 'favorites' && favoriteSlotManagerOpen", weight: 450 },
   'favorites.quick.open.1': { title: '打开快速收藏第 1 项', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+1'], when: "tab == 'favorites' && favoriteQuickMode && !favoriteDrawerActive && !confirmOpen", weight: 170 },
   'favorites.quick.open.2': { title: '打开快速收藏第 2 项', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+2'], when: "tab == 'favorites' && favoriteQuickMode && !favoriteDrawerActive && !confirmOpen", weight: 170 },
   'favorites.quick.open.3': { title: '打开快速收藏第 3 项', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+3'], when: "tab == 'favorites' && favoriteQuickMode && !favoriteDrawerActive && !confirmOpen", weight: 170 },
@@ -684,6 +543,74 @@ const DEFAULT_COMMAND_PROFILES: ShortcutCommandProfile[] = Object.entries(DEFAUL
   shortcutIds: [...profile.shortcutIds]
 }))
 
+interface CommandExecutionPolicyV7 {
+  executionOwner: CommandExecutionOwner
+  surfaceExecutionOwners?: CommandSurfaceExecutionOwnersV7
+}
+
+/**
+ * Declarative execution manifest. Command ids absent from the manifest are
+ * runtime actions; exceptions are exact entries, never prefix/name guesses.
+ */
+export const COMMAND_EXECUTION_POLICY_V7: Readonly<Record<string, CommandExecutionPolicyV7>> = Object.freeze({
+  'action.runner.hide': { executionOwner: 'action-local' },
+  'tab.next': { executionOwner: 'shell' },
+  'tab.prev': { executionOwner: 'shell' },
+  'list.up': { executionOwner: 'shell' },
+  'list.down': { executionOwner: 'shell' },
+  'list.pageUp': { executionOwner: 'shell' },
+  'list.pageDown': { executionOwner: 'shell' },
+  'list.toggleSelection': { executionOwner: 'shell' },
+  'windows.list.up': { executionOwner: 'shell' },
+  'windows.list.down': { executionOwner: 'shell' },
+  'windows.list.pageUp': { executionOwner: 'shell' },
+  'windows.list.pageDown': { executionOwner: 'shell' },
+  'quickJump.openForward': {
+    executionOwner: 'main-quick-jump',
+    surfaceExecutionOwners: { float: 'float-local', action: 'action-local' }
+  },
+  'quickJump.openBackward': {
+    executionOwner: 'main-quick-jump',
+    surfaceExecutionOwners: { float: 'float-local', action: 'action-local' }
+  },
+  'codex.quickJump.openForward': {
+    executionOwner: 'main-quick-jump',
+    surfaceExecutionOwners: { float: 'float-local' }
+  },
+  ...Object.fromEntries([
+    'codex.float.activate',
+    'codex.quickJump.openTasks',
+    'codex.list.up',
+    'codex.list.down',
+    'codex.selection.toggle',
+    'codex.task.openFocused',
+    'codex.detail.open',
+    'codex.drawer.open',
+    'codex.task.archiveFocused',
+    'codex.alias.edit',
+    'codex.pin.toggleFocused',
+    'codex.pin.moveUp',
+    'codex.pin.moveDown',
+    'codex.search.focus',
+    'codex.thread.createFocused',
+    'codex.quick.activate',
+    'codex.layer.cancel',
+    ...Array.from({ length: 10 }, (_, index) => `codex.quick.open.${index + 1}`),
+    ...Array.from({ length: 10 }, (_, index) => `codex.task.openIndex.${index + 1}`),
+    ...Array.from({ length: 9 }, (_, index) => `codex.drawer.select.${index + 1}`)
+  ].map((commandId) => [commandId, {
+    executionOwner: 'runtime-action' as const,
+    surfaceExecutionOwners: { float: 'float-local' as const }
+  }]))
+})
+
+function executionPolicyForProfile(profile: ShortcutCommandProfile): CommandExecutionPolicyV7 {
+  return COMMAND_EXECUTION_POLICY_V7[profile.actionId] || {
+    executionOwner: profile.executionOwner || 'runtime-action',
+    surfaceExecutionOwners: profile.surfaceExecutionOwners
+  }
+}
+
 function featureTabProfiles(featureConfigs?: FeatureConfig[]): ShortcutCommandProfile[] {
   return visibleFeatures(featureConfigs).flatMap((feature) => {
     if (feature.shortcutCommandId !== `tab.select.${feature.id}`) return []
@@ -694,9 +621,34 @@ function featureTabProfiles(featureConfigs?: FeatureConfig[]): ShortcutCommandPr
     layer: 'global',
     shortcutIds: [feature.shortcutId],
     when: '!textInputFocused',
-    weight: 100
+    weight: 100,
+    executionOwner: 'shell'
     }]
   })
+}
+
+export function buildCommandCatalogV7(featureConfigs?: FeatureConfig[]): CommandCatalogV7 {
+  const profiles = [...DEFAULT_COMMAND_PROFILES, ...featureTabProfiles(featureConfigs)]
+  const descriptors: CommandDescriptorV7[] = profiles.map((profile) => {
+    const executionPolicy = executionPolicyForProfile(profile)
+    return {
+    id: profile.actionId,
+    title: profile.title,
+    group: profile.group,
+    description: profile.description,
+    risk: profile.risk || 'normal',
+    executionOwner: executionPolicy.executionOwner,
+    surfaceExecutionOwners: executionPolicy.surfaceExecutionOwners,
+    profileId: profile.profileId || profileIdForCommand(profile.actionId),
+    defaultBindings: [{
+      shortcutIds: [...profile.shortcutIds],
+      layer: profile.layer,
+      when: profile.when,
+      weight: profile.weight
+    }]
+    }
+  })
+  return createCommandCatalogV7(descriptors)
 }
 
 export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
@@ -990,45 +942,7 @@ export function canWhenClausesOverlap(leftWhen: string, rightWhen: string): bool
 }
 
 function activeLayers(context: KeybindingContext): KeybindingLayerId[] {
-  if (context.activeLayers?.length) return [...new Set<KeybindingLayerId>([...context.activeLayers, 'app', 'global'])]
-  const layers: KeybindingLayerId[] = ['app', 'global']
-  if (context.tab) layers.push(context.tab)
-  if (context.confirmOpen) layers.push('confirm')
-  if (context.activeInputRole === 'mqtt-editor') layers.push('mqtt-editor')
-  if (context.activeInputRole === 'mqtt-connection-group-editor') layers.push('mqtt-connection-group-editor')
-  if (context.activeInputRole === 'mqtt-config-subscription-editor') layers.push('mqtt-editor', 'mqtt-config-subscription-editor')
-  if (context.activeInputRole === 'mqtt-config-publish-editor') layers.push('mqtt-editor', 'mqtt-config-publish-editor')
-  if (context.activeInputRole === 'mqtt-publish-editor') layers.push('mqtt-publish-editor')
-  if (context.activeInputRole === 'mqtt-publish-options') layers.push('mqtt-publish-options')
-  if (context.activeInputRole === 'mqtt-publish-draft') layers.push('mqtt-publish-draft')
-  if (context.activeInputRole === 'mqtt-publish-draft-editor') layers.push('mqtt-publish-draft-editor')
-  if (context.activeInputRole === 'mqtt-subscription-editor') layers.push('mqtt-subscription-editor')
-  if (context.activeInputRole === 'mqtt-favorite-editor') layers.push('mqtt-favorite-editor')
-  if (context.activeInputRole === 'mqtt-record-editor') layers.push('mqtt-record-editor')
-  if (context.mqttPreviewOpen) layers.push('mqtt-preview')
-  if (context.activeInputRole === 'port-group-editor') layers.push('port-group-editor')
-  if (context.activeInputRole === 'favorite-editor') layers.push('favorites-editor')
-  if (context.activeInputRole === 'window-editor' || context.windowEditorOpen) layers.push('window-editor')
-  if (context.activeInputRole === 'window-actions' || context.windowActionsOpen) layers.push('window-actions')
-  if (context.activeInputRole === 'favorite-pick-review' || context.favoritePickReviewOpen) layers.push('favorites-pick-review')
-  if (context.activeInputRole === 'codex-composer') layers.push('codex-composer')
-  if (context.mqttDetailOpen || context.mqttDetailActive) layers.push('mqtt-detail')
-  if (context.mqttDrawerOpen || context.mqttDrawerActive) layers.push('mqtt-drawer')
-  if (context.mqttLogDrawerOpen) layers.push('mqtt-log-drawer')
-  if (context.portGroupDetailOpen || context.portGroupDetailActive) layers.push('port-group-detail')
-  if (context.portDetailOpen || context.portDetailActive) layers.push('port-detail')
-  if (context.portDrawerOpen || context.portDrawerActive) layers.push('port-drawer')
-  if (context.favoriteDrawerOpen || context.favoriteDrawerActive) layers.push('favorites-drawer')
-  if (context.favoriteDetailOpen || context.favoriteDetailActive) layers.push('favorite-detail')
-  if (context.portSelectionMode) layers.push('ports-selection')
-  if (context.activeInputRole === 'port-search' || context.activeInputRole === 'port-group-search') layers.push('ports-search')
-  if (context.activeInputRole === 'mqtt-search') layers.push('mqtt-search')
-  if (context.activeInputRole === 'mqtt-topic-filter') layers.push('mqtt-topic-filter')
-  if (context.activeInputRole === 'mqtt-connections') layers.push('mqtt-connections')
-  if (context.activeInputRole === 'mqtt-subscriptions') layers.push('mqtt-subscriptions')
-  if (context.activeInputRole === 'favorite-search' || context.activeInputRole === 'favorite-group-search') layers.push('favorites-search')
-  if (context.activeInputRole === 'window-search') layers.push('windows-search')
-  return [...new Set(layers)]
+  return [...resolveLayerStackV7(context).interactiveIds]
 }
 
 function contextWithLayerFlags(context: KeybindingContext): KeybindingContext {
@@ -1084,7 +998,9 @@ function profileIdForCommand(commandId: string): ShortcutProfileId {
 }
 
 function makeBindings(profiles: ShortcutCommandProfile[]): KeybindingDefinition[] {
-  return profiles.flatMap((profile, profileIndex) => (profile.shortcutIds.length ? profile.shortcutIds : ['']).map((shortcutId, shortcutIndex) => ({
+  return profiles.flatMap((profile, profileIndex) => {
+    const executionPolicy = executionPolicyForProfile(profile)
+    return (profile.shortcutIds.length ? profile.shortcutIds : ['']).map((shortcutId, shortcutIndex) => ({
     actionId: profile.actionId,
     shortcutId: normalizeShortcutId(shortcutId),
     defaultShortcutId: normalizeShortcutId(profile.shortcutIds[0] || shortcutId),
@@ -1100,8 +1016,11 @@ function makeBindings(profiles: ShortcutCommandProfile[]): KeybindingDefinition[
     risk: profile.risk || 'normal',
     internal: profile.internal,
     profileId: profile.profileId || profileIdForCommand(profile.actionId),
+    executionOwner: executionPolicy.executionOwner,
+    surfaceExecutionOwners: executionPolicy.surfaceExecutionOwners,
     order: profileIndex * 100 + shortcutIndex
-  })))
+    }))
+  })
 }
 
 export function buildDefaultKeybindings(featureConfigs?: FeatureConfig[]): KeybindingDefinition[] {
@@ -1174,12 +1093,40 @@ function score(binding: KeybindingDefinition, context: KeybindingContext): numbe
   return layerScore + SOURCE_WEIGHT[binding.source] * 100 + binding.weight + whenSpecificity(binding.when) - (binding.order || 0) / 10000
 }
 
-function sortedCandidates(bindings: KeybindingDefinition[], shortcutId: string, context: KeybindingContext): KeybindingDefinition[] {
+const EXECUTION_OWNERS_BY_SURFACE_V7: Readonly<Record<CommandSurfaceIdV7, ReadonlySet<CommandExecutionOwner>>> = Object.freeze({
+  main: new Set<CommandExecutionOwner>(['runtime-action', 'shell', 'main-quick-jump']),
+  float: new Set<CommandExecutionOwner>(['runtime-action', 'shell', 'float-local']),
+  action: new Set<CommandExecutionOwner>(['runtime-action', 'shell', 'action-local'])
+})
+
+export function keybindingExecutionOwnerForSurfaceV7(
+  binding: Pick<KeybindingDefinition, 'executionOwner' | 'surfaceExecutionOwners'>,
+  surfaceId: CommandSurfaceIdV7
+): CommandExecutionOwner {
+  return binding.surfaceExecutionOwners?.[surfaceId] || binding.executionOwner
+}
+
+export function keybindingAvailableOnSurfaceV7(
+  binding: Pick<KeybindingDefinition, 'executionOwner' | 'surfaceExecutionOwners'>,
+  surfaceId: CommandSurfaceIdV7
+): boolean {
+  return EXECUTION_OWNERS_BY_SURFACE_V7[surfaceId].has(keybindingExecutionOwnerForSurfaceV7(binding, surfaceId))
+}
+
+function sortedCandidates(
+  bindings: KeybindingDefinition[],
+  shortcutId: string,
+  context: KeybindingContext,
+  surfaceId: CommandSurfaceIdV7
+): KeybindingDefinition[] {
   const normalized = normalizeShortcutId(shortcutId)
   const resolvedContext = contextWithLayerFlags(context)
-  if (shouldBlockTextInputShortcut(normalized, resolvedContext)) return []
+  // A modal barrier has already removed every lower feature layer. Its own
+  // user-rebound commands must remain resolvable while an input has focus.
+  if (!resolveLayerStackV7(resolvedContext).blockingLayer && shouldBlockTextInputShortcut(normalized, resolvedContext)) return []
   const layers = activeLayers(resolvedContext)
   return bindings
+    .filter((item) => keybindingAvailableOnSurfaceV7(item, surfaceId))
     .filter((item) => layers.includes(item.layer))
     .filter((item) => item.shortcutId === normalized || item.shortcutId === '*')
     .filter((item) => {
@@ -1192,13 +1139,23 @@ function sortedCandidates(bindings: KeybindingDefinition[], shortcutId: string, 
     .sort((a, b) => score(b, resolvedContext) - score(a, resolvedContext))
 }
 
-export function resolveKeybinding(bindings: KeybindingDefinition[], shortcutId: string, context: KeybindingContext): KeybindingDefinition | null {
-  const winner = sortedCandidates(bindings, shortcutId, context)[0]
+export function resolveKeybinding(
+  bindings: KeybindingDefinition[],
+  shortcutId: string,
+  context: KeybindingContext,
+  surfaceId: CommandSurfaceIdV7 = 'main'
+): KeybindingDefinition | null {
+  const winner = sortedCandidates(bindings, shortcutId, context, surfaceId)[0]
   return winner && !winner.disabled && winner.source !== 'removed' ? winner : null
 }
 
-export function previewKeybindingResolution(bindings: KeybindingDefinition[], shortcutId: string, context: KeybindingContext) {
-  const candidates = sortedCandidates(bindings, shortcutId, context)
+export function previewKeybindingResolution(
+  bindings: KeybindingDefinition[],
+  shortcutId: string,
+  context: KeybindingContext,
+  surfaceId: CommandSurfaceIdV7 = 'main'
+) {
+  const candidates = sortedCandidates(bindings, shortcutId, context, surfaceId)
   const winner = candidates.find((item) => !item.disabled && item.source !== 'removed') || null
   return {
     key: normalizeShortcutId(shortcutId),

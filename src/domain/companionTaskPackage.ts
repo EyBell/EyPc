@@ -17,13 +17,18 @@ import {
 } from './companionProvider'
 import { buildCodexTaskStatePackage, type CodexTaskStatePackageV1 } from './codexPresentation'
 import type {
-  CompanionProviderEvidenceBatchV1,
+  CompanionProviderEvidenceBatchV3,
   CompanionTaskRelationObservationV1,
   CompanionTaskTopologySummaryV1
 } from './companionTaskTopology'
+import {
+  COMPANION_V7_REVISIONS,
+  type CompanionEvidenceChannelV7,
+  type CompanionPlanArtifactStateV1
+} from './generated/companionContractsV7'
 
-export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v6'
-export const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-snapshot-v6'
+export const COMPANION_TASK_KERNEL_REVISION = COMPANION_V7_REVISIONS.kernel
+export const COMPANION_TASK_PACKAGE_REVISION = COMPANION_V7_REVISIONS.snapshot
 
 export type CompanionTaskKind = 'codex-thread' | 'claude-session' | 'cursor-session' | 'topology-child' | 'local-pin'
 export type CompanionTaskPhase = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
@@ -109,6 +114,8 @@ export interface CompanionCanonicalTaskV4 {
   planLifecycleRevision: number
   planLifecycleState?: CompanionPlanLifecycleStateV6
   planClearReason?: CompanionPlanClearReasonV6
+  planArtifactState?: CompanionPlanArtifactStateV1
+  planArtifactActionable?: boolean
   paused: boolean
   turnMode: 'plan' | 'default' | 'unknown'
   idleConfirmed: boolean
@@ -131,7 +138,7 @@ export interface CompanionCanonicalTaskV4 {
   topology?: CompanionTaskTopologySummaryV1
 }
 
-/** Host-private material retained by the process graph; never emitted in V6 snapshots. */
+/** Host-private material retained by the process graph; never emitted in V7 snapshots. */
 export interface CompanionPrivateTaskNodeV5 extends CompanionCanonicalTaskV4 {
   family?: string
   role?: 'root' | 'child'
@@ -142,7 +149,7 @@ export interface CompanionPrivateTaskNodeV5 extends CompanionCanonicalTaskV4 {
 }
 
 export interface CompanionTaskPackageDraftV4 {
-  schema: 'companion-task-evidence-draft-v6'
+  schema: typeof COMPANION_V7_REVISIONS.draft
   producer: 'renderer' | 'host-preflight' | 'host-evidence'
   sourceTaskStateRevision: string
   draftRevision: number
@@ -155,10 +162,10 @@ export interface CompanionTaskPackageDraftV4 {
   sourceLaneGenerations: CompanionSourceLaneGenerations
   providerHealth: CompanionProviderHealthV1
   relations?: CompanionTaskRelationObservationV1[]
-  evidenceBatches?: Partial<Record<CompanionProviderId, CompanionProviderEvidenceBatchV1>>
+  evidenceBatches?: Partial<Record<CompanionProviderId, CompanionProviderEvidenceBatchV3>>
 }
 
-export type CompanionSourceLane = 'membership' | 'phase' | 'unread' | 'metadata' | 'topology'
+export type CompanionSourceLane = CompanionEvidenceChannelV7
 export type CompanionSourceLaneGenerations = Record<CompanionProviderId, Record<CompanionSourceLane, number>>
 
 export type CompanionProviderHealthV1 = Record<CompanionProviderId, {
@@ -211,7 +218,7 @@ export interface CompanionTaskPackageV4 {
   views: CompanionTaskPackageViewsV4
 }
 
-/** Narrow source-compatibility aliases; every emitted runtime value is V6. */
+/** Narrow source-compatibility aliases; every emitted runtime value is V7. */
 export type CompanionTaskEvidencePhaseV3 = CompanionTaskEvidencePhaseV4
 export type CompanionTaskFreshnessV3 = CompanionTaskFreshnessV4
 export type CompanionTaskEvidenceV3 = CompanionTaskEvidenceV4
@@ -224,7 +231,10 @@ export type CompanionCanonicalTaskV5 = CompanionCanonicalTaskV4
 export type CompanionTaskPackageDraftV5 = CompanionTaskPackageDraftV4
 export type CompanionTaskPackageViewsV5 = CompanionTaskPackageViewsV4
 export type CompanionTaskSnapshotV5 = CompanionTaskPackageV4
-export type CompanionTaskViewV6 = Omit<CompanionCanonicalTaskV4,
+export type CompanionCanonicalTaskV7 = CompanionCanonicalTaskV4
+export type CompanionTaskPackageDraftV7 = CompanionTaskPackageDraftV4
+export type CompanionTaskPackageViewsV7 = CompanionTaskPackageViewsV4
+export type CompanionTaskViewV7 = Omit<CompanionCanonicalTaskV4,
   | 'actionAlias'
   | 'capabilityToken'
   | 'archiveRequest'
@@ -236,9 +246,13 @@ export type CompanionTaskViewV6 = Omit<CompanionCanonicalTaskV4,
   | 'metadataRevision'
   | 'planClearReason'
 >
-export type CompanionTaskSnapshotV6 = Omit<CompanionTaskPackageV4, 'tasks'> & {
-  tasks: CompanionTaskViewV6[]
+export type CompanionTaskSnapshotV7 = Omit<CompanionTaskPackageV4, 'tasks'> & {
+  tasks: CompanionTaskViewV7[]
 }
+/** @deprecated V7 is the only emitted runtime contract. */
+export type CompanionTaskViewV6 = CompanionTaskViewV7
+/** @deprecated V7 is the only emitted runtime contract. */
+export type CompanionTaskSnapshotV6 = CompanionTaskSnapshotV7
 
 function allTaskCards(taskState: CodexTaskStatePackageV1): CodexTaskCard[] {
   const conversations = taskState.conversations
@@ -272,9 +286,9 @@ export function emptyCompanionTaskPackage(
     focusedKey: '',
     sourceGenerations: { codex: 0, claude: 0, cursor: 0 },
     sourceLaneGenerations: {
-      codex: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
-      claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
-      cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
+      codex: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
+      claude: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
+      cursor: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 }
     },
     providerHealth: {
       codex: { status: providers.codex ? 'unavailable' : 'disabled', generation: 0, errorCode: '' },
@@ -600,7 +614,7 @@ export function applyCompanionTaskPackageViews(
   return projected
 }
 
-/** Public Renderer adapter. It derives presentation only from one immutable V6
+/** Public Renderer adapter. It derives presentation only from one immutable V7
  * snapshot; the optional inventory contributes project chrome/health metadata
  * and is never allowed to reinterpret task state. */
 export function projectCompanionTaskSnapshot(
@@ -608,7 +622,7 @@ export function projectCompanionTaskSnapshot(
   inventory?: CodexTaskStatePackageV1
 ): CodexTaskStatePackageV1 {
   const source = inventory || buildCodexTaskStatePackage(emptyConversationSnapshot(), {
-    sourceRevision: 'companion-task-snapshot-v6',
+    sourceRevision: COMPANION_TASK_PACKAGE_REVISION,
     now: taskSnapshot.publishedAt
   })
   return applyCompanionTaskPackageViews(source, taskSnapshot)

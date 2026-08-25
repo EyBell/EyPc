@@ -6,7 +6,7 @@ Date: 2026-08-24
 
 ## 结论
 
-**现有仓库权威之间没有需要用户裁决的未决冲突。** RAW-177 已明确裁决旧的“Deep Link 成功即建立会话期已读确认”：外部打开只能到 `dispatched/pending`，原生可见、控制权与 applied/read 必须有独立回执。RAW-178 只收敛全局当前产品真值的唯一 owner、证据真实性与同步门禁，不改变用户可见功能语义。未分类来源条款现在都有 `SA-*` 身份，但不会在未做语义复核前冒充需求边。
+**现有仓库权威之间没有需要用户裁决的未决冲突。** RAW-177 已明确裁决旧的“Deep Link 成功即建立会话期已读确认”：外部打开只能到 `dispatched/pending`，原生可见、控制权与 applied/read 必须有独立回执。RAW-178 收敛全局当前产品真值的唯一 owner、证据真实性与同步门禁；RAW-179 又以 scoped refinement 裁决“历史 completed Plan 自动等待”和 V6 重复归约，不抹除仍有效的未读、匿名证据与原生 ACK 边界。未分类来源条款现在都有 `SA-*` 身份，但不会在未做语义复核前冒充需求边。
 
 ## 处置分类
 
@@ -137,3 +137,14 @@ Environment Action 的 39 条有序来源条款继续由其来源/spec/PRD 承�
 - `artifact-ready`、自动化验证、`host-loaded` 与原生可见/read ACK 继续分层，文档同步不得提升证据等级。
 
 因此 whole/scoped 取代边仍为当前 `22 / 58`，`semantic-fork=0`、`agent-vs-user=0`。
+
+## 2026-08-24：RAW-179 V7 状态、交互、Tab 与 UI 体系
+
+用户在完成本机日志、源码、安装身份与截图核验后明确授权实施完整 V7，而不是发布 V6 单点热修。机器登记新增 [RAW-179](invariants-raw-179.md#L1) 与 [#1](shared-raw-179-clause-001.md#L1)–[#7](invariants-raw-179-clause-007.md#L1)，并作如下精确裁决：
+
+- [RAW-160#5](shared-raw-160-clause-005.md#L1)、[#7](shared-raw-160-clause-007.md#L1) 与 [#10](shared-raw-160-clause-010.md#L1) 只在“completed Plan artifact 自身建立 waiting/待输入”的范围被 RAW-179#1 精化；当前未决 Plan 选择/实施 interaction 仍可产生 waiting，artifact-only 改为 `stopped / 待继续`。
+- [RAW-142](codex-raw-142.md#L1) 同样只在上述 completed-Plan waiting 范围被精化；未读优先、匿名 rollout evidence 和不公开正文/原始 ID 的边界继续有效。
+- [RAW-176](shared-raw-176.md#L1) 的 Provider 注册、拓扑、统一命令与 ACK 分层继续有效；其 V6 Provider 预归约反馈、重复公共投影和 Plan tri-state owner 由 RAW-179#2 的七条 evidence lane、生成合同与唯一 V7 Kernel 精化。
+- RAW-179#3–#7 新增 FeatureModule/RuntimeSlice、统一交互 owner、有界增量性能、项目级 UI token/无障碍和完整 V7 一次性切换合同，不反向扩大发布、安装或真实 Host 操作权限。
+
+本轮没有 whole supersession；whole/scoped 关系为 `22 / 68`，`conflicted=0`、`semantic-fork=0`、`agent-vs-user=0`。若后续真实 Host 证据与 artifact-ready 产物不一致，应回到同一 V7 任务修正，不能恢复被精化的历史等待规则。

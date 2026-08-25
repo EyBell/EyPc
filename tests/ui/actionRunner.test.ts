@@ -6,6 +6,7 @@ import { assignQuickJumpMarkers } from '../../src/domain/quickJump'
 describe('Action Runner UI contract', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/ActionApp.vue'), 'utf8')
   const preload = readFileSync(resolve(process.cwd(), 'preload/action.js'), 'utf8')
+  const hostPreload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const floatPreload = readFileSync(resolve(process.cwd(), 'preload/float.js'), 'utf8')
 
   it('keeps the project tree and selected Action history in the independent child', () => {
@@ -19,8 +20,9 @@ describe('Action Runner UI contract', () => {
   })
 
   it('opens F/Shift+F markers without assigning f as a marker', () => {
-    expect(source).toContain("event.key.toLowerCase() === 'f'")
-    expect(source).toContain('openQuickJump(event.shiftKey)')
+    expect(source).toContain("command === 'quickJump.openForward'")
+    expect(source).toContain("command === 'quickJump.openBackward'")
+    expect(source).toContain("executionOwnerFor(descriptor.id, 'action')")
     const targets = assignQuickJumpMarkers(Array.from({ length: 100 }, (_, index) => ({ id: String(index), label: String(index) })))
     expect(targets.every((target) => !target.marker.includes('f'))).toBe(true)
   })
@@ -28,6 +30,7 @@ describe('Action Runner UI contract', () => {
   it('keeps child IPC constrained to snapshots, sanitized deltas and Runtime Actions', () => {
     expect(preload).toContain("snapshot: 'eypc-action-runner:snapshot'")
     expect(preload).toContain("log: 'eypc-action-runner:log'")
+    expect(preload).toContain("logRequest: 'eypc-action-runner:log-request'")
     expect(preload).toContain("action: 'eypc-action-runner:action'")
     expect(preload).toContain("snapshotRequest: 'eypc-action-runner:snapshot-request'")
     expect(preload).toContain("hide: 'eypc-action-runner:hide'")
@@ -42,8 +45,20 @@ describe('Action Runner UI contract', () => {
     expect(source).toContain('codex.actionRunner.runtime.update')
     expect(source).toContain('选择当前项目的 Node 运行时')
     expect(source).toContain('delta.cursor !== cursor + 1')
-    expect(source).toContain('requestSnapshot()')
+    expect(source).toContain('requestLog(run.runId, cursor)')
+    expect(source).toContain('delta.reset === true')
     expect(source).toContain("snapshot?.message || snapshot?.catalog.message")
     expect(source).toContain("snapshot?.loading ? '正在刷新 Action 目标…'")
+  })
+
+  it('keeps complete logs off repeated Action snapshots and hydrates them by cursor', () => {
+    const snapshotProjection = hostPreload.slice(
+      hostPreload.indexOf('function pushCodexActionRunnerSnapshot'),
+      hostPreload.indexOf('function codexActionRunnerDevelopmentEntry')
+    )
+    expect(snapshotProjection).not.toContain('logText: run.logText')
+    expect(snapshotProjection).toContain("logText: ''")
+    expect(hostPreload).toContain("logRequest: 'eypc-action-runner:log-request'")
+    expect(hostPreload).toContain('reset: true')
   })
 })

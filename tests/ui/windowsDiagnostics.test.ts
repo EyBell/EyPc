@@ -165,8 +165,6 @@ describe('settings window diagnostics section', () => {
     const wrapper = mount(SettingsPage, {
       attachTo: document.body,
       props: {
-        actions: [],
-        defaultKeybindings: [],
         overrides: [],
         shortcutProfiles: state.settings.shortcutProfiles,
         featureConfigs: state.settings.featureConfigs,

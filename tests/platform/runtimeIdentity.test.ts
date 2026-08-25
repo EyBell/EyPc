@@ -128,8 +128,8 @@ describe('uTools runtime identity', () => {
 
   it('accepts the unified Kernel only after exact Main/Preload identity handshake', () => {
     const kernel = {
-      revision: 'companion-task-kernel-v6',
-      packageRevision: 'companion-task-snapshot-v6',
+      revision: 'companion-task-kernel-v7',
+      packageRevision: 'companion-task-snapshot-v7',
       registryRevision: 'companion-provider-registry-v1',
       topologyRevision: 'companion-task-topology-v2',
       commandRevision: 'companion-task-command-v1',

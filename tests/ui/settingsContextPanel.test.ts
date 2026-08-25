@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createInitialState } from '../../src/domain/state'
 import SettingsPage from '../../src/pages/SettingsPage.vue'
 import type { RuntimeDiagnosticsSnapshotV3 } from '../../src/platform/eypcPlatform'
-import { DEFAULT_KEYBINDINGS } from '../../src/runtime/keybinding/keybindingRuntime'
 
 function runtimeDiagnostics(): RuntimeDiagnosticsSnapshotV3 {
   return {
@@ -20,8 +19,6 @@ function mountSettings() {
   return mount(SettingsPage, {
     attachTo: document.body,
     props: {
-      actions: [],
-      defaultKeybindings: DEFAULT_KEYBINDINGS,
       overrides: [],
       shortcutProfiles: state.settings.shortcutProfiles,
       featureConfigs: state.settings.featureConfigs,

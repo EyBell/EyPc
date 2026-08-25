@@ -1,5 +1,7 @@
 'use strict'
 
+const { COMPANION_V7_REVISIONS } = require('../companion/contracts-v7.cjs')
+
 /**
  * Builds and incrementally patches the Desktop conversation "shadow": the
  * preload's own private mirror of one thread's live runtime status, pending
@@ -23,7 +25,7 @@
  * entry's own delegation.
  */
 
-const CODEX_DESKTOP_SHADOW_REVISION = 'codex-desktop-shadow-v1'
+const CODEX_DESKTOP_SHADOW_REVISION = COMPANION_V7_REVISIONS.desktopShadow
 /** How many resolved request observations a waiting state remembers. */
 const CODEX_DESKTOP_WAITING_REQUEST_HISTORY_LIMIT = 400
 
@@ -137,6 +139,9 @@ function createCodexDesktopShadow(dependencies = {}) {
       hasUnreadTurn: typeof state.hasUnreadTurn === 'boolean' ? state.hasUnreadTurn : undefined,
       unreadEvidence: typeof state.hasUnreadTurn === 'boolean' ? 'snapshot' : '',
       requests,
+      requestSetRevision: nextLiveEvidenceSequence(),
+      requestSetComplete: true,
+      requestSetAuthority: 'provider-snapshot',
       runtimeWaitingSequences,
       waitingState
     }

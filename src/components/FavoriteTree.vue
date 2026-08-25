@@ -97,6 +97,7 @@ function isRenaming(id: string) {
       v-for="row in props.rows"
       :key="row.node.id"
       class="favorite-row"
+      data-context-menu-target
       role="treeitem"
       tabindex="-1"
       :data-operation-tooltip="`${row.node.kind === 'group' ? '收藏分组' : '收藏目标'} ${row.node.name}`"

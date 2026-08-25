@@ -18,6 +18,29 @@ try {
 } catch (error) {
   runtimeIdentityLoadError = String(error && error.message || error || 'runtime identity unavailable')
 }
+let childEnvelopeContractsV7 = null
+try { childEnvelopeContractsV7 = require('./companion/contracts-v7.cjs') } catch {}
+
+function createHostChildEnvelopeV7(surfaceId, channel, payload, metadata = {}) {
+  return childEnvelopeContractsV7?.createChildEnvelopeV7?.({
+    runtimeIdentity: String(runtimeIdentityArtifact?.hostAssetId || ''),
+    surfaceId,
+    channel,
+    payloadRevision: Number.isSafeInteger(metadata.payloadRevision) ? metadata.payloadRevision : 0,
+    requestId: metadata.requestId,
+    interactionId: metadata.interactionId,
+    ack: metadata.ack,
+    heartbeat: metadata.heartbeat,
+    logCursor: metadata.logCursor,
+    payload
+  }) || null
+}
+
+function normalizeHostChildEnvelopeV7(value, surfaceId, channel) {
+  const envelope = childEnvelopeContractsV7?.normalizeChildEnvelopeV7?.(value, { surfaceId, channel }) || null
+  if (!envelope || envelope.runtimeIdentity !== String(runtimeIdentityArtifact?.hostAssetId || '')) return null
+  return envelope
+}
 
 const STORAGE_KEY = 'eypc/state/v1'
 const CODEX_LAUNCH_PATH_STORAGE_KEY = 'eypc/codex/launch-path/v1'
@@ -60,8 +83,12 @@ const CODEX_NATIVE_STATE_RECOVERY_INTERVAL_MS = 1_000
 const CODEX_INVENTORY_MEMBERSHIP_RECOVERY_INTERVAL_MS = 1_000
 // Keep synchronized with src/domain/codex.ts. This value crosses the context
 // boundary so a newer renderer can mark long-lived preload evidence degraded.
-const CODEX_TASK_STATE_REVISION = 'task-state-v11'
-const COMPANION_PLAN_PAUSE_STORAGE_KEY = 'eypc/companion/plan-pause/v1'
+const CODEX_TASK_STATE_REVISION = 'task-state-v12'
+const COMPANION_PLAN_PAUSE_STORAGE_KEY = 'eypc/companion/v7/plan-pause'
+const COMPANION_PLAN_PAUSE_LEGACY_STORAGE_KEY = 'eypc/companion/plan-pause/v1'
+const COMPANION_PLAN_PAUSE_STORAGE_VERSION = 7
+const COMPANION_INTERACTION_IDENTITY_STORAGE_KEY = 'eypc/companion/v7/interaction-identity'
+const COMPANION_INTERACTION_TOMBSTONE_STORAGE_KEY = 'eypc/companion/v7/interaction-tombstones'
 const EXECUTE_PLAN_PROMPT_V1 = '请按已完成的 Plan 开始执行。'
 const CODEX_DESKTOP_IPC_VERSIONS = {
   'client-status-changed': 0,
@@ -231,8 +258,15 @@ try {
 // cursor and dispatch arbitration across mainHide/Renderer remounts.
 let createCompanionTaskKernel = null
 let createCompanionHostRegistry = null
-let reduceCodexTaskEvidenceV4 = null
-let reduceClaudeTaskEvidenceV4 = null
+let companionV7Revisions = null
+let companionEvidenceChannelsV7 = null
+let codexBranchObservationV7 = null
+let claudeSessionObservationV7 = null
+let cursorSessionObservationV7 = null
+let createCompanionEvidenceNodeV7 = null
+let createCompanionInteractionEvidenceV7 = null
+let createCompanionInteractionSetV7 = null
+let createCompanionEvidenceBatchV7 = null
 // The phase vocabulary, reached through the Kernel that already owns the
 // companion path. A load failure here is the same failure as a missing
 // reducer: every consumer below is already dead, so no separate fallback.
@@ -268,14 +302,32 @@ try {
   createCompanionHostRegistry = typeof kernelModule.createCompanionHostRegistry === 'function'
     ? kernelModule.createCompanionHostRegistry
     : null
-  reduceCodexTaskEvidenceV4 = typeof kernelModule.reduceCodexTaskEvidenceV4 === 'function'
-    ? kernelModule.reduceCodexTaskEvidenceV4
+  companionV7Revisions = kernelModule.COMPANION_V7_REVISIONS || null
+  companionEvidenceChannelsV7 = Array.isArray(kernelModule.COMPANION_EVIDENCE_CHANNELS_V7)
+    ? kernelModule.COMPANION_EVIDENCE_CHANNELS_V7
     : null
-  reduceClaudeTaskEvidenceV4 = typeof kernelModule.reduceClaudeTaskEvidenceV4 === 'function'
-    ? kernelModule.reduceClaudeTaskEvidenceV4
-    : null
-  if (!reduceCodexTaskEvidenceV4 || !reduceClaudeTaskEvidenceV4 || !createCompanionHostRegistry) {
-    throw new Error('companion task V4 reducers unavailable')
+  let evidenceAdapter = null
+  try { evidenceAdapter = require('./companion/evidence-adapter-v7.cjs') } catch {}
+  if (!evidenceAdapter) {
+    for (const base of [typeof __dirname === 'string' ? __dirname : '', process.cwd(), path.join(process.cwd(), 'preload'), path.join(process.cwd(), 'public')].filter(Boolean)) {
+      try {
+        evidenceAdapter = require(path.join(base, 'companion', 'evidence-adapter-v7.cjs'))
+        break
+      } catch {}
+    }
+  }
+  codexBranchObservationV7 = evidenceAdapter?.codexBranchObservationV7
+  claudeSessionObservationV7 = evidenceAdapter?.claudeSessionObservationV7
+  cursorSessionObservationV7 = evidenceAdapter?.cursorSessionObservationV7
+  createCompanionEvidenceNodeV7 = evidenceAdapter?.createEvidenceNodeV7
+  createCompanionInteractionEvidenceV7 = evidenceAdapter?.createInteractionEvidenceV7
+  createCompanionInteractionSetV7 = evidenceAdapter?.createInteractionSetV7
+  createCompanionEvidenceBatchV7 = evidenceAdapter?.createEvidenceBatchV7
+  if (!createCompanionHostRegistry || !companionV7Revisions || !companionEvidenceChannelsV7
+    || !codexBranchObservationV7 || !claudeSessionObservationV7 || !cursorSessionObservationV7
+    || !createCompanionEvidenceNodeV7 || !createCompanionInteractionEvidenceV7
+    || !createCompanionInteractionSetV7 || !createCompanionEvidenceBatchV7) {
+    throw new Error('companion V7 evidence adapter unavailable')
   }
   isKnownTaskPhase = kernelModule.isKnownTaskPhase
   isSettledTaskPhase = kernelModule.isSettledTaskPhase
@@ -426,7 +478,12 @@ try {
       deliverLogDeltas: (deltas) => {
         if (!codexActionRunnerAlive()) return
         for (const delta of deltas) {
-          try { codexActionRunnerWindow.webContents.send(CODEX_ACTION_RUNNER_CHANNELS.log, delta) } catch {}
+          const envelope = createHostChildEnvelopeV7('action', CODEX_ACTION_RUNNER_CHANNELS.log, delta, {
+            payloadRevision: Number(delta.cursor || 0),
+            logCursor: Number(delta.cursor || 0)
+          })
+          if (!envelope) continue
+          try { codexActionRunnerWindow.webContents.send(CODEX_ACTION_RUNNER_CHANNELS.log, envelope) } catch {}
         }
       }
     })
@@ -646,6 +703,7 @@ try {
       record: codexRecord,
       timestampMs: codexTimestampMs,
       crypto,
+      correlationSalt: readCompanionInteractionIdentitySalt(),
       nextLiveEvidenceSequence: codexNextLiveEvidenceSequence
     })
   }
@@ -1041,6 +1099,7 @@ const CODEX_FLOAT_CHANNELS = {
 const CODEX_ACTION_RUNNER_CHANNELS = {
   snapshot: 'eypc-action-runner:snapshot',
   log: 'eypc-action-runner:log',
+  logRequest: 'eypc-action-runner:log-request',
   action: 'eypc-action-runner:action',
   snapshotRequest: 'eypc-action-runner:snapshot-request',
   hide: 'eypc-action-runner:hide',
@@ -1074,6 +1133,7 @@ let codexActivityInventory = new Map()
 let codexActivitySourceFingerprint = ''
 let codexActivityGeneration = 0
 const codexActivitySemanticFingerprints = new Map()
+const codexInteractionSemanticFingerprints = new Map()
 let codexActivityBridgeFingerprint = ''
 let codexInventoryRefreshPending = false
 let codexInventoryMembershipGeneration = 0
@@ -1123,8 +1183,8 @@ const codexInventorySideBranchEvidence = new Map()
 // complete membership observation used only for stale Desktop Side recovery.
 let codexCompleteInventoryThreadIds = null
 const codexSideTopologyDiagnosticFingerprints = new Map()
-// Raw branch IDs and exact terminal evidence remain Host-only. Kernel receives
-// only session-hashed refs through publishCodexPrivateBranchEvidence().
+// Raw branch IDs and exact terminal evidence remain Host-only. The V7 evidence
+// adapter hashes branch refs before the single Provider batch reaches Kernel.
 const codexPrivateBranchTerminals = new Map()
 // Reserved for a future native-visible read receipt. Deep-link dispatch must
 // never populate this map: only a concrete native receipt may acknowledge the
@@ -1525,6 +1585,7 @@ let runtimeDiagnostics = {
   record: () => null,
   configure: () => null,
   cleanup: () => false,
+  flush: () => Promise.resolve(false),
   ensureDirectory: () => false,
   snapshot: () => ({
     revision: 'eypc-runtime-diagnostics-v3',
@@ -1601,6 +1662,7 @@ function currentRuntimeDiagnosticsFile() {
 
 async function openRuntimeDiagnosticsFile() {
   const startedAt = Date.now()
+  await runtimeDiagnostics.flush?.()
   const activeFile = currentRuntimeDiagnosticsFile()
   if (!activeFile) {
     return fileActionResult('failed', { errorCode: 'not-found', message: 'runtime diagnostics file has not been created' })
@@ -1710,75 +1772,116 @@ function createMqttSqliteAdapter() {
     const db = new DatabaseSync(dbPath)
     ensureMqttSqliteSchema(db)
 
-    const readMeta = db.prepare('SELECT value FROM meta WHERE key = ?')
     const writeMeta = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
-    const clearConnections = db.prepare('DELETE FROM connection_snapshots')
-    const clearSessions = db.prepare('DELETE FROM sessions')
-    const clearMessages = db.prepare('DELETE FROM messages')
-    const clearTemplates = db.prepare('DELETE FROM publish_templates')
-    const clearDraftHistory = db.prepare('DELETE FROM publish_draft_history')
+    const deleteMeta = db.prepare('DELETE FROM meta WHERE key = ?')
+    const readConnections = db.prepare('SELECT id, data_json FROM connection_snapshots ORDER BY updated_at DESC, id ASC')
+    const readSessions = db.prepare('SELECT id, data_json FROM sessions ORDER BY started_at DESC, id ASC')
+    const readMessages = db.prepare('SELECT id, session_id, data_json FROM messages ORDER BY timestamp ASC, id ASC')
+    const readTemplates = db.prepare('SELECT id, data_json FROM publish_templates ORDER BY updated_at DESC, id ASC')
+    const readDraftHistory = db.prepare('SELECT id, data_json FROM publish_draft_history ORDER BY updated_at DESC, id ASC')
+    const deleteConnection = db.prepare('DELETE FROM connection_snapshots WHERE id = ?')
+    const deleteSession = db.prepare('DELETE FROM sessions WHERE id = ?')
+    const deleteMessage = db.prepare('DELETE FROM messages WHERE id = ?')
+    const deleteTemplate = db.prepare('DELETE FROM publish_templates WHERE id = ?')
+    const deleteDraftHistory = db.prepare('DELETE FROM publish_draft_history WHERE id = ?')
     const insertConnection = db.prepare('INSERT OR REPLACE INTO connection_snapshots (id, updated_at, data_json) VALUES (?, ?, ?)')
     const insertSession = db.prepare('INSERT OR REPLACE INTO sessions (id, connection_id, started_at, data_json) VALUES (?, ?, ?, ?)')
     const insertMessage = db.prepare('INSERT OR REPLACE INTO messages (id, session_id, connection_id, direction, timestamp, data_json) VALUES (?, ?, ?, ?, ?, ?)')
     const insertTemplate = db.prepare('INSERT OR REPLACE INTO publish_templates (id, connection_id, updated_at, data_json) VALUES (?, ?, ?, ?)')
     const insertDraftHistory = db.prepare('INSERT OR REPLACE INTO publish_draft_history (id, connection_id, updated_at, data_json) VALUES (?, ?, ?, ?)')
 
-    function writeArchiveToSqlite(archive) {
-      const normalized = normalizeSqliteArchiveInput(archive)
+    function parseRow(row) {
+      try { return JSON.parse(String(row && row.data_json || '{}')) } catch { return null }
+    }
+
+    function sessionData(session) {
+      const data = { ...session }
+      delete data.messages
+      return data
+    }
+
+    function syncRows(existingRows, items, serialize, upsert, remove) {
+      const existing = new Map(existingRows.map((row) => [String(row.id), String(row.data_json || '')]))
+      const nextIds = new Set()
+      for (const item of items) {
+        if (!item || !item.id) continue
+        const id = String(item.id)
+        const serialized = JSON.stringify(serialize(item))
+        nextIds.add(id)
+        if (existing.get(id) !== serialized) upsert(item, serialized)
+      }
+      for (const id of existing.keys()) {
+        if (!nextIds.has(id)) remove.run(id)
+      }
+    }
+
+    function beginTransaction(run) {
       db.exec('BEGIN IMMEDIATE')
       try {
-        clearConnections.run()
-        clearSessions.run()
-        clearMessages.run()
-        clearTemplates.run()
-        clearDraftHistory.run()
-        for (const snapshot of normalized.connectionSnapshots) {
-          if (!snapshot || !snapshot.id) continue
-          insertConnection.run(String(snapshot.id), Math.trunc(Number(snapshot.updatedAt) || 0), JSON.stringify(snapshot))
-        }
-        for (const session of normalized.sessions) {
-          if (!session || !session.id) continue
-          insertSession.run(String(session.id), String(session.connectionId || ''), Math.trunc(Number(session.startedAt) || 0), JSON.stringify(session))
-          const messages = Array.isArray(session.messages) ? session.messages : []
-          for (const message of messages) {
-            if (!message || !message.id) continue
-            insertMessage.run(
-              String(message.id),
-              String(message.sessionId || session.id),
-              String(message.connectionId || session.connectionId || ''),
-              String(message.direction || 'event'),
-              Math.trunc(Number(message.timestamp) || 0),
-              JSON.stringify(message)
-            )
-          }
-        }
-        for (const template of normalized.publishTemplates) {
-          if (!template || !template.id) continue
-          insertTemplate.run(String(template.id), String(template.connectionId || ''), Math.trunc(Number(template.operatedAt || template.updatedAt) || 0), JSON.stringify(template))
-        }
-        for (const item of normalized.publishDraftHistory) {
-          if (!item || !item.id) continue
-          insertDraftHistory.run(String(item.id), String(item.connectionId || ''), Math.trunc(Number(item.updatedAt) || 0), JSON.stringify(item))
-        }
-        writeMeta.run('archive_json', JSON.stringify(normalized))
+        const result = run()
         writeMeta.run('updated_at', String(Date.now()))
+        deleteMeta.run('archive_json')
         db.exec('COMMIT')
-        return true
+        return result
       } catch (error) {
-        try {
-          db.exec('ROLLBACK')
-        } catch {}
+        try { db.exec('ROLLBACK') } catch {}
         throw error
       }
     }
 
-    function readArchiveFromSqlite() {
-      const current = readMeta.get('archive_json')
-      if (current && typeof current.value === 'string') {
-        try {
-          return normalizeSqliteArchiveInput(JSON.parse(current.value))
-        } catch {}
+    function writeArchiveToSqlite(archive) {
+      const normalized = normalizeSqliteArchiveInput(archive)
+      return beginTransaction(() => {
+        syncRows(readConnections.all(), normalized.connectionSnapshots, (item) => item, (item, serialized) => {
+          insertConnection.run(String(item.id), Math.trunc(Number(item.updatedAt) || 0), serialized)
+        }, deleteConnection)
+        syncRows(readSessions.all(), normalized.sessions, sessionData, (item, serialized) => {
+          insertSession.run(String(item.id), String(item.connectionId || ''), Math.trunc(Number(item.startedAt) || 0), serialized)
+        }, deleteSession)
+        const messages = normalized.sessions.flatMap((session) => (Array.isArray(session && session.messages)
+          ? session.messages.map((message) => ({
+            ...message,
+            sessionId: message && message.sessionId || session.id,
+            connectionId: message && message.connectionId || session.connectionId
+          }))
+          : []))
+        syncRows(readMessages.all(), messages, (item) => item, (item, serialized) => {
+          insertMessage.run(String(item.id), String(item.sessionId || ''), String(item.connectionId || ''), String(item.direction || 'event'), Math.trunc(Number(item.timestamp) || 0), serialized)
+        }, deleteMessage)
+        syncRows(readTemplates.all(), normalized.publishTemplates, (item) => item, (item, serialized) => {
+          insertTemplate.run(String(item.id), String(item.connectionId || ''), Math.trunc(Number(item.operatedAt || item.updatedAt) || 0), serialized)
+        }, deleteTemplate)
+        syncRows(readDraftHistory.all(), normalized.publishDraftHistory, (item) => item, (item, serialized) => {
+          insertDraftHistory.run(String(item.id), String(item.connectionId || ''), Math.trunc(Number(item.updatedAt) || 0), serialized)
+        }, deleteDraftHistory)
+        return true
+      })
+    }
+
+    function readArchiveTables() {
+      const messagesBySession = new Map()
+      for (const row of readMessages.all()) {
+        const message = parseRow(row)
+        if (!message) continue
+        const sessionId = String(row.session_id || message.sessionId || '')
+        const messages = messagesBySession.get(sessionId) || []
+        messages.push(message)
+        messagesBySession.set(sessionId, messages)
       }
+      return normalizeSqliteArchiveInput({
+        connectionSnapshots: readConnections.all().map(parseRow).filter(Boolean),
+        sessions: readSessions.all().map((row) => {
+          const session = parseRow(row)
+          return session ? { ...session, messages: messagesBySession.get(String(row.id)) || [] } : null
+        }).filter(Boolean),
+        publishTemplates: readTemplates.all().map(parseRow).filter(Boolean),
+        publishDraftHistory: readDraftHistory.all().map(parseRow).filter(Boolean)
+      })
+    }
+
+    function readArchiveFromSqlite() {
+      const current = readArchiveTables()
+      if (archiveHasData(current)) return current
       const legacy = readLegacyMqttArchive()
       if (archiveHasData(legacy)) {
         writeArchiveToSqlite(legacy)
@@ -1789,10 +1892,27 @@ function createMqttSqliteAdapter() {
       return defaultMqttArchive()
     }
 
+    function mutateArchive(input) {
+      if (!input || input.revision !== 'mqtt-archive-mutation-v1' || input.kind !== 'append-message') return false
+      const session = input.session
+      const message = input.message
+      if (!session || !session.id || !message || !message.id) return false
+      return beginTransaction(() => {
+        const snapshot = input.connectionSnapshot
+        if (snapshot && snapshot.id) {
+          insertConnection.run(String(snapshot.id), Math.trunc(Number(snapshot.updatedAt) || 0), JSON.stringify(snapshot))
+        }
+        insertSession.run(String(session.id), String(session.connectionId || ''), Math.trunc(Number(session.startedAt) || 0), JSON.stringify(sessionData(session)))
+        insertMessage.run(String(message.id), String(message.sessionId || session.id), String(message.connectionId || session.connectionId || ''), String(message.direction || 'event'), Math.trunc(Number(message.timestamp) || 0), JSON.stringify(message))
+        return true
+      })
+    }
+
     return {
       dbPath,
       readArchive: readArchiveFromSqlite,
-      writeArchive: writeArchiveToSqlite
+      writeArchive: writeArchiveToSqlite,
+      mutateArchive
     }
   } catch (error) {
     mqttStorageLastError = error instanceof Error ? error.message : String(error)
@@ -1841,14 +1961,23 @@ function writeMqttArchive(archive) {
   const adapter = mqttSqlite()
   if (adapter) {
     try {
-      const ok = adapter.writeArchive(archive)
-      writeLegacyMqttArchive(archive)
-      return ok
+      return adapter.writeArchive(archive)
     } catch (error) {
       mqttStorageLastError = error instanceof Error ? error.message : String(error)
     }
   }
   return writeLegacyMqttArchive(archive)
+}
+
+function mutateMqttArchive(input) {
+  const adapter = mqttSqlite()
+  if (!adapter || typeof adapter.mutateArchive !== 'function') return false
+  try {
+    return adapter.mutateArchive(input) === true
+  } catch (error) {
+    mqttStorageLastError = error instanceof Error ? error.message : String(error)
+    return false
+  }
 }
 
 function normalizeMqttSecrets(value) {
@@ -3603,9 +3732,8 @@ function codexDesktopIsPlanImplementationRequest(request) {
   return codexDesktopRequestProjection ? codexDesktopRequestProjection.codexDesktopIsPlanImplementationRequest(request) : false
 }
 
-function codexDesktopShadowHasPlanRequest(shadow) {
-  return (Array.isArray(shadow?.requests) ? shadow.requests : [])
-    .some((request) => codexDesktopIsPlanImplementationRequest(request))
+function codexDesktopRequestKind(request) {
+  return codexDesktopRequestProjection ? codexDesktopRequestProjection.codexDesktopRequestKind(request) : ''
 }
 
 function codexDesktopRequestFlag(request) {
@@ -4094,7 +4222,7 @@ function codexApplyCachedCompletedTurnEvidence(known, threadId) {
   return true
 }
 
-function codexPromoteCompletedPlanWait(known) {
+function codexRecordCompletedPlanArtifact(known) {
   if (!known || known.lastTurnStatus !== 'completed'
     || known.pendingCompletedPlanItem !== true) return false
   delete known.pendingCompletedPlanItem
@@ -4105,25 +4233,6 @@ function codexPromoteCompletedPlanWait(known) {
     || codexTimestampMs(known.lastTurnCompletedAt)
     || Date.now()
   known.turnMode = 'plan'
-  const hasOtherWaiting = known.activeFlags.includes('waitingOnApproval')
-    || known.activeFlags.includes('waitingOnUserInput')
-      && known.planImplementationOnly !== true
-  known.connectorPlanImplementationOnly = true
-  known.connectorStatus = 'active'
-  known.connectorActiveFlags = [...new Set([...known.connectorActiveFlags, 'waitingOnUserInput'])]
-  known.connectorStatusAuthority = 'persisted-decision'
-  known.connectorWaitingSince = codexTimestampMs(known.lastTurnCompletedAt)
-    || codexTimestampMs(known.lastTurnStartedAt)
-    || Date.now()
-  known.status = 'active'
-  known.activeFlags = [...new Set([...known.activeFlags, 'waitingOnUserInput'])]
-  known.planImplementationOnly = !hasOtherWaiting
-  known.waitingSince = known.connectorWaitingSince
-  if (known.statusAuthority !== 'desktop-live') {
-    known.statusAuthority = 'persisted-decision'
-    known.activityEvidence = 'connector'
-    delete known.desktopActiveSince
-  }
   return true
 }
 
@@ -4203,7 +4312,7 @@ function codexApplyCompletedTurnNotification(bridge, known, threadId, value, opt
     idleConfirmed: codexPrivateBranchIdleConfirmed(threadId, threadId, known)
   })
   codexClearAppServerLiveActive(known)
-  if (turn.status === 'completed') codexPromoteCompletedPlanWait(known)
+  if (turn.status === 'completed') codexRecordCompletedPlanArtifact(known)
   bridge.cancelLatestTurnRefresh(threadId)
   // Any false already present when the exact completion arrives belongs to
   // the pre-completion epoch, even when an unresolved request flag is still
@@ -4453,10 +4562,51 @@ class CodexDesktopCompanionBridge {
     }
   }
 
-  resolveWaitingRequestObservations(threadId, requests, sequence = 0) {
+  recordWaitingResolutionOnShadow(shadow, sequence) {
+    if (!shadow || !Number.isInteger(sequence) || sequence <= 0) return false
+    shadow.activityEvidence = 'activity-event'
+    shadow.activityEventSequence = Math.max(Number(shadow.activityEventSequence) || 0, sequence)
+    delete shadow.suppressUncorroboratedActive
+    return true
+  }
+
+  recordInteractionTerminalOnShadow(shadow, request, state, sequence) {
+    if (!shadow || !request || !['resolved', 'cancelled', 'execution-started'].includes(state)
+      || !Number.isInteger(sequence) || sequence <= 0
+      || typeof request.interactionRef !== 'string') return false
+    request.interactionState = state
+    request.resolutionSequence = sequence
+    const terminals = new Map((Array.isArray(shadow.interactionTerminals) ? shadow.interactionTerminals : [])
+      .filter((value) => typeof value?.interactionRef === 'string')
+      .map((value) => [value.interactionRef, value]))
+    terminals.delete(request.interactionRef)
+    terminals.set(request.interactionRef, {
+      interactionRef: request.interactionRef,
+      identityExact: request.identityExact === true,
+      type: request.type,
+      method: request.method,
+      observedSequence: request.observedSequence,
+      observedAt: request.observedAt,
+      ...(request.startedAt ? { startedAt: request.startedAt } : {}),
+      interactionState: state,
+      resolutionSequence: sequence
+    })
+    while (terminals.size > CODEX_DESKTOP_RESOLVED_REQUEST_LIMIT) {
+      const oldest = terminals.keys().next().value
+      if (!oldest) break
+      terminals.delete(oldest)
+    }
+    shadow.interactionTerminals = [...terminals.values()]
+    shadow.requestSetRevision = Math.max(Number(shadow.requestSetRevision) || 0, sequence)
+    shadow.requestSetComplete = true
+    shadow.requestSetAuthority = 'provider-live'
+    return true
+  }
+
+  resolveWaitingRequestObservations(threadId, requests, sequence = 0, shadow = null) {
     const observations = (Array.isArray(requests) ? requests : [])
       .filter((request) => codexDesktopRequestFlag(request) && Number.isInteger(request?.observedSequence))
-    if (!observations.length) return false
+    if (!observations.length) return 0
     const state = this.waitingStateFor(threadId)
     const resolvedSequence = Number.isInteger(sequence) && sequence > 0
       ? sequence
@@ -4464,25 +4614,27 @@ class CodexDesktopCompanionBridge {
     for (const request of observations) {
       state.resolvedRequestSequences.delete(request.observedSequence)
       state.resolvedRequestSequences.set(request.observedSequence, resolvedSequence)
+      this.recordInteractionTerminalOnShadow(shadow, request, 'resolved', resolvedSequence)
     }
     while (state.resolvedRequestSequences.size > CODEX_DESKTOP_RESOLVED_REQUEST_LIMIT) {
       const oldest = state.resolvedRequestSequences.keys().next().value
       if (!Number.isInteger(oldest)) break
       state.resolvedRequestSequences.delete(oldest)
     }
-    return true
+    this.recordWaitingResolutionOnShadow(shadow, resolvedSequence)
+    return resolvedSequence
   }
 
-  recordRemovedWaitingRequests(threadId, previousRequests, currentRequests) {
+  recordRemovedWaitingRequests(threadId, previousRequests, currentRequests, shadow = null, sequence = 0) {
     const currentSequences = new Set((Array.isArray(currentRequests) ? currentRequests : [])
       .map((request) => request?.observedSequence)
       .filter(Number.isInteger))
     const removed = (Array.isArray(previousRequests) ? previousRequests : [])
       .filter((request) => !currentSequences.has(request?.observedSequence))
-    return this.resolveWaitingRequestObservations(threadId, removed)
+    return this.resolveWaitingRequestObservations(threadId, removed, sequence, shadow)
   }
 
-  recordRemovedRuntimeWaitingFlags(threadId, previousFlags, currentFlags, currentRequests, sequence = 0) {
+  recordRemovedRuntimeWaitingFlags(threadId, previousFlags, currentFlags, currentRequests, sequence = 0, shadow = null) {
     const current = new Set(Array.isArray(currentFlags) ? currentFlags : [])
     const requestFlags = new Set((Array.isArray(currentRequests) ? currentRequests : [])
       .map(codexDesktopRequestFlag)
@@ -4490,13 +4642,14 @@ class CodexDesktopCompanionBridge {
     const removed = [...new Set((Array.isArray(previousFlags) ? previousFlags : [])
       .filter((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval'))]
       .filter((flag) => !current.has(flag) && !requestFlags.has(flag))
-    if (!removed.length) return false
-    this.clearWaitingEvidence(threadId, removed, {
+    if (!removed.length) return 0
+    const resolvedSequence = this.clearWaitingEvidence(threadId, removed, {
       sequence: Number.isInteger(sequence) && sequence > 0
         ? sequence
         : codexNextLiveEvidenceSequence()
     })
-    return true
+    this.recordWaitingResolutionOnShadow(shadow, resolvedSequence)
+    return resolvedSequence
   }
 
   // A leftover plan/question request is waiting evidence only while Desktop is
@@ -4571,35 +4724,6 @@ class CodexDesktopCompanionBridge {
     return false
   }
 
-  confirmPlanCardRemoval(threadId, previousShadow, shadow, completeActivityState) {
-    if (!completeActivityState
-      || !validCodexThreadId(threadId)
-      || !previousShadow
-      || !shadow
-      || !codexDesktopShadowHasPlanRequest(previousShadow)
-      || codexDesktopShadowHasPlanRequest(shadow)
-      || shadow.runtime?.type === 'active') return false
-    const parentThreadId = shadow.sideConversation && validCodexThreadId(shadow.parentThreadId)
-      ? shadow.parentThreadId
-      : threadId
-    const branches = [
-      [parentThreadId, this.shadows.get(parentThreadId)],
-      ...[...this.sideShadows.entries()].filter(([, candidate]) => candidate.parentThreadId === parentThreadId)
-    ].map(([candidateId, candidate]) => candidateId === threadId ? shadow : candidate)
-    if (branches.some((candidate) => candidate && codexDesktopShadowHasPlanRequest(candidate))) return false
-    const known = codexActivityInventory.get(parentThreadId)
-    if (!known || known.planReady !== true) return false
-    const previousRevision = Math.max(0, Number(known.planLifecycleRevision) || 0)
-    known.planReady = false
-    known.planLifecycleState = 'cleared'
-    known.planClearReason = 'cancel'
-    known.planLifecycleRevision = Math.max(Date.now(), previousRevision + 1)
-    known.planImplementationOnly = false
-    known.connectorPlanImplementationOnly = false
-    delete known.pendingCompletedPlanItem
-    return true
-  }
-
   resolveServerRequest(threadId, correlation) {
     if (!validCodexThreadId(threadId) || typeof correlation !== 'string' || !correlation) return false
     const shadow = this.shadows.get(threadId) || this.sideShadows.get(threadId)
@@ -4610,7 +4734,8 @@ class CodexDesktopCompanionBridge {
       this.scheduleWaitingEdgeRefresh(threadId)
       return false
     }
-    this.resolveWaitingRequestObservations(threadId, matches)
+    const sequence = this.resolveWaitingRequestObservations(threadId, matches, 0, shadow)
+    if (!sequence) return false
     this.cancelWaitingEdgeRefresh(threadId)
     this.publishCurrentShadow(threadId)
     return true
@@ -4735,7 +4860,7 @@ class CodexDesktopCompanionBridge {
       activeEvidenceSequence: known.activeEvidenceSequence,
       idleConfirmed: codexPrivateBranchIdleConfirmed(threadId, branchThreadId, known)
     })
-    codexPromoteCompletedPlanWait(known)
+    codexRecordCompletedPlanArtifact(known)
     this.applyFreshCompletionUnread(known, threadId, { clearStaleLiveFalse: true })
     emitCodexActivityDelta([known], false)
     if (known.hasUnreadTurn !== true && !codexDesktopOpenedReadCoversCompletion(threadId, known)) {
@@ -5564,13 +5689,20 @@ class CodexDesktopCompanionBridge {
         this.scheduleWaitingEdgeRefresh(params.conversationId)
         return
       }
-      this.recordRemovedWaitingRequests(params.conversationId, previousShadow?.requests, shadow.requests)
+      const requestClearSequence = this.recordRemovedWaitingRequests(
+        params.conversationId,
+        previousShadow?.requests,
+        shadow.requests,
+        shadow
+      )
       this.attachWaitingState(params.conversationId, shadow)
       this.recordRemovedRuntimeWaitingFlags(
         params.conversationId,
         previousShadow?.runtime?.activeFlags,
         shadow.runtime?.activeFlags,
-        shadow.requests
+        shadow.requests,
+        requestClearSequence,
+        shadow
       )
       this.clearStaleWaitingAfterRuntimeResume(
         params.conversationId,
@@ -5586,7 +5718,6 @@ class CodexDesktopCompanionBridge {
       if (shadow.sideConversation && validCodexThreadId(hintedParentThreadId)) {
         shadow.parentThreadId = hintedParentThreadId
       }
-      this.confirmPlanCardRemoval(params.conversationId, previousShadow, shadow, true)
       const recoveryRequested = this.sideRecoveryPending.delete(params.conversationId)
       const recoveringSide = recoveryRequested
         && shadow.sideConversation
@@ -5676,23 +5807,14 @@ class CodexDesktopCompanionBridge {
     const previousRequests = [...(shadow.requests || [])]
     let containsReadStatePatch = false
     let containsActivityPatch = false
-    let containsRuntimePatch = false
-    let containsRequestsPatch = false
-    let containsCompleteRequestsPatch = false
+    let containsRequestSetPatch = false
     let refreshRuntimeWaitingSequences = false
     for (const patch of change.patches) {
       const patchSource = codexRecord(patch)
       const patchPath = Array.isArray(patchSource.path) ? patchSource.path : []
       if (patchPath[0] === 'hasUnreadTurn') containsReadStatePatch = true
       if (patchPath[0] === 'threadRuntimeStatus' || patchPath[0] === 'requests') containsActivityPatch = true
-      if (patchPath[0] === 'threadRuntimeStatus') containsRuntimePatch = true
-      if (patchPath[0] === 'requests') {
-        containsRequestsPatch = true
-        if (patchPath.length === 1
-          && (patchSource.op === 'replace' || patchSource.op === 'add' || patchSource.op === 'remove')) {
-          containsCompleteRequestsPatch = true
-        }
-      }
+      if (patchPath[0] === 'requests') containsRequestSetPatch = true
       if (patchPath[0] === 'threadRuntimeStatus'
         && (patchPath.length === 1 || patchPath[1] === 'activeFlags')) {
         refreshRuntimeWaitingSequences = true
@@ -5704,13 +5826,12 @@ class CodexDesktopCompanionBridge {
     }
     this.cancelWaitingEdgeRefresh(params.conversationId)
     shadow.revision = revision
+    if (containsRequestSetPatch) {
+      shadow.requestSetRevision = codexNextLiveEvidenceSequence()
+      shadow.requestSetComplete = true
+      shadow.requestSetAuthority = 'provider-live'
+    }
     delete shadow.ownerDisconnectedAt
-    this.confirmPlanCardRemoval(
-      params.conversationId,
-      { ...shadow, requests: previousRequests, runtime: previousRuntime },
-      shadow,
-      containsCompleteRequestsPatch || containsRuntimePatch && containsRequestsPatch
-    )
     const nextActivity = codexDesktopShadowActivity(shadow)
     const semanticActivityChanged = previousActivity?.status !== nextActivity?.status
       || JSON.stringify(previousActivity?.activeFlags || []) !== JSON.stringify(nextActivity?.activeFlags || [])
@@ -5724,13 +5845,20 @@ class CodexDesktopCompanionBridge {
         delete shadow.suppressUncorroboratedActive
       }
     }
-    this.recordRemovedWaitingRequests(params.conversationId, previousRequests, shadow.requests)
+    const requestClearSequence = this.recordRemovedWaitingRequests(
+      params.conversationId,
+      previousRequests,
+      shadow.requests,
+      shadow,
+      shadow.activityEventSequence
+    )
     this.recordRemovedRuntimeWaitingFlags(
       params.conversationId,
       previousRuntimeFlags,
       shadow.runtime?.activeFlags,
       shadow.requests,
-      shadow.activityEventSequence
+      requestClearSequence || shadow.activityEventSequence,
+      shadow
     )
     this.clearStaleWaitingAfterRuntimeResume(
       params.conversationId,
@@ -5787,6 +5915,125 @@ class CodexDesktopCompanionBridge {
       }
     }
     else this.publishShadow(params.conversationId, shadow, readStateOnly)
+  }
+
+  companionInteractionEvidenceForParent(parentThreadId) {
+    const known = codexActivityInventory.get(parentThreadId)
+    if (!known?.key) return null
+    const shadowEntries = []
+    const own = this.shadows.get(parentThreadId)
+    if (own) shadowEntries.push([parentThreadId, own])
+    const relatedChildIds = new Set()
+    for (const [childThreadId, relatedParentThreadId] of codexAllSideRelations()) {
+      if (relatedParentThreadId === parentThreadId) relatedChildIds.add(childThreadId)
+    }
+    for (const [childThreadId, shadow] of this.sideShadows) {
+      if (shadow.parentThreadId !== parentThreadId) continue
+      relatedChildIds.add(childThreadId)
+      shadowEntries.push([childThreadId, shadow])
+    }
+    const complete = Boolean(own?.requestSetComplete === true)
+      && [...relatedChildIds].every((childThreadId) => this.sideShadows.get(childThreadId)?.requestSetComplete === true)
+    const requestSetRevision = Math.max(
+      0,
+      ...shadowEntries.flatMap(([, shadow]) => [
+        Number(shadow.requestSetRevision) || 0,
+        Number(shadow.activityEventSequence) || 0,
+        ...Object.values(codexRecord(shadow.runtimeWaitingSequences)).map((value) => Number(value) || 0)
+      ])
+    )
+    if (!requestSetRevision) return null
+    const byInstance = new Map()
+    for (const [threadId, shadow] of shadowEntries) {
+      const branchRef = threadId === parentThreadId
+        ? 'root'
+        : codexPrivateBranchRef(parentThreadId, threadId)
+      const candidates = [
+        ...(Array.isArray(shadow.requests) ? shadow.requests : []),
+        ...(Array.isArray(shadow.interactionTerminals) ? shadow.interactionTerminals : [])
+      ]
+      const visibleRequestFlags = new Set()
+      for (const request of candidates) {
+        const kind = codexDesktopRequestKind(request)
+        const interactionRef = typeof request?.interactionRef === 'string' && /^[a-f0-9]{16,64}$/i.test(request.interactionRef)
+          ? request.interactionRef.toLowerCase()
+          : ''
+        if (!kind || !interactionRef) continue
+        const terminal = ['resolved', 'cancelled', 'execution-started'].includes(request.interactionState)
+        if (!terminal) {
+          const flag = codexDesktopRequestFlag(request)
+          if (!flag || !codexWaitingEvidenceVisible(shadow.waitingState, flag, request.observedSequence)) continue
+          visibleRequestFlags.add(flag)
+        }
+        const sequence = terminal
+          ? Number(request.resolutionSequence) || Number(request.observedSequence) || 0
+          : Number(request.observedSequence) || 0
+        if (!Number.isSafeInteger(sequence) || sequence <= 0) continue
+        const evidence = {
+          revision: companionV7Revisions.interaction,
+          provider: 'codex',
+          taskKey: known.key,
+          branchRef,
+          interactionRef,
+          kind,
+          state: terminal ? request.interactionState : 'opened',
+          sequence,
+          turnEpoch: Number(known.lastTurnStartedAt) || 0,
+          requestSetRevision,
+          authority: terminal
+            ? 'provider-live'
+            : shadow.requestSetAuthority === 'provider-live' ? 'provider-live' : 'provider-snapshot',
+          exact: request.identityExact === true
+        }
+        const instanceKey = `${branchRef}\0${interactionRef}`
+        const previous = byInstance.get(instanceKey)
+        if (!previous || evidence.sequence > previous.sequence
+          || evidence.sequence === previous.sequence && terminal && previous.state === 'opened') {
+          byInstance.set(instanceKey, evidence)
+        }
+      }
+      for (const flag of Array.isArray(shadow.runtime?.activeFlags) ? shadow.runtime.activeFlags : []) {
+        if (visibleRequestFlags.has(flag)) continue
+        const sequence = Number(shadow.runtimeWaitingSequences?.[flag]) || 0
+        if (!sequence || !codexWaitingEvidenceVisible(shadow.waitingState, flag, sequence)) continue
+        const interactionRef = crypto.createHash('sha256')
+          .update('codex-runtime-interaction-v1')
+          .update('\0')
+          .update(branchRef)
+          .update('\0')
+          .update(flag)
+          .update('\0')
+          .update(String(sequence))
+          .digest('hex')
+          .slice(0, 32)
+        byInstance.set(`${branchRef}\0${interactionRef}`, {
+          revision: companionV7Revisions.interaction,
+          provider: 'codex',
+          taskKey: known.key,
+          branchRef,
+          interactionRef,
+          kind: flag === 'waitingOnApproval' ? 'approval' : 'user-input',
+          state: 'opened',
+          sequence,
+          turnEpoch: Number(known.lastTurnStartedAt) || 0,
+          requestSetRevision,
+          authority: shadow.activityEvidence === 'activity-event' ? 'provider-live' : 'provider-snapshot',
+          exact: true
+        })
+      }
+    }
+    return {
+      taskKey: known.key,
+      requestSetRevision,
+      interactions: [...byInstance.values()],
+      interactionSets: complete ? [{
+        revision: companionV7Revisions.interaction,
+        provider: 'codex',
+        taskKey: known.key,
+        requestSetRevision,
+        complete: true
+      }] : []
+    }
   }
 
   publishShadow(threadId, shadow, readStateOnly = false) {
@@ -5915,7 +6162,13 @@ class CodexDesktopCompanionBridge {
     const openedWaitingEpoch = waitingLive
       && known.lastTurnStatus !== 'inProgress'
       && this.openParentLiveEpoch(parentThreadId)
-    emitCodexActivityDelta([readStateOnly && !openedWaitingEpoch ? { ...known, readStateOnly: true } : known], false)
+    emitCodexActivityDelta(
+      [readStateOnly && !openedWaitingEpoch ? { ...known, readStateOnly: true } : known],
+      false,
+      'normal',
+      [],
+      { interactionEvidence: this.companionInteractionEvidenceForParent(parentThreadId) }
+    )
     if (status === 'active') {
       if (!waitingLive && (known.lastTurnStatus === 'completed'
         || priorStatus !== 'active' && known.lastTurnStatus !== 'inProgress')) {
@@ -6559,6 +6812,7 @@ function resetCodexThreadSessionState(options = {}) {
   codexActivitySourceFingerprint = ''
   codexActivityGeneration += 1
   codexActivitySemanticFingerprints.clear()
+  codexInteractionSemanticFingerprints.clear()
   codexActivityBridgeFingerprint = ''
   codexInventoryRefreshPending = false
   codexInventoryMembershipGeneration += 1
@@ -6715,6 +6969,7 @@ function codexArchivedActivityKey(threadId) {
   codexThreadGoalCache.delete(threadId)
   codexThreadGoalRefreshes.delete(threadId)
   codexThreadFirstPromptCache.delete(threadId)
+  codexInteractionSemanticFingerprints.delete(known.key)
   codexActivityInventory.delete(threadId)
   return known.key
 }
@@ -6941,13 +7196,17 @@ function closeCodexInventoryMembershipWatchers() {
   codexInventoryMembershipStatPaths.clear()
 }
 
-function codexActivityDelta(entries, inventoryChanged, receivedAt = Date.now(), inventoryRefreshPriority = 'normal', archivedKeys = []) {
+function codexActivityDelta(entries, inventoryChanged, receivedAt = Date.now(), inventoryRefreshPriority = 'normal', archivedKeys = [], options = {}) {
   const normalizedArchivedKeys = [...new Set(archivedKeys.filter((key) => typeof key === 'string' && /^[a-f0-9]{32}$/.test(key)))]
+  const interactionEvidence = codexRecord(options.interactionEvidence)
+  const interactions = Array.isArray(interactionEvidence.interactions) ? interactionEvidence.interactions : []
+  const interactionSets = Array.isArray(interactionEvidence.interactionSets) ? interactionEvidence.interactionSets : []
   return {
     version: 2,
     sourceFingerprint: codexActivitySourceFingerprint,
     generation: codexActivityGeneration,
     entries: entries.map(codexActivityPublicEntry).filter((entry) => entry.key),
+    ...(interactions.length || interactionSets.length ? { interactions, interactionSets } : {}),
     ...(normalizedArchivedKeys.length ? { archivedKeys: normalizedArchivedKeys } : {}),
     inventoryChanged: inventoryChanged === true,
     ...(inventoryChanged === true ? { inventoryRefreshPriority: inventoryRefreshPriority === 'urgent' ? 'urgent' : 'normal' } : {}),
@@ -6992,6 +7251,7 @@ function codexActivityInventorySemanticFingerprint() {
 
 function codexPrimeActivitySemanticFingerprints() {
   codexActivitySemanticFingerprints.clear()
+  codexInteractionSemanticFingerprints.clear()
   for (const value of codexActivityInventory.values()) {
     for (const candidate of [value, { ...value, readStateOnly: true }]) {
       const fingerprint = codexActivitySemanticFingerprint(candidate)
@@ -7005,7 +7265,8 @@ function emitCodexActivityDelta(entries, inventoryChanged, inventoryRefreshPrior
   if (!codexActivitySourceFingerprint && options.allowWithoutFingerprint !== true) return
   const changedEntries = []
   const nextFingerprints = []
-  for (const value of Array.isArray(entries) ? entries : []) {
+  const inputEntries = Array.isArray(entries) ? entries : []
+  for (const value of inputEntries) {
     const fingerprint = codexActivitySemanticFingerprint(value)
     if (!fingerprint) continue
     if (options.forcePrivateEvidence === true
@@ -7024,20 +7285,83 @@ function emitCodexActivityDelta(entries, inventoryChanged, inventoryRefreshPrior
     .filter((key) => typeof key === 'string' && /^[a-f0-9]{32}$/.test(key)))]
   const inventorySignal = inventoryChanged === true
     && (!codexInventoryRefreshPending || normalizedArchivedKeys.length > 0)
-  if (!changedEntries.length && !bridgeChanged && !inventorySignal && !normalizedArchivedKeys.length) return false
+  const interactionEvidence = codexRecord(options.interactionEvidence)
+  const interactionTaskKey = typeof interactionEvidence.taskKey === 'string' ? interactionEvidence.taskKey : ''
+  const semanticInteractions = Array.isArray(interactionEvidence.interactions)
+    ? interactionEvidence.interactions.map((value) => {
+        const interaction = codexRecord(value)
+        return {
+          branchRef: interaction.branchRef,
+          interactionRef: interaction.interactionRef,
+          kind: interaction.kind,
+          state: interaction.state,
+          sequence: interaction.sequence,
+          exact: interaction.exact === true
+        }
+      }).sort((left, right) => `${left.branchRef}:${left.interactionRef}`.localeCompare(`${right.branchRef}:${right.interactionRef}`))
+    : []
+  const interactionFingerprint = interactionTaskKey
+    ? JSON.stringify({
+        complete: Array.isArray(interactionEvidence.interactionSets) && interactionEvidence.interactionSets.length > 0,
+        interactions: semanticInteractions
+      })
+    : ''
+  const previousInteractionFingerprint = interactionTaskKey
+    ? codexInteractionSemanticFingerprints.get(interactionTaskKey)
+    : undefined
+  const canonicalNeedsInteractionClear = previousInteractionFingerprint === undefined
+    && semanticInteractions.length === 0
+    && companionTaskKernel?.getPackage?.().tasks?.some((task) => (
+      task.key === interactionTaskKey && (task.phase === 'waiting-input' || task.phase === 'waiting-approval')
+    ))
+  const interactionChanged = Boolean(interactionTaskKey && interactionFingerprint
+    && (previousInteractionFingerprint === undefined
+      ? semanticInteractions.length > 0 || canonicalNeedsInteractionClear
+      : previousInteractionFingerprint !== interactionFingerprint))
+  if (interactionChanged && !changedEntries.some((value) => codexActivityPublicEntry(value).key === interactionTaskKey)) {
+    const matchingEntry = inputEntries.find((value) => codexActivityPublicEntry(value).key === interactionTaskKey)
+    if (matchingEntry) changedEntries.push(matchingEntry)
+  }
+  if (!changedEntries.length && !bridgeChanged && !inventorySignal && !normalizedArchivedKeys.length && !interactionChanged) return false
   codexActivityBridgeFingerprint = bridgeFingerprint
   if (inventoryChanged === true) codexInventoryRefreshPending = true
+  if (interactionChanged) {
+    codexInteractionSemanticFingerprints.set(interactionTaskKey, interactionFingerprint)
+    const kinds = Object.fromEntries(['user-input', 'approval', 'plan-choice', 'plan-implementation'].map((kind) => [
+      kind,
+      semanticInteractions.filter((interaction) => interaction.kind === kind && interaction.state === 'opened').length
+    ]))
+    const states = Object.fromEntries(['opened', 'resolved', 'cancelled', 'execution-started'].map((state) => [
+      state,
+      semanticInteractions.filter((interaction) => interaction.state === state).length
+    ]))
+    runtimeDiagnostics.record({
+      level: 'debug',
+      scope: 'task-interaction',
+      event: 'request-set',
+      outcome: 'accepted',
+      provider: 'codex',
+      taskRef: companionDiagnosticTaskRef('codex', interactionTaskKey),
+      observationGeneration: Number(interactionEvidence.requestSetRevision) || 0,
+      count: semanticInteractions.length,
+      details: {
+        revision: companionV7Revisions.interaction,
+        requestSetRevision: Number(interactionEvidence.requestSetRevision) || 0,
+        complete: Array.isArray(interactionEvidence.interactionSets) && interactionEvidence.interactionSets.length > 0,
+        kinds,
+        states,
+        exactCount: semanticInteractions.filter((interaction) => interaction.exact).length
+      }
+    })
+  }
   codexActivityGeneration += 1
-  // Stage private branch evidence before listeners consume the matching
-  // public delta. The Host draft commit applies both lanes atomically, so one
-  // provider event cannot publish an intermediate branch-only package.
-  publishCodexPrivateBranchEvidence(changedEntries, codexActivityGeneration, { deferPublish: true })
   const delta = codexActivityDelta(
     changedEntries,
     inventoryChanged === true,
     Date.now(),
     inventoryRefreshPriority,
-    normalizedArchivedKeys
+    normalizedArchivedKeys,
+    { interactionEvidence: interactionChanged ? interactionEvidence : null }
   )
   for (const listener of codexActivityListeners) {
     try { listener(delta) } catch {}
@@ -7882,6 +8206,13 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       activeFlags: live ? [...(row.activity?.activeFlags || [])] : [],
       planImplementationOnly: row.activity?.planImplementationOnly === true,
       planReady: known.planReady === true || row.activity?.planImplementationOnly === true,
+      planLifecycleState: known.planLifecycleState === 'cleared'
+        ? 'cleared'
+        : known.planReady === true || row.activity?.planImplementationOnly === true ? 'ready' : 'unknown',
+      planLifecycleRevision: Number(known.planLifecycleRevision) || 0,
+      ...(['cancel', 'execution-start', 'archive', 'removal'].includes(known.planClearReason)
+        ? { planClearReason: known.planClearReason }
+        : {}),
       ...goalEvidence,
       ...(live && !terminalStrictlyNewer
         ? {
@@ -7947,27 +8278,6 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
     observedAt: Math.max(0, ...branches.map((branch) => Number(branch.observedAt) || 0)),
     branches
   }
-}
-
-function publishCodexPrivateBranchEvidence(entries, generation = codexActivityGeneration, options = {}) {
-  if (!companionTaskKernel?.publishCodexBranchEvidence || !Number.isFinite(generation) || generation <= 0) return false
-  const parents = []
-  const seen = new Set()
-  for (const value of Array.isArray(entries) ? entries : []) {
-    const source = codexRecord(value)
-    const match = [...codexActivityInventory.entries()].find(([, known]) => known === value || known.key === source.key)
-    if (!match || seen.has(match[0])) continue
-    seen.add(match[0])
-    const evidence = codexPrivateBranchEvidence(match[0], match[1])
-    if (evidence) parents.push(evidence)
-  }
-  if (!parents.length) return false
-  companionTaskKernel.publishCodexBranchEvidence({
-    generation: Math.trunc(generation),
-    parents,
-    deferPublish: options.deferPublish === true
-  })
-  return true
 }
 
 function codexThreadAlias(threadId, now, metadata = {}) {
@@ -8249,8 +8559,6 @@ function codexApplyRolloutLiveActive(tracker, known, runtime) {
   known.status = 'active'
   known.activeFlags = []
   known.planImplementationOnly = false
-  known.planReady = false
-  known.planLifecycleRevision = 0
   delete known.waitingSince
   known.statusAuthority = 'app-server-live'
   known.activityEvidence = 'activity-event'
@@ -9031,10 +9339,7 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
     const planLifecycle = codexThreadPersistedPlanLifecycle(thread, lastTurn)
     const persistedPendingInput = connectorStatus !== 'active'
       && codexThreadHasPersistedPendingInput(thread, lastTurn)
-    const persistedPendingPlan = connectorStatus !== 'active'
-      && lastTurn.status === 'completed'
-      && planLifecycle.planReady === true
-    const persistedDecision = persistedPendingInput || persistedPendingPlan
+    const persistedDecision = persistedPendingInput
     const status = persistedDecision ? 'active' : connectorStatus
     const activeFlags = persistedDecision
       ? ['waitingOnUserInput']
@@ -9052,7 +9357,6 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       ...(activeFlags.length
         ? { waitingSince: codexTimestampMs(lastTurn.completedAt) || codexTimestampMs(lastTurn.startedAt) || now }
         : {}),
-      ...(persistedPendingPlan ? { planImplementationOnly: true } : {}),
       ...(planLifecycle.planReady ? {
         planReady: true,
         planLifecycleState: 'ready',
@@ -9339,49 +9643,10 @@ async function scanVerifiedCodexInventory() {
     codexSyncRolloutDecisionTrackers(eligibleRows, turns.latest)
     codexEnsureDesktopBridge().updateInventory(activityInventory.keys())
     const inventoryChanged = previousInventoryFingerprint !== codexActivityInventorySemanticFingerprint()
-    if (inventoryChanged) {
-      codexActivityGeneration += 1
-      publishCodexPrivateBranchEvidence([...activityInventory.values()], codexActivityGeneration)
-    }
+    if (inventoryChanged) codexActivityGeneration += 1
     codexPrimeActivitySemanticFingerprints()
     const activityByKey = new Map([...activityInventory.values()].map((entry) => [entry.key, entry]))
-    for (const thread of threads) {
-      const activity = activityByKey.get(thread.key)
-      if (!activity) continue
-      thread.status = activity.status
-      thread.activeFlags = [...activity.activeFlags]
-      thread.planImplementationOnly = activity.planImplementationOnly === true
-      thread.planReady = activity.planReady === true
-      thread.planLifecycleState = activity.planLifecycleState === 'cleared'
-        ? 'cleared'
-        : activity.planReady === true ? 'ready' : 'unknown'
-      thread.planLifecycleRevision = Number(activity.planLifecycleRevision) || 0
-      if (thread.planLifecycleState === 'cleared' && activity.planClearReason) thread.planClearReason = activity.planClearReason
-      else delete thread.planClearReason
-      thread.turnMode = activity.turnMode === 'plan' || activity.turnMode === 'default' ? activity.turnMode : 'unknown'
-      thread.idleConfirmed = activity.idleConfirmed === true
-      thread.statusAuthority = activity.statusAuthority
-      thread.activityEvidence = activity.activityEvidence
-      thread.activityRevision = activity.activityRevision
-      if (activity.waitingSince) thread.waitingSince = activity.waitingSince
-      else delete thread.waitingSince
-      if (activity.desktopActiveSince) thread.desktopActiveSince = activity.desktopActiveSince
-      else delete thread.desktopActiveSince
-      thread.hasUnreadTurn = activity.hasUnreadTurn === true
-      thread.unreadAuthority = activity.unreadAuthority
-      if (activity.lastTurnStatus && activity.lastTurnStartedAt) {
-        thread.lastTurnStatus = activity.lastTurnStatus
-        thread.lastTurnStartedAt = activity.lastTurnStartedAt
-        if (activity.lastTurnStatus === 'completed' && activity.lastTurnCompletedAt) thread.lastTurnCompletedAt = activity.lastTurnCompletedAt
-        else delete thread.lastTurnCompletedAt
-      }
-      if (activity.lastTurnEvidence) thread.lastTurnEvidence = activity.lastTurnEvidence
-      else delete thread.lastTurnEvidence
-      if (activity.activeEvidenceSequence) thread.activeEvidenceSequence = activity.activeEvidenceSequence
-      else delete thread.activeEvidenceSequence
-      if (activity.terminalEvidenceSequence) thread.terminalEvidenceSequence = activity.terminalEvidenceSequence
-      else delete thread.terminalEvidenceSequence
-    }
+    for (const thread of threads) applyCodexActivityEvidenceToThreadV7(thread, activityByKey.get(thread.key))
     for (const [threadId, generation] of dirtySnapshot) {
       if (codexThreadTurnStatusDirty.get(threadId) === generation) codexThreadTurnStatusDirty.delete(threadId)
     }
@@ -9418,6 +9683,46 @@ async function readCodexActivitySnapshot(options) {
   } catch (error) {
     return codexErrorResult(error)
   }
+}
+
+let companionCodexVerifiedSnapshotCacheV7 = null
+
+function applyCodexActivityEvidenceToThreadV7(thread, activity) {
+  if (!thread || !activity) return thread
+  thread.status = activity.status
+  thread.activeFlags = [...(Array.isArray(activity.activeFlags) ? activity.activeFlags : [])]
+  thread.planImplementationOnly = activity.planImplementationOnly === true
+  thread.planReady = activity.planReady === true
+  thread.planLifecycleState = activity.planLifecycleState === 'cleared'
+    ? 'cleared'
+    : activity.planReady === true ? 'ready' : 'unknown'
+  thread.planLifecycleRevision = Number(activity.planLifecycleRevision) || 0
+  if (thread.planLifecycleState === 'cleared' && activity.planClearReason) thread.planClearReason = activity.planClearReason
+  else delete thread.planClearReason
+  thread.turnMode = activity.turnMode === 'plan' || activity.turnMode === 'default' ? activity.turnMode : 'unknown'
+  thread.idleConfirmed = activity.idleConfirmed === true
+  thread.statusAuthority = activity.statusAuthority
+  thread.activityEvidence = activity.activityEvidence
+  thread.activityRevision = activity.activityRevision
+  if (activity.waitingSince) thread.waitingSince = activity.waitingSince
+  else delete thread.waitingSince
+  if (activity.desktopActiveSince) thread.desktopActiveSince = activity.desktopActiveSince
+  else delete thread.desktopActiveSince
+  thread.hasUnreadTurn = activity.hasUnreadTurn === true
+  thread.unreadAuthority = activity.unreadAuthority
+  if (activity.lastTurnStatus && activity.lastTurnStartedAt) {
+    thread.lastTurnStatus = activity.lastTurnStatus
+    thread.lastTurnStartedAt = activity.lastTurnStartedAt
+    if (activity.lastTurnStatus === 'completed' && activity.lastTurnCompletedAt) thread.lastTurnCompletedAt = activity.lastTurnCompletedAt
+    else delete thread.lastTurnCompletedAt
+  }
+  if (activity.lastTurnEvidence) thread.lastTurnEvidence = activity.lastTurnEvidence
+  else delete thread.lastTurnEvidence
+  if (activity.activeEvidenceSequence) thread.activeEvidenceSequence = activity.activeEvidenceSequence
+  else delete thread.activeEvidenceSequence
+  if (activity.terminalEvidenceSequence) thread.terminalEvidenceSequence = activity.terminalEvidenceSequence
+  else delete thread.terminalEvidenceSequence
+  return thread
 }
 
 async function readCodexSnapshot(options) {
@@ -9461,10 +9766,55 @@ async function readCodexSnapshot(options) {
       } catch {}
     }
     value.receivedAt = Date.now()
-    return { ok: true, value, receivedAt: value.receivedAt }
+    const result = { ok: true, value, receivedAt: value.receivedAt }
+    if (includeThreads && value.completeness === 'verified') {
+      companionCodexVerifiedSnapshotCacheV7 = {
+        result,
+        cachedAt: value.receivedAt,
+        activityGeneration: Number(value.activityGeneration) || 0,
+        sourceFingerprint: typeof value.sourceFingerprint === 'string' ? value.sourceFingerprint : ''
+      }
+    }
+    return result
   } catch (error) {
     return codexErrorResult(error)
   }
+}
+
+function readCompanionCodexPreflightSnapshotV7() {
+  const cached = companionCodexVerifiedSnapshotCacheV7
+  const currentFingerprint = typeof codexActivitySourceFingerprint === 'string' ? codexActivitySourceFingerprint : ''
+  const currentKeys = [...codexActivityInventory.values()]
+    .map((entry) => entry?.key)
+    .filter((key) => typeof key === 'string')
+    .sort()
+  const cachedThreads = Array.isArray(cached?.result?.value?.threads) ? cached.result.value.threads : []
+  const cachedKeys = cachedThreads.map((thread) => thread?.key)
+    .filter((key) => typeof key === 'string')
+    .sort()
+  if (cached
+    && Date.now() - cached.cachedAt <= 500
+    && cached.sourceFingerprint === currentFingerprint
+    && currentKeys.length === cachedKeys.length
+    && currentKeys.every((key, index) => key === cachedKeys[index])) {
+    const activityByKey = new Map([...codexActivityInventory.values()].map((entry) => [entry.key, entry]))
+    const receivedAt = Date.now()
+    const value = {
+      ...cached.result.value,
+      threads: cachedThreads.map((thread) => applyCodexActivityEvidenceToThreadV7({ ...thread }, activityByKey.get(thread.key))),
+      activityGeneration: codexActivityGeneration,
+      receivedAt
+    }
+    const result = { ok: true, value, receivedAt }
+    companionCodexVerifiedSnapshotCacheV7 = {
+      result,
+      cachedAt: receivedAt,
+      activityGeneration: Number(codexActivityGeneration) || 0,
+      sourceFingerprint: currentFingerprint
+    }
+    return Promise.resolve(result)
+  }
+  return readCodexSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
 }
 
 function codexArchiveOperationId(value) {
@@ -11276,65 +11626,8 @@ function publishCompanionCodexAlias(key, actionAlias, fallbackTarget = null, met
   const task = current?.tasks?.find((candidate) => candidate.key === key && candidate.provider === 'codex')
   if (!current || typeof actionAlias !== 'string' || !actionAlias) return false
   if (task?.actionAlias === actionAlias && task.capabilities?.open === true) return true
-  const membershipRevision = Math.max(
-    Date.now(),
-    Number(task?.membershipRevision) + 1,
-    Number(task?.visibilityRevision) + 1
-  )
-  const nextTasks = task
-    ? current.tasks.map((candidate) => candidate.key === key
-      ? {
-          ...candidate,
-          actionAlias,
-          capabilityToken: actionAlias,
-          membershipRevision,
-          visibilityRevision: Math.max(Number(candidate.visibilityRevision) || 0, membershipRevision),
-          capabilities: { ...candidate.capabilities, open: true }
-        }
-      : candidate)
-    : [...current.tasks, {
-        key,
-        provider: 'codex',
-        kind: 'codex-thread',
-        phase: 'unknown',
-        actionAlias,
-        capabilityToken: actionAlias,
-        revisionAt: Math.max(1, Number(fallbackTarget?.revisionAt) || 0),
-        membershipRevision,
-        phaseRevision: 0,
-        unreadRevision: 0,
-        visibilityRevision: membershipRevision,
-        statusEnteredAt: 0,
-        lastQuestionAt: 0,
-        createdAt: 0,
-        displayOrder: current.tasks.length,
-        cycleOrder: current.tasks.length,
-        attentionOrder: current.tasks.length,
-        hidden: false,
-        unreadKnown: false,
-        unread: false,
-        planImplementation: false,
-        planReady: false,
-        planLifecycleRevision: 0,
-        paused: false,
-        turnMode: 'unknown',
-        idleConfirmed: false,
-        localPin: false,
-        dynamicEligible: false,
-        freshness: 'verifying',
-        capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false },
-        displayName: typeof metadata?.displayName === 'string' && metadata.displayName
-          ? metadata.displayName
-          : '新 Codex 任务',
-        projectKey: typeof metadata?.projectKey === 'string' ? metadata.projectKey : 'chats',
-        projectName: typeof metadata?.projectName === 'string' ? metadata.projectName : 'Chats',
-        projectKind: metadata?.projectKind === 'project' ? 'project' : 'chats'
-      }]
-  if (current.complete) return publishCompanionHostTasks(nextTasks, { acceptedAt: Date.now() })
-  // During a cold/incomplete package the refreshed capability stays in the
-  // Host-private alias map. Publishing a task-shaped fallback here would be a
-  // second membership/state source and V6 intentionally ignores it. The next
-  // exact preflight emits the capability through the private evidence node.
+  // Alias renewal is Host-private and open commands resolve by stable key. It
+  // must not trigger an otherwise unnecessary Provider cold reconciliation.
   return true
 }
 
@@ -11672,27 +11965,166 @@ function persistCompanionPreference(input = {}) {
   return writeState({ ...state, codex: nextCodex, updatedAt: Date.now() })
 }
 
-function readCompanionPlanPauseReceipts() {
+let companionPlanPauseStorageReady = true
+
+function sanitizeCompanionPlanPauseReceipts(stored) {
+  const rows = Array.isArray(stored?.receipts) ? stored.receipts : []
+  return rows.flatMap((value) => {
+    const source = codexRecord(value)
+    const key = typeof source.key === 'string' && /^[a-f0-9]{16,64}$/i.test(source.key) ? source.key : ''
+    const planLifecycleRevision = Number.isFinite(source.planLifecycleRevision)
+      ? Math.max(0, Math.trunc(source.planLifecycleRevision))
+      : 0
+    if (!key || !planLifecycleRevision || source.paused !== true) return []
+    return [{
+      key,
+      planLifecycleRevision,
+      paused: true,
+      updatedAt: Number.isFinite(source.updatedAt) ? Math.max(0, Math.trunc(source.updatedAt)) : 0
+    }]
+  }).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 2_000)
+}
+
+function writeCompanionPlanPauseReceipts(rows) {
   try {
-    const stored = globalThis.utools?.dbStorage?.getItem?.(COMPANION_PLAN_PAUSE_STORAGE_KEY)
-    const rows = Array.isArray(stored?.receipts) ? stored.receipts : []
-    return rows.flatMap((value) => {
-      const source = codexRecord(value)
-      const key = typeof source.key === 'string' && /^[a-f0-9]{16,64}$/i.test(source.key) ? source.key : ''
-      const planLifecycleRevision = Number.isFinite(source.planLifecycleRevision)
-        ? Math.max(0, Math.trunc(source.planLifecycleRevision))
-        : 0
-      if (!key || !planLifecycleRevision || source.paused !== true) return []
-      return [{
-        key,
-        planLifecycleRevision,
-        paused: true,
-        updatedAt: Number.isFinite(source.updatedAt) ? Math.max(0, Math.trunc(source.updatedAt)) : 0
-      }]
-    }).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 2_000)
+    return globalThis.utools?.dbStorage?.setItem?.(COMPANION_PLAN_PAUSE_STORAGE_KEY, {
+      version: COMPANION_PLAN_PAUSE_STORAGE_VERSION,
+      receipts: sanitizeCompanionPlanPauseReceipts({ receipts: rows })
+    }) !== false
+  } catch {
+    return false
+  }
+}
+
+function readCompanionPlanPauseReceipts() {
+  const storage = globalThis.utools?.dbStorage
+  if (typeof storage?.getItem !== 'function') return []
+  try {
+    const current = storage.getItem(COMPANION_PLAN_PAUSE_STORAGE_KEY)
+    if (current != null) {
+      if (current?.version !== COMPANION_PLAN_PAUSE_STORAGE_VERSION) {
+        companionPlanPauseStorageReady = false
+        return []
+      }
+      return sanitizeCompanionPlanPauseReceipts(current)
+    }
+    const legacy = storage.getItem(COMPANION_PLAN_PAUSE_LEGACY_STORAGE_KEY)
+    if (legacy == null) return []
+    const receipts = sanitizeCompanionPlanPauseReceipts(legacy)
+    // Copy-on-read is intentionally one-way. The V6 key remains untouched so a
+    // package rollback can still consume the exact pre-migration data.
+    companionPlanPauseStorageReady = writeCompanionPlanPauseReceipts(receipts)
+    return companionPlanPauseStorageReady ? receipts : []
+  } catch {
+    companionPlanPauseStorageReady = false
+    return []
+  }
+}
+
+function readCompanionInteractionIdentitySalt() {
+  try {
+    const stored = globalThis.utools?.dbStorage?.getItem?.(COMPANION_INTERACTION_IDENTITY_STORAGE_KEY)
+    const value = typeof stored?.salt === 'string' && /^[a-f0-9]{64}$/i.test(stored.salt)
+      ? stored.salt.toLowerCase()
+      : ''
+    if (value) return Buffer.from(value, 'hex')
+  } catch {}
+  const salt = crypto.randomBytes(32)
+  try {
+    globalThis.utools?.dbStorage?.setItem?.(COMPANION_INTERACTION_IDENTITY_STORAGE_KEY, {
+      version: 1,
+      salt: salt.toString('hex')
+    })
+  } catch {}
+  return salt
+}
+
+function sanitizeCompanionInteractionTombstone(value) {
+  const source = codexRecord(value)
+  const provider = source.provider === 'codex' || source.provider === 'claude' || source.provider === 'cursor'
+    ? source.provider
+    : ''
+  const state = source.state === 'resolved' || source.state === 'cancelled' || source.state === 'execution-started'
+    ? source.state
+    : ''
+  const kind = ['user-input', 'approval', 'plan-choice', 'plan-implementation'].includes(source.kind)
+    ? source.kind
+    : ''
+  const authority = ['provider-live', 'provider-snapshot', 'host-command', 'rollout'].includes(source.authority)
+    ? source.authority
+    : ''
+  const taskKey = typeof source.taskKey === 'string' && /^[a-f0-9]{16,64}$/i.test(source.taskKey) ? source.taskKey : ''
+  const branchRef = typeof source.branchRef === 'string' && source.branchRef.length > 0 && source.branchRef.length <= 128
+    ? source.branchRef
+    : ''
+  const interactionRef = typeof source.interactionRef === 'string' && /^[a-f0-9]{16,64}$/i.test(source.interactionRef)
+    ? source.interactionRef.toLowerCase()
+    : ''
+  const sequence = Number.isSafeInteger(source.sequence) && source.sequence > 0 ? source.sequence : 0
+  const requestSetRevision = Number.isSafeInteger(source.requestSetRevision) && source.requestSetRevision > 0
+    ? source.requestSetRevision
+    : 0
+  if (source.revision !== companionV7Revisions?.interaction || !provider || !state || !kind || !authority
+    || !taskKey || !branchRef || !interactionRef || !sequence || !requestSetRevision) return null
+  return {
+    revision: companionV7Revisions.interaction,
+    provider,
+    taskKey,
+    branchRef,
+    interactionRef,
+    kind,
+    state,
+    sequence,
+    turnEpoch: Number.isSafeInteger(source.turnEpoch) && source.turnEpoch >= 0 ? source.turnEpoch : 0,
+    requestSetRevision,
+    authority,
+    exact: source.exact === true
+  }
+}
+
+function readCompanionInteractionTombstones() {
+  try {
+    const stored = globalThis.utools?.dbStorage?.getItem?.(COMPANION_INTERACTION_TOMBSTONE_STORAGE_KEY)
+    if (stored?.revision !== companionV7Revisions?.interactionStore) return []
+    return (Array.isArray(stored.tombstones) ? stored.tombstones : [])
+      .map(sanitizeCompanionInteractionTombstone)
+      .filter(Boolean)
+      .slice(-2_000)
   } catch {
     return []
   }
+}
+
+let companionInteractionTombstonePersistTimer = null
+let companionInteractionTombstonePendingRows = []
+
+function flushCompanionInteractionTombstones() {
+  if (companionInteractionTombstonePersistTimer) clearTimeout(companionInteractionTombstonePersistTimer)
+  companionInteractionTombstonePersistTimer = null
+  const tombstones = companionInteractionTombstonePendingRows
+    .map(sanitizeCompanionInteractionTombstone)
+    .filter(Boolean)
+    .slice(-2_000)
+  companionInteractionTombstonePendingRows = []
+  try {
+    return globalThis.utools?.dbStorage?.setItem?.(COMPANION_INTERACTION_TOMBSTONE_STORAGE_KEY, {
+      revision: companionV7Revisions.interactionStore,
+      tombstones,
+      updatedAt: Date.now()
+    }) !== false
+  } catch {
+    return false
+  }
+}
+
+function persistCompanionInteractionTombstones(rows, options = {}) {
+  companionInteractionTombstonePendingRows = Array.isArray(rows) ? rows.slice(-2_000) : []
+  if (options.flush === true) return flushCompanionInteractionTombstones()
+  if (!companionInteractionTombstonePersistTimer) {
+    companionInteractionTombstonePersistTimer = setTimeout(flushCompanionInteractionTombstones, 50)
+    companionInteractionTombstonePersistTimer.unref?.()
+  }
+  return true
 }
 
 function persistCompanionPlanPause(receipt) {
@@ -11703,15 +12135,9 @@ function persistCompanionPlanPause(receipt) {
     : 0
   if (!key || !planLifecycleRevision) return false
   const rows = readCompanionPlanPauseReceipts().filter((value) => value.key !== key)
+  if (!companionPlanPauseStorageReady) return false
   if (source.paused === true) rows.unshift({ key, planLifecycleRevision, paused: true, updatedAt: Date.now() })
-  try {
-    return globalThis.utools?.dbStorage?.setItem?.(COMPANION_PLAN_PAUSE_STORAGE_KEY, {
-      version: 1,
-      receipts: rows.slice(0, 2_000)
-    }) !== false
-  } catch {
-    return false
-  }
+  return writeCompanionPlanPauseReceipts(rows.slice(0, 2_000))
 }
 
 function migrateHiddenCompanionPlan(input = {}) {
@@ -11724,35 +12150,6 @@ function migrateHiddenCompanionPlan(input = {}) {
   const receipts = codex.receipts.filter((value) => codexRecord(value).key !== key)
   if (receipts.length === codex.receipts.length) return true
   return writeState({ ...source, codex: { ...codex, receipts } })
-}
-
-function companionCodexPhaseDecision(thread) {
-  if (typeof reduceCodexTaskEvidenceV4 !== 'function') throw new Error('companion task V4 Codex reducer unavailable')
-  return reduceCodexTaskEvidenceV4(thread)
-}
-
-function companionPhaseForCodexThread(thread) {
-  return companionCodexPhaseDecision(thread).phase
-}
-
-function companionClaudePhaseDecision(value, unread) {
-  if (typeof reduceClaudeTaskEvidenceV4 !== 'function') throw new Error('companion task V4 Claude reducer unavailable')
-  return reduceClaudeTaskEvidenceV4({ phase: value, unread: unread === true })
-}
-
-function companionCursorPhaseDecision(session, hook) {
-  const source = codexRecord(session)
-  const hot = codexRecord(hook)
-  const subagents = Array.isArray(source.subagents) ? source.subagents.map(codexRecord) : []
-  if (hot.turnOpen === true) return 'running'
-  if (source.hasPendingPlan === true) return 'waiting-input'
-  if (subagents.some((child) => Number(child.unfinishedRunAt) > 0)) return 'running'
-  if (hot.phase === 'running' || hot.phase === 'completed' || hot.phase === 'stopped') return hot.phase
-  if (Number(source.unfinishedRunAt) > 0) return 'running'
-  if (source.hasBlockingPendingActions === true) return 'unknown'
-  if (source.hasUnreadMessages === true || source.diskStatus === 'completed') return 'completed'
-  if (source.diskStatus === 'aborted') return 'stopped'
-  return 'unknown'
 }
 
 function companionPrivateChildKey(provider, parentKey, childId) {
@@ -11840,10 +12237,693 @@ function recordCompanionProbeGate(event, outcome, details = {}) {
   })
 }
 
+function companionEvidenceSequenceV7(...values) {
+  return Math.max(0, ...values.flat().map((value) => {
+    const numeric = Math.trunc(Number(value))
+    return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : 0
+  }))
+}
+
+function companionSyntheticInteractionRefV7(input = {}) {
+  const source = codexRecord(input)
+  return crypto.createHash('sha256')
+    .update('companion-interaction-v7')
+    .update('\0')
+    .update(String(source.provider || 'unknown'))
+    .update('\0')
+    .update(String(source.taskKey || ''))
+    .update('\0')
+    .update(String(source.branchRef || 'root'))
+    .update('\0')
+    .update(String(source.kind || 'user-input'))
+    .update('\0')
+    .update(String(source.turnEpoch || 0))
+    .update('\0')
+    .update(String(source.sequence || 0))
+    .digest('hex')
+    .slice(0, 32)
+}
+
+function companionSyntheticInteractionBundleV7(input = {}) {
+  const source = codexRecord(input)
+  const sequence = companionEvidenceSequenceV7(source.sequence)
+  const requestSetRevision = companionEvidenceSequenceV7(source.requestSetRevision, sequence)
+  if (!requestSetRevision || typeof source.taskKey !== 'string' || !source.taskKey) {
+    return { interactions: [], interactionSets: [] }
+  }
+  const interaction = source.kind
+    ? createCompanionInteractionEvidenceV7({
+        provider: source.provider,
+        taskKey: source.taskKey,
+        branchRef: source.branchRef || 'root',
+        interactionRef: companionSyntheticInteractionRefV7({ ...source, sequence }),
+        kind: source.kind,
+        state: source.state || 'opened',
+        sequence,
+        turnEpoch: companionEvidenceSequenceV7(source.turnEpoch),
+        requestSetRevision,
+        authority: source.authority || 'provider-live',
+        exact: source.exact === true
+      })
+    : null
+  const interactionSet = source.complete === false
+    ? null
+    : createCompanionInteractionSetV7({
+        provider: source.provider,
+        taskKey: source.taskKey,
+        requestSetRevision,
+        complete: true
+      })
+  return {
+    interactions: interaction ? [interaction] : [],
+    interactionSets: interactionSet ? [interactionSet] : []
+  }
+}
+
+function companionProviderMetadataV7(input = {}) {
+  const source = codexRecord(input)
+  const revisionAt = companionEvidenceSequenceV7(source.revisionAt, 1)
+  return {
+    kind: source.kind,
+    actionAlias: typeof source.actionAlias === 'string' ? source.actionAlias : '',
+    capabilityToken: typeof source.capabilityToken === 'string' ? source.capabilityToken : source.actionAlias || '',
+    revisionAt,
+    membershipRevision: companionEvidenceSequenceV7(source.membershipRevision, revisionAt),
+    visibilityRevision: companionEvidenceSequenceV7(source.visibilityRevision, revisionAt),
+    metadataRevision: companionEvidenceSequenceV7(source.metadataRevision, revisionAt),
+    lastQuestionAt: companionEvidenceSequenceV7(source.lastQuestionAt),
+    createdAt: companionEvidenceSequenceV7(source.createdAt),
+    displayOrder: companionEvidenceSequenceV7(source.displayOrder),
+    cycleOrder: companionEvidenceSequenceV7(source.cycleOrder),
+    attentionOrder: companionEvidenceSequenceV7(source.attentionOrder),
+    hidden: source.hidden === true,
+    paused: false,
+    turnMode: source.turnMode === 'plan' || source.turnMode === 'default' ? source.turnMode : 'unknown',
+    idleConfirmed: source.idleConfirmed === true,
+    localPin: source.localPin === true,
+    dynamicEligible: source.dynamicEligible === true,
+    ...(typeof source.displayName === 'string' ? { displayName: source.displayName.slice(0, 240) } : {}),
+    ...(typeof source.originalTitle === 'string' ? { originalTitle: source.originalTitle.slice(0, 240) } : {}),
+    alias: typeof source.alias === 'string' ? source.alias.slice(0, 120) : '',
+    ...(typeof source.projectKey === 'string' ? { projectKey: source.projectKey.slice(0, 256) } : {}),
+    ...(typeof source.projectName === 'string' ? { projectName: source.projectName.slice(0, 240) } : {}),
+    ...(source.projectKind === 'project' || source.projectKind === 'chats' ? { projectKind: source.projectKind } : {}),
+    ...(source.archiveRequest && typeof source.archiveRequest === 'object' ? { archiveRequest: source.archiveRequest } : {})
+  }
+}
+
+function companionUnknownObservationV7(input = {}) {
+  const source = codexRecord(input)
+  return {
+    kind: 'unknown',
+    exact: false,
+    candidates: [{
+      kind: 'unknown',
+      exact: false,
+      sequence: companionEvidenceSequenceV7(source.activitySequence),
+      observedAt: companionEvidenceSequenceV7(source.observedAt),
+      statusEnteredAt: 0,
+      turnStartedAt: 0,
+      terminalAt: 0
+    }],
+    sequence: companionEvidenceSequenceV7(source.activitySequence),
+    statusEnteredAt: 0,
+    turnStartedAt: 0,
+    terminalAt: 0,
+    unreadKnown: source.unreadKnown === true,
+    unread: source.unreadKnown === true && source.unread === true,
+    unreadSequence: companionEvidenceSequenceV7(source.unreadSequence),
+    interactionKind: '',
+    interactionSequence: 0,
+    planState: source.planState || 'unknown',
+    planSequence: companionEvidenceSequenceV7(source.planSequence),
+    planActionable: source.planActionable === true,
+    planReason: source.planReason || ''
+  }
+}
+
+function companionCodexInventoryMatchV7(key) {
+  if (typeof key !== 'string' || !key) return null
+  for (const [threadId, known] of codexActivityInventory) {
+    if (known?.key === key) return { threadId, known }
+  }
+  return null
+}
+
+function companionCodexFallbackBranchV7(threadValue) {
+  const thread = codexRecord(threadValue)
+  return {
+    ref: 'root',
+    branchKind: 'main',
+    topologyExact: true,
+    unreadKnown: thread.unreadAuthority !== 'unavailable' && typeof thread.hasUnreadTurn === 'boolean',
+    hasUnreadTurn: thread.hasUnreadTurn === true,
+    status: thread.status,
+    statusAuthority: thread.statusAuthority,
+    activityEvidence: thread.activityEvidence,
+    activeFlags: Array.isArray(thread.activeFlags) ? thread.activeFlags : [],
+    planImplementationOnly: thread.planImplementationOnly === true,
+    planReady: thread.planReady === true || thread.planImplementationOnly === true,
+    planLifecycleState: thread.planLifecycleState,
+    planLifecycleRevision: Number(thread.planLifecycleRevision) || 0,
+    planClearReason: thread.planClearReason,
+    goalStatus: thread.goalStatus,
+    goalFreshness: thread.goalFreshness,
+    goalUpdatedAt: Number(thread.goalUpdatedAt) || 0,
+    goalEvidenceSequence: Number(thread.goalEvidenceSequence) || 0,
+    lastTurnStatus: thread.lastTurnStatus,
+    lastTurnEvidence: thread.lastTurnEvidence,
+    activeEvidenceSequence: Number(thread.activeEvidenceSequence) || Number(thread.activityRevision) || 0,
+    terminalEvidenceSequence: Number(thread.terminalEvidenceSequence) || 0,
+    idleConfirmed: thread.idleConfirmed === true,
+    waitingSince: Number(thread.waitingSince) || 0,
+    turnStartedAt: Number(thread.lastTurnStartedAt) || 0,
+    terminalAt: Number(thread.lastTurnCompletedAt) || 0,
+    transitionAt: Number(thread.waitingSince)
+      || Number(thread.lastTurnCompletedAt)
+      || Number(thread.lastTurnStartedAt)
+      || 0,
+    observedAt: companionEvidenceSequenceV7(
+      thread.activityRevision,
+      thread.activeEvidenceSequence,
+      thread.terminalEvidenceSequence,
+      thread.updatedAt
+    )
+  }
+}
+
+function companionCodexEvidenceV7(threadValue, input = {}) {
+  const thread = codexRecord(threadValue)
+  const key = typeof thread.key === 'string' ? thread.key : ''
+  if (!key) return { nodes: [], interactions: [], interactionSets: [], relations: [], maxima: {} }
+  const persisted = input.persisted || companionPersistedTaskState()
+  const match = companionCodexInventoryMatchV7(key)
+  const privateEvidence = match ? codexPrivateBranchEvidence(match.threadId, match.known) : null
+  const branches = Array.isArray(privateEvidence?.branches) && privateEvidence.branches.length
+    ? privateEvidence.branches
+    : [companionCodexFallbackBranchV7({ ...(match?.known || {}), ...thread })]
+  const family = `codex:${key}`
+  const dynamicCutoff = Number(input.dynamicCutoff) || 0
+  const nodes = []
+  const relations = []
+  const syntheticInteractions = []
+  let syntheticRequestSetRevision = 0
+  let order = Number(input.order) || 0
+  const rootSource = { ...(match?.known || {}), ...thread }
+  const rootActionAlias = typeof rootSource.actionAlias === 'string' ? rootSource.actionAlias : ''
+  const originalTitle = typeof rootSource.displayName === 'string' && rootSource.displayName
+    ? rootSource.displayName.slice(0, 240)
+    : typeof rootSource.name === 'string' && rootSource.name
+      ? rootSource.name.slice(0, 240)
+      : 'Codex 任务'
+  const alias = persisted.aliases.get(key) || ''
+  for (const branchValue of branches) {
+    const branch = codexRecord(branchValue)
+    const isRoot = branch.branchKind !== 'side'
+    const branchRef = isRoot ? 'root' : branch.ref
+    const nodeKey = isRoot ? key : `codex-child:${branch.ref}`
+    const observation = codexBranchObservationV7(branch)
+    const hydrationOnlyActive = isRoot
+      && input.authority === 'provider-live'
+      && thread.status === 'active'
+      && thread.activityEvidence !== 'activity-event'
+      && Number(thread.activeEvidenceSequence) <= 0
+      && (!Array.isArray(thread.activeFlags) || thread.activeFlags.length === 0)
+    if (hydrationOnlyActive) {
+      // A hydration row is membership evidence, not proof of a running or
+      // terminal Turn. Conflicting private history therefore enters the V7
+      // unknown state until an exact Turn/Goal event arrives.
+      observation.candidates = [{
+        kind: 'unknown',
+        authority: 'unknown',
+        exact: false,
+        sequence: observation.sequence,
+        observedAt: observation.sequence,
+        statusEnteredAt: 0,
+        turnStartedAt: 0,
+        terminalAt: 0
+      }]
+    }
+    if (isRoot && typeof thread.hasUnreadTurn === 'boolean' && thread.unreadAuthority !== 'unavailable') {
+      observation.unreadKnown = true
+      observation.unread = thread.hasUnreadTurn === true
+    }
+    if (observation.unreadKnown === true && input.unreadSequence) {
+      observation.unreadSequence = Math.max(
+        companionEvidenceSequenceV7(observation.unreadSequence),
+        companionEvidenceSequenceV7(input.unreadSequence)
+      )
+    }
+    if (!isRoot) {
+      observation.planState = 'unknown'
+      observation.planSequence = 0
+      observation.planActionable = false
+      observation.planReason = ''
+    }
+    const revisionAt = companionEvidenceSequenceV7(
+      observation.sequence,
+      rootSource.updatedAt,
+      rootSource.lastTurnStartedAt,
+      rootSource.lastTurnCompletedAt,
+      1
+    )
+    const localPin = isRoot && persisted.pins.has(key)
+    const hidden = isRoot && Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt
+    const terminalCandidate = (observation.candidates || []).some((candidate) => (
+      candidate.exact === true && ['turn-completed', 'turn-interrupted', 'turn-failed'].includes(candidate.kind)
+    ))
+    const archiveRequest = isRoot && terminalCandidate
+      && Number(rootSource.updatedAt) > 0
+      && Number(rootSource.lastTurnStartedAt) > 0
+      && typeof input.sourceFingerprint === 'string' && input.sourceFingerprint
+      ? {
+          expectedUpdatedAt: Number(rootSource.updatedAt),
+          expectedRevisionAt: Number(rootSource.lastTurnCompletedAt) || Number(rootSource.lastTurnStartedAt),
+          ...(Number(rootSource.lastTurnCompletedAt) ? { expectedCompletionAt: Number(rootSource.lastTurnCompletedAt) } : {}),
+          expectedLastTurnStartedAt: Number(rootSource.lastTurnStartedAt),
+          expectedSourceFingerprint: input.sourceFingerprint,
+          evidence: rootSource.lastTurnStatus === 'completed' ? 'completed' : 'stopped'
+        }
+      : undefined
+    const capabilities = isRoot
+      ? [
+          ...(rootActionAlias ? ['open'] : []),
+          ...(terminalCandidate ? ['archive'] : []),
+          ...(observation.planState === 'available' ? ['pause', 'resume', 'execute-plan'] : [])
+        ]
+      : []
+    const metadata = companionProviderMetadataV7({
+      kind: isRoot ? localPin ? 'local-pin' : 'codex-thread' : 'topology-child',
+      actionAlias: isRoot ? rootActionAlias : '',
+      capabilityToken: isRoot ? rootActionAlias : '',
+      revisionAt,
+      membershipRevision: companionEvidenceSequenceV7(rootSource.updatedAt, revisionAt),
+      visibilityRevision: companionEvidenceSequenceV7(rootSource.updatedAt, revisionAt),
+      metadataRevision: companionEvidenceSequenceV7(rootSource.updatedAt, revisionAt),
+      lastQuestionAt: isRoot ? companionEvidenceSequenceV7(rootSource.lastQuestionAt, rootSource.lastTurnStartedAt) : observation.turnStartedAt,
+      createdAt: isRoot ? companionEvidenceSequenceV7(rootSource.createdAt) : observation.turnStartedAt,
+      displayOrder: order,
+      cycleOrder: order,
+      attentionOrder: order++,
+      hidden,
+      turnMode: isRoot ? rootSource.turnMode : 'unknown',
+      idleConfirmed: !(observation.candidates || []).some((candidate) => candidate.kind === 'turn-running'),
+      localPin,
+      dynamicEligible: !isRoot || dynamicCutoff === 0 || companionEvidenceSequenceV7(
+        rootSource.lastQuestionAt,
+        rootSource.lastTurnStartedAt,
+        rootSource.waitingSince,
+        rootSource.lastTurnCompletedAt,
+        rootSource.createdAt
+      ) >= dynamicCutoff,
+      ...(isRoot ? {
+        displayName: alias || originalTitle,
+        originalTitle,
+        alias,
+        projectKey: rootSource.projectKey,
+        projectName: rootSource.projectName,
+        projectKind: rootSource.projectKind,
+        archiveRequest
+      } : {})
+    })
+    const node = createCompanionEvidenceNodeV7({
+      provider: 'codex',
+      key: nodeKey,
+      family,
+      role: isRoot ? 'root' : 'child',
+      observation,
+      causalKey: companionCausalKey('codex', nodeKey, observation.turnStartedAt || observation.sequence),
+      observedAt: observation.sequence,
+      metadata,
+      capabilities,
+      standaloneEligible: isRoot
+    })
+    if (node) nodes.push(node)
+    if (!isRoot) {
+      relations.push({
+        childKey: nodeKey,
+        parentKey: key,
+        provider: 'codex',
+        family,
+        relation: 'side-thread',
+        authority: 'codex-app-server-inventory',
+        exact: branch.topologyExact === true,
+        generation: companionEvidenceSequenceV7(input.topologyGeneration, observation.sequence)
+      })
+    }
+    if (observation.interactionKind) {
+      const bundle = companionSyntheticInteractionBundleV7({
+        provider: 'codex',
+        taskKey: key,
+        branchRef,
+        kind: observation.interactionKind,
+        sequence: observation.interactionSequence,
+        turnEpoch: observation.turnStartedAt,
+        requestSetRevision: observation.interactionSequence,
+        authority: input.authority || 'provider-snapshot',
+        exact: true,
+        complete: false
+      })
+      syntheticInteractions.push(...bundle.interactions)
+      syntheticRequestSetRevision = Math.max(syntheticRequestSetRevision, observation.interactionSequence)
+    }
+  }
+  const nativeInteraction = match ? codexDesktopBridge?.companionInteractionEvidenceForParent?.(match.threadId) : null
+  const interactions = Array.isArray(nativeInteraction?.interactions)
+    ? nativeInteraction.interactions.map((value) => createCompanionInteractionEvidenceV7(value)).filter(Boolean)
+    : syntheticInteractions
+  const interactionSets = Array.isArray(nativeInteraction?.interactionSets)
+    ? nativeInteraction.interactionSets.map((value) => createCompanionInteractionSetV7(value)).filter(Boolean)
+    : syntheticRequestSetRevision
+      ? [createCompanionInteractionSetV7({
+          provider: 'codex',
+          taskKey: key,
+          requestSetRevision: syntheticRequestSetRevision,
+          complete: privateEvidence?.complete === true
+        })].filter(Boolean)
+      : []
+  return {
+    nodes,
+    interactions,
+    interactionSets,
+    relations,
+    maxima: {
+      activity: Math.max(0, ...nodes.map((node) => companionEvidenceSequenceV7(node.activity?.sequence))),
+      interaction: companionEvidenceSequenceV7(
+        nativeInteraction?.requestSetRevision,
+        syntheticRequestSetRevision,
+        ...interactions.map((value) => value.sequence)
+      ),
+      unread: Math.max(0, ...nodes.map((node) => companionEvidenceSequenceV7(node.unread?.sequence))),
+      planArtifact: Math.max(0, ...nodes.map((node) => companionEvidenceSequenceV7(node.planArtifact?.sequence))),
+      topology: Math.max(0, ...relations.map((relation) => companionEvidenceSequenceV7(relation.generation)))
+    }
+  }
+}
+
+function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
+  const session = codexRecord(sessionValue)
+  const sessionId = typeof session.sessionId === 'string' ? session.sessionId : ''
+  if (!sessionId || session.isArchived === true) return { nodes: [], interactions: [], interactionSets: [], relations: [], maxima: {} }
+  const key = `claude:${sessionId}`
+  const family = key
+  const persisted = input.persisted || companionPersistedTaskState()
+  const observation = claudeSessionObservationV7(session, unread === true)
+  const revisionAt = companionEvidenceSequenceV7(
+    session.stateGeneration,
+    session.phaseUpdatedAt,
+    session.turnStartedAt,
+    session.lastStopAt,
+    session.lastActivityAt,
+    session.metadataUpdatedAt,
+    input.acceptedAt,
+    1
+  )
+  const localPin = persisted.pins.has(key)
+  const originalTitle = typeof session.title === 'string' && session.title.trim()
+    ? session.title.trim().slice(0, 240)
+    : 'Claude 任务'
+  const alias = persisted.aliases.get(key) || ''
+  const terminal = ['turn-completed', 'turn-interrupted', 'turn-failed'].includes(observation.kind)
+  const compatible = session.stateCompatibility === 'compatible' || session.compatibility === 'compatible'
+  const root = createCompanionEvidenceNodeV7({
+    provider: 'claude',
+    key,
+    family,
+    role: 'root',
+    observation,
+    causalKey: companionCausalKey('claude', key, observation.turnStartedAt || observation.sequence),
+    observedAt: observation.sequence,
+    metadata: companionProviderMetadataV7({
+      kind: localPin ? 'local-pin' : 'claude-session',
+      actionAlias: sessionId,
+      revisionAt,
+      membershipRevision: companionEvidenceSequenceV7(session.lastActivityAt, session.metadataUpdatedAt, input.acceptedAt, revisionAt),
+      visibilityRevision: companionEvidenceSequenceV7(session.metadataUpdatedAt, input.acceptedAt, revisionAt),
+      metadataRevision: companionEvidenceSequenceV7(session.metadataUpdatedAt, input.acceptedAt, revisionAt),
+      lastQuestionAt: session.turnStartedAt,
+      createdAt: session.createdAt,
+      displayOrder: input.order,
+      cycleOrder: input.order,
+      attentionOrder: input.order,
+      hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
+      idleConfirmed: terminal,
+      localPin,
+      dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.turnStartedAt, session.lastActivityAt) >= input.dynamicCutoff,
+      displayName: alias || originalTitle,
+      originalTitle,
+      alias
+    }),
+    capabilities: ['open', ...(terminal && compatible ? ['archive'] : [])],
+    standaloneEligible: true
+  })
+  const nodes = root ? [root] : []
+  const relations = []
+  let childOrder = Number(input.order) || 0
+  for (const childValue of Array.isArray(session.subagents) ? session.subagents : []) {
+    const child = codexRecord(childValue)
+    const agentId = typeof child.agentId === 'string' ? child.agentId : ''
+    const childRevision = companionEvidenceSequenceV7(child.startedAt, child.stoppedAt)
+    if (!agentId || !childRevision) continue
+    const childKey = companionPrivateChildKey('claude', key, agentId)
+    const childRunning = child.active === true
+    const childObservation = companionUnknownObservationV7({ activitySequence: childRevision })
+    childObservation.kind = childRunning ? 'turn-running' : 'turn-completed'
+    childObservation.exact = true
+    childObservation.candidates = [{
+      kind: childObservation.kind,
+      exact: true,
+      sequence: childRevision,
+      observedAt: childRevision,
+      statusEnteredAt: childRevision,
+      turnStartedAt: companionEvidenceSequenceV7(child.startedAt),
+      terminalAt: childRunning ? 0 : companionEvidenceSequenceV7(child.stoppedAt, childRevision)
+    }]
+    childObservation.sequence = childRevision
+    childObservation.statusEnteredAt = childRevision
+    childObservation.turnStartedAt = companionEvidenceSequenceV7(child.startedAt)
+    childObservation.terminalAt = childRunning ? 0 : companionEvidenceSequenceV7(child.stoppedAt, childRevision)
+    const node = createCompanionEvidenceNodeV7({
+      provider: 'claude',
+      key: childKey,
+      family,
+      role: 'child',
+      observation: childObservation,
+      causalKey: companionCausalKey('claude', childKey, child.startedAt || childRevision),
+      metadata: companionProviderMetadataV7({
+        kind: 'topology-child',
+        revisionAt: childRevision,
+        membershipRevision: childRevision,
+        visibilityRevision: childRevision,
+        metadataRevision: childRevision,
+        lastQuestionAt: child.startedAt,
+        createdAt: child.startedAt,
+        displayOrder: ++childOrder,
+        cycleOrder: childOrder,
+        attentionOrder: childOrder,
+        idleConfirmed: !childRunning,
+        dynamicEligible: true
+      }),
+      capabilities: [],
+      standaloneEligible: false
+    })
+    if (node) nodes.push(node)
+    relations.push({
+      childKey,
+      parentKey: key,
+      provider: 'claude',
+      family,
+      relation: 'subagent',
+      authority: 'claude-hook',
+      exact: true,
+      generation: companionEvidenceSequenceV7(input.topologyGeneration, childRevision)
+    })
+  }
+  const interactionBundle = companionSyntheticInteractionBundleV7({
+    provider: 'claude',
+    taskKey: key,
+    branchRef: 'root',
+    kind: observation.interactionKind,
+    sequence: observation.interactionSequence || observation.sequence,
+    turnEpoch: observation.turnStartedAt,
+    requestSetRevision: observation.interactionSequence || observation.sequence,
+    authority: input.authority || 'provider-snapshot',
+    exact: observation.exact === true,
+    complete: true
+  })
+  return {
+    nodes,
+    interactions: interactionBundle.interactions,
+    interactionSets: interactionBundle.interactionSets,
+    relations,
+    maxima: {
+      activity: observation.sequence,
+      interaction: companionEvidenceSequenceV7(observation.interactionSequence, observation.sequence),
+      unread: observation.unreadSequence,
+      planArtifact: 0,
+      topology: Math.max(0, ...relations.map((relation) => companionEvidenceSequenceV7(relation.generation)))
+    }
+  }
+}
+
+function companionCursorEvidenceV7(sessionValue, hookValue, input = {}) {
+  const session = codexRecord(sessionValue)
+  const hook = codexRecord(hookValue)
+  const composerId = typeof session.composerId === 'string' ? session.composerId.toLowerCase() : ''
+  if (!composerId) return { nodes: [], interactions: [], interactionSets: [], relations: [], maxima: {} }
+  const key = `cursor:${composerId}`
+  const family = key
+  const persisted = input.persisted || companionPersistedTaskState()
+  const observation = cursorSessionObservationV7(session, hook)
+  const revisionAt = companionEvidenceSequenceV7(
+    hook.lastEventAt,
+    session.lastUpdatedAt,
+    session.unfinishedRunAt,
+    session.createdAt,
+    input.acceptedAt,
+    1
+  )
+  const localPin = persisted.pins.has(key)
+  const originalTitle = typeof session.name === 'string' && session.name.trim()
+    ? session.name.trim().slice(0, 240)
+    : typeof session.subtitle === 'string' && session.subtitle.trim()
+      ? session.subtitle.trim().slice(0, 240)
+      : 'Cursor Agent'
+  const alias = persisted.aliases.get(key) || ''
+  const terminal = ['turn-completed', 'turn-interrupted', 'turn-failed'].includes(observation.kind)
+  const root = createCompanionEvidenceNodeV7({
+    provider: 'cursor',
+    key,
+    family,
+    role: 'root',
+    observation,
+    causalKey: companionCausalKey('cursor', key, hook.generationId || observation.turnStartedAt || observation.sequence),
+    observedAt: observation.sequence,
+    metadata: companionProviderMetadataV7({
+      kind: localPin ? 'local-pin' : 'cursor-session',
+      actionAlias: composerId,
+      revisionAt,
+      membershipRevision: companionEvidenceSequenceV7(input.acceptedAt, revisionAt),
+      visibilityRevision: revisionAt,
+      metadataRevision: companionEvidenceSequenceV7(session.lastUpdatedAt, input.acceptedAt, revisionAt),
+      lastQuestionAt: companionEvidenceSequenceV7(session.unfinishedRunAt, hook.turnStartedAt),
+      createdAt: session.createdAt,
+      displayOrder: input.order,
+      cycleOrder: input.order,
+      attentionOrder: input.order,
+      hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
+      idleConfirmed: terminal,
+      localPin,
+      dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.lastUpdatedAt, session.unfinishedRunAt) >= input.dynamicCutoff,
+      displayName: alias || originalTitle,
+      originalTitle,
+      alias
+    }),
+    capabilities: ['open', ...(terminal ? ['archive'] : []), ...(observation.planState === 'available' ? ['execute-plan'] : [])],
+    standaloneEligible: true
+  })
+  const nodes = root ? [root] : []
+  const relations = []
+  let childOrder = Number(input.order) || 0
+  for (const childValue of Array.isArray(session.subagents) ? session.subagents : []) {
+    const child = codexRecord(childValue)
+    const childId = typeof child.composerId === 'string' ? child.composerId : ''
+    if (!childId) continue
+    const hotChild = (Array.isArray(hook.subagents) ? hook.subagents : [])
+      .map(codexRecord)
+      .find((candidate) => candidate.subagentId === childId
+        && (!candidate.parentConversationId || String(candidate.parentConversationId).toLowerCase() === composerId))
+    const childKey = companionPrivateChildKey('cursor', key, childId)
+    const childRevision = companionEvidenceSequenceV7(
+      hotChild?.lastEventAt,
+      child.unfinishedRunAt,
+      child.lastUpdatedAt,
+      child.createdAt,
+      revisionAt
+    )
+    const hotCurrent = Number(hotChild?.lastEventAt) > 0
+      && Number(hotChild.lastEventAt) >= Number(child.unfinishedRunAt || 0)
+    const childRunning = hotCurrent ? hotChild.active === true : Number(child.unfinishedRunAt) > 0
+    const childObservation = companionUnknownObservationV7({ activitySequence: childRevision })
+    childObservation.kind = childRunning ? 'turn-running' : 'turn-completed'
+    childObservation.exact = true
+    childObservation.candidates = [{
+      kind: childObservation.kind,
+      exact: true,
+      sequence: childRevision,
+      observedAt: childRevision,
+      statusEnteredAt: childRevision,
+      turnStartedAt: companionEvidenceSequenceV7(hotChild?.startedAt, child.unfinishedRunAt),
+      terminalAt: childRunning ? 0 : companionEvidenceSequenceV7(hotChild?.stoppedAt, childRevision)
+    }]
+    childObservation.sequence = childRevision
+    childObservation.statusEnteredAt = childRevision
+    childObservation.turnStartedAt = companionEvidenceSequenceV7(hotChild?.startedAt, child.unfinishedRunAt)
+    childObservation.terminalAt = childRunning ? 0 : companionEvidenceSequenceV7(hotChild?.stoppedAt, childRevision)
+    const node = createCompanionEvidenceNodeV7({
+      provider: 'cursor',
+      key: childKey,
+      family,
+      role: 'child',
+      observation: childObservation,
+      causalKey: companionCausalKey('cursor', childKey, hotChild?.generationId || childObservation.turnStartedAt || childRevision),
+      metadata: companionProviderMetadataV7({
+        kind: 'topology-child',
+        revisionAt: childRevision,
+        membershipRevision: childRevision,
+        visibilityRevision: childRevision,
+        metadataRevision: childRevision,
+        lastQuestionAt: child.unfinishedRunAt,
+        createdAt: child.createdAt,
+        displayOrder: ++childOrder,
+        cycleOrder: childOrder,
+        attentionOrder: childOrder,
+        idleConfirmed: !childRunning,
+        dynamicEligible: true
+      }),
+      capabilities: [],
+      standaloneEligible: false
+    })
+    if (node) nodes.push(node)
+    relations.push({
+      childKey,
+      parentKey: key,
+      provider: 'cursor',
+      family,
+      relation: 'subagent',
+      authority: 'cursor-inventory',
+      exact: true,
+      generation: companionEvidenceSequenceV7(input.topologyGeneration, childRevision)
+    })
+  }
+  const interactionBundle = companionSyntheticInteractionBundleV7({
+    provider: 'cursor',
+    taskKey: key,
+    sequence: observation.sequence,
+    requestSetRevision: observation.sequence,
+    authority: input.authority || 'provider-snapshot',
+    exact: observation.exact === true,
+    complete: true
+  })
+  return {
+    nodes,
+    interactions: interactionBundle.interactions,
+    interactionSets: interactionBundle.interactionSets,
+    relations,
+    maxima: {
+      activity: observation.sequence,
+      interaction: observation.sequence,
+      unread: observation.unreadSequence,
+      planArtifact: observation.planSequence,
+      topology: Math.max(0, ...relations.map((relation) => companionEvidenceSequenceV7(relation.generation)))
+    }
+  }
+}
+
 let companionPreflightDraftSequence = 0
 
-async function preflightCompanionTaskPackage(input = {}) {
-  const preflightStartedAt = Date.now()
+async function preflightCompanionTaskPackageV7(input = {}) {
+  const startedAt = Date.now()
   const configuration = companionTaskConfiguration()
   const requested = codexRecord(input.providers)
   const providers = {
@@ -11854,573 +12934,217 @@ async function preflightCompanionTaskPackage(input = {}) {
   if (!configuration.enabled) throw new Error('companion-disabled')
   const reads = []
   if (providers.codex) {
-    reads.push(Promise.resolve(readCodexSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true }))
-      .then((result) => {
-        if (!result?.ok || !Array.isArray(result.value?.threads) || result.value.completeness !== 'verified') {
-          return { provider: 'codex', status: 'unavailable', errorCode: 'codex-task-preflight-failed' }
-        }
-        return { provider: 'codex', status: 'ready', value: result.value }
-      }).catch(() => ({ provider: 'codex', status: 'unavailable', errorCode: 'codex-task-preflight-failed' })))
+    reads.push(Promise.resolve(readCompanionCodexPreflightSnapshotV7())
+      .then((result) => result?.ok && Array.isArray(result.value?.threads) && result.value.completeness === 'verified'
+        ? { provider: 'codex', status: 'ready', value: result.value }
+        : { provider: 'codex', status: 'unavailable', errorCode: 'codex-task-preflight-failed' })
+      .catch(() => ({ provider: 'codex', status: 'unavailable', errorCode: 'codex-task-preflight-failed' })))
   }
   if (providers.claude) {
     reads.push(Promise.all([
       Promise.resolve(claudeBridge?.readCodeSnapshot({ now: Date.now() })),
       Promise.resolve(claudeBridge?.readCodeUnread())
     ]).then(([value, unread]) => {
-        if (!claudeBridge || !value || !Array.isArray(value.sessions) || value.truncated === true) {
-          return { provider: 'claude', status: 'unavailable', errorCode: 'claude-task-preflight-failed' }
-        }
-        if (!unread || !Array.isArray(unread.ids)) {
-          return { provider: 'claude', status: 'degraded', errorCode: 'claude-unread-preflight-failed', value, unread: { ids: [], generation: 0, readAt: Date.now() } }
-        }
-        return { provider: 'claude', status: 'ready', value, unread }
-      }).catch(() => ({ provider: 'claude', status: 'unavailable', errorCode: 'claude-task-preflight-failed' })))
+      if (!claudeBridge || !value || !Array.isArray(value.sessions) || value.truncated === true) {
+        return { provider: 'claude', status: 'unavailable', errorCode: 'claude-task-preflight-failed' }
+      }
+      if (!unread || !Array.isArray(unread.ids)) {
+        return { provider: 'claude', status: 'degraded', errorCode: 'claude-unread-preflight-failed', value, unread: null }
+      }
+      return { provider: 'claude', status: 'ready', value, unread }
+    }).catch(() => ({ provider: 'claude', status: 'unavailable', errorCode: 'claude-task-preflight-failed' })))
   }
   if (providers.cursor) {
     reads.push(Promise.resolve().then(() => ({
       inventory: cursorBridge?.readInventory?.(),
       hooks: cursorBridge?.readHookState?.() || []
-    })).then(({ inventory, hooks }) => {
-      if (!cursorBridge || !inventory || inventory.available !== true || !Array.isArray(inventory.sessions) || inventory.truncated === true) {
-        return { provider: 'cursor', status: 'unavailable', errorCode: `cursor-${inventory?.reason || 'task-preflight-failed'}`.slice(0, 80) }
-      }
-      return { provider: 'cursor', status: 'ready', value: inventory, hooks: Array.isArray(hooks) ? hooks : [] }
-    }).catch(() => ({ provider: 'cursor', status: 'unavailable', errorCode: 'cursor-task-preflight-failed' })))
+    })).then(({ inventory, hooks }) => inventory?.available === true
+      && Array.isArray(inventory.sessions) && inventory.truncated !== true
+      ? { provider: 'cursor', status: 'ready', value: inventory, hooks: Array.isArray(hooks) ? hooks : [] }
+      : { provider: 'cursor', status: 'unavailable', errorCode: `cursor-${inventory?.reason || 'task-preflight-failed'}`.slice(0, 80) })
+      .catch(() => ({ provider: 'cursor', status: 'unavailable', errorCode: 'cursor-task-preflight-failed' })))
   }
   if (!reads.length) throw new Error('no-enabled-provider')
-  let rows
-  try {
-    rows = await Promise.all(reads)
-  } catch (error) {
-    runtimeDiagnostics.record({
-      scope: 'task-recovery',
-      event: 'cold-preflight',
-      outcome: 'failed',
-      code: error instanceof Error && /^[a-z0-9-]{1,80}$/i.test(error.message) ? error.message : 'provider-read-failed',
-      durationMs: Date.now() - preflightStartedAt,
-      slowMs: 500,
-      level: 'error'
-    })
-    throw error
-  }
+  const rows = await Promise.all(reads)
   const persisted = companionPersistedTaskState()
   const dynamicCutoff = Date.now() - configuration.dynamicTaskWindowHours * 60 * 60 * 1_000
-  const tasks = []
-  const sourceGenerations = { codex: 0, claude: 0, cursor: 0 }
-  const sourceLaneGenerations = {
-    codex: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
-    claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
-    cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
-  }
+  const sourceLaneGenerations = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => [
+    provider,
+    Object.fromEntries(companionEvidenceChannelsV7.map((lane) => [lane, 0]))
+  ]))
   const providerHealth = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => [provider, {
     status: providers[provider] ? 'unavailable' : 'disabled',
     generation: 0,
     errorCode: ''
   }]))
-  const providerTopologyComplete = { codex: false, claude: false, cursor: false }
-  const relations = []
-  let order = 0
+  const evidenceBatches = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => [provider, null]))
+  let taskCount = 0
   for (const result of rows) {
-    providerHealth[result.provider] = {
+    const provider = result.provider
+    const available = result.status !== 'unavailable' && result.value
+    const readAt = companionEvidenceSequenceV7(result.value?.readAt, Date.now())
+    providerHealth[provider] = {
       status: result.status,
-      generation: Number(result.value?.readAt) || Date.now(),
+      generation: available ? readAt : 0,
       errorCode: result.errorCode || ''
     }
-    providerTopologyComplete[result.provider] = result.status !== 'unavailable'
-      && (result.provider === 'codex' || result.value?.topologyComplete === true)
-    if (result.status === 'unavailable' || !result.value) continue
-    if (result.provider === 'codex') {
-      sourceGenerations.codex = Number(result.value.activityGeneration) || 0
-      sourceLaneGenerations.codex.membership = Number(result.value.readAt) || Date.now()
-      sourceLaneGenerations.codex.phase = sourceGenerations.codex
-      sourceLaneGenerations.codex.unread = sourceGenerations.codex
-      sourceLaneGenerations.codex.metadata = Number(result.value.readAt) || Date.now()
-      sourceLaneGenerations.codex.topology = sourceGenerations.codex || Number(result.value.readAt) || Date.now()
-      for (const value of result.value.threads) {
-        const thread = codexRecord(value)
-        const key = typeof thread.key === 'string' ? thread.key : ''
-        const actionAlias = typeof thread.actionAlias === 'string' ? thread.actionAlias : ''
-        const revisionAt = Math.max(
-          Number(thread.activityRevision) || 0,
-          Number(thread.waitingSince) || 0,
-          Number(thread.lastTurnCompletedAt) || 0,
-          Number(thread.lastTurnStartedAt) || 0,
-          Number(thread.updatedAt) || 0
-        )
-        if (!key || !actionAlias || !revisionAt) continue
-        const decision = companionCodexPhaseDecision(thread)
-        const phase = decision.phase
-        const localPin = persisted.pins.has(key)
-        const receipt = persisted.receipts.get(key)
-        const hidden = Number(receipt?.dismissedActivityRecency) >= revisionAt
-        const unread = thread.hasUnreadTurn === true
-        const planImplementation = thread.planImplementationOnly === true
-        const planReady = thread.planReady === true || planImplementation
-        const planLifecycleRevision = planReady
-          ? Number(thread.planLifecycleRevision) || Number(thread.lastTurnStartedAt) || revisionAt
-          : 0
-        const causalStatusAt = Number(thread.waitingSince)
-          || Number(thread.lastTurnCompletedAt)
-          || Number(thread.lastTurnStartedAt)
-          || Number(thread.createdAt)
-          || 0
-        const dynamicEligible = Math.max(
-          Number(thread.lastQuestionAt) || 0,
-          Number(thread.lastTurnStartedAt) || 0,
-          Number(thread.waitingSince) || 0,
-          Number(thread.lastTurnCompletedAt) || 0,
-          Number(thread.createdAt) || 0
-        ) >= dynamicCutoff
-        const executePlanAvailable = planReady
-        const turnCausalIdentity = Number(thread.lastTurnStartedAt) || causalStatusAt
-        const originalTitle = typeof thread.displayName === 'string'
-          ? thread.displayName.slice(0, 240)
-          : typeof thread.name === 'string' ? thread.name.slice(0, 240) : 'Codex 任务'
-        const alias = persisted.aliases.get(key) || ''
-        recordCompanionStateDecision('codex', key, decision, thread.lastTurnEvidence || 'inventory')
-        tasks.push({
-          key,
-          provider: 'codex',
-          kind: localPin ? 'local-pin' : 'codex-thread',
-          phase,
-          cycleTier: 'none',
-          dynamicGroup: 'none',
-          actionAlias,
-          revisionAt,
-          semanticRevision: 1,
-          observationGeneration: sourceGenerations.codex,
-          membershipRevision: revisionAt,
-          phaseRevision: causalStatusAt || Number(thread.activityRevision) || revisionAt,
-          unreadRevision: Number(thread.lastTurnCompletedAt) || Number(thread.activityRevision) || revisionAt,
-          visibilityRevision: revisionAt,
-          statusEnteredAt: causalStatusAt,
-          turnStartedAt: Number(thread.lastTurnStartedAt) || 0,
-          terminalAt: phase === 'completed'
-            ? Number(thread.lastTurnCompletedAt) || Number(thread.lastTurnStartedAt) || 0
-            : phase === 'stopped' ? Number(thread.lastTurnStartedAt) || 0 : 0,
-          metadataRevision: Number(thread.updatedAt) || revisionAt,
-          capabilityToken: actionAlias,
-          freshness: decision.freshness === 'verifying' ? 'verifying' : 'fresh',
-          lastQuestionAt: Number(thread.lastQuestionAt) || Number(thread.lastTurnStartedAt) || 0,
-          createdAt: Number(thread.createdAt) || 0,
-          displayOrder: order,
-          cycleOrder: order,
-          attentionOrder: order++,
-          hidden,
-          unreadKnown: thread.unreadAuthority !== 'unavailable',
-          unread,
-          planImplementation,
-          planReady,
-          planLifecycleRevision,
-          planLifecycleState: thread.planLifecycleState === 'cleared'
-            ? 'cleared'
-            : planReady ? 'ready' : 'unknown',
-          ...(['cancel', 'execution-start', 'archive', 'removal'].includes(thread.planClearReason)
-            ? { planClearReason: thread.planClearReason }
-            : {}),
-          paused: false,
-          turnMode: thread.turnMode === 'plan' || thread.turnMode === 'default' ? thread.turnMode : 'unknown',
-          idleConfirmed: thread.idleConfirmed === true,
-          localPin,
-          dynamicEligible,
-          capabilities: {
-            open: true,
-            archive: phase === 'completed' || phase === 'stopped',
-            pause: planReady,
-            resume: planReady,
-            executePlan: executePlanAvailable
-          },
-          family: `codex:${key}`,
-          role: 'root',
-          standaloneEligible: true,
-          causalKey: companionCausalKey('codex', key, turnCausalIdentity),
-          causalReliable: turnCausalIdentity > 0,
-          displayName: alias || originalTitle,
-          originalTitle,
-          alias,
-          ...(typeof thread.projectKey === 'string' ? { projectKey: thread.projectKey } : {}),
-          ...(typeof thread.projectName === 'string' ? { projectName: thread.projectName } : {}),
-          ...(thread.projectKind === 'project' || thread.projectKind === 'chats' ? { projectKind: thread.projectKind } : {}),
-          ...(phase === 'completed' || phase === 'stopped' ? {
-            archiveRequest: {
-              expectedUpdatedAt: Number(thread.updatedAt) || revisionAt,
-              expectedRevisionAt: phase === 'completed'
-                ? Number(thread.lastTurnCompletedAt) || Number(thread.lastTurnStartedAt) || revisionAt
-                : Number(thread.lastTurnStartedAt) || revisionAt,
-              ...(phase === 'completed' && Number(thread.lastTurnCompletedAt)
-                ? { expectedCompletionAt: Number(thread.lastTurnCompletedAt) }
-                : {}),
-              expectedLastTurnStartedAt: Number(thread.lastTurnStartedAt) || revisionAt,
-              expectedSourceFingerprint: String(result.value.sourceFingerprint || '').slice(0, 80),
-              evidence: phase === 'stopped' ? 'stopped' : 'completed'
-            }
-          } : {})
-        })
-      }
-      continue
-    }
-    if (result.provider === 'claude') {
-    const unreadIds = new Set(result.unread.ids.filter((value) => typeof value === 'string'))
-    companionClaudeUnreadSnapshot = {
-      ids: unreadIds,
-      generation: Number(result.unread.generation) || 0,
-      readAt: Number(result.unread.readAt) || Date.now(),
-      available: true
-    }
-    sourceLaneGenerations.claude.membership = Number(result.value.readAt) || Date.now()
-    sourceLaneGenerations.claude.phase = Number(result.value.generation || result.value.stateGeneration) || 0
-    sourceLaneGenerations.claude.unread = Number(result.unread.generation) || 0
-    sourceLaneGenerations.claude.metadata = Number(result.value.readAt) || Date.now()
-    sourceLaneGenerations.claude.topology = Math.max(
-      Number(result.value.generation || result.value.stateGeneration) || 0,
-      Number(result.value.readAt) || Date.now()
-    )
-    sourceGenerations.claude = companionCounterAggregate(sourceLaneGenerations.claude)
-    for (const value of result.value.sessions) {
-      const session = codexRecord(value)
-      if (session.isArchived === true) continue
-      const sessionId = typeof session.sessionId === 'string' ? session.sessionId : ''
-      const key = sessionId ? `claude:${sessionId}` : ''
-      const unread = unreadIds.has(sessionId)
-      const decision = companionClaudePhaseDecision(session.phase, unread)
-      const phase = decision.phase
-      const revisionAt = Math.max(
-        Number(session.stateGeneration) || 0,
-        Number(session.phaseUpdatedAt) || 0,
-        Number(session.turnStartedAt) || 0,
-        Number(session.lastStopAt) || 0,
-        Number(session.lastActivityAt) || 0,
-        Number(session.metadataUpdatedAt) || 0
-      )
-      if (!key || !revisionAt) continue
-      recordCompanionStateDecision('claude', key, decision, unread ? 'native-unread' : session.stateSource || 'provider-state')
-      const localPin = persisted.pins.has(key)
-      // Local visibility is provider-neutral EyPc state. Without this the cold
-      // preflight rebuilt every Claude row as visible and silently dropped a
-      // hide that the Renderer had already persisted.
-      const hidden = Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt
-      const phaseStatusAt = Number(session.waitingApprovalAt)
-        || Number(session.waitingInputAt)
-        || Number(session.lastStopAt)
-        || Number(session.phaseUpdatedAt)
-        || Number(session.turnStartedAt)
-        || Number(session.createdAt)
-        || 0
-      const phaseRevision = phaseStatusAt || Number(session.stateGeneration) || revisionAt
-      const turnCausalIdentity = Number(session.turnStartedAt) || phaseStatusAt
-      const originalTitle = typeof session.title === 'string' && session.title.trim()
-        ? session.title.trim().slice(0, 240)
-        : 'Claude 任务'
-      const alias = persisted.aliases.get(key) || ''
-      tasks.push({
-        key,
-        provider: 'claude',
-        kind: localPin ? 'local-pin' : 'claude-session',
-        phase,
-        cycleTier: 'none',
-        dynamicGroup: 'none',
-        actionAlias: sessionId,
-        revisionAt,
-        membershipRevision: Math.max(Number(session.lastActivityAt) || 0, Number(session.metadataUpdatedAt) || 0, revisionAt),
-        phaseRevision,
-        unreadRevision: sourceLaneGenerations.claude.unread || revisionAt,
-        visibilityRevision: Math.max(Number(session.metadataUpdatedAt) || 0, revisionAt),
-        statusEnteredAt: phaseStatusAt,
-        lastQuestionAt: Number(session.turnStartedAt) || 0,
-        createdAt: Number(session.createdAt) || 0,
-        displayOrder: order,
-        cycleOrder: order,
-        attentionOrder: order++,
-        hidden,
-        unread,
-        planImplementation: false,
-        planReady: false,
-        planLifecycleRevision: 0,
-        paused: false,
-        turnMode: 'unknown',
-        idleConfirmed: false,
-        localPin,
-        dynamicEligible: Math.max(Number(session.turnStartedAt) || 0, Number(session.lastActivityAt) || 0) >= dynamicCutoff,
-        capabilities: {
-          open: true,
-          // Status-only gate: the dispatch-time transaction revalidates the
-          // exact target, so state compatibility never blocks archive here.
-          archive: phase === 'completed' || phase === 'stopped',
-          pause: false,
-          resume: false,
-          executePlan: false
-        },
-        family: `claude:${sessionId}`,
-        role: 'root',
-        standaloneEligible: true,
-        causalKey: companionCausalKey('claude', key, turnCausalIdentity),
-        causalReliable: turnCausalIdentity > 0,
-        displayName: alias || originalTitle,
-        originalTitle,
-        alias
+    if (!available) continue
+    const nodes = []
+    const interactions = []
+    const interactionSets = []
+    const relations = []
+    let order = 0
+    let topologyComplete = false
+    let completeLanes = [...companionEvidenceChannelsV7]
+    if (provider === 'codex') {
+      const providerGeneration = companionEvidenceSequenceV7(result.value.activityGeneration, codexActivityGeneration)
+      Object.assign(sourceLaneGenerations.codex, {
+        membership: readAt,
+        activity: providerGeneration,
+        interaction: providerGeneration,
+        unread: providerGeneration,
+        planArtifact: providerGeneration,
+        metadata: readAt,
+        topology: providerGeneration
       })
-      for (const childValue of Array.isArray(session.subagents) ? session.subagents : []) {
-        const child = codexRecord(childValue)
-        const agentId = typeof child.agentId === 'string' ? child.agentId : ''
-        const childRevision = Math.max(Number(child.startedAt) || 0, Number(child.stoppedAt) || 0)
-        if (!agentId || !childRevision) continue
-        const childKey = companionPrivateChildKey('claude', key, agentId)
-        const childPhase = child.active === true ? 'running' : 'completed'
-        tasks.push({
-          key: childKey,
-          provider: 'claude',
-          kind: 'topology-child',
-          phase: childPhase,
-          cycleTier: 'none',
-          dynamicGroup: 'none',
-          actionAlias: '',
-          revisionAt: childRevision,
-          semanticRevision: 1,
-          observationGeneration: sourceLaneGenerations.claude.topology,
-          membershipRevision: childRevision,
-          phaseRevision: childRevision,
-          unreadRevision: childRevision,
-          visibilityRevision: childRevision,
-          statusEnteredAt: childRevision,
-          turnStartedAt: Number(child.startedAt) || 0,
-          terminalAt: child.active === true ? 0 : Number(child.stoppedAt) || childRevision,
-          metadataRevision: childRevision,
-          capabilityToken: '',
-          freshness: 'fresh',
-          lastQuestionAt: Number(child.startedAt) || 0,
-          createdAt: Number(child.startedAt) || 0,
-          displayOrder: order,
-          cycleOrder: order,
-          attentionOrder: order++,
-          hidden: false,
-          unreadKnown: false,
-          unread: false,
-          planImplementation: false,
-          planReady: false,
-          planLifecycleRevision: 0,
-          paused: false,
-          turnMode: 'unknown',
-          idleConfirmed: child.active !== true,
-          localPin: false,
-          dynamicEligible: true,
-          capabilities: { open: false, archive: false, pause: false, resume: false, executePlan: false },
-          family: `claude:${sessionId}`,
-          role: 'child',
-          standaloneEligible: false,
-          causalKey: companionCausalKey('claude', childKey, Number(child.startedAt) || childRevision),
-          causalReliable: Number(child.startedAt) > 0
+      topologyComplete = true
+      const seen = new Set()
+      for (const thread of result.value.threads) {
+        const key = typeof thread?.key === 'string' ? thread.key : ''
+        if (!key || seen.has(key)) continue
+        seen.add(key)
+        const evidence = companionCodexEvidenceV7(thread, {
+          persisted,
+          dynamicCutoff,
+          order,
+          sourceFingerprint: String(result.value.sourceFingerprint || '').slice(0, 80),
+          topologyGeneration: providerGeneration,
+          unreadSequence: providerGeneration,
+          authority: 'provider-snapshot'
         })
-        relations.push({
-          childKey,
-          parentKey: key,
-          provider: 'claude',
-          family: `claude:${sessionId}`,
-          relation: 'subagent',
-          authority: 'claude-hook',
-          exact: true,
-          generation: sourceLaneGenerations.claude.topology
-        })
+        nodes.push(...evidence.nodes)
+        interactions.push(...evidence.interactions)
+        interactionSets.push(...evidence.interactionSets)
+        relations.push(...evidence.relations)
+        order += evidence.nodes.length
       }
-    }
-    continue
-    }
-
-    const cursorReadAt = Number(result.value.readAt) || Date.now()
-    const hooks = new Map((Array.isArray(result.hooks) ? result.hooks : [])
-      .filter((value) => value && typeof value.sessionId === 'string')
-      .map((value) => [String(value.sessionId).toLowerCase(), codexRecord(value)]))
-    sourceLaneGenerations.cursor.membership = cursorReadAt
-    sourceLaneGenerations.cursor.phase = Math.max(cursorReadAt, ...[...hooks.values()].map((value) => Number(value.lastEventAt) || 0))
-    sourceLaneGenerations.cursor.unread = cursorReadAt
-    sourceLaneGenerations.cursor.metadata = cursorReadAt
-    sourceLaneGenerations.cursor.topology = cursorReadAt
-    sourceGenerations.cursor = companionCounterAggregate(sourceLaneGenerations.cursor)
-    for (const value of result.value.sessions) {
-      const session = codexRecord(value)
-      const composerId = typeof session.composerId === 'string' ? session.composerId.toLowerCase() : ''
-      const key = composerId ? `cursor:${composerId}` : ''
-      const hook = hooks.get(composerId)
-      const phase = companionCursorPhaseDecision(session, hook)
-      const revisionAt = Math.max(
-        Number(hook?.lastEventAt) || 0,
-        Number(session.lastUpdatedAt) || 0,
-        Number(session.unfinishedRunAt) || 0,
-        Number(session.createdAt) || 0
-      )
-      if (!key || !revisionAt) continue
-      const localPin = persisted.pins.has(key)
-      const hidden = Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt
-      const statusEnteredAt = Math.max(Number(hook?.lastEventAt) || 0, Number(session.lastUpdatedAt) || 0)
-      const terminalAt = phase === 'completed' || phase === 'stopped' ? statusEnteredAt || revisionAt : 0
-      const turnCausalIdentity = typeof hook?.generationId === 'string' && hook.generationId
-        ? hook.generationId
-        : Number(hook?.turnStartedAt) || Number(session.unfinishedRunAt) || 0
-      const originalTitle = typeof session.name === 'string' && session.name.trim()
-        ? session.name.trim().slice(0, 240)
-        : typeof session.subtitle === 'string' && session.subtitle.trim()
-          ? session.subtitle.trim().slice(0, 240)
-          : 'Cursor Agent'
-      const alias = persisted.aliases.get(key) || ''
-      tasks.push({
-        key,
-        provider: 'cursor',
-        kind: localPin ? 'local-pin' : 'cursor-session',
-        phase,
-        cycleTier: 'none',
-        dynamicGroup: 'none',
-        actionAlias: composerId,
-        revisionAt,
-        semanticRevision: 1,
-        observationGeneration: sourceGenerations.cursor,
-        membershipRevision: cursorReadAt,
-        phaseRevision: statusEnteredAt || revisionAt,
-        unreadRevision: cursorReadAt,
-        visibilityRevision: revisionAt,
-        statusEnteredAt,
-        turnStartedAt: Number(session.unfinishedRunAt) || Number(hook?.turnStartedAt) || 0,
-        terminalAt,
-        metadataRevision: Number(session.lastUpdatedAt) || revisionAt,
-        capabilityToken: composerId,
-        freshness: phase === 'unknown' ? 'verifying' : 'fresh',
-        lastQuestionAt: Number(session.unfinishedRunAt) || Number(hook?.turnStartedAt) || 0,
-        createdAt: Number(session.createdAt) || 0,
-        displayOrder: order,
-        cycleOrder: order,
-        attentionOrder: order++,
-        hidden,
-        unreadKnown: true,
-        unread: session.hasUnreadMessages === true,
-        planImplementation: false,
-        planReady: false,
-        planLifecycleRevision: 0,
-        paused: false,
-        turnMode: 'unknown',
-        idleConfirmed: phase === 'completed' || phase === 'stopped',
-        localPin,
-        dynamicEligible: Math.max(Number(session.lastUpdatedAt) || 0, Number(session.unfinishedRunAt) || 0) >= dynamicCutoff,
-        capabilities: {
-          open: true,
-          archive: phase === 'completed' || phase === 'stopped',
-          pause: false,
-          resume: false,
-          executePlan: false
-        },
-        family: `cursor:${composerId}`,
-        role: 'root',
-        standaloneEligible: true,
-        causalKey: companionCausalKey('cursor', key, turnCausalIdentity),
-        causalReliable: Boolean(turnCausalIdentity),
-        displayName: alias || originalTitle,
-        originalTitle,
-        alias
+    } else if (provider === 'claude') {
+      const unreadIds = result.unread
+        ? new Set(result.unread.ids.filter((value) => typeof value === 'string'))
+        : companionClaudeUnreadSnapshot.available ? new Set(companionClaudeUnreadSnapshot.ids) : new Set()
+      if (result.unread) {
+        companionClaudeUnreadSnapshot = {
+          ids: unreadIds,
+          generation: Number(result.unread.generation) || 0,
+          readAt: companionEvidenceSequenceV7(result.unread.readAt, readAt),
+          available: true
+        }
+      }
+      const activityGeneration = companionEvidenceSequenceV7(result.value.generation, result.value.stateGeneration)
+      const unreadGeneration = result.unread
+        ? companionEvidenceSequenceV7(result.unread.generation, result.unread.readAt)
+        : 0
+      const topologyGeneration = companionEvidenceSequenceV7(activityGeneration, result.value.readAt)
+      Object.assign(sourceLaneGenerations.claude, {
+        membership: readAt,
+        activity: activityGeneration,
+        interaction: activityGeneration,
+        unread: unreadGeneration,
+        planArtifact: activityGeneration,
+        metadata: readAt,
+        topology: topologyGeneration
       })
-      for (const childValue of Array.isArray(session.subagents) ? session.subagents : []) {
-        const child = codexRecord(childValue)
-        const childId = typeof child.composerId === 'string' ? child.composerId : ''
-        if (!childId) continue
-        const hotChild = (Array.isArray(hook?.subagents) ? hook.subagents : [])
-          .map(codexRecord)
-          .find((candidate) => candidate.subagentId === childId
-            && (!candidate.parentConversationId || String(candidate.parentConversationId).toLowerCase() === composerId))
-        const childKey = companionPrivateChildKey('cursor', key, childId)
-        const hotRevision = Number(hotChild?.lastEventAt) || 0
-        const inventoryRevision = Number(child.unfinishedRunAt) || 0
-        // `readAt` is a transport watermark, not a task mutation. Folding it
-        // into the child revision made every stable inventory read look like a
-        // semantic topology change and advanced the root package repeatedly.
-        const childRevision = Math.max(
-          hotRevision,
-          inventoryRevision,
-          Number(child.lastUpdatedAt) || 0,
-          Number(child.createdAt) || 0,
-          revisionAt
-        )
-        const hotCurrent = hotRevision > 0 && hotRevision >= inventoryRevision
-        const childPhase = hotCurrent
-          ? hotChild.active === true ? 'running' : 'completed'
-          : inventoryRevision > 0 ? 'running' : 'completed'
-        tasks.push({
-          key: childKey,
-          provider: 'cursor',
-          kind: 'topology-child',
-          phase: childPhase,
-          cycleTier: 'none',
-          dynamicGroup: 'none',
-          actionAlias: '',
-          revisionAt: childRevision,
-          semanticRevision: 1,
-          observationGeneration: cursorReadAt,
-          membershipRevision: childRevision,
-          phaseRevision: childRevision,
-          unreadRevision: childRevision,
-          visibilityRevision: childRevision,
-          statusEnteredAt: childRevision,
-          turnStartedAt: Number(hotChild?.startedAt) || inventoryRevision,
-          terminalAt: childPhase === 'running' ? 0 : Number(hotChild?.stoppedAt) || childRevision,
-          metadataRevision: childRevision,
-          capabilityToken: '',
-          freshness: 'fresh',
-          lastQuestionAt: Number(child.unfinishedRunAt) || 0,
-          createdAt: 0,
-          displayOrder: order,
-          cycleOrder: order,
-          attentionOrder: order++,
-          hidden: false,
-          unreadKnown: false,
-          unread: false,
-          planImplementation: false,
-          planReady: false,
-          planLifecycleRevision: 0,
-          paused: false,
-          turnMode: 'unknown',
-          idleConfirmed: childPhase !== 'running',
-          localPin: false,
-          dynamicEligible: true,
-          capabilities: { open: false, archive: false, pause: false, resume: false, executePlan: false },
-          family: `cursor:${composerId}`,
-          role: 'child',
-          standaloneEligible: false,
-          causalKey: companionCausalKey('cursor', childKey,
-            typeof hotChild?.generationId === 'string' && hotChild.generationId
-              ? hotChild.generationId
-              : Number(hotChild?.startedAt) || inventoryRevision || childRevision),
-          causalReliable: Boolean(hotChild?.generationId || hotChild?.startedAt || inventoryRevision)
+      topologyComplete = result.value.topologyComplete === true
+      if (!result.unread) completeLanes = completeLanes.filter((lane) => lane !== 'unread')
+      for (const session of result.value.sessions) {
+        const evidence = companionClaudeEvidenceV7(session, unreadIds.has(session?.sessionId), {
+          persisted,
+          dynamicCutoff,
+          order,
+          acceptedAt: readAt,
+          topologyGeneration,
+          authority: 'provider-snapshot'
         })
-        relations.push({
-          childKey,
-          parentKey: key,
-          provider: 'cursor',
-          family: `cursor:${composerId}`,
-          relation: 'subagent',
-          authority: 'cursor-inventory',
-          exact: true,
-          generation: cursorReadAt
+        nodes.push(...evidence.nodes)
+        interactions.push(...evidence.interactions)
+        interactionSets.push(...evidence.interactionSets)
+        relations.push(...evidence.relations)
+        order += evidence.nodes.length
+      }
+    } else {
+      const hooks = new Map((Array.isArray(result.hooks) ? result.hooks : [])
+        .filter((value) => value && typeof value.sessionId === 'string')
+        .map((value) => [String(value.sessionId).toLowerCase(), codexRecord(value)]))
+      const generation = readAt
+      Object.assign(sourceLaneGenerations.cursor, {
+        membership: generation,
+        activity: generation,
+        interaction: generation,
+        unread: generation,
+        planArtifact: generation,
+        metadata: generation,
+        topology: generation
+      })
+      topologyComplete = result.value.topologyComplete === true
+      for (const session of result.value.sessions) {
+        const composerId = typeof session?.composerId === 'string' ? session.composerId.toLowerCase() : ''
+        const evidence = companionCursorEvidenceV7(session, hooks.get(composerId), {
+          persisted,
+          dynamicCutoff,
+          order,
+          acceptedAt: readAt,
+          topologyGeneration: generation,
+          authority: 'provider-snapshot'
         })
+        nodes.push(...evidence.nodes)
+        interactions.push(...evidence.interactions)
+        interactionSets.push(...evidence.interactionSets)
+        relations.push(...evidence.relations)
+        order += evidence.nodes.length
       }
     }
+    taskCount += nodes.filter((node) => node.role === 'root').length
+    const snapshotLanes = completeLanes.filter((lane) => lane !== 'topology')
+    if (topologyComplete) snapshotLanes.push('topology')
+    evidenceBatches[provider] = createCompanionEvidenceBatchV7({
+      provider,
+      nodes,
+      interactions,
+      interactionSets,
+      relations,
+      laneGenerations: sourceLaneGenerations[provider],
+      snapshotLanes,
+      completeLanes: topologyComplete ? completeLanes : completeLanes.filter((lane) => lane !== 'topology'),
+      relationsComplete: topologyComplete,
+      health: result.status
+    })
   }
-  tasks.sort((left, right) => right.lastQuestionAt - left.lastQuestionAt
-    || right.createdAt - left.createdAt
-    || left.key.localeCompare(right.key))
-  tasks.forEach((task, index) => {
-    task.displayOrder = index
-    task.cycleOrder = index
-    task.attentionOrder = index
-  })
+  for (const provider of ['codex', 'claude', 'cursor']) {
+    if (evidenceBatches[provider]) continue
+    evidenceBatches[provider] = createCompanionEvidenceBatchV7({
+      provider,
+      laneGenerations: sourceLaneGenerations[provider],
+      health: providerHealth[provider].status
+    })
+  }
+  const sourceGenerations = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => [
+    provider,
+    companionCounterAggregate(sourceLaneGenerations[provider])
+  ]))
   runtimeDiagnostics.record({
     level: 'info',
     scope: 'task-recovery',
-    event: 'cold-preflight',
+    event: 'cold-preflight-v7',
     outcome: 'accepted',
-    durationMs: Date.now() - preflightStartedAt,
+    durationMs: Date.now() - startedAt,
     slowMs: 500,
-    count: tasks.length,
-    details: { providers, sourceGenerations, sourceLaneGenerations, taskCount: tasks.length }
+    count: taskCount,
+    details: { providers, sourceGenerations, sourceLaneGenerations, taskCount }
   })
   return {
-    schema: 'companion-task-evidence-draft-v6',
+    schema: companionV7Revisions.draft,
     producer: 'host-preflight',
-    sourceTaskStateRevision: 'task-state-v11:cold-preflight',
+    sourceTaskStateRevision: `${companionV7Revisions.taskState}:cold-preflight-v7`,
     draftRevision: ++companionPreflightDraftSequence,
     acceptedAt: Date.now(),
     enabled: true,
@@ -12430,31 +13154,7 @@ async function preflightCompanionTaskPackage(input = {}) {
     sourceGenerations,
     sourceLaneGenerations,
     providerHealth,
-    evidenceBatches: Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => {
-      const available = providers[provider] === true && providerHealth[provider].status !== 'unavailable'
-      const topologyComplete = available && providerTopologyComplete[provider] === true
-      const channels = Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
-        mode: channel === 'topology'
-          ? topologyComplete ? 'snapshot' : 'delta'
-          : available ? 'snapshot' : 'delta',
-        complete: channel === 'topology' ? topologyComplete : available,
-        generation: Number(sourceLaneGenerations[provider][channel]) || 0,
-        removedKeys: []
-      }]))
-      return [provider, {
-        revision: 'companion-provider-evidence-batch-v2',
-        provider,
-        channels,
-        nodes: tasks.filter((task) => task.provider === provider).map(companionTaskEvidenceNodeV2),
-        relations: relations.filter((relation) => relation.provider === provider),
-        relationMode: topologyComplete ? 'snapshot' : 'delta',
-        relationsComplete: topologyComplete,
-        removedRelationChildKeys: [],
-        health: providerHealth[provider].status === 'ready' || providerHealth[provider].status === 'degraded'
-          ? providerHealth[provider].status
-          : 'unavailable'
-      }]
-    }))
+    evidenceBatches
   }
 }
 
@@ -12492,14 +13192,18 @@ const companionHostRegistry = createCompanionHostRegistry?.({
   }
 })
 
-companionTaskKernel = typeof createCompanionTaskKernel === 'function' && companionHostRegistry
+const companionInitialPlanPauseReceipts = readCompanionPlanPauseReceipts()
+
+companionTaskKernel = typeof createCompanionTaskKernel === 'function' && companionHostRegistry && companionPlanPauseStorageReady
   ? createCompanionTaskKernel({
       initialConfiguration: companionTaskConfiguration(),
-      initialPauseReceipts: readCompanionPlanPauseReceipts(),
+      initialPauseReceipts: companionInitialPlanPauseReceipts,
+      initialInteractionTombstones: readCompanionInteractionTombstones(),
       persistPlanPause: persistCompanionPlanPause,
+      persistInteractionTombstones: persistCompanionInteractionTombstones,
       migrateHiddenPlan: migrateHiddenCompanionPlan,
       applyPreference: persistCompanionPreference,
-      preflight: preflightCompanionTaskPackage,
+      preflight: preflightCompanionTaskPackageV7,
       hostRegistry: companionHostRegistry,
       notify: (message) => {
         try { globalThis.utools?.showNotification?.(String(message || '')) } catch {}
@@ -12507,6 +13211,16 @@ companionTaskKernel = typeof createCompanionTaskKernel === 'function' && compani
       record: (event) => recordCompanionDiagnosticEvent(event)
     })
   : null
+
+if (!companionPlanPauseStorageReady) {
+  runtimeDiagnostics.record({
+    level: 'error',
+    scope: 'companion-storage',
+    event: 'v7-plan-pause-migration',
+    outcome: 'blocked',
+    details: { namespace: 'v7', legacyPreserved: true }
+  })
+}
 
 if (companionTaskKernel?.onPackage) {
   companionTaskKernel.onPackage((taskPackage) => {
@@ -12527,7 +13241,7 @@ let companionCursorInventoryDispose = null
 let companionClaudeUnreadSnapshot = { ids: new Set(), generation: 0, readAt: 0, available: false }
 
 /**
- * Single rule for lane units. `phase` and `unread` are monotonic provider
+ * Single rule for lane units. Activity, interaction, unread and Plan artifact are monotonic provider
  * counters; `membership` is an observation timestamp that is only ever compared
  * against itself. Mixing them is not a rounding error but a permanent failure:
  * a counter can never overtake a wall-clock value, so any lane that inherits a
@@ -12535,21 +13249,31 @@ let companionClaudeUnreadSnapshot = { ids: new Set(), generation: 0, readAt: 0, 
  * therefore spans counters only, and no lane may seed another across units.
  */
 function companionCounterAggregate(lanes) {
-  return Math.max(Number(lanes?.phase) || 0, Number(lanes?.unread) || 0)
+  return Math.max(
+    Number(lanes?.activity) || Number(lanes?.phase) || 0,
+    Number(lanes?.interaction) || 0,
+    Number(lanes?.unread) || 0,
+    Number(lanes?.planArtifact) || 0
+  )
 }
 
-function companionActivityEvidenceKind(phase) {
-  if (phase === 'running') return 'turn-running'
-  if (phase === 'waiting-input') return 'waiting-input'
-  if (phase === 'waiting-approval') return 'waiting-approval'
-  if (phase === 'completed') return 'turn-completed'
-  if (phase === 'stopped') return 'turn-interrupted'
+function companionActivityEvidenceKind(task) {
+  const source = codexRecord(task)
+  if (source.phase === 'running') return 'turn-running'
+  // Waiting is an interaction lane, never an activity phase. Provider adapters
+  // that already know the underlying activity may pass it explicitly; otherwise
+  // a blocked Turn is treated as settled until a newer Turn-start proves running.
+  if (source.phase === 'waiting-input' || source.phase === 'waiting-approval') {
+    return source.activityPhase === 'running' ? 'turn-running' : 'turn-completed'
+  }
+  if (source.phase === 'completed') return 'turn-completed'
+  if (source.phase === 'stopped') return 'turn-interrupted'
   return 'unknown'
 }
 
 /** Converts one provider-specific observation into the only Host -> Kernel
  * evidence shape. It deliberately does not emit canonical phase/groups/views. */
-function companionTaskEvidenceNodeV2(task) {
+function companionTaskEvidenceNodeV3(task) {
   const source = codexRecord(task)
   const capabilities = codexRecord(source.capabilities)
   const planLifecycleState = source.planLifecycleState === 'cleared'
@@ -12558,6 +13282,17 @@ function companionTaskEvidenceNodeV2(task) {
   const planClearReason = ['cancel', 'execution-start', 'archive', 'removal'].includes(source.planClearReason)
     ? source.planClearReason
     : ''
+  const planArtifactState = ['unknown', 'available', 'executing', 'consumed', 'cancelled', 'removed'].includes(source.planArtifactState)
+    ? source.planArtifactState
+    : planLifecycleState === 'ready'
+      ? 'available'
+      : planClearReason === 'execution-start'
+        ? 'executing'
+        : planClearReason === 'cancel'
+          ? 'cancelled'
+          : planClearReason === 'archive' || planClearReason === 'removal'
+            ? 'removed'
+            : planLifecycleState === 'cleared' ? 'consumed' : 'unknown'
   const activitySequence = Math.max(
     Number(source.phaseRevision) || 0,
     Number(source.statusEnteredAt) || 0,
@@ -12572,7 +13307,7 @@ function companionTaskEvidenceNodeV2(task) {
     role: source.role === 'child' ? 'child' : 'root',
     membership: 'present',
     activity: {
-      kind: companionActivityEvidenceKind(source.phase),
+      kind: companionActivityEvidenceKind(source),
       causalKey: typeof source.causalKey === 'string' ? source.causalKey : '',
       sequence: activitySequence,
       exact: source.causalReliable === true || source.freshness === 'fresh',
@@ -12586,9 +13321,11 @@ function companionTaskEvidenceNodeV2(task) {
       value: source.unread === true,
       sequence: Number(source.unreadRevision) || 0
     },
-    plan: {
-      state: planLifecycleState,
+    planArtifact: {
+      revision: companionV7Revisions.planArtifact,
+      state: planArtifactState,
       sequence: Number(source.planLifecycleRevision) || 0,
+      actionable: planArtifactState === 'available' && source.planArtifactActionable !== false,
       reason: planClearReason
     },
     metadata: {
@@ -12611,7 +13348,6 @@ function companionTaskEvidenceNodeV2(task) {
       idleConfirmed: source.idleConfirmed === true,
       localPin: source.localPin === true,
       dynamicEligible: source.dynamicEligible === true,
-      planImplementation: source.planImplementation === true,
       displayName: source.displayName,
       originalTitle: source.originalTitle,
       alias: source.alias,
@@ -12628,539 +13364,225 @@ function companionTaskEvidenceNodeV2(task) {
   }
 }
 
-function publishCompanionHostTasks(tasks, input = {}) {
+function companionInteractionEvidenceV1(task, authority = 'provider-live') {
+  const source = codexRecord(task)
+  if (source.phase !== 'waiting-input' && source.phase !== 'waiting-approval') return []
+  const kind = source.phase === 'waiting-approval'
+    ? 'approval'
+    : source.planImplementation === true ? 'plan-implementation' : 'user-input'
+  const sequence = Math.max(
+    Number(source.phaseRevision) || 0,
+    Number(source.statusEnteredAt) || 0,
+    Number(source.turnStartedAt) || 0,
+    Number(source.revisionAt) || 0
+  )
+  if (!sequence || typeof source.key !== 'string' || typeof source.provider !== 'string') return []
+  const interactionRef = crypto.createHash('sha256')
+    .update('companion-interaction-v1')
+    .update('\0')
+    .update(source.provider)
+    .update('\0')
+    .update(source.key)
+    .update('\0')
+    .update(kind)
+    .update('\0')
+    .update(typeof source.causalKey === 'string' ? source.causalKey : '')
+    .update('\0')
+    .update(String(sequence))
+    .digest('hex')
+    .slice(0, 32)
+  return [{
+    revision: companionV7Revisions.interaction,
+    provider: source.provider,
+    taskKey: source.key,
+    branchRef: source.role === 'child' ? 'child' : 'root',
+    interactionRef,
+    kind,
+    state: 'opened',
+    sequence,
+    turnEpoch: Number(source.turnStartedAt) || 0,
+    requestSetRevision: sequence,
+    authority,
+    exact: source.causalReliable === true || source.freshness === 'fresh'
+  }]
+}
+
+function publishCompanionEvidenceBatchesV3(input = {}) {
   const current = companionTaskKernel?.getPackage?.()
   if (!current?.complete || !companionTaskKernel?.publishEvidence) return false
   const providers = ['codex', 'claude', 'cursor']
-  const channels = ['membership', 'phase', 'unread', 'metadata', 'topology']
-  const currentLanes = current.sourceLaneGenerations || Object.fromEntries(providers.map((provider) => [provider, {
-    membership: 0,
-    phase: Number(current.sourceGenerations?.[provider]) || 0,
-    unread: Number(current.sourceGenerations?.[provider]) || 0,
-    metadata: 0,
-    topology: 0
-  }]))
-  const requestedLanes = codexRecord(input.sourceLaneGenerations)
-  const laneGenerations = Object.fromEntries(providers.map((provider) => {
-    const requested = codexRecord(requestedLanes[provider])
-    return [provider, Object.fromEntries(channels.map((channel) => [
-      channel,
-      Number(requested[channel]) || Number(currentLanes?.[provider]?.[channel]) || 0
-    ]))]
-  }))
   const requestedBatches = codexRecord(input.evidenceBatches)
-  const removedKeys = codexRecord(input.removedKeys)
+  const requestedLanes = codexRecord(input.sourceLaneGenerations)
+  const sourceLaneGenerations = Object.fromEntries(providers.map((provider) => {
+    const currentProvider = codexRecord(current.sourceLaneGenerations?.[provider])
+    const requestedProvider = codexRecord(requestedLanes[provider])
+    const explicitBatch = codexRecord(requestedBatches[provider])
+    return [provider, Object.fromEntries(companionEvidenceChannelsV7.map((lane) => {
+      const explicitChannel = codexRecord(explicitBatch.channels?.[lane])
+      const hasRequested = Object.prototype.hasOwnProperty.call(requestedProvider, lane)
+      const hasBatchGeneration = Number.isSafeInteger(explicitChannel.generation)
+      return [lane, hasRequested
+        ? companionEvidenceSequenceV7(requestedProvider[lane])
+        : hasBatchGeneration
+          ? Math.max(0, explicitChannel.generation)
+          : companionEvidenceSequenceV7(currentProvider[lane])]
+    }))]
+  }))
+  const providerHealth = {
+    ...current.providerHealth,
+    ...(input.providerHealth && typeof input.providerHealth === 'object' ? input.providerHealth : {})
+  }
   const evidenceBatches = Object.fromEntries(providers.map((provider) => {
-    const explicit = codexRecord(requestedBatches[provider])
-    if (explicit.revision === 'companion-provider-evidence-batch-v2' && explicit.provider === provider) {
+    const explicit = requestedBatches[provider]
+    if (explicit?.revision === companionV7Revisions.providerEvidenceBatch && explicit.provider === provider) {
       return [provider, explicit]
     }
-    return [provider, {
-      revision: 'companion-provider-evidence-batch-v2',
+    return [provider, createCompanionEvidenceBatchV7({
       provider,
-      channels: Object.fromEntries(channels.map((channel) => [channel, {
-        mode: 'delta',
-        complete: false,
-        generation: Number(laneGenerations[provider][channel]) || 0,
-        removedKeys: channel === 'membership' && Array.isArray(removedKeys[provider])
-          ? removedKeys[provider]
-          : []
-      }])),
-      nodes: (Array.isArray(tasks) ? tasks : [])
-        .filter((task) => task?.provider === provider)
-        .map(companionTaskEvidenceNodeV2),
-      relations: (Array.isArray(input.relations) ? input.relations : []).filter((relation) => relation?.provider === provider),
-      relationMode: 'delta',
-      relationsComplete: false,
-      removedRelationChildKeys: [],
-      health: current.providerHealth?.[provider]?.status === 'ready' || current.providerHealth?.[provider]?.status === 'degraded'
-        ? current.providerHealth[provider].status
-        : 'unavailable'
-    }]
+      laneGenerations: sourceLaneGenerations[provider],
+      health: providerHealth[provider]?.status
+    })]
   }))
-  const next = companionTaskKernel.publishEvidence({
-    schema: 'companion-task-evidence-draft-v6',
+  const result = companionTaskKernel.publishEvidence({
+    schema: companionV7Revisions.draft,
     producer: 'host-evidence',
-    sourceTaskStateRevision: current.sourceTaskStateRevision,
+    sourceTaskStateRevision: `${companionV7Revisions.taskState}:provider-evidence-v7`,
     draftRevision: ++companionHostDraftSequence,
-    acceptedAt: Number(input.acceptedAt) || Date.now(),
+    acceptedAt: companionEvidenceSequenceV7(input.acceptedAt, Date.now()),
     enabled: current.enabled,
     providers: current.providers,
     complete: true,
     focusedKey: current.focusedKey,
-    sourceGenerations: Object.fromEntries(providers.map((provider) => [provider, Math.max(
-      Number(current.sourceGenerations?.[provider]) || 0,
-      companionCounterAggregate(laneGenerations[provider])
-    )])),
-    sourceLaneGenerations: laneGenerations,
-    providerHealth: input.providerHealth && typeof input.providerHealth === 'object'
-      ? input.providerHealth
-      : current.providerHealth,
+    sourceGenerations: Object.fromEntries(providers.map((provider) => [
+      provider,
+      Math.max(
+        companionEvidenceSequenceV7(current.sourceGenerations?.[provider]),
+        companionCounterAggregate(sourceLaneGenerations[provider])
+      )
+    ])),
+    sourceLaneGenerations,
+    providerHealth,
     evidenceBatches
   })
-  return Boolean(next)
-}
-
-function companionCanonicalProposalMismatchCount(proposedTasks, canonical, keys, selectors, removedKeys = []) {
-  const proposedByKey = new Map((Array.isArray(proposedTasks) ? proposedTasks : []).map((task) => [task.key, task]))
-  const canonicalByKey = new Map((Array.isArray(canonical?.tasks) ? canonical.tasks : []).map((task) => [task.key, task]))
-  let count = 0
-  for (const key of removedKeys) if (canonicalByKey.has(key)) count += 1
-  for (const key of keys) {
-    const proposed = proposedByKey.get(key)
-    const committed = canonicalByKey.get(key)
-    if (!proposed || !committed) {
-      count += 1
-      continue
-    }
-    for (const selector of selectors) {
-      if (selector(proposed) !== selector(committed)) count += 1
-    }
-  }
-  return count
-}
-
-/**
- * Single outlet for "was this proposal actually accepted?".
- *
- * RAW-166 §78 states one rule — a proposal counts as accepted only when the
- * committed canonical package matches it — and that rule was implemented four
- * times, once per Provider lane. Four copies of one contract means four places
- * to keep in step, so the decision, its repair trigger and its diagnostic shape
- * live here and each lane supplies only what genuinely differs.
- */
-function recordCompanionProposalOutcome(input) {
-  const canonicalPublishedAt = Number(input.canonical?.publishedAt) || 0
-  const canonicalMismatchCount = Number(input.mismatchCount) || 0
-  const outcome = input.queued
-    ? 'queued'
-    : !input.changed
-      ? 'ignored'
-      : input.published && canonicalMismatchCount === 0 ? 'accepted' : 'superseded'
-  if (!input.queued && input.changed) {
-    companionTrackCanonicalMismatch(input.event, input.provider, canonicalMismatchCount, canonicalPublishedAt)
-  }
-  runtimeDiagnostics.record({
-    level: outcome === 'accepted' || outcome === 'superseded' ? 'info' : 'debug',
-    scope: 'task-push',
-    event: input.event,
-    outcome,
-    durationMs: Date.now() - input.startedAt,
-    slowMs: 50,
-    count: input.count,
-    cache: input.cache,
-    details: { ...input.details, canonicalMismatchCount, canonicalPublishedAt }
-  })
-  return outcome
-}
-
-const companionCanonicalMismatchStreak = new Map()
-const COMPANION_MISMATCH_REPAIR_AFTER = 3
-// A repair is one narrow cold inventory read. A live authority disagreement
-// (Desktop keeps proposing a phase the Kernel keeps superseding) re-arms the
-// streak every few hundred milliseconds, and without a floor that produced one
-// Codex cold read every ~2 seconds for minutes on a real host, starving the
-// shortcut preflight that shares the same transport. The cooldown keeps the
-// RAW-166 repair action but bounds it to one read per provider per window.
-const COMPANION_MISMATCH_REPAIR_COOLDOWN_MS = 30_000
-const companionMismatchRepairCooldown = new Map()
-
-/**
- * A proposal the Kernel accepted may still disagree with the published package.
- * Recording that as `superseded` names the symptom but repairs nothing, so a
- * genuinely stuck task stays stuck — observed in a real host for 23 minutes at
- * a constant mismatch of one. Detection must therefore carry an action: a
- * streak of disagreements queues the narrow reconciliation for that provider.
- */
-function companionTrackCanonicalMismatch(event, provider, mismatchCount, canonicalPublishedAt) {
-  const previous = companionCanonicalMismatchStreak.get(event)
-  const cooldownKey = provider || 'all'
-  if (!mismatchCount) {
-    companionCanonicalMismatchStreak.delete(event)
-    // A proposal that matched again proves the lane converged; the next real
-    // stuck state must not inherit this window.
-    companionMismatchRepairCooldown.delete(cooldownKey)
-    return
-  }
-  // Only a mismatch that survives a *stationary* canonical package is stuck. If
-  // the package advanced between two disagreements the reducer is still making
-  // progress, and queueing a repair there would republish identical semantics.
-  const stationary = previous && previous.publishedAt === canonicalPublishedAt
-  const streak = stationary ? previous.streak + 1 : 1
-  if (streak < COMPANION_MISMATCH_REPAIR_AFTER) {
-    companionCanonicalMismatchStreak.set(event, { streak, publishedAt: canonicalPublishedAt })
-    return
-  }
-  companionCanonicalMismatchStreak.delete(event)
-  const nowAt = Date.now()
-  const cooldown = companionMismatchRepairCooldown.get(cooldownKey)
-  if (cooldown && cooldown.until > nowAt) {
-    cooldown.suppressed += 1
-    return
-  }
-  companionMismatchRepairCooldown.set(cooldownKey, { until: nowAt + COMPANION_MISMATCH_REPAIR_COOLDOWN_MS, suppressed: 0 })
-  // 'warn' is not an explicit diagnostics level; the sink rejected every one of
-  // these records as `diagnostics-level-missing`, so the repair trigger never
-  // reached the log it was meant to explain.
-  runtimeDiagnostics.record({
-    level: 'info',
-    scope: 'task-push',
-    event: 'canonical-mismatch-repair',
-    outcome: 'queued',
-    durationMs: 0,
-    slowMs: 0,
-    count: mismatchCount,
-    details: {
-      source: event,
-      provider,
-      streak,
-      suppressedRepairs: cooldown ? cooldown.suppressed : 0,
-      cooldownMs: COMPANION_MISMATCH_REPAIR_COOLDOWN_MS
-    }
-  })
-  queueCompanionHostReconciliation(provider)
+  return Boolean(result)
 }
 
 function applyCodexActivityToCompanionKernel(delta) {
   const startedAt = Date.now()
   const source = codexRecord(delta)
   const current = companionTaskKernel?.getPackage?.()
-  const generation = Number(source.generation) || 0
-  const inventoryChanged = source.inventoryChanged === true
-  if (!current?.complete || !current.providers.codex || !generation) {
-    recordCompanionProbeGate('codex-activity-gate', 'prerequisite-missing', {
+  const generation = companionEvidenceSequenceV7(source.generation)
+  const entries = Array.isArray(source.entries) ? source.entries.map(codexRecord) : []
+  const archivedKeys = [...new Set((Array.isArray(source.archivedKeys) ? source.archivedKeys : [])
+    .filter((key) => typeof key === 'string' && key))]
+  if (!current?.complete || current.providers?.codex !== true || !generation) {
+    recordCompanionProbeGate('codex-activity-v7-gate', 'prerequisite-missing', {
       packageComplete: current?.complete === true,
       providerEnabled: current?.providers?.codex === true,
       generation
     })
     return false
   }
-  // Membership signals are recovery triggers, not authoritative inventories.
-  // Queue the narrow Codex reconciliation before any phase/unread freshness
-  // gate so a same-generation new/archive event cannot be swallowed.
-  if (inventoryChanged) queueCompanionHostReconciliation('codex')
-  const currentLanes = current?.sourceLaneGenerations?.codex || { phase: current?.sourceGenerations?.codex || 0, unread: current?.sourceGenerations?.codex || 0 }
-  const byKey = new Map((Array.isArray(source.entries) ? source.entries : []).map((value) => {
-    const entry = codexRecord(value)
-    return [typeof entry.key === 'string' ? entry.key : '', entry]
-  }))
-  const archived = new Set(Array.isArray(source.archivedKeys) ? source.archivedKeys.filter((key) => typeof key === 'string') : [])
-  const phaseAccepted = generation > currentLanes.phase
-    && [...byKey.values()].some((entry) => entry.readStateOnly !== true)
-  const unreadAccepted = generation > currentLanes.unread
-    && [...byKey.values()].some((entry) => typeof entry.hasUnreadTurn === 'boolean' && entry.unreadAuthority !== 'unavailable')
-  if (!phaseAccepted && !unreadAccepted && archived.size === 0) {
-    // An empty delta carries no lane evidence at all, so neither `.some()` can
-    // pass. Reporting that as a stale lane hides the real ordering failures in
-    // the same counter; reconciliation was already queued above either way.
-    recordCompanionProbeGate('codex-activity-gate', byKey.size === 0 ? 'empty-delta' : 'stale-lanes', {
-      generation,
-      currentLanes,
-      inventoryChanged,
-      entryCount: byKey.size
-    })
-    return inventoryChanged
-  }
-  let changed = archived.size > 0
-  let phaseMatched = false
-  let unreadMatched = false
-  const matchedKeys = new Set()
-  const phaseMatchedKeys = new Set()
-  const unreadMatchedKeys = new Set()
-  const tasks = []
+  if (source.inventoryChanged === true) queueCompanionHostReconciliation('codex')
   const persisted = companionPersistedTaskState()
-  for (const task of current.tasks) {
-    if (task.provider !== 'codex') {
-      tasks.push(task)
-      continue
+  const dynamicCutoff = Date.now() - companionTaskConfiguration().dynamicTaskWindowHours * 60 * 60 * 1_000
+  const nodesByKey = new Map()
+  const relationsByKey = new Map()
+  let order = 0
+  for (const entry of entries) {
+    const evidence = companionCodexEvidenceV7(entry, {
+      persisted,
+      dynamicCutoff,
+      order,
+      sourceFingerprint: String(source.sourceFingerprint || codexActivitySourceFingerprint || '').slice(0, 80),
+      topologyGeneration: generation,
+      unreadSequence: generation,
+      authority: 'provider-live'
+    })
+    for (const node of evidence.nodes) nodesByKey.set(node.key, node)
+    for (const relation of evidence.relations) {
+      relationsByKey.set(`${relation.provider}\0${relation.childKey}\0${relation.authority}\0${relation.relation}`, relation)
     }
-    if (archived.has(task.key)) continue
-    const entry = byKey.get(task.key)
-    if (!entry) {
-      tasks.push(task)
-      continue
-    }
-    matchedKeys.add(task.key)
-    const readStateOnly = entry.readStateOnly === true
-    const acceptPhaseForTask = phaseAccepted && !readStateOnly
-    const acceptUnreadForTask = unreadAccepted && typeof entry.hasUnreadTurn === 'boolean' && entry.unreadAuthority !== 'unavailable'
-    if (!acceptPhaseForTask && !acceptUnreadForTask) {
-      tasks.push(task)
-      continue
-    }
-    if (acceptPhaseForTask) {
-      phaseMatched = true
-      phaseMatchedKeys.add(task.key)
-    }
-    if (acceptUnreadForTask) {
-      unreadMatched = true
-      unreadMatchedKeys.add(task.key)
-    }
-    const decision = acceptPhaseForTask ? companionCodexPhaseDecision({ ...task, ...entry, previousPhase: task.phase }) : null
-    const phase = decision ? decision.phase : task.phase
-    const freshness = decision ? decision.freshness : task.freshness
-    const unread = acceptUnreadForTask ? entry.hasUnreadTurn : task.unread
-    const unreadKnown = acceptUnreadForTask ? true : task.unreadKnown
-    const planImplementation = acceptPhaseForTask ? entry.planImplementationOnly === true : task.planImplementation
-    // A new/supplementary Turn clears waiting immediately but does not prove
-    // that the native Plan card was cancelled or execution began. Only an
-    // explicit lifecycle edge may clear an already-ready Plan.
-    const planClearReason = ['cancel', 'execution-start', 'archive', 'removal'].includes(entry.planClearReason)
-      ? entry.planClearReason
-      : ''
-    const incomingPlanRevision = Number(entry.planLifecycleRevision) || 0
-    const exactPlanClear = acceptPhaseForTask
-      && entry.planLifecycleState === 'cleared'
-      && Boolean(planClearReason)
-      && incomingPlanRevision > (Number(task.planLifecycleRevision) || 0)
-    const planReady = exactPlanClear
-      ? false
-      : acceptPhaseForTask && entry.planReady === true
-        ? true
-        : task.planReady === true
-    const planLifecycleRevision = exactPlanClear
-      ? incomingPlanRevision
-      : planReady
-        ? incomingPlanRevision || Number(task.planLifecycleRevision) || Number(entry.lastTurnStartedAt) || Number(task.revisionAt) || 1
-        : Number(task.planLifecycleRevision) || 0
-    const planLifecycleState = exactPlanClear
-      ? 'cleared'
-      : planReady ? 'ready' : task.planLifecycleState || 'unknown'
-    const phaseChanged = phase !== task.phase
-      || freshness !== task.freshness
-      || planImplementation !== task.planImplementation
-      || planReady !== task.planReady
-      || planLifecycleRevision !== task.planLifecycleRevision
-      || planLifecycleState !== task.planLifecycleState
-    const unreadChanged = unread !== task.unread || unreadKnown !== task.unreadKnown
-    const evidenceRevision = Math.max(
-      Number(entry.waitingSince) || 0,
-      Number(entry.lastTurnCompletedAt) || 0,
-      Number(entry.lastTurnStartedAt) || 0,
-      Number(entry.updatedAt) || 0
-    )
-    const causalIdentity = Number(entry.lastTurnStartedAt)
-      || Number(entry.waitingSince)
-      || Number(entry.lastTurnCompletedAt)
-      || 0
-    const revisionAt = phaseChanged || unreadChanged ? Math.max(task.revisionAt, evidenceRevision) : task.revisionAt
-    const phaseEnteredAt = Number(entry.waitingSince)
-      || Number(entry.lastTurnCompletedAt)
-      || Number(entry.lastTurnStartedAt)
-      || task.statusEnteredAt
-    const next = {
-      ...task,
-      phase,
-      freshness,
-      cycleTier: 'none',
-      dynamicGroup: 'none',
-      revisionAt,
-      observationGeneration: Math.max(Number(task.observationGeneration) || 0, generation),
-      phaseRevision: acceptPhaseForTask
-        ? Math.max(Number(task.phaseRevision) || 0, generation)
-        : task.phaseRevision,
-      unreadRevision: acceptUnreadForTask
-        ? Math.max(Number(task.unreadRevision) || 0, generation)
-        : task.unreadRevision,
-      statusEnteredAt: phaseChanged ? phaseEnteredAt : task.statusEnteredAt,
-      turnStartedAt: acceptPhaseForTask
-        ? Number(entry.lastTurnStartedAt) || task.turnStartedAt
-        : task.turnStartedAt,
-      terminalAt: acceptPhaseForTask && (phase === 'completed' || phase === 'stopped')
-        ? Number(entry.lastTurnCompletedAt) || Number(entry.lastTurnStartedAt) || task.terminalAt
-        : phase === 'running' || phase === 'waiting-input' || phase === 'waiting-approval' ? 0 : task.terminalAt,
-      unread,
-      unreadKnown,
-      planImplementation,
-      planReady,
-      planLifecycleRevision,
-      planLifecycleState,
-      planClearReason: exactPlanClear ? planClearReason : task.planClearReason || '',
-      turnMode: acceptPhaseForTask && (entry.turnMode === 'plan' || entry.turnMode === 'default') ? entry.turnMode : task.turnMode,
-      idleConfirmed: acceptPhaseForTask ? entry.idleConfirmed === true : task.idleConfirmed,
-      // A phase-only event cannot refresh the archive transaction fingerprint.
-      // It publishes the status immediately but waits for a verified inventory
-      // before enabling a newly terminal archive action.
-      capabilities: {
-        ...task.capabilities,
-        archive: acceptPhaseForTask
-          ? task.capabilities.archive && (phase === 'completed' || phase === 'stopped')
-          : task.capabilities.archive
-      },
-      ...(acceptPhaseForTask && causalIdentity ? {
-        causalKey: companionCausalKey('codex', task.key, causalIdentity),
-        causalReliable: true
-      } : {})
-    }
-    if (phaseChanged || unreadChanged) changed = true
-    if (decision && phase !== task.phase) {
-      recordCompanionStateDecision(
-        'codex',
-        task.key,
-        decision,
-        entry.lastTurnEvidence || 'inventory',
-        task,
-        next,
-        generation,
-        current.packageRevision + 1
-      )
-    }
-    tasks.push(next)
+    order += evidence.nodes.length
   }
-  if (phaseAccepted) {
-    for (const [key, entry] of byKey) {
-      if (!key || matchedKeys.has(key) || archived.has(key) || entry.readStateOnly === true) continue
-      const actionAlias = typeof entry.actionAlias === 'string' ? entry.actionAlias : ''
-      // A newly observed row has no prior semantic phase. Hydration/inventory
-      // `active` without a real-time Turn/activity witness must therefore stay
-      // unknown instead of inheriting a fabricated running baseline.
-      const decision = companionCodexPhaseDecision({ ...entry, previousPhase: 'unknown' })
-      const phase = decision.phase
-      const liveTransitionAt = decision.details?.activeCurrent === true || decision.details?.waitingCurrent === true
-        ? Number(source.receivedAt) || 0
-        : 0
-      const revisionAt = Math.max(
-        Number(entry.updatedAt) || 0,
-        Number(entry.waitingSince) || 0,
-        Number(entry.lastTurnCompletedAt) || 0,
-        Number(entry.lastTurnStartedAt) || 0,
-        generation
-      )
-      const unreadKnown = typeof entry.hasUnreadTurn === 'boolean' && entry.unreadAuthority !== 'unavailable'
-      const unread = entry.hasUnreadTurn === true
-      const statusEnteredAt = Number(entry.waitingSince)
-        || Number(entry.lastTurnCompletedAt)
-        || Number(entry.lastTurnStartedAt)
-        || liveTransitionAt
-        || 0
-      const localPin = persisted.pins.has(key)
-      const hidden = Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt
-      const originalTitle = typeof entry.displayName === 'string' && entry.displayName
-        ? entry.displayName.slice(0, 240)
-        : '新 Codex 任务'
-      const alias = persisted.aliases.get(key) || ''
-      const causalIdentity = Number(entry.lastTurnStartedAt) || statusEnteredAt
-      tasks.push({
-        key,
-        provider: 'codex',
-        kind: localPin ? 'local-pin' : 'codex-thread',
-        phase,
-        cycleTier: 'none',
-        dynamicGroup: 'none',
-        actionAlias,
-        revisionAt,
-        semanticRevision: 1,
-        observationGeneration: generation,
-        membershipRevision: generation,
-        phaseRevision: generation,
-        unreadRevision: unreadKnown ? generation : 0,
-        visibilityRevision: revisionAt,
-        statusEnteredAt,
-        turnStartedAt: Number(entry.lastTurnStartedAt) || 0,
-        terminalAt: phase === 'completed'
-          ? Number(entry.lastTurnCompletedAt) || Number(entry.lastTurnStartedAt) || 0
-          : phase === 'stopped' ? Number(entry.lastTurnStartedAt) || 0 : 0,
-        metadataRevision: Number(entry.updatedAt) || revisionAt,
-        capabilityToken: actionAlias,
-        freshness: decision.freshness === 'verifying' ? 'verifying' : 'fresh',
-        lastQuestionAt: Number(entry.lastTurnStartedAt) || 0,
-        createdAt: 0,
-        displayOrder: tasks.length,
-        cycleOrder: tasks.length,
-        attentionOrder: tasks.length,
-        hidden,
-        unreadKnown,
-        unread,
-        planImplementation: entry.planImplementationOnly === true,
-        planReady: entry.planReady === true || entry.planImplementationOnly === true,
-        planLifecycleRevision: Number(entry.planLifecycleRevision) || (entry.planReady === true ? Number(entry.lastTurnStartedAt) || revisionAt : 0),
-        planLifecycleState: entry.planLifecycleState === 'cleared'
-          ? 'cleared'
-          : entry.planReady === true || entry.planImplementationOnly === true ? 'ready' : 'unknown',
-        ...(['cancel', 'execution-start', 'archive', 'removal'].includes(entry.planClearReason)
-          ? { planClearReason: entry.planClearReason }
-          : {}),
-        paused: false,
-        turnMode: entry.turnMode === 'plan' || entry.turnMode === 'default' ? entry.turnMode : 'unknown',
-        idleConfirmed: entry.idleConfirmed === true,
-        localPin,
-        dynamicEligible: statusEnteredAt > 0,
-        capabilities: { open: true, archive: false, pause: true, resume: true, executePlan: false },
-        family: `codex:${key}`,
-        role: 'root',
-        standaloneEligible: true,
-        causalKey: companionCausalKey('codex', key, causalIdentity),
-        causalReliable: causalIdentity > 0,
-        displayName: alias || originalTitle,
-        originalTitle,
-        alias,
-        ...(typeof entry.projectKey === 'string' ? { projectKey: entry.projectKey } : {}),
-        ...(typeof entry.projectName === 'string' ? { projectName: entry.projectName } : {}),
-        ...(entry.projectKind === 'project' || entry.projectKind === 'chats' ? { projectKind: entry.projectKind } : {})
-      })
-      matchedKeys.add(key)
-      phaseMatched = true
-      phaseMatchedKeys.add(key)
-      if (unreadKnown) unreadMatched = true
-      if (unreadKnown) unreadMatchedKeys.add(key)
-      changed = true
-      recordCompanionStateDecision('codex', key, decision, 'membership-minimal')
-    }
+  const explicitInteractions = (Array.isArray(source.interactions) ? source.interactions : [])
+    .map((value) => createCompanionInteractionEvidenceV7(value))
+    .filter(Boolean)
+  const explicitInteractionSets = (Array.isArray(source.interactionSets) ? source.interactionSets : [])
+    .map((value) => createCompanionInteractionSetV7(value))
+    .filter(Boolean)
+  const currentLanes = codexRecord(current.sourceLaneGenerations?.codex)
+  const hasActivity = entries.some((entry) => entry.readStateOnly !== true)
+  const hasUnread = entries.some((entry) => typeof entry.hasUnreadTurn === 'boolean' && entry.unreadAuthority !== 'unavailable')
+  const hasInteraction = explicitInteractions.length > 0 || explicitInteractionSets.length > 0
+  const hasPlanArtifact = entries.some((entry) => entry.readStateOnly !== true
+    && (entry.planReady === true
+      || entry.planImplementationOnly === true
+      || entry.planLifecycleState === 'cleared'
+      || Number(entry.planLifecycleRevision) > 0))
+  const hasTopology = hasActivity && nodesByKey.size > 0
+  const membershipGeneration = archivedKeys.length
+    ? Math.max(companionEvidenceSequenceV7(currentLanes.membership) + 1, companionEvidenceSequenceV7(source.receivedAt, Date.now()))
+    : companionEvidenceSequenceV7(currentLanes.membership)
+  const laneGenerations = {
+    membership: membershipGeneration,
+    activity: hasActivity ? generation : companionEvidenceSequenceV7(currentLanes.activity),
+    interaction: hasInteraction ? generation : companionEvidenceSequenceV7(currentLanes.interaction),
+    unread: hasUnread ? generation : companionEvidenceSequenceV7(currentLanes.unread),
+    planArtifact: hasPlanArtifact ? generation : companionEvidenceSequenceV7(currentLanes.planArtifact),
+    metadata: companionEvidenceSequenceV7(currentLanes.metadata),
+    topology: hasTopology ? generation : companionEvidenceSequenceV7(currentLanes.topology)
   }
-  const published = publishCompanionHostTasks(tasks, {
+  const batch = createCompanionEvidenceBatchV7({
+    provider: 'codex',
+    nodes: [...nodesByKey.values()],
+    interactions: explicitInteractions,
+    interactionSets: explicitInteractionSets,
+    relations: [...relationsByKey.values()],
+    laneGenerations,
+    removedKeys: { membership: archivedKeys },
+    health: current.providerHealth?.codex?.status
+  })
+  if (!batch || (!entries.length && !archivedKeys.length && !hasInteraction)) {
+    recordCompanionProbeGate('codex-activity-v7-gate', 'empty-delta', {
+      generation,
+      inventoryChanged: source.inventoryChanged === true
+    })
+    return source.inventoryChanged === true
+  }
+  const beforeRevision = current.packageRevision
+  const published = publishCompanionEvidenceBatchesV3({
     acceptedAt: source.receivedAt,
-    removedKeys: { codex: [...archived] },
-    sourceLaneGenerations: {
-      codex: {
-        ...(phaseMatched ? { phase: generation } : {}),
-        ...(unreadMatched ? { unread: generation } : {})
-      }
-    }
+    sourceLaneGenerations: { codex: laneGenerations },
+    evidenceBatches: { codex: batch }
   })
   const canonical = companionTaskKernel?.getPackage?.()
-  const canonicalMismatchCount = companionCanonicalProposalMismatchCount(
-    tasks,
-    canonical,
-    phaseMatchedKeys,
-    [(task) => task.phase],
-    archived
-  ) + companionCanonicalProposalMismatchCount(
-    tasks,
-    canonical,
-    unreadMatchedKeys,
-    [(task) => task.unread, (task) => task.unreadKnown]
-  )
-  recordCompanionProposalOutcome({
-    event: 'codex-activity',
-    provider: 'codex',
-    startedAt,
-    changed,
-    published,
-    canonical,
-    mismatchCount: canonicalMismatchCount,
-    count: byKey.size + archived.size,
-    cache: 'process-package',
+  const changed = Boolean(published && canonical?.packageRevision !== beforeRevision)
+  runtimeDiagnostics.record({
+    level: changed ? 'info' : 'debug',
+    scope: 'task-push',
+    event: 'codex-evidence-v7',
+    outcome: published ? changed ? 'accepted' : 'semantic-noop' : 'rejected',
+    durationMs: Date.now() - startedAt,
+    slowMs: 50,
+    count: nodesByKey.size,
+    cache: 'provider-direct',
     details: {
       generation,
-      currentLanes,
-      phaseAccepted,
-      unreadAccepted,
-      phaseMatched,
-      unreadMatched,
-      inventoryChanged,
-      archivedCount: archived.size,
-      receivedAt: Number(source.receivedAt) || 0,
-      hostCommittedAt: Date.now()
+      entryCount: entries.length,
+      interactionCount: explicitInteractions.length,
+      archivedCount: archivedKeys.length,
+      packageRevision: canonical?.packageRevision || beforeRevision
     }
   })
-  return changed || inventoryChanged
+  return changed || source.inventoryChanged === true
 }
 
 function applyClaudeStateToCompanionKernel() {
   const startedAt = Date.now()
   const current = companionTaskKernel?.getPackage?.()
-  if (!current?.complete || !current.providers.claude || !claudeBridge?.readCodeStateSnapshot) {
-    recordCompanionProbeGate('claude-state-gate', 'prerequisite-missing', {
+  if (!current?.complete || current.providers?.claude !== true || !claudeBridge?.readCodeStateSnapshot) {
+    recordCompanionProbeGate('claude-state-v7-gate', 'prerequisite-missing', {
       packageComplete: current?.complete === true,
       providerEnabled: current?.providers?.claude === true,
       readerAvailable: Boolean(claudeBridge?.readCodeStateSnapshot)
@@ -13169,403 +13591,291 @@ function applyClaudeStateToCompanionKernel() {
   }
   let snapshot
   try { snapshot = claudeBridge.readCodeStateSnapshot({ now: Date.now() }) } catch {
-    runtimeDiagnostics.record({ scope: 'task-push', event: 'claude-state', outcome: 'failed', code: 'provider-read-failed', durationMs: Date.now() - startedAt, slowMs: 50, level: 'error', cache: 'provider-direct' })
+    runtimeDiagnostics.record({
+      level: 'error',
+      scope: 'task-push',
+      event: 'claude-evidence-v7',
+      outcome: 'failed',
+      code: 'provider-read-failed',
+      durationMs: Date.now() - startedAt,
+      slowMs: 50,
+      cache: 'provider-direct'
+    })
     return false
   }
   const source = codexRecord(snapshot)
-  const generation = Number(source.generation || source.stateGeneration) || 0
-  const currentPhaseGeneration = Number(current.sourceLaneGenerations?.claude?.phase) || current.sourceGenerations.claude
-  if (!generation || generation <= currentPhaseGeneration || !Array.isArray(source.sessions)) {
-    recordCompanionProbeGate('claude-state-gate', 'stale-or-invalid', {
+  const generation = companionEvidenceSequenceV7(source.generation, source.stateGeneration)
+  const currentLanes = codexRecord(current.sourceLaneGenerations?.claude)
+  if (!generation || generation <= companionEvidenceSequenceV7(currentLanes.activity) || !Array.isArray(source.sessions)) {
+    recordCompanionProbeGate('claude-state-v7-gate', 'stale-or-invalid', {
       generation,
-      currentPhaseGeneration,
+      currentGeneration: companionEvidenceSequenceV7(currentLanes.activity),
       sessionsAvailable: Array.isArray(source.sessions)
     })
     return false
   }
-  const byAlias = new Map(source.sessions.map((value) => {
-    const session = codexRecord(value)
-    return [typeof session.sessionId === 'string' ? session.sessionId : '', session]
-  }))
-  let changed = false
-  const proposalKeys = new Set()
-  const tasks = current.tasks.map((task) => {
-    if (task.provider !== 'claude') return task
-    const sessionId = task.key.startsWith('claude:') ? task.key.slice('claude:'.length) : ''
-    const session = byAlias.get(sessionId)
-    if (!session) return task
-    const sourcePhase = isKnownTaskPhase(session.phase)
-      ? session.phase
-      : task.phase
-    const decision = companionClaudePhaseDecision(sourcePhase, task.unread)
-    const phase = decision.phase
-    const archive = (phase === 'completed' || phase === 'stopped')
-      && (session.stateCompatibility === 'compatible' || session.compatibility === 'compatible')
-    const semanticChanged = phase !== task.phase || archive !== task.capabilities.archive
-    const phaseEvidenceRevision = Number(session.waitingApprovalAt)
-      || Number(session.waitingInputAt)
-      || Number(session.lastStopAt)
-      || Number(session.phaseUpdatedAt)
-      || Number(source.readAt)
-      || task.phaseRevision
-    const revisionAt = Math.max(
-      task.revisionAt,
-      ...(semanticChanged
-        ? [Number(session.phaseUpdatedAt) || 0, Number(session.turnStartedAt) || 0, Number(session.lastStopAt) || 0]
-        : [])
-    )
-    const causalIdentity = Number(session.turnStartedAt)
-      || Number(session.waitingApprovalAt)
-      || Number(session.waitingInputAt)
-      || Number(session.lastStopAt)
-      || 0
-    const next = {
-      ...task,
-      phase,
-      cycleTier: 'none',
-      dynamicGroup: 'none',
-      revisionAt,
-      phaseRevision: Math.max(Number(task.phaseRevision) || 0, phaseEvidenceRevision),
-      statusEnteredAt: phase !== task.phase ? phaseEvidenceRevision : task.statusEnteredAt,
-      planImplementation: false,
-      capabilities: {
-        ...task.capabilities,
-        archive
-      },
-      ...(causalIdentity ? {
-        causalKey: companionCausalKey('claude', task.key, causalIdentity),
-        causalReliable: true
-      } : {})
-    }
-    if (semanticChanged) {
-      changed = true
-      proposalKeys.add(task.key)
-    }
-    if (phase !== task.phase) recordCompanionStateDecision('claude', task.key, decision, task.unread ? 'native-unread' : session.stateSource || 'provider-state')
-    return next
+  const persisted = companionPersistedTaskState()
+  const dynamicCutoff = Date.now() - companionTaskConfiguration().dynamicTaskWindowHours * 60 * 60 * 1_000
+  const nodes = []
+  const interactions = []
+  const interactionSets = []
+  const relations = []
+  let order = 0
+  for (const session of source.sessions) {
+    const sessionId = typeof session?.sessionId === 'string' ? session.sessionId : ''
+    const unread = companionClaudeUnreadSnapshot.available && companionClaudeUnreadSnapshot.ids.has(sessionId)
+    const evidence = companionClaudeEvidenceV7(session, unread, {
+      persisted,
+      dynamicCutoff,
+      order,
+      acceptedAt: source.readAt,
+      topologyGeneration: generation,
+      authority: 'provider-live'
+    })
+    nodes.push(...evidence.nodes)
+    interactions.push(...evidence.interactions)
+    interactionSets.push(...evidence.interactionSets)
+    relations.push(...evidence.relations)
+    order += evidence.nodes.length
+  }
+  const laneGenerations = {
+    membership: companionEvidenceSequenceV7(currentLanes.membership),
+    activity: generation,
+    interaction: generation,
+    unread: companionEvidenceSequenceV7(currentLanes.unread),
+    planArtifact: companionEvidenceSequenceV7(currentLanes.planArtifact),
+    metadata: companionEvidenceSequenceV7(currentLanes.metadata),
+    topology: generation
+  }
+  const batch = createCompanionEvidenceBatchV7({
+    provider: 'claude',
+    nodes,
+    interactions,
+    interactionSets,
+    relations,
+    laneGenerations,
+    health: current.providerHealth?.claude?.status
   })
-  const published = publishCompanionHostTasks(tasks, {
+  const beforeRevision = current.packageRevision
+  const published = publishCompanionEvidenceBatchesV3({
     acceptedAt: source.readAt,
-    sourceLaneGenerations: { claude: { phase: generation } }
+    sourceLaneGenerations: { claude: laneGenerations },
+    evidenceBatches: { claude: batch }
   })
   const canonical = companionTaskKernel?.getPackage?.()
-  const canonicalMismatchCount = companionCanonicalProposalMismatchCount(
-    tasks,
-    canonical,
-    proposalKeys,
-    [(task) => task.phase, (task) => task.capabilities?.archive === true]
-  )
-  recordCompanionProposalOutcome({
-    event: 'claude-state',
-    provider: 'claude',
-    startedAt,
-    changed,
-    published,
-    canonical,
-    mismatchCount: canonicalMismatchCount,
-    count: source.sessions.length,
+  const changed = Boolean(published && canonical?.packageRevision !== beforeRevision)
+  runtimeDiagnostics.record({
+    level: changed ? 'info' : 'debug',
+    scope: 'task-push',
+    event: 'claude-evidence-v7',
+    outcome: published ? changed ? 'accepted' : 'semantic-noop' : 'rejected',
+    durationMs: Date.now() - startedAt,
+    slowMs: 50,
+    count: nodes.length,
     cache: 'provider-direct',
-    details: {
-      generation,
-      previousGeneration: currentPhaseGeneration,
-      readAt: Number(source.readAt) || 0,
-      sessionCount: source.sessions.length
-    }
+    details: { generation, sessionCount: source.sessions.length, packageRevision: canonical?.packageRevision || beforeRevision }
   })
   return changed
 }
 
 async function applyClaudeUnreadToCompanionKernel() {
   const startedAt = Date.now()
-  const admitted = companionTaskKernel?.getPackage?.()
-  if (!admitted?.complete || !admitted.providers.claude || !claudeBridge?.readCodeUnread) {
-    recordCompanionProbeGate('claude-unread-gate', 'prerequisite-missing', {
-      packageComplete: admitted?.complete === true,
-      providerEnabled: admitted?.providers?.claude === true,
+  const current = companionTaskKernel?.getPackage?.()
+  if (!current?.complete || current.providers?.claude !== true || !claudeBridge?.readCodeUnread) {
+    recordCompanionProbeGate('claude-unread-v7-gate', 'prerequisite-missing', {
+      packageComplete: current?.complete === true,
+      providerEnabled: current?.providers?.claude === true,
       readerAvailable: Boolean(claudeBridge?.readCodeUnread)
     })
     return false
   }
   let snapshot
   try { snapshot = await Promise.resolve(claudeBridge.readCodeUnread()) } catch {
-    runtimeDiagnostics.record({ scope: 'task-push', event: 'claude-unread', outcome: 'failed', code: 'provider-read-failed', durationMs: Date.now() - startedAt, slowMs: 50, level: 'error', cache: 'provider-direct' })
-    return false
-  }
-  const source = codexRecord(snapshot)
-  if (!Array.isArray(source.ids)) {
-    recordCompanionProbeGate('claude-unread-gate', 'invalid-snapshot', { idsAvailable: false })
-    return false
-  }
-  const generation = Number(source.generation || source.readAt) || 0
-  const readAt = Number(source.readAt) || Date.now()
-  const ids = new Set(source.ids.filter((value) => typeof value === 'string'))
-  // Membership may change while the unread file read is in flight. Rebase the
-  // lane patch on the latest package so this partial update cannot delete a
-  // newly-created session by replaying an older full task array.
-  const current = companionTaskKernel?.getPackage?.()
-  if (!current?.complete || !current.providers.claude) {
-    recordCompanionProbeGate('claude-unread-gate', 'package-changed-during-read', {
-      packageComplete: current?.complete === true,
-      providerEnabled: current?.providers?.claude === true,
-      generation
+    runtimeDiagnostics.record({
+      level: 'error',
+      scope: 'task-push',
+      event: 'claude-unread-v7',
+      outcome: 'failed',
+      code: 'provider-read-failed',
+      durationMs: Date.now() - startedAt,
+      slowMs: 50,
+      cache: 'provider-direct'
     })
     return false
   }
-  const currentGeneration = Number(current.sourceLaneGenerations?.claude?.unread) || current.sourceGenerations.claude
-  if (!generation || generation <= currentGeneration) {
-    recordCompanionProbeGate('claude-unread-gate', 'stale-generation', { generation, currentGeneration, unreadCount: ids.size })
-    return false
+  const source = codexRecord(snapshot)
+  if (!Array.isArray(source.ids)) return false
+  const generation = companionEvidenceSequenceV7(source.generation, source.readAt)
+  const currentLanes = codexRecord(current.sourceLaneGenerations?.claude)
+  if (!generation || generation <= companionEvidenceSequenceV7(currentLanes.unread)) return false
+  const previousIds = companionClaudeUnreadSnapshot.available
+    ? new Set(companionClaudeUnreadSnapshot.ids)
+    : new Set()
+  const ids = new Set(source.ids.filter((value) => typeof value === 'string'))
+  // The unread file is a complete set. Canonical membership supplies only the
+  // identities that must receive an explicit false; no phase or UI state is
+  // read back into Provider evidence.
+  const canonicalSessionIds = (Array.isArray(current.tasks) ? current.tasks : [])
+    .filter((task) => task?.provider === 'claude' && task?.role !== 'child' && typeof task.key === 'string' && task.key.startsWith('claude:'))
+    .map((task) => task.key.slice('claude:'.length))
+  const affected = new Set([...previousIds, ...ids, ...canonicalSessionIds])
+  companionClaudeUnreadSnapshot = {
+    ids,
+    generation: Number(source.generation) || 0,
+    readAt: companionEvidenceSequenceV7(source.readAt, Date.now()),
+    available: true
   }
-  companionClaudeUnreadSnapshot = { ids, generation: Number(source.generation) || 0, readAt, available: true }
-  let changed = false
-  const proposalKeys = new Set()
-  const tasks = current.tasks.map((task) => {
-    if (task.provider !== 'claude') return task
-    const sessionId = task.key.startsWith('claude:') ? task.key.slice('claude:'.length) : ''
-    const unread = ids.has(sessionId)
-    const decision = companionClaudePhaseDecision(task.phase, unread)
-    const phase = decision.phase
-    const semanticChanged = unread !== task.unread || task.unreadKnown !== true || phase !== task.phase
-    if (semanticChanged) {
-      changed = true
-      proposalKeys.add(task.key)
-    }
-    if (semanticChanged) {
-      recordCompanionStateDecision('claude', task.key, decision, unread ? 'native-unread' : 'provider-state')
-    }
-    return {
-      ...task,
-      phase,
-      unread,
+  const nodes = [...affected].map((sessionId) => createCompanionEvidenceNodeV7({
+    provider: 'claude',
+    key: `claude:${sessionId}`,
+    family: `claude:${sessionId}`,
+    role: 'root',
+    observation: companionUnknownObservationV7({
       unreadKnown: true,
-      unreadRevision: Math.max(Number(task.unreadRevision) || 0, readAt),
-      revisionAt: semanticChanged ? Math.max(task.revisionAt, readAt) : task.revisionAt,
-      phaseRevision: phase !== task.phase ? Math.max(Number(task.phaseRevision) || 0, readAt) : task.phaseRevision,
-      statusEnteredAt: phase !== task.phase ? readAt : task.statusEnteredAt,
-      cycleTier: 'none',
-      dynamicGroup: 'none',
-      capabilities: { ...task.capabilities, archive: phase === 'completed' || phase === 'stopped' ? task.capabilities.archive : false }
-    }
+      unread: ids.has(sessionId),
+      unreadSequence: generation
+    }),
+    metadata: companionProviderMetadataV7({
+      kind: 'claude-session',
+      actionAlias: sessionId,
+      revisionAt: 1,
+      membershipRevision: 1,
+      visibilityRevision: 1,
+      metadataRevision: 1
+    }),
+    metadataPartial: true,
+    capabilities: [],
+    standaloneEligible: true
+  })).filter(Boolean)
+  const laneGenerations = {
+    membership: companionEvidenceSequenceV7(currentLanes.membership),
+    activity: companionEvidenceSequenceV7(currentLanes.activity),
+    interaction: companionEvidenceSequenceV7(currentLanes.interaction),
+    unread: generation,
+    planArtifact: companionEvidenceSequenceV7(currentLanes.planArtifact),
+    metadata: companionEvidenceSequenceV7(currentLanes.metadata),
+    topology: companionEvidenceSequenceV7(currentLanes.topology)
+  }
+  const batch = createCompanionEvidenceBatchV7({
+    provider: 'claude',
+    nodes,
+    laneGenerations,
+    health: current.providerHealth?.claude?.status
   })
-  const published = publishCompanionHostTasks(tasks, {
-    acceptedAt: readAt,
-    sourceLaneGenerations: { claude: { unread: generation } }
+  const beforeRevision = current.packageRevision
+  const published = publishCompanionEvidenceBatchesV3({
+    acceptedAt: source.readAt,
+    sourceLaneGenerations: { claude: laneGenerations },
+    evidenceBatches: { claude: batch }
   })
   const canonical = companionTaskKernel?.getPackage?.()
-  const canonicalMismatchCount = companionCanonicalProposalMismatchCount(
-    tasks,
-    canonical,
-    proposalKeys,
-    [(task) => task.phase, (task) => task.unread, (task) => task.unreadKnown]
-  )
-  recordCompanionProposalOutcome({
-    event: 'claude-unread',
-    provider: 'claude',
-    startedAt,
-    changed,
-    published,
-    canonical,
-    mismatchCount: canonicalMismatchCount,
+  const changed = Boolean(published && canonical?.packageRevision !== beforeRevision)
+  runtimeDiagnostics.record({
+    level: changed ? 'info' : 'debug',
+    scope: 'task-push',
+    event: 'claude-unread-v7',
+    outcome: published ? changed ? 'accepted' : 'semantic-noop' : 'rejected',
+    durationMs: Date.now() - startedAt,
+    slowMs: 50,
     count: ids.size,
     cache: 'provider-direct',
-    details: {
-      generation,
-      previousGeneration: currentGeneration,
-      readAt,
-      unreadCount: ids.size
-    }
+    details: { generation, affectedCount: affected.size, packageRevision: canonical?.packageRevision || beforeRevision }
   })
   return changed
 }
 
-function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
-  const session = codexRecord(sessionValue)
-  const sessionId = typeof session.sessionId === 'string' ? session.sessionId : ''
-  if (!sessionId) return null
-  const evidenceRevision = Math.max(
-    Number(session.stateGeneration) || 0,
-    Number(session.phaseUpdatedAt) || 0,
-    Number(session.turnStartedAt) || 0,
-    Number(session.lastStopAt) || 0,
-    Number(session.lastActivityAt) || 0,
-    Number(session.metadataUpdatedAt) || 0,
-    Number(acceptedAt) || 0
-  )
-  if (!evidenceRevision) return null
-  const unread = companionClaudeUnreadSnapshot.available
-    ? companionClaudeUnreadSnapshot.ids.has(sessionId)
-    : previous?.unread === true
-  const unreadKnown = companionClaudeUnreadSnapshot.available || previous?.unreadKnown === true
-  const sourcePhase = isKnownTaskPhase(session.phase)
-    ? session.phase
-    : previous?.phase || 'unknown'
-  const decision = companionClaudePhaseDecision(sourcePhase, unread)
-  const phase = decision.phase
-  const key = `claude:${sessionId}`
-  const persisted = previous ? null : companionPersistedTaskState()
-  const localPin = previous?.localPin === true || persisted?.pins.has(key) === true
-  const phaseChanged = !previous || phase !== previous.phase
-  const phaseStatusAt = Number(session.waitingApprovalAt)
-    || Number(session.waitingInputAt)
-    || Number(session.lastStopAt)
-    || Number(session.phaseUpdatedAt)
-    || Number(session.turnStartedAt)
-    || Number(session.createdAt)
-    || 0
-  const phaseEvidenceRevision = phaseStatusAt
-    || Number(session.stateGeneration)
-    || evidenceRevision
-  // Status-only gate: the dispatch-time transaction revalidates the exact
-  // target, so state compatibility never blocks archive here.
-  const archive = phase === 'completed' || phase === 'stopped'
-  const dynamicEligible = Math.max(Number(session.turnStartedAt) || 0, Number(session.lastActivityAt) || 0)
-    >= Date.now() - companionTaskConfiguration().dynamicTaskWindowHours * 60 * 60 * 1_000
-  const semanticChanged = !previous
-    || phaseChanged
-    || unread !== previous.unread
-    || unreadKnown !== previous.unreadKnown
-    || archive !== previous.capabilities?.archive
-    || dynamicEligible !== previous.dynamicEligible
-    || sessionId !== previous.actionAlias
-  const revisionAt = semanticChanged ? Math.max(Number(previous?.revisionAt) || 0, evidenceRevision) : previous.revisionAt
-  const originalTitle = typeof session.title === 'string' && session.title.trim()
-    ? session.title.trim().slice(0, 240)
-    : previous?.originalTitle || 'Claude 任务'
-  const alias = previous?.alias || persisted?.aliases.get(key) || ''
-  if (!previous || phase !== previous.phase) {
-    recordCompanionStateDecision('claude', `claude:${sessionId}`, decision, unread ? 'native-unread' : session.stateSource || 'provider-state')
-  }
-  return {
-    ...(previous || {}),
-    key,
-    provider: 'claude',
-    kind: localPin ? 'local-pin' : 'claude-session',
-    phase,
-    cycleTier: 'none',
-    dynamicGroup: 'none',
-    actionAlias: sessionId,
-    revisionAt,
-    membershipRevision: Math.max(Number(session.lastActivityAt) || 0, Number(session.metadataUpdatedAt) || 0, Number(acceptedAt) || 0),
-    phaseRevision: phaseChanged ? phaseEvidenceRevision : previous?.phaseRevision || phaseEvidenceRevision,
-    unreadRevision: companionClaudeUnreadSnapshot.available
-      ? companionClaudeUnreadSnapshot.readAt || companionClaudeUnreadSnapshot.generation || revisionAt
-      : previous?.unreadRevision || revisionAt,
-    visibilityRevision: Math.max(Number(session.metadataUpdatedAt) || 0, Number(acceptedAt) || 0),
-    statusEnteredAt: phaseChanged ? phaseStatusAt : previous?.statusEnteredAt || phaseStatusAt,
-    lastQuestionAt: Number(session.turnStartedAt) || previous?.lastQuestionAt || 0,
-    createdAt: Number(session.createdAt) || previous?.createdAt || 0,
-    displayOrder: previous?.displayOrder || 0,
-    cycleOrder: previous?.cycleOrder || 0,
-    attentionOrder: previous?.attentionOrder || 0,
-    hidden: previous?.hidden === true
-      || Number(persisted?.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
-    unread,
-    unreadKnown,
-    planImplementation: false,
-    planReady: false,
-    planLifecycleRevision: 0,
-    paused: false,
-    turnMode: 'unknown',
-    idleConfirmed: false,
-    localPin,
-    dynamicEligible,
-    capabilities: {
-      open: true,
-      archive,
-      pause: false,
-      resume: false,
-      executePlan: false
-    },
-    family: `claude:${sessionId}`,
-    role: 'root',
-    standaloneEligible: true,
-    causalKey: companionCausalKey('claude', key, Number(session.turnStartedAt) || phaseStatusAt),
-    causalReliable: Boolean(Number(session.turnStartedAt) || phaseStatusAt),
-    displayName: alias || originalTitle,
-    originalTitle,
-    alias
-  }
-}
-
 function applyClaudeInventoryDeltaToCompanionKernel(delta) {
   const startedAt = Date.now()
-  const current = companionTaskKernel?.getPackage?.()
   const source = codexRecord(delta)
-  if (!current?.complete || !current.providers.claude || !Array.isArray(source.mutations)) {
-    recordCompanionProbeGate('claude-inventory-gate', 'reconciliation-required', {
-      packageComplete: current?.complete === true,
-      providerEnabled: current?.providers?.claude === true,
-      mutationsAvailable: Array.isArray(source.mutations)
-    })
+  const current = companionTaskKernel?.getPackage?.()
+  if (!current?.complete || current.providers?.claude !== true || !Array.isArray(source.mutations)) {
     queueCompanionHostReconciliation('claude')
     return false
   }
-  const currentMembership = Number(current.sourceLaneGenerations?.claude?.membership) || current.sourceGenerations.claude
-  const acceptedAt = Math.max(Number(source.acceptedAt) || Date.now(), currentMembership + 1)
-  const byKey = new Map(current.tasks.map((task) => [task.key, task]))
-  let changed = false
+  const currentLanes = codexRecord(current.sourceLaneGenerations?.claude)
+  const membershipGeneration = Math.max(
+    companionEvidenceSequenceV7(currentLanes.membership) + 1,
+    companionEvidenceSequenceV7(source.acceptedAt, Date.now())
+  )
+  const providerGeneration = Math.max(
+    companionEvidenceSequenceV7(currentLanes.activity) + 1,
+    companionEvidenceSequenceV7(source.generation)
+  )
+  const persisted = companionPersistedTaskState()
+  const dynamicCutoff = Date.now() - companionTaskConfiguration().dynamicTaskWindowHours * 60 * 60 * 1_000
+  const nodes = []
+  const interactions = []
+  const interactionSets = []
+  const relations = []
+  const removedKeys = []
   let exact = true
-  const proposalKeys = new Set()
-  const removedKeys = new Set()
+  let order = 0
   for (const value of source.mutations) {
     const mutation = codexRecord(value)
     const key = typeof mutation.key === 'string' ? mutation.key : ''
     if (!key.startsWith('claude:')) { exact = false; continue }
     if (mutation.mutation === 'remove' || mutation.mutation === 'archived') {
-      if (byKey.delete(key)) {
-        changed = true
-        removedKeys.add(key)
-      }
+      removedKeys.push(key)
       continue
     }
     if (mutation.mutation !== 'upsert' || !mutation.session) { exact = false; continue }
-    const next = companionTaskFromClaudeSession(mutation.session, byKey.get(key), acceptedAt)
-    if (!next) { exact = false; continue }
-    if (JSON.stringify(next) !== JSON.stringify(byKey.get(key))) {
-      changed = true
-      proposalKeys.add(key)
-    }
-    byKey.set(key, next)
+    const sessionId = typeof mutation.session.sessionId === 'string' ? mutation.session.sessionId : key.slice('claude:'.length)
+    const unread = companionClaudeUnreadSnapshot.available && companionClaudeUnreadSnapshot.ids.has(sessionId)
+    const evidence = companionClaudeEvidenceV7(mutation.session, unread, {
+      persisted,
+      dynamicCutoff,
+      order,
+      acceptedAt: membershipGeneration,
+      topologyGeneration: providerGeneration,
+      authority: 'provider-live'
+    })
+    nodes.push(...evidence.nodes)
+    interactions.push(...evidence.interactions)
+    interactionSets.push(...evidence.interactionSets)
+    relations.push(...evidence.relations)
+    order += evidence.nodes.length
   }
-  const tasks = [...byKey.values()]
-  const published = exact && publishCompanionHostTasks(tasks, {
-    acceptedAt,
-    removedKeys: { claude: [...removedKeys] },
-    sourceLaneGenerations: { claude: { membership: acceptedAt } }
-  })
-  if (!exact) queueCompanionHostReconciliation('claude')
-  const canonical = exact ? companionTaskKernel?.getPackage?.() : null
-  const canonicalMismatchCount = exact
-    ? companionCanonicalProposalMismatchCount(
-        tasks,
-        canonical,
-        proposalKeys,
-        [
-          (task) => task.phase,
-          (task) => task.unread,
-          (task) => task.unreadKnown,
-          (task) => task.capabilities?.archive === true
-        ],
-        removedKeys
-      )
-    : 0
-  recordCompanionProposalOutcome({
-    event: 'claude-inventory',
+  if (!exact) {
+    queueCompanionHostReconciliation('claude')
+    return false
+  }
+  const laneGenerations = {
+    membership: membershipGeneration,
+    activity: nodes.length ? providerGeneration : companionEvidenceSequenceV7(currentLanes.activity),
+    interaction: nodes.length ? providerGeneration : companionEvidenceSequenceV7(currentLanes.interaction),
+    unread: nodes.length ? Math.max(companionEvidenceSequenceV7(currentLanes.unread) + 1, providerGeneration) : companionEvidenceSequenceV7(currentLanes.unread),
+    planArtifact: companionEvidenceSequenceV7(currentLanes.planArtifact),
+    metadata: membershipGeneration,
+    topology: nodes.length || removedKeys.length ? providerGeneration : companionEvidenceSequenceV7(currentLanes.topology)
+  }
+  const batch = createCompanionEvidenceBatchV7({
     provider: 'claude',
-    startedAt,
-    queued: !exact,
-    changed,
-    published,
-    canonical,
-    mismatchCount: canonicalMismatchCount,
+    nodes,
+    interactions,
+    interactionSets,
+    relations,
+    laneGenerations,
+    removedKeys: { membership: removedKeys },
+    health: current.providerHealth?.claude?.status
+  })
+  const beforeRevision = current.packageRevision
+  const published = publishCompanionEvidenceBatchesV3({
+    acceptedAt: source.acceptedAt,
+    sourceLaneGenerations: { claude: laneGenerations },
+    evidenceBatches: { claude: batch }
+  })
+  const canonical = companionTaskKernel?.getPackage?.()
+  const changed = Boolean(published && canonical?.packageRevision !== beforeRevision)
+  runtimeDiagnostics.record({
+    level: changed ? 'info' : 'debug',
+    scope: 'task-push',
+    event: 'claude-inventory-v7',
+    outcome: published ? changed ? 'accepted' : 'semantic-noop' : 'rejected',
+    durationMs: Date.now() - startedAt,
+    slowMs: 50,
     count: source.mutations.length,
-    cache: exact ? 'provider-direct' : 'none',
-    details: {
-      acceptedAt,
-      previousMembershipGeneration: currentMembership,
-      exact,
-      mutationCount: source.mutations.length
-    }
+    cache: 'provider-direct',
+    details: { providerGeneration, removedCount: removedKeys.length, packageRevision: canonical?.packageRevision || beforeRevision }
   })
   return changed
 }
@@ -13592,7 +13902,7 @@ function queueCompanionHostReconciliation(provider = '') {
             cursor: requestedProvider === 'cursor'
           }
         : current.providers
-      return preflightCompanionTaskPackage({ providers: requestedProviders }).then((draft) => {
+      return preflightCompanionTaskPackageV7({ providers: requestedProviders }).then((draft) => {
         if (!requestedProvider) return draft
         return {
           ...draft,
@@ -13614,15 +13924,17 @@ function queueCompanionHostReconciliation(provider = '') {
             providerId === requestedProvider
               ? draft.evidenceBatches[providerId]
               : {
-                  revision: 'companion-provider-evidence-batch-v2',
+                  revision: companionV7Revisions.providerEvidenceBatch,
                   provider: providerId,
-                  channels: Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
+                  channels: Object.fromEntries(companionEvidenceChannelsV7.map((channel) => [channel, {
                     mode: 'delta',
                     complete: false,
                     generation: Number(current.sourceLaneGenerations?.[providerId]?.[channel]) || 0,
                     removedKeys: []
                   }])),
                   nodes: [],
+                  interactions: [],
+                  interactionSets: [],
                   relations: [],
                   relationMode: 'delta',
                   relationsComplete: false,
@@ -14780,7 +15092,9 @@ function pushCodexActionRunnerSnapshot(message = '') {
       endedAt: run.endedAt,
       exitCode: run.exitCode,
       archivedAt: run.archivedAt,
-      logText: run.logText,
+      // Logs are cursor-hydrated through the dedicated log channel. Repeated
+      // state/catalog snapshots must stay bounded and never resend full output.
+      logText: '',
       logBytes: run.logBytes,
       logLines: run.logLines,
       message: run.message,
@@ -14987,6 +15301,36 @@ function installCodexActionRunnerIpc() {
   ipc.on(CODEX_ACTION_RUNNER_CHANNELS.snapshotRequest, (event) => {
     if (validCodexActionRunnerSender(event)) pushCodexActionRunnerSnapshot()
   })
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.logRequest, (event, payload) => {
+    if (!validCodexActionRunnerSender(event) || !codexActionRunnerAlive()) return
+    const requestEnvelope = normalizeHostChildEnvelopeV7(payload, 'action', CODEX_ACTION_RUNNER_CHANNELS.logRequest)
+    if (!requestEnvelope) return
+    const source = codexRecord(requestEnvelope.payload)
+    const runId = typeof source.runId === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(source.runId)
+      ? source.runId
+      : ''
+    const requestedCursor = Number.isSafeInteger(source.cursor) && source.cursor >= 0 ? source.cursor : 0
+    if (!runId) return
+    const run = codexActionRunMemorySnapshot().find((candidate) => candidate.runId === runId)
+    if (!run || requestedCursor === Number(run.cursor || 0)) return
+    const logPayload = {
+        version: 1,
+        runId,
+        cursor: Number(run.cursor || 0),
+        baseCursor: requestedCursor,
+        reset: true,
+        stream: 'system',
+        text: String(run.logText || ''),
+        receivedAt: Date.now()
+    }
+    const responseEnvelope = createHostChildEnvelopeV7('action', CODEX_ACTION_RUNNER_CHANNELS.log, logPayload, {
+      requestId: requestEnvelope.requestId,
+      payloadRevision: Number(run.cursor || 0),
+      logCursor: Number(run.cursor || 0)
+    })
+    if (!responseEnvelope) return
+    try { codexActionRunnerWindow.webContents.send(CODEX_ACTION_RUNNER_CHANNELS.log, responseEnvelope) } catch {}
+  })
   ipc.on(CODEX_ACTION_RUNNER_CHANNELS.hide, (event) => {
     if (!validCodexActionRunnerSender(event) || !codexActionRunnerAlive()) return
     codexActionRunnerDrag = null
@@ -15117,6 +15461,7 @@ window.eypcPlatform = {
     setState: writeState,
     getMqttArchive: readMqttArchive,
     setMqttArchive: writeMqttArchive,
+    mutateMqttArchive,
     getMqttStorageStatus,
     getMqttSecrets: readMqttSecrets,
     setMqttSecrets: writeMqttSecrets

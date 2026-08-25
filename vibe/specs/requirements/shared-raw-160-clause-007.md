@@ -5,6 +5,10 @@ status: active
 domain: companion-shared
 authority: user-stated
 parent_requirement: eypc-req-shared-raw-160
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-shared-raw-179-clause-001
+    scope: "Plan artifact 与 Plan interaction 分离，完成产物不再自动建立 waiting"
 ---
 
 # RAW-160#7 · companion-shared

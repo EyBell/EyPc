@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { nextTick, onMounted } from 'vue'
 import { Play, X } from '@lucide/vue'
 import type { FavoriteRunPrompt } from '../runtime/appRuntime'
+import DialogShell from './DialogShell.vue'
 
 const props = defineProps<{ prompt: FavoriteRunPrompt }>()
 const emit = defineEmits<{
@@ -10,33 +10,17 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
-onMounted(() => {
-  nextTick(() => document.querySelector<HTMLInputElement>('[data-role="favorite-run-prompt"] input')?.focus())
-})
-
-function trapFocus(event: KeyboardEvent) {
-  const panel = event.currentTarget as HTMLElement | null
-  const focusable = panel ? Array.from(panel.querySelectorAll<HTMLElement>('input, button:not([disabled])')) : []
-  if (!focusable.length) return
-  event.preventDefault()
-  const index = focusable.indexOf(document.activeElement as HTMLElement)
-  const next = event.shiftKey
-    ? (index <= 0 ? focusable.length - 1 : index - 1)
-    : (index < 0 || index >= focusable.length - 1 ? 0 : index + 1)
-  focusable[next]?.focus()
-}
 </script>
 
 <template>
-  <div class="modal-backdrop" @click.self="emit('cancel')">
-    <form
-      class="favorite-run-prompt confirm-layer"
+  <DialogShell
+      as="form"
+      panel-class="favorite-run-prompt confirm-layer"
       data-role="favorite-run-prompt"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="favorite-run-prompt-title"
-      @keydown.tab="trapFocus"
-      @submit.prevent="emit('submit')"
+      label-id="favorite-run-prompt-title"
+      initial-focus-selector="input"
+      @close="emit('cancel')"
+      @submit="emit('submit')"
     >
       <header class="favorite-run-prompt-header">
         <div>
@@ -64,6 +48,5 @@ function trapFocus(event: KeyboardEvent) {
         <button type="button" @click="emit('cancel')">取消</button>
         <button type="submit" :disabled="!props.prompt.preview"><Play :size="14" aria-hidden="true" />运行</button>
       </div>
-    </form>
-  </div>
+  </DialogShell>
 </template>

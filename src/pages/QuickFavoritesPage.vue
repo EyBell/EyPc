@@ -3,9 +3,9 @@ import { nextTick, watch } from 'vue'
 import { AlertTriangle, Copy, File, Files, Folder, LocateFixed, MoreHorizontal, Play, SquareArrowOutUpRight, X } from '@lucide/vue'
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 import { favoritePathIdentityKey } from '../domain/favorites'
-import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
+import type { QuickFavoritesRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
 
-const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean }>()
+const props = defineProps<{ snapshot: QuickFavoritesRuntimeSliceV7; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
   search: [value: string]
   focus: [id: string]
@@ -154,6 +154,7 @@ watch(() => [
         v-for="(item, index) in props.snapshot.favoriteItemRows"
         :key="item.id"
         class="favorite-row favorite-item-row quick-favorite-row"
+        data-context-menu-target
         role="row"
         tabindex="-1"
         :id="rowDomId(item.id)"

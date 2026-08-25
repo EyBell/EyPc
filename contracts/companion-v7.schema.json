@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eypc.local/contracts/companion-v7.schema.json",
+  "title": "EyPc Companion V7 Contracts",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["revisions", "evidenceChannels", "activity", "interaction", "planArtifact", "childEnvelope"],
+  "properties": {
+    "revisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskState",
+        "draft",
+        "providerEvidenceBatch",
+        "kernel",
+        "snapshot",
+        "interaction",
+        "interactionStore",
+        "planArtifact",
+        "rolloutEvidence",
+        "desktopRequestProjection",
+        "desktopShadow",
+        "childEnvelope"
+      ],
+      "properties": {
+        "taskState": { "const": "task-state-v12" },
+        "draft": { "const": "companion-task-evidence-draft-v7" },
+        "providerEvidenceBatch": { "const": "companion-provider-evidence-batch-v3" },
+        "kernel": { "const": "companion-task-kernel-v7" },
+        "snapshot": { "const": "companion-task-snapshot-v7" },
+        "interaction": { "const": "companion-interaction-evidence-v1" },
+        "interactionStore": { "const": "companion-interaction-tombstones-v1" },
+        "planArtifact": { "const": "companion-plan-artifact-v1" },
+        "rolloutEvidence": { "const": "codex-rollout-evidence-v2" },
+        "desktopRequestProjection": { "const": "codex-desktop-request-projection-v2" },
+        "desktopShadow": { "const": "codex-desktop-shadow-v2" },
+        "childEnvelope": { "const": "child-envelope-v7" }
+      }
+    },
+    "evidenceChannels": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "membership" },
+        { "const": "activity" },
+        { "const": "interaction" },
+        { "const": "unread" },
+        { "const": "planArtifact" },
+        { "const": "metadata" },
+        { "const": "topology" }
+      ],
+      "items": false,
+      "minItems": 7,
+      "maxItems": 7
+    },
+    "activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kinds", "authorities"],
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "turn-running" },
+            { "const": "turn-completed" },
+            { "const": "turn-interrupted" },
+            { "const": "turn-failed" },
+            { "const": "unknown" }
+          ],
+          "items": false,
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "authorities": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "goal-verifying" },
+            { "const": "goal" },
+            { "const": "live-turn" },
+            { "const": "terminal" },
+            { "const": "inventory" },
+            { "const": "unknown" }
+          ],
+          "items": false,
+          "minItems": 6,
+          "maxItems": 6
+        }
+      }
+    },
+    "interaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kinds", "states", "authorities"],
+      "properties": {
+        "kinds": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "user-input" },
+            { "const": "approval" },
+            { "const": "plan-choice" },
+            { "const": "plan-implementation" }
+          ],
+          "items": false,
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "states": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "opened" },
+            { "const": "resolved" },
+            { "const": "cancelled" },
+            { "const": "execution-started" }
+          ],
+          "items": false,
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "authorities": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "provider-live" },
+            { "const": "provider-snapshot" },
+            { "const": "host-command" },
+            { "const": "rollout" }
+          ],
+          "items": false,
+          "minItems": 4,
+          "maxItems": 4
+        }
+      }
+    },
+    "planArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["states", "reasons"],
+      "properties": {
+        "states": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "unknown" },
+            { "const": "available" },
+            { "const": "executing" },
+            { "const": "consumed" },
+            { "const": "cancelled" },
+            { "const": "removed" }
+          ],
+          "items": false,
+          "minItems": 6,
+          "maxItems": 6
+        },
+        "reasons": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "" },
+            { "const": "cancel" },
+            { "const": "execution-start" },
+            { "const": "archive" },
+            { "const": "removal" }
+          ],
+          "items": false,
+          "minItems": 5,
+          "maxItems": 5
+        }
+      }
+    },
+    "childEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surfaces", "ackStages"],
+      "properties": {
+        "surfaces": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "main" },
+            { "const": "float" },
+            { "const": "action" },
+            { "const": "quick-favorites" }
+          ],
+          "items": false,
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "ackStages": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "accepted" },
+            { "const": "dispatched" },
+            { "const": "native-confirmed" },
+            { "const": "read-confirmed" },
+            { "const": "applied" },
+            { "const": "rejected" }
+          ],
+          "items": false,
+          "minItems": 6,
+          "maxItems": 6
+        }
+      }
+    }
+  }
+}

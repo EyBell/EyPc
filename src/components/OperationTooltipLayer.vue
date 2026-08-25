@@ -255,6 +255,10 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') hideTooltip()
 }
 
+defineExpose({
+  handleSurfaceKeydown: onKeydown
+})
+
 watch(() => props.suspended, (suspended) => {
   if (suspended) hideTooltip()
 })
@@ -298,7 +302,6 @@ onMounted(() => {
   document.addEventListener('focusout', onFocusOut)
   window.addEventListener('resize', onViewportChange)
   window.addEventListener('scroll', onViewportChange, true)
-  window.addEventListener('keydown', onKeydown, true)
   window.addEventListener('blur', onWindowBlur)
 })
 
@@ -317,7 +320,6 @@ onUnmounted(() => {
   document.removeEventListener('focusout', onFocusOut)
   window.removeEventListener('resize', onViewportChange)
   window.removeEventListener('scroll', onViewportChange, true)
-  window.removeEventListener('keydown', onKeydown, true)
   window.removeEventListener('blur', onWindowBlur)
 })
 </script>

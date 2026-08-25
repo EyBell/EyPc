@@ -5,6 +5,10 @@ status: active
 domain: companion-shared
 authority: user-stated
 parent_requirement: eypc-req-shared-raw-160
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-shared-raw-179-clause-001
+    scope: "动态窗口外只有未决 interaction 进入待输入；artifact-only 进入待继续"
 ---
 
 # RAW-160#10 · companion-shared
