@@ -120,9 +120,9 @@ function packageFor(task: CompanionCanonicalTaskV4 | null, revision: number): Co
     focusedKey: '',
     sourceGenerations: { codex: revision, claude: 0, cursor: 0 },
     sourceLaneGenerations: {
-      codex: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
-      claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
-      cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
+      codex: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision },
+      claude: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
+      cursor: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 }
     },
     providerHealth: {
       codex: { status: 'ready', generation: revision, errorCode: '' },

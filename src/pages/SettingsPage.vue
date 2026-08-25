@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Ban, Braces, Keyboard, MoreHorizontal, RotateCcw, X } from '@lucide/vue'
 import FeatureHelpDialog from '../components/FeatureHelpDialog.vue'
 import type { AppSettings, AppTabId, FeatureConfig, KeybindingOverride, MqttStorageStatus, RuntimeDiagnosticsLevel, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
 import { getFeatureHelp, hasFeatureHelp, type FeatureHelpDoc } from '../help/guides'
-import type { RuntimeActionDefinition } from '../runtime/action/types'
 import type { WindowActivationDiagnostic, WindowOperationDebugRecord } from '../runtime/appRuntime'
 import type { RuntimeDiagnosticsSnapshotV3 } from '../platform/eypcPlatform'
 import { featureDefinitionFor } from '../runtime/feature/featureRegistry'
@@ -18,7 +17,8 @@ import {
   parseWhenExpression,
   previewKeybindingResolution
 } from '../runtime/keybinding/keybindingRuntime'
-import type { KeybindingContext, KeybindingDefinition, KeybindingLayerId, ShortcutCommandRow } from '../runtime/keybinding/keybindingRuntime'
+import type { KeybindingContext, KeybindingLayerId, ShortcutCommandRow } from '../runtime/keybinding/keybindingRuntime'
+import { createKeybindingIndexV7 } from '../runtime/keybinding/keybindingIndex'
 import { blockHandledShortcutEvent } from '../runtime/keyboardEvent'
 import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutFromEvent as shortcutFromKeyboardEvent } from '../domain/shortcuts'
 
@@ -37,8 +37,6 @@ interface KeybindingUpdatePayload {
 }
 
 const props = defineProps<{
-  actions: RuntimeActionDefinition[]
-  defaultKeybindings: KeybindingDefinition[]
   overrides: KeybindingOverride[]
   shortcutProfiles?: ShortcutProfileMap
   featureConfigs: FeatureConfig[]
@@ -122,18 +120,10 @@ const featureHelpDoc = ref<FeatureHelpDoc | null>(null)
 const contextPanel = ref<'detail' | 'actions' | null>(null)
 let contextPanelTrigger: HTMLElement | null = null
 
-const actionMeta = computed(() => new Map(props.actions.map((action) => [action.id, action])))
 const shortcutDraftDirty = computed(() => JSON.stringify(draftShortcutProfiles.value) !== JSON.stringify(props.shortcutProfiles || props.settings.shortcutProfiles))
-const effectiveBindings = computed(() => buildEffectiveKeybindings(draftShortcutProfiles.value, draftFeatureConfigs.value))
-const commandRows = computed(() => buildShortcutCommandRows(effectiveBindings.value).map((row) => {
-  const action = actionMeta.value.get(row.commandId)
-  return {
-    ...row,
-    title: action?.title || row.title,
-    group: action?.group || row.group,
-    risk: action?.risk || row.risk
-  } satisfies ShortcutCommandRow
-}))
+const effectiveIndex = computed(() => createKeybindingIndexV7(1, buildEffectiveKeybindings(draftShortcutProfiles.value, draftFeatureConfigs.value)))
+const effectiveBindings = computed(() => effectiveIndex.value.bindings)
+const commandRows = computed(() => [...effectiveIndex.value.rows()])
 
 const layerRows = computed(() => (Object.entries(LAYER_PRIORITY) as Array<[KeybindingLayerId, number]>)
   .sort((a, b) => b[1] - a[1])
@@ -179,7 +169,7 @@ const primaryShortcutRows = computed(() => filteredCommandRows.value.filter((row
 const maintenanceShortcutRows = computed(() => filteredCommandRows.value.filter(isMaintenanceShortcutRow))
 const filteredRows = computed(() => primaryShortcutRows.value)
 
-const previewResult = computed(() => previewKeybindingResolution(effectiveBindings.value, previewShortcut.value, activePreviewContext.value.context))
+const previewResult = computed(() => previewKeybindingResolution([...effectiveBindings.value], previewShortcut.value, activePreviewContext.value.context))
 const maintenanceSections = computed<Array<{ id: MaintenanceSectionId; label: string; meta: string }>>(() => [
   { id: 'features', label: '功能开关', meta: `${featureRows.value.filter((row) => row.enabled).length}/${featureRows.value.length} 启用` },
   {
@@ -327,20 +317,6 @@ watch(() => props.initialMaintenanceSection, (section) => {
 
 watch([settingsTabId, maintenanceSectionId], ([tab, section]) => {
   emit('updateSettingsPath', tab, section)
-})
-
-onMounted(() => {
-  window.addEventListener('keydown', handleModalEscape, true)
-  window.addEventListener('keydown', handleSettingsKeydown, true)
-  window.addEventListener('keyup', handleSettingsKeyup, true)
-  window.addEventListener('blur', clearSettingsShortcutHints)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleModalEscape, true)
-  window.removeEventListener('keydown', handleSettingsKeydown, true)
-  window.removeEventListener('keyup', handleSettingsKeyup, true)
-  window.removeEventListener('blur', clearSettingsShortcutHints)
 })
 
 function matchesShortcutScope(row: ShortcutCommandRow, id: ShortcutScopeId): boolean {
@@ -531,12 +507,12 @@ function commandTooltip(row: ShortcutCommandRow) {
 }
 
 function commandTooltipLines(row: ShortcutCommandRow) {
-  const action = actionMeta.value.get(row.commandId)
+  const description = row.bindings.find((binding) => binding.description)?.description
   return [
     row.title,
     row.commandId,
     `group: ${row.group}`,
-    action?.description ? `description: ${action.description}` : '',
+    description ? `description: ${description}` : '',
     `when: ${row.when || 'always'}`,
     `default: ${formatShortcutList(row.defaultShortcutIds) || 'none'}`
   ].filter(Boolean)
@@ -661,6 +637,11 @@ function handleModalEscape(event: KeyboardEvent) {
     if (recordingRow.value && recordValidation.value.errors.length === 0) saveRecord()
     else if (whenRow.value && whenValidation.value.errors.length === 0) saveWhen()
   }
+}
+
+function handleSettingsSurfaceKeydown(event: KeyboardEvent) {
+  handleModalEscape(event)
+  handleSettingsKeydown(event)
 }
 
 function validateCandidate(row: ShortcutCommandRow | null, shortcutIds: string[], when: string) {
@@ -914,7 +895,9 @@ function isRecordableShortcutId(shortcutId: string) {
   <section
     class="settings-page"
     :style="{ '--shortcut-tooltip-x': `${commandTooltipX}px`, '--shortcut-tooltip-y': `${commandTooltipY}px` }"
-    @keydown.capture="handleSettingsKeydown"
+    @keydown.capture="handleSettingsSurfaceKeydown"
+    @keyup.capture="handleSettingsKeyup"
+    @blur.capture="clearSettingsShortcutHints"
   >
     <div class="settings-shell-header">
       <div class="settings-sub-tabs" role="tablist" aria-label="设置分类">
@@ -967,6 +950,7 @@ function isRecordableShortcutId(shortcutId: string) {
           v-for="row in primaryShortcutRows"
           :key="row.commandId"
           class="shortcut-compact-row"
+          data-context-menu-target
           role="row"
           tabindex="0"
           :data-command-id="row.commandId"
@@ -1216,6 +1200,7 @@ function isRecordableShortcutId(shortcutId: string) {
               v-for="row in maintenanceShortcutRows"
               :key="`maintenance-${row.commandId}`"
               class="shortcut-compact-row"
+              data-context-menu-target
               role="row"
               tabindex="0"
               :data-command-id="row.commandId"

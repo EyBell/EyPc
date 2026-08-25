@@ -203,10 +203,13 @@ for (const marker of ['companion-task-actions-v3', 'archiveInFlight', 'executeIn
 }
 const companionTaskKernelSource = preloadModuleSources.get('companion/task-kernel.cjs') || ''
 const companionProviderRegistrySource = preloadModuleSources.get('companion/provider-registry.cjs') || ''
-const companionTaskContractSource = `${companionProviderRegistrySource}\n${companionTaskKernelSource}`
+const companionGeneratedContractSource = preloadModuleSources.get('companion/contracts-v7.cjs') || ''
+const companionTaskContractSource = `${companionGeneratedContractSource}\n${companionProviderRegistrySource}\n${companionTaskKernelSource}`
 for (const marker of [
-  'companion-task-kernel-v6',
-  'companion-task-snapshot-v6',
+  'companion-task-kernel-v7',
+  'companion-task-snapshot-v7',
+  'companion-provider-evidence-batch-v3',
+  'companion-interaction-evidence-v1',
   'companion-task-command-v1',
   'companion-task-subscribe-v1',
   'companion-task-ack-v2',
@@ -215,7 +218,7 @@ for (const marker of [
   'UNKNOWN_GRACE_MS',
   'planReady',
   'pausedKeys',
-  'reduceClaudeTaskEvidenceV4',
+  'reduceActivityCandidatesV7',
   'nextVisibilityTransitionAt',
   'getLatest: () => currentPackage',
   'subscribe(afterRevision',

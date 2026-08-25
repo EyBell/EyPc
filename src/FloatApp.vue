@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
+  Archive,
   ArrowLeft,
+  Check,
   ChevronDown,
   ChevronRight,
   CirclePlay,
   CircleHelp,
   CircleStop,
   Clipboard,
+  Ellipsis,
   Eye,
   EyeOff,
   Folder,
   FolderOpen,
+  LoaderCircle,
   MessageSquareText,
+  Pin,
+  Plus,
   Search,
   ShieldCheck,
   Trash2,
@@ -48,12 +54,13 @@ import {
 } from './domain/codexAppearance'
 import { buildCodexCompactPresentation, codexBadgeText } from './domain/codexPresentation'
 import { emptyCompanionTaskPackage, projectCompanionTaskSnapshot } from './domain/companionTaskPackage'
-import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
-import type { QuickJumpTarget } from './domain/quickJump'
-import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'
+import { moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
+import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, type QuickJumpDomTargetV7 } from './ui/quickJumpRegistry'
+import { dispatchKeyboardContextMenuV7 } from './ui/contextMenuKeyboard'
 import { shortcutFromEvent } from './domain/shortcuts'
 import { codexModelReasonLabel, resolveCodexNewThreadModel, resolveManualCodexModel } from './domain/codexNewThread'
-import { evaluateWhenExpression, LAYER_PRIORITY, type KeybindingContext, type KeybindingLayerId } from './runtime/keybinding/keybindingRuntime'
+import { buildCommandCatalogV7, evaluateWhenExpression, LAYER_PRIORITY, type KeybindingContext, type KeybindingLayerId } from './runtime/keybinding/keybindingRuntime'
+import type { CommandExecutionOwner } from './runtime/command/types'
 import type {
   CodexModelCatalogSnapshotV1,
   CodexTaskTab,
@@ -124,7 +131,7 @@ type ActionHint = {
   maxWidth: number
   sticky?: boolean
 } | null
-type QuickJumpDomTarget = QuickJumpTarget & { element: HTMLElement }
+type QuickJumpDomTarget = QuickJumpDomTargetV7
 
 const COMPOSER_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const COMPOSER_IMAGE_MAX_BYTES = 20 * 1024 * 1024
@@ -133,6 +140,7 @@ const FLOAT_COLLAPSE_DELAY_MS = 220
 const snapshot = ref<CodexFloatSnapshotV1 | null>(null)
 const floatRuntimeIdentity = ref<RuntimeIdentityHandshakeV1 | null>(null)
 const rootElement = ref<HTMLElement | null>(null)
+const quickJumpRegistry = createQuickJumpRegistryV7({ surfaceId: 'float', root: () => rootElement.value })
 const expanded = ref(false)
 const floatState = ref<CodexFloatWindowState>({ expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null })
 const searchText = ref('')
@@ -1454,11 +1462,6 @@ function requestPlanExecute(task: CodexTaskCard) {
   action('codex.task.executePlan', { key: task.key, revisionAt: task.revisionAt })
 }
 
-function taskSecondaryActionLabel(task: CodexTaskCard) {
-  if (task.planReady) return task.planPaused ? '恢' : '暂'
-  return task.isHidden ? '显' : '隐'
-}
-
 function taskSecondaryActionHint(task: CodexTaskCard) {
   if (task.planReady) return planActionBlockedReason(task, task.planPaused ? '恢复' : '暂停')
   return task.isHidden ? '恢复会话显示' : '移到 Companion 已隐藏区'
@@ -2136,56 +2139,10 @@ function taskActiveFlagsLabel(task: CodexTaskCard) {
   return flags.map((flag) => flag === 'waitingOnApproval' ? '等待审批' : '等待用户输入').join('、')
 }
 
-function quickJumpLabel(element: HTMLElement) {
-  return element.getAttribute('data-quick-jump-label')
-    || element.getAttribute('aria-label')
-    || (element.textContent || '').replace(/\s+/g, ' ').trim()
-    || '操作'
-}
-
-function quickJumpStyleHidden(style: CSSStyleDeclaration) {
-  return style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0' || style.pointerEvents === 'none'
-}
-
-function quickJumpClippingAncestor(element: HTMLElement) {
-  const style = window.getComputedStyle(element)
-  return ['hidden', 'clip', 'scroll', 'auto'].some((value) => style.overflow === value || style.overflowX === value || style.overflowY === value)
-}
-
-function quickJumpVisibleRect(element: HTMLElement) {
-  const source = element.getBoundingClientRect()
-  let left = Math.max(0, source.left)
-  let top = Math.max(0, source.top)
-  let right = Math.min(window.innerWidth, source.right)
-  let bottom = Math.min(window.innerHeight, source.bottom)
-  for (let current = element.parentElement; current; current = current.parentElement) {
-    const style = window.getComputedStyle(current)
-    if (quickJumpStyleHidden(style)) return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }
-    if (!quickJumpClippingAncestor(current)) continue
-    const rect = current.getBoundingClientRect()
-    left = Math.max(left, rect.left)
-    top = Math.max(top, rect.top)
-    right = Math.min(right, rect.right)
-    bottom = Math.min(bottom, rect.bottom)
-  }
-  return { left, top, right, bottom, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }
-}
-
-function quickJumpHitTargetVisible(element: HTMLElement, visibleRect: ReturnType<typeof quickJumpVisibleRect>) {
-  if (typeof document.elementsFromPoint !== 'function') return true
-  return quickJumpHitTestPoints(visibleRect).some((point) => quickJumpHitStackContainsTarget(element, document.elementsFromPoint(point.x, point.y)))
-}
-
 function quickJumpTargetVisible(element: HTMLElement) {
-  if (element.matches(':disabled')) return false
-  if (element.getAttribute('aria-disabled') === 'true' && !element.matches('.action-pin')) return false
-  const style = window.getComputedStyle(element)
-  if (quickJumpStyleHidden(style)) return false
-  const visibleRect = quickJumpVisibleRect(element)
-  if (visibleRect.width < 6 || visibleRect.height < 6) return false
   if (composer.value || shiftPreview.value) return false
   if (panel.value && !element.closest('.float-side-panel')) return false
-  return quickJumpHitTargetVisible(element, visibleRect)
+  return defaultQuickJumpTargetVisibleV7(element, { allowAriaDisabled: element.matches('.action-pin') })
 }
 
 function quickJumpTaskKeyFor(element: HTMLElement) {
@@ -2194,16 +2151,10 @@ function quickJumpTaskKeyFor(element: HTMLElement) {
 }
 
 function collectQuickJumpTargets(backward = false, mode: 'all' | 'tasks' = 'all'): QuickJumpDomTarget[] {
-  const elements = Array.from((rootElement.value || document.body).querySelectorAll<HTMLElement>('[data-quick-jump-target]'))
-    .filter((element) => (mode === 'tasks' ? Boolean(quickJumpTaskKeyFor(element)) : true))
-    .filter(quickJumpTargetVisible)
-  const targets = elements.map((element, index) => ({
-    id: element.dataset.quickJumpId || `float:${index}:${quickJumpLabel(element)}`,
-    label: quickJumpLabel(element),
-    searchText: element.dataset.quickJumpSearch || '',
-    element
-  }))
-  return assignQuickJumpMarkers(backward ? targets.reverse() : targets)
+  return quickJumpRegistry.collect({
+    backward,
+    accept: (element) => (mode === 'tasks' ? Boolean(quickJumpTaskKeyFor(element)) : true) && quickJumpTargetVisible(element)
+  })
 }
 
 function syncQuickJumpActive(scroll = false) {
@@ -2325,6 +2276,15 @@ const fallbackCommands: Record<string, string> = {
   F: 'quickJump.openForward',
   'Shift+F': 'quickJump.openBackward',
   Escape: 'codex.layer.cancel'
+}
+
+const floatCommandCatalog = buildCommandCatalogV7()
+
+function floatExecutionOwner(commandId: string): CommandExecutionOwner {
+  const published = snapshot.value?.keybindings?.find((binding) => binding.actionId === commandId)?.executionOwner
+  if (published) return published
+  const descriptor = floatCommandCatalog.get(commandId)
+  return descriptor ? floatCommandCatalog.executionOwnerFor(commandId, 'float') : 'runtime-action'
 }
 
 function floatInputRole(target: HTMLElement, editing: boolean): KeybindingContext['activeInputRole'] {
@@ -2519,16 +2479,21 @@ function onRootKeydown(event: KeyboardEvent) {
   if (!command) return
   event.preventDefault()
   event.stopPropagation()
+  const executionOwner = floatExecutionOwner(command)
+  if (executionOwner !== 'float-local') {
+    if (executionOwner === 'runtime-action') {
+      action(command, command === 'codex.float.toggle' ? { source: 'in-app-shortcut' } : { source: 'float-shortcut' })
+      if (command === 'codex.tab.prev' || command === 'codex.tab.next') focusSelectedComposerTab()
+    } else {
+      liveMessage.value = `命令 ${command} 不属于 Float 执行域`
+    }
+    return
+  }
   const item = focusedItem.value
   if (command === 'codex.float.activate') {
     requestExpansion(true)
     focusCurrent()
   }
-  else if (command === 'codex.tab.prev' || command === 'codex.tab.next') {
-    action(command)
-    focusSelectedComposerTab()
-  }
-  else if (command === 'codex.float.toggle') action('codex.float.toggle', { source: 'in-app-shortcut' })
   else if (command === 'quickJump.openForward' || command === 'codex.quickJump.openForward') openQuickJump(false)
   else if (command === 'quickJump.openBackward') openQuickJump(true)
   else if (command === 'codex.quickJump.openTasks') openQuickJump(false, 'tasks')
@@ -2557,7 +2522,6 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.quick.activate') enterQuickMode()
   else if (command.startsWith('codex.quick.open.') || command.startsWith('codex.task.openIndex.')) openQuickIndex(Number(command.split('.').at(-1)))
   else if (command.startsWith('codex.drawer.select.')) executeDrawerAction(Number(command.split('.').at(-1)) - 1)
-  else if (command.startsWith('codex.action.run.')) action(command)
   else if (command === 'codex.layer.cancel') {
     cancelTopLayer()
   }
@@ -2604,6 +2568,7 @@ function handleWindowLevelKeydown(event: KeyboardEvent) {
 
 function onWindowKeydown(event: KeyboardEvent) {
   if (event.isComposing) return
+  if (dispatchKeyboardContextMenuV7(event, rootElement.value || document)) return
   if (handleWindowLevelKeydown(event)) return
   // 宿主刚显示子窗口、DOM 焦点仍停在 document.body 时，事件不会冒泡到根元素，
   // 根派发器整个不会执行。这里补一次派发，让"焦点没落进列表"不再等于"快捷键全部失灵"。
@@ -3388,6 +3353,7 @@ onUnmounted(() => {
               :data-pin-source="row.project.pinSource"
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
+              data-context-menu-target
               data-quick-jump-target
               :data-quick-jump-label="row.hiddenProject ? `聚焦已隐藏项目 ${row.project.name}` : `${isProjectCollapsed(row.project) ? '展开' : '折叠'}项目 ${row.project.name}`"
               @focus="focusedKey = row.key"
@@ -3400,10 +3366,10 @@ onUnmounted(() => {
                 <span><strong>{{ row.project.name }}</strong><i class="project-provider-marker" :class="row.marker.className">{{ row.marker.label }}</i><small v-if="row.hiddenProject">项目分组已隐藏 · 任务仍在其他页签</small><small v-else>{{ row.project.tasks.length ? `${row.project.tasks.length} 个最近任务` : `最近 ${settings?.timeWindowDays || 30} 天无会话` }}</small></span>
               </button>
               <div class="project-inline-actions" role="toolbar" :aria-label="`${row.project.name} 项目操作`">
-                <button type="button" class="inline-character-button action-pin" :data-pin-source="pinSourceValue(row)" :aria-disabled="pinIsReadOnly(row)" :aria-pressed="Boolean(row.project.pinSource)" :aria-label="`${row.project.name}，${pinSourceHint(row)}`" data-quick-jump-target :data-quick-jump-label="pinSourceHint(row)" @pointerenter="queueActionHint($event, pinSourceHint(row))" @pointerleave="clearActionHint" @focus="queueActionHint($event, pinSourceHint(row))" @blur="clearActionHint" @click.stop="focusedKey = row.key; togglePin(row)">顶</button>
-                <button type="button" class="inline-character-button action-remove" :class="{ confirming: projectRemoveConfirming(row.project) }" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly || !row.project.actionAlias || !conversations?.sourceFingerprint" :title="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : '从 Codex 侧栏移除；需先完全退出 Codex'" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? `确认从 Codex 侧栏移除 ${row.project.name}` : `从 Codex 侧栏移除 ${row.project.name}`" data-confirm-slot data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : `从 Codex 移除 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @blur="clearActionHint" @click.stop="focusedKey = row.key; requestProjectRemove(row.project, $event)">{{ projectRemoveConfirming(row.project) ? '确' : '移' }}</button>
-                <button type="button" class="inline-character-button action-hide" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly" :aria-pressed="isProjectHidden(row.project)" :aria-label="isProjectHidden(row.project) ? `恢复项目分组 ${row.project.name}` : `隐藏项目分组 ${row.project.name}`" data-quick-jump-target :data-quick-jump-label="isProjectHidden(row.project) ? `恢复项目 ${row.project.name}` : `隐藏项目 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @blur="clearActionHint" @click.stop="focusedKey = row.key; toggleProjectHidden(row.project)">{{ isProjectHidden(row.project) ? '显' : '隐' }}</button>
-                <button type="button" class="inline-character-button action-create" :disabled="row.marker.claudeOnly || !row.project.actionAlias" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : row.project.actionAlias ? `在 ${row.project.name} 新建会话` : '项目动作已失效'" data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : `在 ${row.project.name} 新建会话`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @blur="clearActionHint" @click.stop="focusedKey = row.key; openComposer(row.project)">+</button>
+                <button type="button" class="inline-icon-button action-pin" :data-pin-source="pinSourceValue(row)" :aria-disabled="pinIsReadOnly(row)" :aria-pressed="Boolean(row.project.pinSource)" :aria-label="`${row.project.name}，${pinSourceHint(row)}`" data-quick-jump-target :data-quick-jump-label="pinSourceHint(row)" @pointerenter="queueActionHint($event, pinSourceHint(row))" @pointerleave="clearActionHint" @focus="queueActionHint($event, pinSourceHint(row))" @blur="clearActionHint" @click.stop="focusedKey = row.key; togglePin(row)"><Pin :size="13" aria-hidden="true" /></button>
+                <button type="button" class="inline-icon-button action-remove" :class="{ confirming: projectRemoveConfirming(row.project) }" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly || !row.project.actionAlias || !conversations?.sourceFingerprint" :title="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : '从 Codex 侧栏移除；需先完全退出 Codex'" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? `确认从 Codex 侧栏移除 ${row.project.name}` : `从 Codex 侧栏移除 ${row.project.name}`" data-confirm-slot data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : `从 Codex 移除 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @blur="clearActionHint" @click.stop="focusedKey = row.key; requestProjectRemove(row.project, $event)"><Check v-if="projectRemoveConfirming(row.project)" :size="13" aria-hidden="true" /><Trash2 v-else :size="13" aria-hidden="true" /></button>
+                <button type="button" class="inline-icon-button action-hide" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly" :aria-pressed="isProjectHidden(row.project)" :aria-label="isProjectHidden(row.project) ? `恢复项目分组 ${row.project.name}` : `隐藏项目分组 ${row.project.name}`" data-quick-jump-target :data-quick-jump-label="isProjectHidden(row.project) ? `恢复项目 ${row.project.name}` : `隐藏项目 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @blur="clearActionHint" @click.stop="focusedKey = row.key; toggleProjectHidden(row.project)"><Eye v-if="isProjectHidden(row.project)" :size="13" aria-hidden="true" /><EyeOff v-else :size="13" aria-hidden="true" /></button>
+                <button type="button" class="inline-icon-button action-create" :disabled="row.marker.claudeOnly || !row.project.actionAlias" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : row.project.actionAlias ? `在 ${row.project.name} 新建会话` : '项目动作已失效'" data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : `在 ${row.project.name} 新建会话`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @blur="clearActionHint" @click.stop="focusedKey = row.key; openComposer(row.project)"><Plus :size="14" aria-hidden="true" /></button>
               </div>
             </div>
 
@@ -3417,6 +3383,7 @@ onUnmounted(() => {
               :data-pin-source="row.task.pinSource"
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
+              data-context-menu-target
               data-quick-jump-target
               :data-quick-jump-label="`聚焦任务 ${taskDisplayLabel(row.task)}`"
               @focus="focusedKey = row.key"
@@ -3470,7 +3437,7 @@ onUnmounted(() => {
                 <div class="task-inline-actions" role="toolbar" :aria-label="`${taskDisplayLabel(row.task)} 会话操作`">
                 <button
                   type="button"
-                  class="inline-character-button action-pin"
+                  class="inline-icon-button action-pin"
                     :data-pin-source="pinSourceValue(row)"
                     :aria-disabled="pinIsReadOnly(row)"
                     :aria-pressed="Boolean(row.task.pinSource)"
@@ -3482,10 +3449,10 @@ onUnmounted(() => {
                   @focus="queueActionHint($event, pinSourceHint(row))"
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; togglePin(row)"
-                >顶</button>
+                ><Pin :size="13" aria-hidden="true" /></button>
                 <button
                   type="button"
-                  class="inline-character-button action-hide"
+                  class="inline-icon-button action-hide"
                     :aria-label="`${taskSecondaryActionHint(row.task)} ${taskDisplayLabel(row.task)}`"
                     data-quick-jump-target
                     :data-quick-jump-label="`${taskSecondaryActionHint(row.task)} ${taskDisplayLabel(row.task)}`"
@@ -3496,11 +3463,14 @@ onUnmounted(() => {
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; runTaskSecondaryAction(row.task)"
                 >
-                    {{ taskSecondaryActionLabel(row.task) }}
+                    <CirclePlay v-if="row.task.planReady && row.task.planPaused" :size="13" aria-hidden="true" />
+                    <CircleStop v-else-if="row.task.planReady" :size="13" aria-hidden="true" />
+                    <Eye v-else-if="row.task.isHidden" :size="13" aria-hidden="true" />
+                    <EyeOff v-else :size="13" aria-hidden="true" />
                   </button>
                 <button
                   type="button"
-                  class="inline-character-button action-archive"
+                  class="inline-icon-button action-archive"
                     :class="{ confirming: taskArchiveConfirming(row.task), archiving: taskArchiving(row.task) }"
                     :aria-label="taskArchiving(row.task) ? `正在归档 ${taskDisplayLabel(row.task)}` : taskArchiveConfirming(row.task) ? `确认归档 ${taskDisplayLabel(row.task)}` : `归档 ${taskDisplayLabel(row.task)}`"
                     data-confirm-slot
@@ -3514,11 +3484,13 @@ onUnmounted(() => {
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; requestTaskArchive(row.task, $event)"
                 >
-                    {{ taskArchiving(row.task) ? '中' : taskArchiveConfirming(row.task) ? '确' : '归' }}
+                    <LoaderCircle v-if="taskArchiving(row.task)" :size="13" aria-hidden="true" />
+                    <Check v-else-if="taskArchiveConfirming(row.task)" :size="13" aria-hidden="true" />
+                    <Archive v-else :size="13" aria-hidden="true" />
                   </button>
                 <button
                   type="button"
-                  class="inline-character-button action-create"
+                  class="inline-icon-button action-create"
                     :class="{ confirming: row.task.planReady && planExecuteConfirming(row.task) }"
                     :aria-label="row.task.planReady ? (planExecuteConfirming(row.task) ? `确认执行 ${taskDisplayLabel(row.task)} 的原 Plan` : `执行 ${taskDisplayLabel(row.task)} 的原 Plan`) : taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
                     :title="row.task.planReady ? planActionBlockedReason(row.task, '执行') : taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
@@ -3530,7 +3502,7 @@ onUnmounted(() => {
                   @focus="queueActionHint($event, row.task.planReady ? (planExecuteConfirming(row.task) ? '再次点击确认执行原 Plan' : planActionBlockedReason(row.task, '执行')) : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; row.task.planReady ? requestPlanExecute(row.task) : taskProject(row.task) && openComposer(taskProject(row.task)!)"
-                >{{ row.task.planReady ? (planExecuteConfirming(row.task) ? '确' : '执') : '+' }}</button>
+                ><Check v-if="row.task.planReady && planExecuteConfirming(row.task)" :size="13" aria-hidden="true" /><CirclePlay v-else-if="row.task.planReady" :size="13" aria-hidden="true" /><Plus v-else :size="14" aria-hidden="true" /></button>
               </div>
             </div>
             </div>
@@ -3554,9 +3526,9 @@ onUnmounted(() => {
 
           <div v-if="showBatchToolbar" class="float-batch-toolbar" :class="batchPlacement" role="toolbar" :aria-label="`已选择 ${selectedTasks.length} 个任务的批量操作`">
             <strong>已选 {{ selectedTasks.length }}</strong>
-            <button type="button" class="danger" :class="{ confirming: pendingConfirm?.id?.startsWith('archive:') }" aria-label="归档当前多选任务；仅归档通过真实状态核验的任务" data-confirm-slot data-quick-jump-target @click.stop="requestTaskArchive(undefined, $event)"><span aria-hidden="true">{{ pendingConfirm?.id?.startsWith('archive:') ? '确' : '归' }}</span></button>
-            <button type="button" aria-label="打开当前多选的完整操作；快捷键 Ctrl+右箭头" data-quick-jump-target @click.stop="openBatchDrawer"><span aria-hidden="true">操</span></button>
-            <button type="button" aria-label="清空当前多选" data-quick-jump-target @click.stop="clearSelection"><span aria-hidden="true">清</span></button>
+            <button type="button" class="danger" :class="{ confirming: pendingConfirm?.id?.startsWith('archive:') }" aria-label="归档当前多选任务；仅归档通过真实状态核验的任务" data-confirm-slot data-quick-jump-target @click.stop="requestTaskArchive(undefined, $event)"><Check v-if="pendingConfirm?.id?.startsWith('archive:')" :size="15" aria-hidden="true" /><Archive v-else :size="15" aria-hidden="true" /></button>
+            <button type="button" aria-label="打开当前多选的完整操作；快捷键 Ctrl+右箭头" data-quick-jump-target @click.stop="openBatchDrawer"><Ellipsis :size="16" aria-hidden="true" /></button>
+            <button type="button" aria-label="清空当前多选" data-quick-jump-target @click.stop="clearSelection"><X :size="15" aria-hidden="true" /></button>
           </div>
         </div>
 

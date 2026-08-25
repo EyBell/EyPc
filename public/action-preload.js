@@ -1,8 +1,14 @@
 const { ipcRenderer } = require('electron')
 
+let runtimeIdentityArtifact = null
+let childEnvelopeContractsV7 = null
+try { runtimeIdentityArtifact = require('./runtime-identity.cjs') } catch {}
+try { childEnvelopeContractsV7 = require('./companion/contracts-v7.cjs') } catch {}
+
 const CHANNELS = {
   snapshot: 'eypc-action-runner:snapshot',
   log: 'eypc-action-runner:log',
+  logRequest: 'eypc-action-runner:log-request',
   action: 'eypc-action-runner:action',
   snapshotRequest: 'eypc-action-runner:snapshot-request',
   hide: 'eypc-action-runner:hide',
@@ -18,6 +24,30 @@ const CHANNELS = {
 let lastSnapshot = null
 const snapshotListeners = new Set()
 const logListeners = new Set()
+let childRequestSequence = 0
+
+function nextChildRequestId() {
+  childRequestSequence = (childRequestSequence + 1) % Number.MAX_SAFE_INTEGER
+  return `action:${Date.now().toString(36)}:${childRequestSequence.toString(36)}`
+}
+
+function createActionEnvelope(channel, payload, metadata = {}) {
+  return childEnvelopeContractsV7?.createChildEnvelopeV7?.({
+    runtimeIdentity: String(runtimeIdentityArtifact?.hostAssetId || ''),
+    surfaceId: 'action',
+    channel,
+    payloadRevision: Number.isSafeInteger(metadata.payloadRevision) ? metadata.payloadRevision : 0,
+    requestId: metadata.requestId,
+    logCursor: metadata.logCursor,
+    payload
+  }) || null
+}
+
+function actionEnvelopePayload(value, channel) {
+  const envelope = childEnvelopeContractsV7?.normalizeChildEnvelopeV7?.(value, { surfaceId: 'action', channel }) || null
+  if (!envelope || envelope.runtimeIdentity !== String(runtimeIdentityArtifact?.hostAssetId || '')) return null
+  return envelope.payload
+}
 
 function sendToParent(channel, payload) {
   try {
@@ -37,7 +67,8 @@ ipcRenderer.on(CHANNELS.snapshot, (_event, snapshot) => {
   }
 })
 
-ipcRenderer.on(CHANNELS.log, (_event, delta) => {
+ipcRenderer.on(CHANNELS.log, (_event, envelope) => {
+  const delta = actionEnvelopePayload(envelope, CHANNELS.log)
   if (!delta || typeof delta !== 'object' || delta.version !== 1) return
   for (const listener of logListeners) {
     try { listener(delta) } catch {}
@@ -62,6 +93,16 @@ window.eypcActionRunner = {
     return sendToParent(CHANNELS.action, { actionId, args: args && typeof args === 'object' ? args : {} })
   },
   requestSnapshot: () => sendToParent(CHANNELS.snapshotRequest, {}),
+  requestLog(runId, cursor = 0) {
+    if (typeof runId !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/.test(runId)) return false
+    const safeCursor = Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0
+    const envelope = createActionEnvelope(CHANNELS.logRequest, { runId, cursor: safeCursor }, {
+      requestId: nextChildRequestId(),
+      payloadRevision: safeCursor,
+      logCursor: safeCursor
+    })
+    return Boolean(envelope) && sendToParent(CHANNELS.logRequest, envelope)
+  },
   hide: () => sendToParent(CHANNELS.hide, {}),
   dragStart: (screenX, screenY) => sendToParent(CHANNELS.dragStart, { screenX, screenY }),
   dragMove: (screenX, screenY) => sendToParent(CHANNELS.dragMove, { screenX, screenY }),

@@ -440,7 +440,9 @@ describe('favorite file bridge source', () => {
     expect(prepareScript).toContain("syncUtoolsPreloads(root, 'dist')")
     expect(preloadAssetsScript).toContain("canonical: 'preload/index.js', public: 'public/preload.js', dist: 'preload.js'")
     expect(preloadAssetsScript).toContain("canonical: 'preload/action.js', public: 'public/action-preload.js', dist: 'action-preload.js'")
-    expect(packageJson.scripts?.['sync:preloads']).toBe('node scripts/sync-utools-preloads.mjs')
+    expect(packageJson.scripts?.['generate:contracts']).toBe('node scripts/generate-companion-contracts.mjs')
+    expect(packageJson.scripts?.['validate:contracts']).toBe('node scripts/generate-companion-contracts.mjs --check')
+    expect(packageJson.scripts?.['sync:preloads']).toBe('pnpm run generate:contracts && node scripts/sync-utools-preloads.mjs')
     // `validate:mirrors` joined the pipeline because the working-tree mirror
     // check that `build` already runs stays green when the *committed* state is
     // broken, and the host loads the committed mirror.

@@ -111,6 +111,7 @@ export interface MqttLayoutPrefs {
 
 export interface MqttViewPrefs {
   infoFilter: MqttInfoFilter
+  followLatest: boolean
   activeSubscriptionTopicsByConfigId: Record<string, string[]>
 }
 

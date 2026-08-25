@@ -15,10 +15,10 @@ const TEST_RUNTIME_IDENTITY = {
   artifactState: 'artifact-ready',
   hostAssetId: 'host-test-current',
   rendererAssetId: 'renderer-test-current',
-  kernelRevision: 'companion-task-kernel-v6',
+  kernelRevision: 'companion-task-kernel-v7',
   registryRevision: 'companion-provider-registry-v1',
   topologyRevision: 'companion-task-topology-v2',
-  taskPackageRevision: 'companion-task-snapshot-v6',
+  taskPackageRevision: 'companion-task-snapshot-v7',
   commandRevision: 'companion-task-command-v1',
   subscribeRevision: 'companion-task-subscribe-v1',
   ackRevision: 'companion-task-ack-v2'
@@ -516,7 +516,7 @@ function nativeRegistryTextWithUnread(threadIds: string[]) {
   return JSON.stringify(value)
 }
 
-function v6EvidenceDraft(input: Record<string, any>) {
+function v7EvidenceDraft(input: Record<string, any>) {
   const { tasks: taskRows = [], relations = [], ...draft } = input
   const providers = {
     codex: input.providers?.codex === true,
@@ -529,15 +529,19 @@ function v6EvidenceDraft(input: Record<string, any>) {
     cursor: Number(input.sourceGenerations?.cursor) || 0
   }
   const lanes = Object.fromEntries((['codex', 'claude', 'cursor'] as const).map((provider) => [provider, Object.fromEntries(
-    ['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [
+    ['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology'].map((channel) => [
       channel,
-      Number(input.sourceLaneGenerations?.[provider]?.[channel]) || sourceGenerations[provider]
+      Number(input.sourceLaneGenerations?.[provider]?.[channel])
+        || (channel === 'interaction' || channel === 'planArtifact'
+          ? Number(input.sourceLaneGenerations?.[provider]?.activity)
+          : 0)
+        || sourceGenerations[provider]
     ])
   )])) as Record<string, Record<string, number>>
   const evidenceBatches = Object.fromEntries((['codex', 'claude', 'cursor'] as const).map((provider) => [provider, {
-    revision: 'companion-provider-evidence-batch-v2',
+    revision: 'companion-provider-evidence-batch-v3',
     provider,
-    channels: Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
+    channels: Object.fromEntries(['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology'].map((channel) => [channel, {
       mode: 'delta',
       complete: false,
       generation: lanes[provider][channel],
@@ -551,13 +555,12 @@ function v6EvidenceDraft(input: Record<string, any>) {
       membership: 'present',
       activity: {
         kind: task.phase === 'running' ? 'turn-running'
-          : task.phase === 'waiting-input' ? 'waiting-input'
-            : task.phase === 'waiting-approval' ? 'waiting-approval'
+          : task.phase === 'waiting-input' || task.phase === 'waiting-approval' ? 'turn-completed'
               : task.phase === 'completed' ? 'turn-completed'
                 : task.phase === 'stopped' ? task.error === true ? 'turn-failed' : 'turn-interrupted'
                   : 'unknown',
         causalKey: task.causalKey || '',
-        sequence: lanes[provider].phase || Number(task.phaseRevision) || Number(task.revisionAt) || 1,
+        sequence: Number(task.phaseRevision) || Number(task.statusEnteredAt) || lanes[provider].activity || Number(task.revisionAt) || 1,
         exact: task.freshness !== 'verifying',
         observedAt: Number(input.acceptedAt) || Date.now(),
         statusEnteredAt: Number(task.statusEnteredAt) || 0,
@@ -569,11 +572,17 @@ function v6EvidenceDraft(input: Record<string, any>) {
         value: task.unread === true,
         sequence: lanes[provider].unread || Number(task.unreadRevision) || 0
       },
-      plan: {
-        state: task.planLifecycleState === 'cleared'
-          ? 'cleared'
-          : task.planReady === true || task.planImplementation === true ? 'ready' : 'unknown',
+      planArtifact: {
+        revision: 'companion-plan-artifact-v1',
+        state: task.planReady === true || task.planImplementation === true
+          ? 'available'
+          : task.planLifecycleState === 'cleared'
+            ? task.planClearReason === 'cancel' ? 'cancelled'
+              : task.planClearReason === 'archive' || task.planClearReason === 'removal' ? 'removed'
+                : task.planClearReason === 'execution-start' ? 'executing' : 'consumed'
+            : 'unknown',
         sequence: Number(task.planLifecycleRevision) || 0,
+        actionable: task.planReady === true || task.planImplementation === true,
         reason: ['cancel', 'execution-start', 'archive', 'removal'].includes(String(task.planClearReason)) ? task.planClearReason : ''
       },
       metadata: { ...task, partial: false },
@@ -583,6 +592,34 @@ function v6EvidenceDraft(input: Record<string, any>) {
       standaloneEligible: task.standaloneEligible !== false,
       error: task.error === true
     })),
+    interactions: taskRows.filter((task: Record<string, any>) => task.provider === provider
+      && (task.phase === 'waiting-input' || task.phase === 'waiting-approval')).map((task: Record<string, any>) => {
+      const kind = task.phase === 'waiting-approval'
+        ? 'approval'
+        : task.planImplementation === true ? 'plan-implementation' : 'user-input'
+      const sequence = Number(task.phaseRevision) || Number(task.statusEnteredAt) || Number(task.revisionAt) || 1
+      return {
+        revision: 'companion-interaction-evidence-v1',
+        provider,
+        taskKey: task.key,
+        branchRef: task.role === 'child' ? 'child' : 'root',
+        interactionRef: crypto.createHash('sha256').update(`${provider}\0${task.key}\0${kind}\0${sequence}`).digest('hex').slice(0, 32),
+        kind,
+        state: 'opened',
+        sequence,
+        turnEpoch: Number(task.turnStartedAt) || 0,
+        requestSetRevision: sequence,
+        authority: 'provider-live',
+        exact: task.freshness !== 'verifying'
+      }
+    }),
+    interactionSets: taskRows.filter((task: Record<string, any>) => task.provider === provider).map((task: Record<string, any>) => ({
+      revision: 'companion-interaction-evidence-v1',
+      provider,
+      taskKey: task.key,
+      requestSetRevision: Number(task.phaseRevision) || Number(task.statusEnteredAt) || Number(task.revisionAt) || 1,
+      complete: true
+    })),
     relations: relations.filter((relation: Record<string, any>) => relation.provider === provider),
     relationMode: 'delta',
     relationsComplete: false,
@@ -591,7 +628,7 @@ function v6EvidenceDraft(input: Record<string, any>) {
   }]))
   return {
     ...draft,
-    schema: 'companion-task-evidence-draft-v6',
+    schema: 'companion-task-evidence-draft-v7',
     providers,
     sourceGenerations,
     sourceLaneGenerations: lanes,
@@ -610,9 +647,9 @@ function seedSingleCodexKernelTask(context: Record<string, any>, snapshot: Recor
   const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
   kernel.syncPackage({
     lease: receipt.lease,
-draft: v6EvidenceDraft({
+draft: v7EvidenceDraft({
       producer: 'renderer',
-      sourceTaskStateRevision: 'task-state-v11',
+      sourceTaskStateRevision: 'task-state-v12',
       draftRevision: 1,
       acceptedAt: Date.now(),
       enabled: true,
@@ -621,8 +658,8 @@ draft: v6EvidenceDraft({
       focusedKey: '',
       sourceGenerations: { codex: generation, claude: 0 },
       sourceLaneGenerations: {
-        codex: { membership: generation, phase: generation, unread: generation },
-        claude: { membership: 0, phase: 0, unread: 0 }
+        codex: { membership: generation, activity: generation, unread: generation },
+        claude: { membership: 0, activity: 0, unread: 0 }
       },
       tasks: [{
         key: task.key,
@@ -666,9 +703,9 @@ function seedSingleClaudeKernelTask(context: Record<string, any>) {
   const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: true } })
   kernel.syncPackage({
     lease: receipt.lease,
-draft: v6EvidenceDraft({
+draft: v7EvidenceDraft({
       producer: 'renderer',
-      sourceTaskStateRevision: 'task-state-v11',
+      sourceTaskStateRevision: 'task-state-v12',
       draftRevision: 1,
       acceptedAt: 100,
       enabled: true,
@@ -677,8 +714,8 @@ draft: v6EvidenceDraft({
       focusedKey: '',
       sourceGenerations: { codex: 0, claude: 1 },
       sourceLaneGenerations: {
-        codex: { membership: 0, phase: 0, unread: 0 },
-        claude: { membership: 1, phase: 1, unread: 1 }
+        codex: { membership: 0, activity: 0, unread: 0 },
+        claude: { membership: 1, activity: 1, unread: 1 }
       },
       tasks: [{
         key: 'claude:local-a',
@@ -724,7 +761,8 @@ function loadCodexBridge(
   useHostDate = false,
   useElectronShell = true,
   claudeBridgeOverride: Record<string, any> | null = null,
-  enableFloatHarness = false
+  enableFloatHarness = false,
+  dbStorageHarness: { values: Map<string, unknown>; failWrites?: boolean; writes?: string[] } | null = null
 ) {
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const spawn = vi.fn(() => child)
@@ -831,6 +869,19 @@ function loadCodexBridge(
       onPluginOut: (listener: (isKill: boolean) => void) => pluginOutListeners.push(listener),
       showNotification: (message: string) => notifications.push(message),
       shellOpenExternal,
+      ...(dbStorageHarness
+        ? {
+            dbStorage: {
+              getItem: (key: string) => dbStorageHarness.values.get(key),
+              setItem: (key: string, value: unknown) => {
+                dbStorageHarness.writes?.push(key)
+                if (dbStorageHarness.failWrites) return false
+                dbStorageHarness.values.set(key, value)
+                return true
+              }
+            }
+          }
+        : {}),
       ...(enableFloatHarness
         ? {
             createBrowserWindow: createFloatWindow,
@@ -935,9 +986,9 @@ function loadCodexBridge(
   }
   if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, companionPhaseForCodexThread, applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, codexObservationForThread: (thread) => codexBranchObservationV7(companionCodexFallbackBranchV7(thread)), applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
   const exposedPlatform = (sandbox.window as { eypcPlatform: Record<string, any> }).eypcPlatform
-  handshakeTestRuntime(exposedPlatform)
+  if (!dbStorageHarness?.failWrites) handshakeTestRuntime(exposedPlatform)
   const internalKernel = vm.runInNewContext('companionTaskKernel', sandbox) as Record<string, any>
   const testPlatform: Record<string, any> = { ...exposedPlatform, companionKernel: internalKernel }
 
@@ -972,7 +1023,7 @@ function loadCodexBridge(
         codexRolloutRuntimeStateText(text: string): { known: boolean; phase: string; edge: string; startedAt: number; edgeAt: number }
         resetCodexThreadSessionState(): void
         markCodexThreadTurnStatusDirty(threadId: string): void
-        companionPhaseForCodexThread(thread: Record<string, unknown>): string
+        codexObservationForThread(thread: Record<string, unknown>): Record<string, any>
         applyCodexActivityToCompanionKernel(delta: Record<string, unknown>): boolean
         applyClaudeStateToCompanionKernel(): boolean
         applyClaudeUnreadToCompanionKernel(): Promise<boolean>
@@ -992,6 +1043,7 @@ function loadCodexBridge(
     diagnosticEvents,
     floatSends,
     floatAppliedAt: () => floatAppliedAt,
+    dbStorageHarness,
     // Most bridge tests seed Host-private evidence directly. Keep that test
     // authority separate from the production facade, whose surface is asserted
     // through `publicPlatform`.
@@ -1054,6 +1106,52 @@ describe('Codex App Server preload bridge', () => {
     context.bridge.close()
   })
 
+  it('copies V6 Plan pause receipts into the isolated V7 namespace once and preserves rollback data', () => {
+    const legacyKey = 'eypc/companion/plan-pause/v1'
+    const v7Key = 'eypc/companion/v7/plan-pause'
+    const legacy = {
+      version: 1,
+      receipts: [{ key: 'abcdef0123456789', planLifecycleRevision: 7, paused: true, updatedAt: 123 }]
+    }
+    const values = new Map<string, unknown>([[legacyKey, legacy]])
+    const firstWrites: string[] = []
+    const first = loadCodexBridge(new FakeCodexProcess(), undefined, null, false, true, null, false, { values, writes: firstWrites })
+
+    expect(values.get(legacyKey)).toBe(legacy)
+    expect(values.get(v7Key)).toEqual({
+      version: 7,
+      receipts: [{ key: 'abcdef0123456789', planLifecycleRevision: 7, paused: true, updatedAt: 123 }]
+    })
+    expect(firstWrites.filter((key) => key === v7Key)).toHaveLength(1)
+    expect(first.platform.companionKernel).toBeTruthy()
+    first.bridge.close()
+
+    const secondWrites: string[] = []
+    const second = loadCodexBridge(new FakeCodexProcess(), undefined, null, false, true, null, false, { values, writes: secondWrites })
+    expect(secondWrites).not.toContain(v7Key)
+    expect(values.get(legacyKey)).toBe(legacy)
+    expect(second.platform.companionKernel).toBeTruthy()
+    second.bridge.close()
+  })
+
+  it('blocks V7 Kernel activation when Plan pause migration cannot be persisted', () => {
+    const values = new Map<string, unknown>([[
+      'eypc/companion/plan-pause/v1',
+      { version: 1, receipts: [{ key: 'abcdef0123456789', planLifecycleRevision: 7, paused: true, updatedAt: 123 }] }
+    ]])
+    const context = loadCodexBridge(new FakeCodexProcess(), undefined, null, false, true, null, false, { values, failWrites: true })
+
+    expect(context.platform.companionKernel).toBeNull()
+    expect(context.diagnosticEvents).toContainEqual(expect.objectContaining({
+      scope: 'companion-storage',
+      event: 'v7-plan-pause-migration',
+      outcome: 'blocked',
+      details: { namespace: 'v7', legacyPreserved: true }
+    }))
+    expect(values.has('eypc/companion/v7/plan-pause')).toBe(false)
+    context.bridge.close()
+  })
+
   it('exposes only the V6 command surface and dispatches a first-class Cursor root through it', async () => {
     const context = loadCodexBridge(new FakeCodexProcess())
     handshakeTestRuntime(context.publicPlatform)
@@ -1063,9 +1161,9 @@ describe('Codex App Server preload bridge', () => {
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: true }, dynamicTaskWindowHours: 36 })
     const readyPackage = kernel.syncPackage({
       lease: receipt.lease,
-draft: v6EvidenceDraft({
+draft: v7EvidenceDraft({
         producer: 'host-evidence',
-        sourceTaskStateRevision: 'task-state-v11',
+        sourceTaskStateRevision: 'task-state-v12',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -1074,9 +1172,9 @@ draft: v6EvidenceDraft({
         focusedKey: '',
         sourceGenerations: { codex: 1, claude: 0, cursor: 1 },
         sourceLaneGenerations: {
-          codex: { membership: 1, phase: 1, unread: 1, metadata: 1, topology: 1 },
-          claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
-          cursor: { membership: 1, phase: 1, unread: 1, metadata: 1, topology: 1 }
+          codex: { membership: 1, activity: 1, interaction: 1, unread: 1, planArtifact: 1, metadata: 1, topology: 1 },
+          claude: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
+          cursor: { membership: 1, activity: 1, interaction: 1, unread: 1, planArtifact: 1, metadata: 1, topology: 1 }
         },
         providerHealth: {
           codex: { status: 'ready', generation: 1, errorCode: '' },
@@ -1180,10 +1278,10 @@ draft: v6EvidenceDraft({
     })).toBe(true)
     expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === 'claude:local-b'))
       .toMatchObject({ phase: 'completed', unreadKnown: true, unread: false })
-    expect(context.diagnosticEvents.filter((event) => event.event === 'claude-unread').at(-1))
-      .toMatchObject({ outcome: 'accepted', details: { canonicalMismatchCount: 0 } })
-    expect(context.diagnosticEvents.filter((event) => event.event === 'claude-inventory').at(-1))
-      .toMatchObject({ outcome: 'accepted', details: { canonicalMismatchCount: 0 } })
+    expect(context.diagnosticEvents.filter((event) => event.event === 'claude-unread-v7').at(-1))
+      .toMatchObject({ outcome: 'accepted' })
+    expect(context.diagnosticEvents.filter((event) => event.event === 'claude-inventory-v7').at(-1))
+      .toMatchObject({ outcome: 'accepted' })
     context.bridge.close()
   })
 
@@ -1301,9 +1399,9 @@ draft: v6EvidenceDraft({
     const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: true }, dynamicTaskWindowHours: 36 })
     kernel.syncPackage({
       lease: receipt.lease,
-draft: v6EvidenceDraft({
+draft: v7EvidenceDraft({
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v11',
+        sourceTaskStateRevision: 'task-state-v12',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -1312,8 +1410,8 @@ draft: v6EvidenceDraft({
         focusedKey: '',
         sourceGenerations: { codex: 0, claude: generation },
         sourceLaneGenerations: {
-          codex: { membership: 0, phase: 0, unread: 0 },
-          claude: { membership: generation, phase: generation, unread: generation }
+          codex: { membership: 0, activity: 0, unread: 0 },
+          claude: { membership: generation, activity: generation, unread: generation }
         },
         tasks: [{
           key: `claude:${localId}`,
@@ -1399,25 +1497,25 @@ draft: v6EvidenceDraft({
       lastTurnStatus: 'interrupted'
     }
 
-    expect(context.native.companionPhaseForCodexThread({
+    expect(context.native.codexObservationForThread({
       ...staleActive,
       lastTurnEvidence: 'turn-completed',
       idleConfirmed: true
-    })).toBe('running')
-    expect(context.native.companionPhaseForCodexThread({
+    }).candidates).toContainEqual(expect.objectContaining({ kind: 'turn-running' }))
+    expect(context.native.codexObservationForThread({
       ...staleActive,
       lastTurnEvidence: 'inventory'
-    })).toBe('running')
-    expect(context.native.companionPhaseForCodexThread({
+    }).candidates).toContainEqual(expect.objectContaining({ kind: 'turn-running' }))
+    expect(context.native.codexObservationForThread({
       ...staleActive,
       activeFlags: ['waitingOnUserInput'],
       lastTurnEvidence: 'turn-completed'
-    })).toBe('waiting-input')
-    expect(context.native.companionPhaseForCodexThread({
+    })).toMatchObject({ interactionKind: 'user-input' })
+    expect(context.native.codexObservationForThread({
       ...staleActive,
       lastTurnStatus: 'failed',
       lastTurnEvidence: 'turn-completed'
-    })).toBe('running')
+    }).candidates).toContainEqual(expect.objectContaining({ kind: 'turn-running' }))
     context.triggerPluginOut(true)
   })
 
@@ -1881,7 +1979,8 @@ draft: v6EvidenceDraft({
       lastTurnStatus: 'interrupted',
       lastTurnEvidence: 'targeted-after-exit'
     })
-    expect(context.native.companionPhaseForCodexThread(interrupted)).toBe('stopped')
+    expect(context.native.codexObservationForThread(interrupted).candidates)
+      .toContainEqual(expect.objectContaining({ kind: 'turn-interrupted' }))
     context.triggerPluginOut(true)
   })
 
@@ -1894,9 +1993,9 @@ draft: v6EvidenceDraft({
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     kernel.syncPackage({
       lease: receipt.lease,
-draft: v6EvidenceDraft({
+draft: v7EvidenceDraft({
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v11',
+        sourceTaskStateRevision: 'task-state-v12',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -1936,7 +2035,7 @@ draft: v6EvidenceDraft({
     await vi.waitFor(() => expect(kernel.getPackage().tasks.length).toBeGreaterThan(1))
     expect(kernel.getPackage()).toMatchObject({
       complete: true,
-      sourceTaskStateRevision: 'task-state-v11',
+      sourceTaskStateRevision: 'task-state-v12:provider-evidence-v7',
       providers: { codex: true, claude: false }
     })
     context.triggerPluginOut(true)
@@ -2196,9 +2295,9 @@ draft: v6EvidenceDraft({
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     kernel.syncPackage({
       lease: receipt.lease,
-draft: v6EvidenceDraft({
+draft: v7EvidenceDraft({
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v11',
+        sourceTaskStateRevision: 'task-state-v12',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -2207,8 +2306,8 @@ draft: v6EvidenceDraft({
         focusedKey: '',
         sourceGenerations: { codex: generation, claude: 0 },
         sourceLaneGenerations: {
-          codex: { membership: generation, phase: generation, unread: Math.max(0, generation - 1) },
-          claude: { membership: 0, phase: 0, unread: 0 }
+          codex: { membership: generation, activity: generation, unread: Math.max(0, generation - 1) },
+          claude: { membership: 0, activity: 0, unread: 0 }
         },
         tasks: [{
           key: task.key,
@@ -2240,7 +2339,7 @@ draft: v6EvidenceDraft({
       entries: [{ key: task.key, status: 'active', lastTurnStatus: 'inProgress' }]
     })).toBe(true)
     expect(kernel.getPackage().sourceLaneGenerations.codex).toMatchObject({
-      phase: generation + 1,
+      activity: generation + 1,
       unread: Math.max(0, generation - 1)
     })
 
@@ -2251,7 +2350,7 @@ draft: v6EvidenceDraft({
       entries: [{ key: task.key, readStateOnly: true, hasUnreadTurn: true, unreadAuthority: 'desktop-live' }]
     })).toBe(true)
     expect(kernel.getPackage()).toMatchObject({
-      sourceLaneGenerations: { codex: { phase: generation + 1, unread: generation + 1 } },
+      sourceLaneGenerations: { codex: { activity: generation + 1, unread: generation + 1 } },
       tasks: [expect.objectContaining({ key: task.key, unread: true })]
     })
 
@@ -2267,7 +2366,7 @@ draft: v6EvidenceDraft({
     context.triggerPluginOut(true)
   })
 
-  it('does not fabricate running for a newly observed hydration-only active row', async () => {
+  it('does not let a hydration-only active row overwrite corroborated terminal history', async () => {
     const child = new FakeCodexProcess()
     const context = loadCodexBridge(child)
     const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
@@ -2277,9 +2376,9 @@ draft: v6EvidenceDraft({
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     kernel.syncPackage({
       lease: receipt.lease,
-draft: v6EvidenceDraft({
+draft: v7EvidenceDraft({
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v11',
+        sourceTaskStateRevision: 'task-state-v12',
         draftRevision: 1,
         acceptedAt: 1,
         enabled: true,
@@ -2288,8 +2387,8 @@ draft: v6EvidenceDraft({
         focusedKey: '',
         sourceGenerations: { codex: generation, claude: 0 },
         sourceLaneGenerations: {
-          codex: { membership: generation, phase: generation, unread: generation },
-          claude: { membership: 0, phase: 0, unread: 0 }
+          codex: { membership: generation, activity: generation, unread: generation },
+          claude: { membership: 0, activity: 0, unread: 0 }
         },
         tasks: []
       })
@@ -2312,10 +2411,9 @@ draft: v6EvidenceDraft({
     expect(kernel.getPackage()).toMatchObject({
       tasks: [expect.objectContaining({
         key: sourceTask.key,
-        phase: 'unknown',
+        phase: 'completed',
         freshness: 'verifying',
-        dynamicGroup: 'none',
-        statusEnteredAt: 0
+        dynamicGroup: 'completed'
       })],
       views: {
         groups: { active: [] },
@@ -2339,9 +2437,9 @@ draft: v6EvidenceDraft({
 
     kernel.syncPackage({
       lease: receipt.lease,
-draft: v6EvidenceDraft({
+draft: v7EvidenceDraft({
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v11',
+        sourceTaskStateRevision: 'task-state-v12',
         draftRevision: 1,
         acceptedAt: 1,
         enabled: true,
@@ -2350,8 +2448,8 @@ draft: v6EvidenceDraft({
         focusedKey: '',
         sourceGenerations: { codex: generation, claude: 0 },
         sourceLaneGenerations: {
-          codex: { membership: generation, phase: generation, unread: generation },
-          claude: { membership: 0, phase: 0, unread: 0 }
+          codex: { membership: generation, activity: generation, unread: generation },
+          claude: { membership: 0, activity: 0, unread: 0 }
         },
         tasks: [{
           key: sourceTask.key,
@@ -2401,7 +2499,7 @@ draft: v6EvidenceDraft({
     // membership expansion is a real semantic change; subsequent identical scans
     // must keep the same task package revision and publish nothing.
     await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
-    await vi.waitFor(() => expect(kernel.getPackage().tasks.length).toBeGreaterThan(1))
+    await vi.waitFor(() => expect(kernel.getPackage().tasks.length).toBe(snapshot.value.threads.length))
     const stablePackageRevision = kernel.getPackage().packageRevision
     const publications: number[] = []
     const stopPackage = kernel.onPackage((value: Record<string, any>) => publications.push(value.packageRevision))
@@ -2423,9 +2521,9 @@ draft: v6EvidenceDraft({
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     expect(kernel.syncPackage({
       lease: receipt.lease,
-draft: v6EvidenceDraft({
+draft: v7EvidenceDraft({
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v11',
+        sourceTaskStateRevision: 'task-state-v12',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -2750,11 +2848,13 @@ draft: v6EvidenceDraft({
 
     expect(native.codexRolloutPendingPlanStateText([started('plan'), item('Plan')].join('\n'))).toMatchObject({
       known: true,
-      pending: true
+      pending: false,
+      planReady: true
     })
     expect(native.codexRolloutPendingPlanStateText([started('plan'), item('Plan'), started('default'), item('AgentMessage')].join('\n'))).toMatchObject({
       known: true,
-      pending: true,
+      pending: false,
+      planReady: true,
       planLifecycleState: 'ready',
       turnMode: 'default'
     })
@@ -2764,7 +2864,8 @@ draft: v6EvidenceDraft({
       JSON.stringify({ type: 'event_msg', payload: { type: 'turn_aborted' } })
     ].join('\n'))).toMatchObject({
       known: true,
-      pending: true,
+      pending: false,
+      planReady: true,
       planLifecycleState: 'ready'
     })
     expect(native.codexRolloutPendingPlanStateText(started('default'))).toMatchObject({
@@ -2779,7 +2880,7 @@ draft: v6EvidenceDraft({
     bridge.close()
   })
 
-  it('retains Plan readiness on generic request resolution and clears it only after an exact idle card-removal snapshot', async () => {
+  it('closes the matching Plan interaction atomically while retaining its artifact across request removal', async () => {
     const child = new FakeCodexProcess()
     child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
       JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
@@ -2794,7 +2895,7 @@ draft: v6EvidenceDraft({
     const kernel = context.platform.companionKernel
     kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
     await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
-      .toMatchObject({ phase: 'waiting-input', planReady: true, planLifecycleState: 'ready' }))
+      .toMatchObject({ phase: 'stopped', planReady: true, planLifecycleState: 'ready' }))
 
     const planRequest = {
       type: 'plan',
@@ -2822,6 +2923,8 @@ draft: v6EvidenceDraft({
       }
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+      .toMatchObject({ phase: 'waiting-input', planReady: true, planImplementation: true }))
 
     child.stdout.emit('data', `${JSON.stringify({
       method: 'serverRequest/resolved',
@@ -2834,7 +2937,7 @@ draft: v6EvidenceDraft({
       planLifecycleState: 'ready'
     })
     expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
-      .toMatchObject({ phase: 'waiting-input', planReady: true, planLifecycleState: 'ready' })
+      .toMatchObject({ phase: 'stopped', planReady: true, planLifecycleState: 'ready', planImplementation: false })
 
     desktopSocket.push({
       type: 'broadcast',
@@ -2853,12 +2956,62 @@ draft: v6EvidenceDraft({
       }
     })
     await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
-      .toMatchObject({ phase: 'completed', planReady: false, planLifecycleState: 'cleared' }))
+      .toMatchObject({ phase: 'stopped', planReady: true, planLifecycleState: 'ready', planImplementation: false }))
+
+    // A later full Desktop snapshot may replay the already-resolved native
+    // request. The stable anonymous instance and persisted Kernel tombstone must
+    // keep it closed; only a genuinely new request identity may reopen waiting.
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[3],
+        change: {
+          type: 'snapshot',
+          revision: 4,
+          conversationState: {
+            threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+            resumeState: '',
+            hasUnreadTurn: false,
+            requests: [planRequest]
+          }
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+      .toMatchObject({ phase: 'stopped', planReady: true, planImplementation: false })
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[3],
+        change: {
+          type: 'snapshot',
+          revision: 5,
+          conversationState: {
+            threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+            resumeState: '',
+            hasUnreadTurn: false,
+            requests: [{ ...planRequest, requestId: 'plan-card-instance-next' }]
+          }
+        }
+      }
+    })
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+      .toMatchObject({ phase: 'waiting-input', planReady: true, planImplementation: true }))
     expect(JSON.stringify(kernel.getLatest())).not.toContain('plan-card-instance')
     context.triggerPluginOut(true)
   })
 
-  it('projects a completed unread Plan as pending input before Desktop request replay', async () => {
+  it('keeps a completed unread Plan terminal before any current interaction is observed', async () => {
     const child = new FakeCodexProcess()
     child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
       JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
@@ -2871,10 +3024,11 @@ draft: v6EvidenceDraft({
 
     const snapshot = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
     expect(snapshot.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知')).toMatchObject({
-      status: 'active',
-      activeFlags: ['waitingOnUserInput'],
-      planImplementationOnly: true,
-      statusAuthority: 'persisted-decision',
+      status: 'notLoaded',
+      activeFlags: [],
+      planImplementationOnly: false,
+      planReady: true,
+      statusAuthority: 'connector',
       hasUnreadTurn: true,
       lastTurnStatus: 'completed'
     })
@@ -2894,7 +3048,7 @@ draft: v6EvidenceDraft({
     kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     await vi.waitFor(() => {
       const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
-      expect(task).toMatchObject({ phase: 'waiting-input', planReady: true })
+      expect(task).toMatchObject({ phase: 'stopped', planReady: true, dynamicGroup: 'stopped', cycleTier: 'plan' })
       expect(task.capabilities.executePlan).toBe(true)
     })
     const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
@@ -3055,7 +3209,7 @@ draft: v6EvidenceDraft({
     context.triggerPluginOut(true)
   })
 
-  it('publishes an exact completed Plan item as waiting instead of a terminal unread frame', async () => {
+  it('publishes an exact completed Plan item as an artifact without fabricating a waiting interaction', async () => {
     const child = new FakeCodexProcess()
     child.inProgressTurnIds.add(FIXED_THREAD_IDS[1])
     const { bridge } = loadCodexBridge(
@@ -3085,9 +3239,10 @@ draft: v6EvidenceDraft({
     expect(deltas.at(-1)).toMatchObject({
       entries: [{
         key: task.key,
-        status: 'active',
-        activeFlags: ['waitingOnUserInput'],
-        planImplementationOnly: true,
+        status: 'notLoaded',
+        activeFlags: [],
+        planImplementationOnly: false,
+        planReady: true,
         lastTurnStatus: 'completed'
       }]
     })
@@ -3753,6 +3908,7 @@ draft: v6EvidenceDraft({
     })
 
     const liveGeneration = Number((await bridge.readActivitySnapshot()).value.generation) || 1
+    const packageRevisionBeforeStaleReplay = kernel.getLatest().packageRevision
     expect(context.native.applyCodexActivityToCompanionKernel({
       generation: liveGeneration + 1,
       receivedAt: 2_000_000_000_000,
@@ -3766,15 +3922,13 @@ draft: v6EvidenceDraft({
         lastTurnStartedAt: 1_800_000_000_000,
         idleConfirmed: true
       }]
-    })).toBe(true)
+    })).toBe(false)
     expect(kernel.getLatest().tasks.find((candidate: Record<string, any>) => candidate.key === task.key)).toMatchObject({
       phase: 'running'
     })
-    expect(context.diagnosticEvents.filter((event) => event.scope === 'task-push' && event.event === 'state-proposal').at(-1))
-      .toMatchObject({ outcome: 'proposed', phase: 'stopped' })
-    expect(context.diagnosticEvents.some((event) => event.event === 'state-decision' && event.outcome === 'accepted')).toBe(false)
-    expect(context.diagnosticEvents.filter((event) => event.scope === 'task-push' && event.event === 'codex-activity').at(-1))
-      .toMatchObject({ outcome: 'superseded', details: { canonicalMismatchCount: 1 } })
+    expect(kernel.getLatest().packageRevision).toBe(packageRevisionBeforeStaleReplay)
+    expect(context.diagnosticEvents.filter((event) => event.scope === 'task-push' && event.event === 'codex-evidence-v7').at(-1))
+      .toMatchObject({ outcome: 'semantic-noop' })
 
     await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
     expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
@@ -5158,9 +5312,9 @@ draft: v6EvidenceDraft({
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     kernel.syncPackage({
       lease: receipt.lease,
-draft: v6EvidenceDraft({
+draft: v7EvidenceDraft({
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v11',
+        sourceTaskStateRevision: 'task-state-v12',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -5169,8 +5323,8 @@ draft: v6EvidenceDraft({
         focusedKey: '',
         sourceGenerations: { codex: 0, claude: 0 },
         sourceLaneGenerations: {
-          codex: { membership: 0, phase: 0, unread: 0 },
-          claude: { membership: 0, phase: 0, unread: 0 }
+          codex: { membership: 0, activity: 0, unread: 0 },
+          claude: { membership: 0, activity: 0, unread: 0 }
         },
         tasks: []
       })
@@ -5749,10 +5903,9 @@ draft: v6EvidenceDraft({
 
     const kernel = seedSingleCodexKernelTask(context, baseline, parent)
     expect(kernel.getPackage()).toMatchObject({
-      // A cold child terminal without precise lifecycle closure abstains. V6
-      // must not end the root until every related member is exact or gone.
-      tasks: [{ key: parent.key, phase: 'unknown', unreadKnown: true, unread: true }],
-      views: { counts: { active: 0, unread: 0 } }
+      // V7 gives terminal unread evidence priority over interaction guesses.
+      tasks: [{ key: parent.key, phase: 'completed', unreadKnown: true, unread: true }],
+      views: { counts: { active: 0, unread: 1 } }
     })
     expect(kernel.getPackage().tasks).toHaveLength(1)
 

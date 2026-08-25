@@ -447,6 +447,40 @@ describe('app runtime', () => {
     expect(settings.keybindingOverrides.map((item) => item.commandId)).toContain('mqtt.publish.draft.saveDraft')
   })
 
+  it('isolates Companion presentation notifications from unrelated shell changes', () => {
+    const { state } = installPlatform()
+    const runtime = createAppRuntime(state)
+    let shellNotifications = 0
+    let companionNotifications = 0
+    let portNotifications = 0
+    let mqttNotifications = 0
+    runtime.subscribe(() => { shellNotifications += 1 })
+    runtime.subscribeDomain('companion', () => { companionNotifications += 1 })
+    runtime.subscribeDomain('ports', () => { portNotifications += 1 })
+    runtime.subscribeDomain('mqtt', () => { mqttNotifications += 1 })
+
+    runtime.setPortSearch('vite')
+    expect(shellNotifications).toBe(1)
+    expect(companionNotifications).toBe(0)
+    expect(portNotifications).toBe(1)
+    expect(mqttNotifications).toBe(0)
+    expect(runtime.snapshot()).not.toHaveProperty('codexFloat')
+
+    runtime.updateKeybinding({ commandId: 'codex.float.toggle', shortcutIds: ['Ctrl+Alt+W'] })
+    expect(shellNotifications).toBe(2)
+    expect(companionNotifications).toBe(1)
+    expect(portNotifications).toBe(2)
+    expect(mqttNotifications).toBe(1)
+    expect(runtime.companionPresentationSnapshot()).toMatchObject({
+      visible: false,
+      snapshot: {
+        keybindings: expect.arrayContaining([
+          expect.objectContaining({ actionId: 'codex.float.toggle', shortcutId: 'Ctrl+Alt+W' })
+        ])
+      }
+    })
+  })
+
   it('hides the app with Shift+Escape above active layers', async () => {
     const { state, getHideCount } = installPlatform()
     state.portGroups = [group('web', 'Web', ['3000'])]
@@ -738,7 +772,9 @@ describe('app runtime', () => {
     expect(runtime.snapshot().portDrawer).toMatchObject({ open: true, mode: 'single', targetIds: ['11:3000:tcp'], activeIndex: 0 })
     expect(runtime.snapshot().portDrawerItems[0]).toMatchObject({
       commandId: 'ports.kill.confirm',
-      shortcutLabel: 'del / backspace'
+      shortcutLabel: 'del / backspace',
+      target: { featureId: 'ports', kind: 'port', key: '11:3000:tcp' },
+      navigationIntent: { revision: 'navigation-intent-v7', source: 'drawer', disposition: 'execute' }
     })
     expect(runtime.dispatch('ports.drawer.open', { portId: '12:5174:tcp' }).handled).toBe(true)
     expect(runtime.snapshot().portDrawer.targetIds).toEqual(['12:5174:tcp'])
@@ -1495,7 +1531,10 @@ describe('app runtime', () => {
     await Promise.resolve()
     expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(true)
     expect(activate).toHaveBeenCalledWith({ command: 'new-thread' })
-    expect(runtime.handleShortcut('Ctrl+T', { textInputFocused: true, activeInputRole: 'codex-composer' })).toBeNull()
+    expect(runtime.handleShortcut('Ctrl+T', { textInputFocused: true, activeInputRole: 'codex-composer' })).toMatchObject({
+      consumed: true,
+      blockedBy: 'codex-composer'
+    })
 
     runtime.setTab('favorites')
     expect(runtime.handleShortcut('Ctrl+T', false)).not.toBe('codex.thread.createFocused')
@@ -1708,6 +1747,43 @@ describe('app runtime', () => {
     })
   })
 
+  it('persists incoming messages incrementally and preserves historical selection until follow-latest is enabled', () => {
+    const { state, platform } = installPlatform()
+    const fullWrites: unknown[] = []
+    const mutations: unknown[] = []
+    platform.storage.getMqttArchive = () => ({ version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [], publishDraftHistory: [] })
+    platform.storage.setMqttArchive = (archive: unknown) => { fullWrites.push(archive); return true }
+    const mqttStorage = platform.storage as EypcPlatformApi['storage']
+    mqttStorage.mutateMqttArchive = (mutation) => { mutations.push(mutation); return true }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.mqtt.configs = [createMqttConnectionConfig({ id: 'dev', name: 'Dev', url: 'ws://localhost:8083/mqtt' }, 100)]
+    state.mqtt.activeConfigId = 'dev'
+    const runtime = createAppRuntime(state)
+    runtime.setTab('mqtt')
+
+    for (const [id, timestamp] of [['m1', 100], ['m2', 200]] as const) {
+      runtime.appendMqttMessageRecord({ id, direction: 'incoming', topic: 'demo/in', payload: id, qos: 0, retain: false, timestamp })
+    }
+    expect(runtime.snapshot()).toMatchObject({ mqttFollowLatest: true, mqttSelectedRecord: { kind: 'message', id: 'm2' } })
+
+    runtime.focusMqttMessage('m1')
+    runtime.appendMqttMessageRecord({ id: 'm3', direction: 'incoming', topic: 'demo/in', payload: 'm3', qos: 0, retain: false, timestamp: 300 })
+    expect(runtime.snapshot()).toMatchObject({ mqttFollowLatest: false, mqttSelectedRecord: { kind: 'message', id: 'm1' } })
+    expect(runtime.snapshot().state.mqtt.viewPrefs.followLatest).toBe(false)
+
+    expect(runtime.dispatch('mqtt.followLatest.toggle').handled).toBe(true)
+    expect(runtime.snapshot()).toMatchObject({ mqttFollowLatest: true, mqttSelectedRecord: { kind: 'message', id: 'm3' } })
+    runtime.appendMqttMessageRecord({ id: 'm4', direction: 'incoming', topic: 'demo/in', payload: 'm4', qos: 0, retain: false, timestamp: 400 })
+    expect(runtime.snapshot().mqttSelectedRecord).toMatchObject({ id: 'm4' })
+    expect(fullWrites).toHaveLength(1)
+    expect(mutations).toHaveLength(4)
+    expect(mutations[0]).toMatchObject({ revision: 'mqtt-archive-mutation-v1', kind: 'append-message', session: { messages: [] }, message: { id: 'm1' } })
+  })
+
   it('keeps MQTT message rows visible when reconnect creates a new session', async () => {
     const { state } = installPlatform()
     const clientRef: { current: ReturnType<typeof createFakeMqttClient> | null } = { current: null }
@@ -1917,6 +1993,10 @@ describe('app runtime', () => {
       'mqtt.config.edit',
       'mqtt.connection.delete'
     ]))
+    expect(runtime.snapshot().mqttDrawerItems[0]).toMatchObject({
+      target: { featureId: 'mqtt', kind: 'mqtt-config', key: 'dev-b' },
+      navigationIntent: { revision: 'navigation-intent-v7', source: 'drawer', disposition: 'open' }
+    })
 
     expect(runtime.dispatch('mqtt.connection.deleteSelected').handled).toBe(true)
     expect(runtime.snapshot().state.mqtt.configs.map((config) => config.id)).toEqual(['dev-a'])
@@ -4233,6 +4313,19 @@ describe('app runtime', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(getShowCount()).toBe(1)
     expect(runtime.snapshot().favoriteSlotManagerOpen).toBe(true)
+    runtime.updateKeybinding({ commandId: 'favorites.slot.manager.close', shortcutIds: ['Alt+Escape'] })
+    expect(runtime.handleShortcut('Escape', false)).toMatchObject({ consumed: true, blockedBy: 'favorites-slot-manager' })
+    expect(runtime.snapshot().favoriteSlotManagerOpen).toBe(true)
+    expect(runtime.handleShortcut('Alt+Escape', false)).toBe('favorites.slot.manager.close')
+    expect(runtime.snapshot().favoriteSlotManagerOpen).toBe(false)
+
+    runtime.dispatch('favorites.slot.manager.open', { favoriteId: 'script' })
+    runtime.updateKeybinding({ commandId: 'favorites.slot.manager.close', enabled: false })
+    expect(runtime.handleShortcut('Alt+Escape', false)).toMatchObject({ consumed: true, blockedBy: 'favorites-slot-manager' })
+    expect(runtime.handleShortcut('Ctrl+N', false)).toMatchObject({ consumed: true, blockedBy: 'favorites-slot-manager' })
+    expect(runtime.snapshot().favoriteSlotManagerOpen).toBe(true)
+    expect(runtime.snapshot().favoriteDraft).toBeNull()
+    runtime.dispatch('favorites.slot.manager.close')
   })
 
   it('separates launch acceptance from exit code and exposes the captured run log', async () => {
@@ -4322,12 +4415,19 @@ describe('app runtime', () => {
     expect(prompt?.preview).toBe('')
     expect(prompt?.error).toContain('标签')
 
-    expect(runtime.submitFavoriteRunPrompt()).toBe(false)
+    expect(runtime.handleShortcut('Ctrl+Enter', { textInputFocused: true, activeInputRole: 'other' })).toMatchObject({
+      consumed: true,
+      blockedBy: 'favorites-run-prompt'
+    })
+    expect(runtime.handleShortcut('Ctrl+N', false)).toMatchObject({ consumed: true, blockedBy: 'favorites-run-prompt' })
+    expect(runtime.handleShortcut('F2', { textInputFocused: true, activeInputRole: 'other' })).toMatchObject({ consumed: true, blockedBy: 'favorites-run-prompt' })
+    expect(runtime.handleShortcut('Delete', { textInputFocused: true, activeInputRole: 'other' })).toMatchObject({ consumed: false, blockedBy: 'favorites-run-prompt' })
+    expect(runtime.snapshot().favoriteDraft).toBeNull()
     expect(runRequests).toHaveLength(0)
 
     runtime.updateFavoriteRunPrompt('标签', 'v1 空格')
     expect(runtime.snapshot().favoriteRunPrompt?.preview).toBe('"/bin/sh" "/work/run.sh" "--env=dev" "--tag=v1 空格"')
-    runtime.submitFavoriteRunPrompt()
+    expect(runtime.handleShortcut('Ctrl+Enter', { textInputFocused: true, activeInputRole: 'other' })).toBe('favorites.run.prompt.submit')
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(runtime.snapshot().favoriteRunPrompt).toBeNull()
@@ -4338,7 +4438,13 @@ describe('app runtime', () => {
     runtime.dispatch('favorites.open', { favoriteId: 'script' })
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(runtime.snapshot().favoriteRunPrompt?.fields.find((field) => field.name === '标签')?.value).toBe('v1 空格')
-    runtime.cancelFavoriteRunPrompt()
+    runtime.updateKeybinding({ commandId: 'favorites.run.prompt.cancel', shortcutIds: ['Alt+Escape'] })
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'other' })).toMatchObject({
+      consumed: true,
+      blockedBy: 'favorites-run-prompt'
+    })
+    expect(runtime.snapshot().favoriteRunPrompt).not.toBeNull()
+    expect(runtime.handleShortcut('Alt+Escape', { textInputFocused: true, activeInputRole: 'other' })).toBe('favorites.run.prompt.cancel')
     expect(runtime.snapshot().favoriteRunPrompt).toBeNull()
     expect(runtime.snapshot().message).toBe('已取消本次运行')
     expect(runRequests).toHaveLength(1)
@@ -4776,6 +4882,10 @@ describe('app runtime', () => {
     expect(runtime.handleShortcut('Ctrl+ArrowRight', false)).toBe('favorites.drawer.open')
     expect(runtime.snapshot().favoriteDrawer).toMatchObject({ open: true, active: true, targetKind: 'favorite' })
     expect(runtime.snapshot().favoriteDrawerItems.map((item) => item.commandId)).toContain('favorites.open')
+    expect(runtime.snapshot().favoriteDrawerItems[0]).toMatchObject({
+      target: { featureId: 'favorites', kind: 'favorite', key: 'f1' },
+      navigationIntent: { revision: 'navigation-intent-v7', source: 'drawer', disposition: 'open' }
+    })
     expect(runtime.handleShortcut('Ctrl+1', false)).toBe('favorites.drawer.select.1')
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(opened).toEqual(['/work/readme.md'])

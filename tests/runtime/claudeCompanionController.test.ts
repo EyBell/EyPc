@@ -352,14 +352,14 @@ function harness(options: HarnessOptions = {}) {
         } as any)
       }
       const sourceLaneGenerations = {
-        codex: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
-        claude: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
-        cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
+        codex: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision },
+        claude: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision },
+        cursor: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 }
       }
       const evidenceBatches = Object.fromEntries((['codex', 'claude', 'cursor'] as const).map((provider) => [provider, {
-        revision: 'companion-provider-evidence-batch-v2',
+        revision: 'companion-provider-evidence-batch-v3',
         provider,
-        channels: Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
+        channels: Object.fromEntries(['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology'].map((channel) => [channel, {
           mode: 'delta',
           complete: false,
           generation: sourceLaneGenerations[provider][channel as keyof typeof sourceLaneGenerations.codex],
@@ -373,8 +373,7 @@ function harness(options: HarnessOptions = {}) {
           membership: 'present',
           activity: {
             kind: task.phase === 'running' ? 'turn-running'
-              : task.phase === 'waiting-input' ? 'waiting-input'
-                : task.phase === 'waiting-approval' ? 'waiting-approval'
+              : task.phase === 'waiting-input' || task.phase === 'waiting-approval' ? 'turn-completed'
                   : task.phase === 'completed' ? 'turn-completed'
                     : task.phase === 'stopped' ? 'turn-interrupted'
                       : 'unknown',
@@ -387,13 +386,35 @@ function harness(options: HarnessOptions = {}) {
             terminalAt: task.terminalAt
           },
           unread: { known: task.unreadKnown, value: task.unread, sequence: revision },
-          plan: { state: 'unknown', sequence: 0, reason: '' },
+          planArtifact: { revision: 'companion-plan-artifact-v1', state: 'unknown', sequence: 0, actionable: false, reason: '' },
           metadata: { ...task, partial: false },
           capabilities: Object.entries(task.capabilities)
             .filter(([, enabled]) => enabled === true)
             .map(([name]) => name === 'executePlan' ? 'execute-plan' : name),
           standaloneEligible: true,
           error: false
+        })),
+        interactions: tasks.filter((task) => task.provider === provider
+          && (task.phase === 'waiting-input' || task.phase === 'waiting-approval')).map((task) => ({
+          revision: 'companion-interaction-evidence-v1',
+          provider,
+          taskKey: task.key,
+          branchRef: 'root',
+          interactionRef: `${revision.toString(16).padStart(16, '0')}bbbbbbbbbbbbbbbb`,
+          kind: task.phase === 'waiting-approval' ? 'approval' : 'user-input',
+          state: 'opened',
+          sequence: revision,
+          turnEpoch: task.turnStartedAt,
+          requestSetRevision: revision,
+          authority: 'provider-live',
+          exact: true
+        })),
+        interactionSets: tasks.filter((task) => task.provider === provider).map((task) => ({
+          revision: 'companion-interaction-evidence-v1',
+          provider,
+          taskKey: task.key,
+          requestSetRevision: revision,
+          complete: true
         })),
         relations: [],
         relationMode: 'delta',
@@ -402,9 +423,9 @@ function harness(options: HarnessOptions = {}) {
         health: state.codex.settings.providers[provider] ? 'ready' : 'unavailable'
       }]))
       companionKernel.publishEvidence({
-        schema: 'companion-task-evidence-draft-v6',
+        schema: 'companion-task-evidence-draft-v7',
         producer: 'host-evidence',
-        sourceTaskStateRevision: 'task-state-v11',
+        sourceTaskStateRevision: 'task-state-v12',
         draftRevision: revision,
         acceptedAt: Date.now(),
         enabled: true,

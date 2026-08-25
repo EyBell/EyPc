@@ -1,6 +1,8 @@
-import type { RuntimeActionDefinition, RuntimeActionDispatchResult, RuntimeActionIntent, RuntimeActionScope } from './types'
+import type { CommandCatalogV7 } from '../command/commandCatalog'
+import type { RuntimeActionDefinition, RuntimeActionDispatchResult, RuntimeActionHandlerV7, RuntimeActionIntent, RuntimeActionScope } from './types'
 
 interface ActionRuntimeOptions {
+  catalog?: CommandCatalogV7
   captureSnapshot?: () => unknown
   commitSnapshot?: (snapshot: unknown) => void
   onDispatch?: (observation: RuntimeActionDispatchObservation) => void
@@ -29,6 +31,19 @@ const SCOPE_WEIGHT: Record<RuntimeActionScope, number> = {
   layer: 400
 }
 
+const RISK_WEIGHT: Record<RuntimeActionDefinition['risk'], number> = {
+  normal: 0,
+  'data-write': 1,
+  destructive: 2
+}
+
+function highestRisk(
+  descriptorRisk: RuntimeActionDefinition['risk'],
+  handlerRisk: RuntimeActionDefinition['risk']
+): RuntimeActionDefinition['risk'] {
+  return RISK_WEIGHT[descriptorRisk] >= RISK_WEIGHT[handlerRisk] ? descriptorRisk : handlerRisk
+}
+
 function handled(value: ReturnType<RuntimeActionDefinition['run']>): boolean {
   return typeof value === 'object' ? value.handled !== false : value !== false
 }
@@ -52,10 +67,47 @@ export function createActionRuntime(options: ActionRuntimeOptions = {}) {
     try { options.onDispatch?.(observation) } catch {}
   }
 
+  function canonicalDefinition(action: RuntimeActionDefinition): RuntimeActionDefinition {
+    const descriptor = options.catalog?.get(action.id)
+    if (!descriptor) return action
+    return {
+      ...action,
+      title: descriptor.title,
+      group: descriptor.group,
+      description: descriptor.description ?? action.description,
+      icon: descriptor.icon ?? action.icon,
+      // A partially migrated Catalog may tighten risk, but must never downgrade an
+      // already audited handler and accidentally bypass write/destructive policy.
+      risk: highestRisk(descriptor.risk, action.risk),
+      shortcut: descriptor.defaultBindings[0]?.shortcutIds[0]
+    }
+  }
+
+  function registerDefinition(action: RuntimeActionDefinition): void {
+    if (actions.has(action.id)) throw new Error(`Duplicate action id: ${action.id}`)
+    actions.set(action.id, canonicalDefinition(action))
+  }
+
   return {
     register(action: RuntimeActionDefinition): void {
-      if (actions.has(action.id)) throw new Error(`Duplicate action id: ${action.id}`)
-      actions.set(action.id, action)
+      registerDefinition(action)
+    },
+    registerHandler(handler: RuntimeActionHandlerV7): void {
+      const descriptor = options.catalog?.require(handler.commandId)
+      if (!descriptor) throw new Error('registerHandler requires a Command Catalog')
+      registerDefinition({
+        id: handler.commandId,
+        title: descriptor.title,
+        group: descriptor.group,
+        description: descriptor.description,
+        icon: descriptor.icon,
+        risk: descriptor.risk,
+        scope: handler.scope,
+        priority: handler.priority,
+        shortcut: descriptor.defaultBindings[0]?.shortcutIds[0],
+        when: handler.when,
+        run: handler.run
+      })
     },
     all(): RuntimeActionDefinition[] {
       return [...actions.values()].sort((a, b) => a.group.localeCompare(b.group) || a.id.localeCompare(b.id))

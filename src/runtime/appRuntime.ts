@@ -35,10 +35,14 @@ import type { AppState, AppTabId, FavoriteNode, FavoritePlatform, FavoriteRunner
 import type { PortGroupTreeRow } from '../domain/ports'
 import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFavoriteRunResult, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FavoriteRunResult, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type RuntimeDiagnosticsSnapshotV3, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
-import type { RuntimeActionContext, RuntimeActionRisk } from './action/types'
+import { actionMenuDispatchArgsV7, buildActionMenuItemV7, type ActionMenuItemV7 } from './action/actionMenu'
+import type { RuntimeActionContext } from './action/types'
+import type { KeybindingLayerId } from './command/types'
 import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feature/featureRegistry'
-import { buildDefaultKeybindings, buildEffectiveKeybindings, normalizeShortcutId, resolveKeybinding } from './keybinding/keybindingRuntime'
+import { buildCommandCatalogV7, buildEffectiveKeybindings, normalizeShortcutId } from './keybinding/keybindingRuntime'
 import type { KeybindingContext } from './keybinding/keybindingRuntime'
+import { createKeybindingIndexV7, type KeybindingIndexV7 } from './keybinding/keybindingIndex'
+import { featureTargetRefForCommandV7 } from './navigation/navigationIntent'
 import { resolveMqttConnect, type MqttRuntimeClient } from './mqttClientModule'
 import { createCodexController, type CodexFloatSnapshotV1, type CodexRuntimeView } from './codexController'
 import { createWindowActivationRequest, isWindowSpaceFailureReason } from './window/windowActivationRuntime'
@@ -71,7 +75,6 @@ export interface FavoriteRunSummary {
 export interface AppRuntimeSnapshot {
   state: AppState
   codex: CodexRuntimeView
-  codexFloat: CodexFloatSnapshotV1
   runtimeDiagnostics: RuntimeDiagnosticsSnapshotV3
   ports: PortProcess[]
   filteredPorts: PortProcess[]
@@ -191,6 +194,7 @@ export interface AppRuntimeSnapshot {
   mqttReceiveFilter: MqttReceiveFilter
   activeMqttPane: MqttPaneId
   activeMqttRecordList: MqttRecordListId
+  mqttFollowLatest: boolean
   mqttMessageStats: MqttMessageStats
   mqttSessionRows: MqttSessionRecordView[]
   mqttMessageRows: MqttMessageRecord[]
@@ -223,6 +227,23 @@ export interface AppRuntimeSnapshot {
   commandShortcutLabels: Record<string, string>
   visibleFeatures: VisibleFeatureDefinition[]
 }
+
+export interface CompanionPresentationRuntimeSnapshotV7 {
+  visible: boolean
+  snapshot: CodexFloatSnapshotV1
+  position: CodexSettings['position']
+  expandedSizes: CodexSettings['expandedSizes']
+}
+
+export type RuntimeNotificationDomainV7 = 'shell' | 'companion' | AppTabId
+
+export interface ShortcutBarrierResultV7 {
+  readonly actionId: null
+  readonly consumed: boolean
+  readonly blockedBy: KeybindingLayerId
+}
+
+export type ShortcutHandlingResultV7 = string | ShortcutBarrierResultV7 | null
 
 export type PortPaneId = 'groups' | 'results'
 export type FavoritePaneId = 'containers' | 'items' | 'directory'
@@ -528,16 +549,7 @@ export interface MqttMessageStats {
   outgoing: number
 }
 
-export interface MqttDrawerItem {
-  commandId: string
-  title: string
-  description: string
-  icon: string
-  shortcutLabel: string
-  risk: RuntimeActionRisk
-  enabled: boolean
-  args?: Record<string, unknown>
-}
+export type MqttDrawerItem = ActionMenuItemV7
 
 export interface MqttPreviewState {
   open: boolean
@@ -575,16 +587,7 @@ export interface PortDrawerState {
   groupTarget: PortGroupTarget | null
 }
 
-export interface PortDrawerItem {
-  commandId: string
-  title: string
-  description: string
-  icon: string
-  shortcutLabel: string
-  risk: RuntimeActionRisk
-  enabled: boolean
-  args?: Record<string, unknown>
-}
+export type PortDrawerItem = ActionMenuItemV7
 
 export interface FavoriteDirectoryRow extends FavoriteDirectoryEntry {
   favorited: boolean
@@ -600,16 +603,7 @@ export interface FavoriteDrawerState {
   targetIds: string[]
 }
 
-export interface FavoriteDrawerItem {
-  commandId: string
-  title: string
-  description: string
-  icon: string
-  shortcutLabel: string
-  risk: RuntimeActionRisk
-  enabled: boolean
-  args?: Record<string, unknown>
-}
+export type FavoriteDrawerItem = ActionMenuItemV7
 
 export interface ShortcutInputContext {
   textInputFocused: boolean
@@ -727,6 +721,21 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
   const runtimeDiagnosticsNeedsDefaultMigration = initialState.settings.runtimeDiagnostics.defaultsRevision !== 3
   let state = normalizeAppState(initialState)
+  let keybindingRevision = 1
+  let cachedKeybindingIndex: KeybindingIndexV7 | null = null
+  function invalidateKeybindingIndex(): void {
+    keybindingRevision += 1
+    cachedKeybindingIndex = null
+  }
+  function keybindingIndex(): KeybindingIndexV7 {
+    if (!cachedKeybindingIndex) {
+      cachedKeybindingIndex = createKeybindingIndexV7(
+        keybindingRevision,
+        buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
+      )
+    }
+    return cachedKeybindingIndex
+  }
   if (runtimeDiagnosticsNeedsDefaultMigration) {
     platform.diagnostics?.configure(state.settings.runtimeDiagnostics)
     save()
@@ -844,6 +853,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let mqttPublishRecordsOpen = state.mqtt.layoutPrefs.publishRecordsOpen
   const initialMqttInfoFilter = state.mqtt.viewPrefs.infoFilter
   let mqttReceiveFilter: MqttReceiveFilter = initialMqttInfoFilter === 'all' || initialMqttInfoFilter === 'outgoing' ? initialMqttInfoFilter : 'incoming'
+  let mqttFollowLatest = state.mqtt.viewPrefs.followLatest
   let activeMqttPane: MqttPaneId = 'messages'
   let activeMqttRecordList: MqttRecordListId = initialMqttInfoFilter === 'favorites' ? 'templates' : 'messages'
   if (activeMqttRecordList !== 'messages') mqttPublishRecordsOpen = true
@@ -883,12 +893,13 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let confirm: AppRuntimeSnapshot['confirm'] = null
   let scanInFlight: Promise<void> | null = null
   const listeners = new Set<() => void>()
-  const undoStack: AppState[] = []
+  const domainListeners = new Map<RuntimeNotificationDomainV7, Set<() => void>>()
+  let notificationRevision = 1
+  let snapshotCacheRevision = 0
+  let snapshotCache: AppRuntimeSnapshot | null = null
+  const commandCatalog = buildCommandCatalogV7(state.settings.featureConfigs)
   const actions = createActionRuntime({
-    captureSnapshot: () => normalizeAppState(state),
-    commitSnapshot: (snapshot) => {
-      undoStack.push(normalizeAppState(snapshot))
-    },
+    catalog: commandCatalog,
     onDispatch: (observation) => {
       const automaticFocus = observation.actionId === 'codex.task.focus' && observation.source === 'automatic-focus'
       platform.diagnostics?.record({
@@ -920,8 +931,33 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
   })
 
-  function notify() {
+  function notifyDomains(...domains: RuntimeNotificationDomainV7[]) {
+    notificationRevision += 1
+    snapshotCache = null
     listeners.forEach((listener) => listener())
+    for (const domain of new Set(domains)) {
+      domainListeners.get(domain)?.forEach((listener) => listener())
+    }
+  }
+
+  function notify(domain: RuntimeNotificationDomainV7 = state.activeTab) {
+    if (domain === 'companion') {
+      notifyDomains('companion', 'codex')
+      return
+    }
+    if (domain === 'shell') {
+      notifyDomains('shell', state.activeTab)
+      return
+    }
+    // A feature mutation only invalidates the shell when it belongs to the
+    // currently visible feature. Hidden feature ingestion (notably MQTT and
+    // Companion) must not rebuild the shell or another page slice.
+    if (domain === state.activeTab) notifyDomains('shell', domain)
+    else notifyDomains(domain)
+  }
+
+  function notifyRuntimeContractChange() {
+    notifyDomains('shell', 'companion', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings')
   }
 
   function save() {
@@ -1148,7 +1184,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     platform,
     getAppState: () => state,
     save,
-    notify,
+    notify: () => notify('companion'),
     setMessage
   })
 
@@ -3092,6 +3128,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
     state.mqtt.viewPrefs = {
       infoFilter: currentMqttInfoFilter(),
+      followLatest: mqttFollowLatest,
       activeSubscriptionTopicsByConfigId: activeTopicsByConfig
     }
     save()
@@ -4229,6 +4266,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function selectMqttRecord(target: MqttRecordSelection, list: MqttRecordListId = activeMqttRecordList) {
     mqttSelectedRecord = target
+    const disabledFollowLatest = list === 'messages' && mqttFollowLatest
+    if (list === 'messages' && mqttFollowLatest) {
+      mqttFollowLatest = false
+    }
     activeMqttRecordList = list
     activeMqttPane = 'messages'
     if (list === 'templates' || list === 'history') {
@@ -4250,6 +4291,23 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         }
       }
     }
+    if (disabledFollowLatest) persistMqttViewPrefs()
+    notify()
+    return true
+  }
+
+  function toggleMqttFollowLatest() {
+    mqttFollowLatest = !mqttFollowLatest
+    if (mqttFollowLatest) {
+      activeMqttRecordList = 'messages'
+      const latest = mqttRecordRowsForList('messages')[0] || null
+      mqttSelectedRecord = latest
+      mqttRecordListStates = {
+        ...mqttRecordListStates,
+        messages: { ...mqttRecordListStates.messages, activeIndex: 0 }
+      }
+    }
+    persistMqttViewPrefs()
     notify()
     return true
   }
@@ -4419,6 +4477,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (!configId) return
     mqttArchive = archiveWithConnectionSnapshots(mqttArchive)
     platform.storage.setMqttArchive(mqttArchive)
+  }
+
+  function persistMqttMessage(config: MqttConnectionConfig, sessionId: string, message: MqttMessageRecord) {
+    const session = mqttArchive.sessions.find((item) => item.id === sessionId)
+    if (session && platform.storage.mutateMqttArchive?.({
+      revision: 'mqtt-archive-mutation-v1',
+      kind: 'append-message',
+      connectionSnapshot: createMqttConnectionSnapshot(config),
+      // The mutation carries only session metadata plus the appended message.
+      session: { ...session, messages: [] },
+      message
+    })) return
+    saveMqttArchiveForConfig(config.id)
   }
 
   function mqttSessionsForActiveConfig(): MqttSessionRecordView[] {
@@ -5065,8 +5136,22 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
     mqttArchive = appendMqttMessage(mqttArchive, record)
     updateMqttUnreadForMessage(record)
-    mqttSelectedRecord = { kind: 'message', id: record.id }
-    saveMqttArchiveForConfig(config.id)
+    if (mqttFollowLatest) {
+      mqttSelectedRecord = { kind: 'message', id: record.id }
+      mqttRecordListStates = {
+        ...mqttRecordListStates,
+        messages: { ...mqttRecordListStates.messages, activeIndex: 0 }
+      }
+    } else if (activeMqttRecordList === 'messages' && mqttSelectedRecord?.kind === 'message') {
+      const selectedIndex = mqttRecordRowsForList('messages').findIndex((item) => item.id === mqttSelectedRecord?.id)
+      if (selectedIndex >= 0) {
+        mqttRecordListStates = {
+          ...mqttRecordListStates,
+          messages: { ...mqttRecordListStates.messages, activeIndex: selectedIndex }
+        }
+      }
+    }
+    persistMqttMessage(config, sessionId, record)
     notify()
     return true
   }
@@ -5552,6 +5637,43 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return { open: true, active, activeIndex: 0, targetKind: target?.kind || null, targetId: target?.id || null }
   }
 
+  function actionMenuItem(
+    commandId: string,
+    title: string,
+    description: string,
+    icon: string,
+    args?: Record<string, unknown>,
+    shortcutLabel?: string
+  ): ActionMenuItemV7 {
+    const disposition = /(?:^|\.)(?:open|reveal|detail)(?:$|\.)/.test(commandId)
+      ? 'open'
+      : /(?:^|\.)(?:focus|search)(?:$|\.)/.test(commandId)
+        ? 'focus'
+        : 'execute'
+    return buildActionMenuItemV7({
+      commandId,
+      title,
+      description,
+      icon,
+      args,
+      target: featureTargetRefForCommandV7({ commandId, args, featureId: state.activeTab }),
+      source: 'drawer',
+      disposition
+    }, {
+      command(id) {
+        const action = actions.get(id)
+        return action ? {
+          title: action.title,
+          description: action.description,
+          icon: action.icon,
+          risk: action.risk,
+          available: action.when(context())
+        } : null
+      },
+      shortcutLabel: (id) => keybindingIndex().labelFor(id)
+    }, shortcutLabel)
+  }
+
   function mqttDrawerItem(
     commandId: string,
     title: string,
@@ -5559,23 +5681,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     icon: string,
     args?: Record<string, unknown>
   ): MqttDrawerItem {
-    const action = actions.get(commandId)
-    return {
-      commandId,
-      title,
-      description,
-      icon,
-      args,
-      risk: action?.risk || 'normal',
-      shortcutLabel: '',
-      enabled: Boolean(action?.when(context()))
-    }
+    return actionMenuItem(commandId, title, description, icon, args, '')
   }
 
   function secondaryMqttDrawerActionShortcut(commandId: string) {
-    const labels = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
-      .filter((binding) => binding.actionId === commandId && !binding.disabled && binding.source !== 'removed')
-      .map((binding) => binding.shortcutId)
+    const labels = keybindingIndex().shortcutsFor(commandId)
       .filter((shortcutId) => {
         const normalized = normalizeShortcutId(shortcutId)
         return normalized !== 'ArrowLeft' && normalized !== 'ArrowRight'
@@ -5659,7 +5769,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (target?.kind === 'connection-group') {
       return finalizeMqttDrawerItems([
         mqttDrawerItem('mqtt.detail.open', '详情', '查看当前连接分组。抽屉内可用索引快捷键或 Enter。', 'detail', args),
-        mqttDrawerItem('mqtt.connectionGroup.create', '子分组', '在当前分组下新增子分组。', 'folder-plus', { parentId: target.id }),
+        mqttDrawerItem('mqtt.connectionGroup.create', '子分组', '在当前分组下新增子分组。', 'folder-plus', {
+          groupId: target.id,
+          parentId: target.id,
+          targetKind: 'connection-group'
+        }),
         mqttDrawerItem('mqtt.config.create', '新建连接', '在当前分组下新增 MQTT 连接。', 'add', args),
         mqttDrawerItem('mqtt.connectionGroup.moveParent', '移动父级', '选择当前分组所在的父级分组，或留空放在根层。', 'folder', args),
         mqttDrawerItem('mqtt.connectionGroup.rename', '重命名', '只编辑当前连接分组名称。', 'rename', args),
@@ -5721,7 +5835,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const items = buildMqttDrawerItems(drawer)
     const item = items[index]
     if (!item || !item.enabled) return false
-    const result = actions.dispatch({ actionId: item.commandId, context: context(), args: item.args })
+    const result = actions.dispatch({ actionId: item.commandId, context: context(), args: actionMenuDispatchArgsV7(item) })
     if (mqttDrawer.open && item.commandId !== 'mqtt.detail.open' && item.commandId !== 'mqtt.record.favorite') closeMqttDrawer(false)
     notify()
     return result.handled
@@ -6050,11 +6164,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         pushMqttLog('info', '连接成功', config.url, config.id)
         ensureCurrentMqttSession(config)
         if (config.subscriptions.length) client.subscribe(config.subscriptions, { qos: config.qos })
-        notify()
+        notifyDomains('mqtt')
       })
-      client.on('reconnect', () => { mqttConnectionStatus = { state: 'reconnecting', detail: config.url }; pushMqttLog('warn', '正在重连', config.url, config.id); logUnestablished(); notify() })
-      client.on('close', () => { mqttConnectionStatus = { state: 'disconnected', detail: config.url }; pushMqttLog('warn', '连接关闭', config.url, config.id); logUnestablished(); notify() })
-      client.on('error', (error: Error) => { mqttConnectionStatus = { state: 'error', detail: error.message }; pushMqttLog('error', '连接错误', error.message, config.id); notify() })
+      client.on('reconnect', () => { mqttConnectionStatus = { state: 'reconnecting', detail: config.url }; pushMqttLog('warn', '正在重连', config.url, config.id); logUnestablished(); notifyDomains('mqtt') })
+      client.on('close', () => { mqttConnectionStatus = { state: 'disconnected', detail: config.url }; pushMqttLog('warn', '连接关闭', config.url, config.id); logUnestablished(); notifyDomains('mqtt') })
+      client.on('error', (error: Error) => { mqttConnectionStatus = { state: 'error', detail: error.message }; pushMqttLog('error', '连接错误', error.message, config.id); notifyDomains('mqtt') })
       client.on('message', (topic: string, payload: Uint8Array) => {
         appendMqttMessageRecord({ direction: 'incoming', topic, payload: new TextDecoder().decode(payload), qos: config.qos, retain: false })
       })
@@ -6062,7 +6176,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     } catch (error) {
       mqttConnectionStatus = { state: 'error', detail: error instanceof Error ? error.message : 'MQTT 连接失败' }
       pushMqttLog('error', '连接失败', mqttConnectionStatus.detail, config.id)
-      notify()
+      notifyDomains('mqtt')
       return false
     }
   }
@@ -6338,20 +6452,34 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function shortcutLabelsFor(commandId: string) {
-    const labels = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
-      .filter((binding) => binding.actionId === commandId && !binding.disabled && binding.source !== 'removed')
-      .map((binding) => binding.shortcutId)
-      .filter(Boolean)
-    return formatShortcutList(labels)
+    return keybindingIndex().labelFor(commandId)
   }
 
   function buildCommandShortcutLabels(): Record<string, string> {
-    const output: Record<string, string> = {}
-    for (const binding of buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)) {
-      if (binding.disabled || binding.source === 'removed') continue
-      if (!output[binding.actionId]) output[binding.actionId] = shortcutLabelsFor(binding.actionId)
-    }
-    return output
+    return keybindingIndex().labelRecord
+  }
+
+  function companionFloatKeybindings() {
+    return keybindingIndex().bindings
+      .filter((binding) => (binding.actionId.startsWith('codex.') || binding.actionId.startsWith('quickJump.')) && !binding.disabled && Boolean(binding.shortcutId))
+      .map((binding) => ({
+        actionId: binding.actionId,
+        shortcutId: binding.shortcutId,
+        layer: binding.layer,
+        when: binding.when,
+        weight: binding.weight,
+        executionOwner: commandCatalog.executionOwnerFor(binding.actionId, 'float')
+      }))
+  }
+
+  function companionPresentationSnapshot(): CompanionPresentationRuntimeSnapshotV7 {
+    const codex = codexController.view()
+    return Object.freeze({
+      visible: currentVisibleFeatures().some((feature) => feature.id === 'codex') && codex.settings.floatEnabled,
+      snapshot: codexController.floatSnapshot(companionFloatKeybindings()),
+      position: codex.settings.position,
+      expandedSizes: codex.settings.expandedSizes
+    })
   }
 
   function drawerItem(
@@ -6361,17 +6489,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     icon: string,
     args?: Record<string, unknown>
   ): PortDrawerItem {
-    const action = actions.get(commandId)
-    return {
-      commandId,
-      title,
-      description,
-      icon,
-      args,
-      risk: action?.risk || 'normal',
-      shortcutLabel: shortcutLabelsFor(commandId),
-      enabled: Boolean(action?.when(context()))
-    }
+    return actionMenuItem(commandId, title, description, icon, args)
   }
 
   function inferPortDrawerState(args?: Record<string, unknown>): PortDrawerState | null {
@@ -6423,12 +6541,17 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       }
       return items
     }
+    const args = drawer.targetIds.length > 1
+      ? { portIds: [...drawer.targetIds] }
+      : drawer.targetIds[0]
+        ? { portId: drawer.targetIds[0] }
+        : {}
     return [
-      drawerItem('ports.kill.confirm', '终止确认', drawer.mode === 'multi' ? '确认后终止已选端口进程。' : '确认后终止当前端口进程。', ''),
-      drawerItem('ports.kill.force', '强杀', '直接执行强杀，并保留 PID + 端口双重校验。', ''),
-      drawerItem('ports.group.createFromSelection', '收藏为组', '把当前目标端口写入新的端口组草稿。', ''),
-      drawerItem('ports.scan', '刷新扫描', '重新扫描本机监听端口。', ''),
-      drawerItem('search.focus', '聚焦搜索', '回到当前栏搜索框。', '')
+      drawerItem('ports.kill.confirm', '终止确认', drawer.mode === 'multi' ? '确认后终止已选端口进程。' : '确认后终止当前端口进程。', '', args),
+      drawerItem('ports.kill.force', '强杀', '直接执行强杀，并保留 PID + 端口双重校验。', '', args),
+      drawerItem('ports.group.createFromSelection', '收藏为组', '把当前目标端口写入新的端口组草稿。', '', args),
+      drawerItem('ports.scan', '刷新扫描', '重新扫描本机监听端口。', '', args),
+      drawerItem('search.focus', '聚焦搜索', '回到当前栏搜索框。', '', args)
     ]
   }
 
@@ -6463,7 +6586,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const items = buildPortDrawerItems(drawer)
     const item = items[index]
     if (!item || !item.enabled) return false
-    const result = actions.dispatch({ actionId: item.commandId, context: context(), args: item.args })
+    const result = actions.dispatch({ actionId: item.commandId, context: context(), args: actionMenuDispatchArgsV7(item) })
     if (portDrawer.open) closePortDrawer(false)
     notify()
     return result.handled
@@ -6499,17 +6622,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     icon: string,
     args?: Record<string, unknown>
   ): FavoriteDrawerItem {
-    const action = actions.get(commandId)
-    return {
-      commandId,
-      title,
-      description,
-      icon,
-      args,
-      risk: action?.risk || 'normal',
-      shortcutLabel: shortcutLabelsFor(commandId),
-      enabled: Boolean(action?.when(context()))
-    }
+    return actionMenuItem(commandId, title, description, icon, args)
   }
 
   function hasExplicitFavoriteDrawerArgs(args?: Record<string, unknown>) {
@@ -6615,7 +6728,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const items = buildFavoriteDrawerItems()
     const item = items[index]
     if (!item || !item.enabled) return false
-    const result = actions.dispatch({ actionId: item.commandId, context: context(), args: item.args })
+    const result = actions.dispatch({ actionId: item.commandId, context: context(), args: actionMenuDispatchArgsV7(item) })
     closeFavoriteDrawer(false)
     notify()
     return result.handled
@@ -8866,8 +8979,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         return true
       }
     })
-    actions.register({ id: 'quickJump.openForward', title: '快捷跳转', group: '全局', risk: 'normal', scope: 'global', priority: 99, shortcut: 'F', when: (ctx) => !ctx.layerIds.includes('confirm'), run: () => true })
-    actions.register({ id: 'quickJump.openBackward', title: '反向快捷跳转', group: '全局', risk: 'normal', scope: 'global', priority: 99, shortcut: 'Shift+F', when: (ctx) => !ctx.layerIds.includes('confirm'), run: () => true })
+    actions.registerHandler({ commandId: 'quickJump.openForward', scope: 'global', priority: 99, when: (ctx) => !ctx.layerIds.includes('confirm'), run: () => true })
+    actions.registerHandler({ commandId: 'quickJump.openBackward', scope: 'global', priority: 99, when: (ctx) => !ctx.layerIds.includes('confirm'), run: () => true })
     for (const feature of FEATURES) {
       const tabActionId = `tab.select.${feature.id}`
       actions.register({
@@ -9124,6 +9237,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'mqtt.subscription.deleteSelected', title: '删除选中 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'mqtt', run: () => deleteSelectedMqttSubscriptions() })
     actions.register({ id: 'mqtt.subscription.clearAll', title: '清空 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: () => clearAllMqttSubscriptions() })
     actions.register({ id: 'mqtt.layout.toggle', title: '切换 MQTT 收发布局', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+Shift+S', when: (ctx) => ctx.tab === 'mqtt', run: () => { setMqttWorkspaceLayout(mqttWorkspaceLayout === 'stack' ? 'split' : 'stack'); notify(); return true } })
+    actions.register({ id: 'mqtt.followLatest.toggle', title: '切换跟随最新消息', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: () => toggleMqttFollowLatest() })
     actions.register({ id: 'mqtt.layout.resize', title: '调整 MQTT 收发比例', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => resizeMqttLayout(args) })
     actions.register({ id: 'mqtt.layout.reset', title: '重置 MQTT 收发比例', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => resetMqttLayoutRatio(args) })
     actions.register({ id: 'tool.preview.hover.update', title: '更新工具悬浮预览设置', group: '工具系统', risk: 'normal', scope: 'global', priority: 91, when: () => true, run: (_ctx, args) => updateToolPreviewPrefs(args) })
@@ -9382,7 +9496,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'codex.clear-launch-path', title: '恢复 Codex CLI 自动发现', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => { void codexController.clearLaunchPath(); return true } })
     actions.register({ id: 'codex.settings.open', title: '打开 Codex 配置', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => { setTab('codex'); return true } })
     actions.register({ id: 'codex.quickJump.activate', title: '执行 Quick Jump 目标', group: 'Codex', risk: 'normal', scope: 'global', priority: 1, when: () => true, run: () => true })
-    actions.register({ id: 'codex.thread.createFocused', title: '在当前项目新建会话', group: 'Codex', risk: 'normal', scope: 'global', priority: 99, shortcut: 'Ctrl+T', when: () => true, run: () => {
+    actions.registerHandler({ commandId: 'codex.thread.createFocused', scope: 'global', priority: 99, when: () => true, run: () => {
       const enabled = state.codex.settings.floatEnabled || codexController.updateSettings({ floatEnabled: true })
       if (!enabled) return false
       queueMicrotask(() => platform.float.activate?.({ command: 'new-thread' }))
@@ -9404,7 +9518,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'codex.completed-unread.openFirst', title: '依次打开 Codex 已完成未读任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.openFirstCompletedUnread(typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'attention-shortcut') })
     actions.register({ id: 'codex.task.previous', title: '上一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.cycleTask(-1, typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'global-shortcut') })
     actions.register({ id: 'codex.task.next', title: '下一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.cycleTask(1, typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'global-shortcut') })
-    actions.register({ id: 'codex.task.archiveFocused', title: '归档当前 Companion 任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.archiveFocusedTask(typeof args?.operationId === 'string' ? args.operationId : undefined) })
+    actions.registerHandler({ commandId: 'codex.task.archiveFocused', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.archiveFocusedTask(typeof args?.operationId === 'string' ? args.operationId : undefined) })
     actions.register({ id: 'codex.task.focus', title: '同步 Companion 聚焦任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 1, when: () => true, run: (_ctx, args) => codexController.setFocusedTask(
       typeof args?.key === 'string' ? args.key : '',
       typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
@@ -9522,12 +9636,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const tab = typeof args?.tab === 'string' ? args.tab : ''
       return codexController.setTaskTab(tab as 'all' | 'input' | 'ongoing' | 'completed' | 'hidden' | 'projects')
     } })
-    actions.register({ id: 'codex.tab.prev', title: '上一个 Codex 页签', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: () => {
+    actions.registerHandler({ commandId: 'codex.tab.prev', scope: 'global', priority: 96, when: () => true, run: () => {
       const tabs = ['ongoing', 'completed', 'hidden', 'projects'] as const
       const current = tabs.includes(state.codex.lastTaskTab as typeof tabs[number]) ? state.codex.lastTaskTab as typeof tabs[number] : 'ongoing'
       return codexController.setTaskTab(tabs[(tabs.indexOf(current) - 1 + tabs.length) % tabs.length])
     } })
-    actions.register({ id: 'codex.tab.next', title: '下一个 Codex 页签', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: () => {
+    actions.registerHandler({ commandId: 'codex.tab.next', scope: 'global', priority: 96, when: () => true, run: () => {
       const tabs = ['ongoing', 'completed', 'hidden', 'projects'] as const
       const current = tabs.includes(state.codex.lastTaskTab as typeof tabs[number]) ? state.codex.lastTaskTab as typeof tabs[number] : 'ongoing'
       return codexController.setTaskTab(tabs[(tabs.indexOf(current) + 1) % tabs.length])
@@ -9587,7 +9701,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     } })
     actions.register({ id: 'codex.float.position.reset', title: '重置 Codex 悬浮球位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 91, when: () => true, run: () => codexController.resetPosition() })
     actions.register({ id: 'codex.float.size.reset', title: '恢复 Codex 自适应展开尺寸', group: 'Codex', risk: 'data-write', scope: 'global', priority: 91, when: () => true, run: (_ctx, args) => codexController.resetExpandedSize(typeof args?.displayId === 'string' ? args.displayId : undefined) })
-    actions.register({ id: 'codex.float.toggle', title: '显示或隐藏 Codex 悬浮球', group: 'Codex', risk: 'data-write', scope: 'global', priority: 1000, shortcut: 'Ctrl+Alt+Q', when: () => true, run: (_ctx, args) => {
+    actions.registerHandler({ commandId: 'codex.float.toggle', scope: 'global', priority: 1000, when: () => true, run: (_ctx, args) => {
       if (!isTabEnabled('codex')) {
         setMessage('请先在总设置中启用 Codex Companion')
         return false
@@ -9603,7 +9717,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       lastCodexFloatToggleSource = source
       return codexController.updateSettings({ floatEnabled: !state.codex.settings.floatEnabled })
     } })
-    actions.register({ id: 'codex.float.activate', title: '进入 Codex 卡片', description: '显示并展开 Codex 卡片，将键盘焦点交给会话列表。', group: 'Codex', risk: 'normal', scope: 'global', priority: 1001, shortcut: 'Ctrl+Alt+Enter', when: () => true, run: () => {
+    actions.registerHandler({ commandId: 'codex.float.activate', scope: 'global', priority: 1001, when: () => true, run: () => {
       if (!isTabEnabled('codex')) {
         setMessage('请先在总设置中启用 Codex Companion')
         return false
@@ -9613,7 +9727,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       queueMicrotask(() => platform.float.activate?.())
       return true
     } })
-    actions.register({ id: 'codex.quick.activate', title: '快速任务查看', description: '展开悬浮卡片的动态列表并进入筛选模式：直接打字筛选，Ctrl+1…0 打开对应编号任务。', group: 'Codex', risk: 'normal', scope: 'global', priority: 1002, shortcut: 'Ctrl+Alt+K', when: () => true, run: () => {
+    actions.registerHandler({ commandId: 'codex.quick.activate', scope: 'global', priority: 1002, when: () => true, run: () => {
       if (!isTabEnabled('codex')) {
         setMessage('请先在总设置中启用 Codex Companion')
         return false
@@ -9710,11 +9824,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     for (let slot = 1; slot <= 5; slot += 1) {
       const slotIndex = slot - 1
       const label = `Codex Action 槽 ${slot}`
-      actions.register({
-        id: `codex.action.run.${slot}`,
-        title: `执行 Codex Environment Action 槽 ${slot}`,
-        group: 'Codex',
-        risk: 'data-write',
+      actions.registerHandler({
+        commandId: `codex.action.run.${slot}`,
         scope: 'global',
         priority: 88,
         when: () => true,
@@ -9792,6 +9903,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       favoriteDetailOpen: favoriteDrawer.open && !favoriteDrawer.active,
       favoriteDetailActive: favoriteDrawer.open && !favoriteDrawer.active,
       favoritePickReviewOpen: Boolean(favoritePickReview),
+      favoriteRunPromptOpen: Boolean(favoriteRunPrompt),
+      favoriteSlotManagerOpen,
       portDetailOpen: portDetail.open,
       portDetailActive: portDetail.active,
       portGroupDetailOpen: portGroupDetail.open,
@@ -9806,12 +9919,119 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
   }
 
+  function blockedShortcutResult(consumed: boolean, blockedBy: KeybindingLayerId): ShortcutBarrierResultV7 {
+    return Object.freeze({ actionId: null, consumed, blockedBy })
+  }
+
+  /**
+   * A modal owns the shortcut transaction. Its binding may dispatch, while an
+   * unmatched key terminates resolution without ever falling through to the Tab.
+   * Native text editing remains possible when `consumed` is false.
+   */
+  function dispatchTopLayerShortcut(
+    shortcutId: string,
+    input: ShortcutInputContext
+  ): ShortcutHandlingResultV7 | undefined {
+    const resolution = keybindingIndex().resolveWithBarrier(shortcutId, keybindingContext(input), 'main')
+    if (!resolution.blockedBy) return undefined
+    const binding = resolution.binding
+    if (!binding) return blockedShortcutResult(resolution.consumed, resolution.blockedBy)
+    // Compatibility during handler migration: legacy direct branches may still own
+    // a declared modal command until they are registered in ActionRuntime.
+    if (!actions.get(binding.actionId)) return undefined
+    const result = actions.dispatch({
+      actionId: binding.actionId,
+      context: context(input),
+      args: { source: 'local-shortcut' }
+    })
+    return result.handled
+      ? binding.actionId
+      : blockedShortcutResult(true, resolution.blockedBy)
+  }
+
+  /**
+   * Shell-only navigation is intentionally kept outside ActionRuntime, but its
+   * ownership is now declared by CommandCatalog rather than inferred by a second
+   * ad-hoc prefix chain in the keyboard handler.
+   */
+  function dispatchShellOwnedCommand(actionId: string): ShortcutHandlingResultV7 {
+    if (actionId === 'tab.next' || actionId === 'tab.prev') {
+      const order: AppTabId[] = currentVisibleFeatures().map((feature) => feature.id)
+      const current = order.indexOf(state.activeTab)
+      const offset = actionId === 'tab.next' ? 1 : -1
+      setTab(order[(current + offset + order.length) % order.length])
+      return actionId
+    }
+    if (actionId.startsWith('tab.select.')) {
+      const tab = actionId.replace('tab.select.', '') as AppTabId
+      if (['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'].includes(tab) && isTabEnabled(tab)) setTab(tab)
+      return actionId
+    }
+    if (actionId === 'list.up' || actionId === 'windows.list.up') {
+      moveInList(-1)
+      return actionId
+    }
+    if (actionId === 'list.down' || actionId === 'windows.list.down') {
+      moveInList(1)
+      return actionId
+    }
+    if (actionId === 'list.pageUp' || actionId === 'windows.list.pageUp') {
+      moveInList(-1, true)
+      return actionId
+    }
+    if (actionId === 'list.pageDown' || actionId === 'windows.list.pageDown') {
+      moveInList(1, true)
+      return actionId
+    }
+    if (actionId === 'list.toggleSelection') {
+      if (state.activeTab === 'mqtt' && activeMqttPane !== 'messages') return null
+      toggleFocusedSelection()
+      return actionId
+    }
+    return null
+  }
+
+  function dispatchCatalogOwnedShortcut(
+    actionId: string,
+    input: ShortcutInputContext
+  ): ShortcutHandlingResultV7 {
+    const descriptor = commandCatalog.get(actionId)
+    const owner = descriptor ? commandCatalog.executionOwnerFor(actionId, 'main') : 'runtime-action'
+    if (owner === 'main-quick-jump') {
+      if (actionId === 'quickJump.openBackward') return actionId
+      return 'quickJump.openForward'
+    }
+    if (owner === 'shell') return dispatchShellOwnedCommand(actionId)
+    if (owner !== 'runtime-action') return null
+    const result = actions.dispatch({
+      actionId,
+      context: context(input),
+      ...(actionId === 'codex.float.toggle'
+        ? { args: { source: 'in-app-shortcut' } }
+        : actionId.startsWith('codex.')
+          ? { args: { source: 'local-shortcut' } }
+          : {})
+    })
+    return result.handled ? actionId : null
+  }
+
   return {
     subscribe(listener: () => void) {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
+    subscribeDomain(domain: RuntimeNotificationDomainV7, listener: () => void) {
+      const current = domainListeners.get(domain) || new Set<() => void>()
+      current.add(listener)
+      domainListeners.set(domain, current)
+      return () => {
+        current.delete(listener)
+        if (!current.size) domainListeners.delete(domain)
+      }
+    },
+    companionPresentationSnapshot,
     snapshot(): AppRuntimeSnapshot {
+      if (snapshotCache && snapshotCacheRevision === notificationRevision) return snapshotCache
       const portFilter = currentPortFilter()
       const favoriteTree = filterFavoriteTree(state.favorites, { keyword: state.favoriteSearch, tags: [], groupId: null })
       const groupFavoriteRows = favoriteGroupRows()
@@ -9823,14 +10043,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const groupDetailTarget = portGroupDetail.target ? groupRows.find((row) => sameTarget(row.target, portGroupDetail.target)) || rowForGroupTarget(portGroupDetail.target) : null
       const currentWindowRows = windowRows()
       const windowActionTarget = windowActionTargetId ? currentWindowRows.find((row) => row.id === windowActionTargetId) || null : null
-      const floatKeybindings = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
-        .filter((binding) => (binding.actionId.startsWith('codex.') || binding.actionId.startsWith('quickJump.')) && !binding.disabled && Boolean(binding.shortcutId))
-        .map((binding) => ({ actionId: binding.actionId, shortcutId: binding.shortcutId, layer: binding.layer, when: binding.when, weight: binding.weight }))
-      const codexFloat = codexController.floatSnapshot(floatKeybindings)
-      return {
+      const nextSnapshot: AppRuntimeSnapshot = {
         state,
         codex: codexController.view(),
-        codexFloat,
         runtimeDiagnostics: platform.diagnostics?.snapshot() || {
           revision: 'eypc-runtime-diagnostics-v3',
           status: 'unavailable',
@@ -9966,6 +10181,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         mqttReceiveFilter,
         activeMqttPane,
         activeMqttRecordList,
+        mqttFollowLatest,
         mqttMessageStats: mqttMessageStatsForSelection(),
         mqttSessionRows: mqttSessionsForActiveConfig(),
         mqttMessageRows: mqttMessagesForSelection(),
@@ -9998,6 +10214,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         commandShortcutLabels: buildCommandShortcutLabels(),
         visibleFeatures: currentVisibleFeatures()
       }
+      snapshotCache = nextSnapshot
+      snapshotCacheRevision = notificationRevision
+      return nextSnapshot
     },
     actions: actions.all,
     scanPorts,
@@ -10295,14 +10514,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     saveShortcutProfiles(nextProfiles: ShortcutProfileMap) {
       state.settings.shortcutProfiles = cloneShortcutProfiles(nextProfiles)
       state.settings.keybindingOverrides = aggregateShortcutProfiles()
+      invalidateKeybindingIndex()
       save()
-      notify()
+      notifyRuntimeContractChange()
     },
     saveFeatureConfigs(nextConfigs: FeatureConfig[]) {
       state.settings.featureConfigs = normalizeAppState({ settings: { featureConfigs: nextConfigs } }).settings.featureConfigs
       normalizeActiveTab()
+      invalidateKeybindingIndex()
       save()
-      notify()
+      notifyRuntimeContractChange()
       codexController.syncActivation()
     },
     updateKeybinding(input: string | KeybindingUpdateInput, shortcutId?: string, disabled = false) {
@@ -10327,16 +10548,22 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       state.settings.shortcutProfiles[profileId].keybindingOverrides.push(override)
       state.settings.shortcutProfiles[profileId].updatedAt = Date.now()
       state.settings.keybindingOverrides = aggregateShortcutProfiles()
+      invalidateKeybindingIndex()
       save()
-      notify()
+      notifyRuntimeContractChange()
     },
     resetKeybinding(commandId: string) {
       for (const profile of Object.values(state.settings.shortcutProfiles)) {
-        profile.keybindingOverrides = profile.keybindingOverrides.filter((item) => item.commandId !== commandId)
+        const nextOverrides = profile.keybindingOverrides.filter((item) => item.commandId !== commandId)
+        if (nextOverrides.length !== profile.keybindingOverrides.length) {
+          profile.keybindingOverrides = nextOverrides
+          profile.updatedAt = Date.now()
+        }
       }
       state.settings.keybindingOverrides = aggregateShortcutProfiles()
+      invalidateKeybindingIndex()
       save()
-      notify()
+      notifyRuntimeContractChange()
     },
     cancelConfirm() {
       confirm = null
@@ -10348,8 +10575,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     dispatch(actionId: string, args?: Record<string, unknown>) {
       return actions.dispatch({ actionId, context: context(), args })
     },
-    handleShortcut(shortcutId: string, inputContext: boolean | ShortcutInputContext): string | null {
+    handleShortcut(shortcutId: string, inputContext: boolean | ShortcutInputContext): ShortcutHandlingResultV7 {
       const input = normalizeShortcutInput(inputContext)
+      const topLayerResult = dispatchTopLayerShortcut(shortcutId, input)
+      if (topLayerResult !== undefined) return topLayerResult
       if (confirm && shortcutId === 'Escape') {
         confirm = null
         notify()
@@ -10406,10 +10635,6 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         favoritePickReview = null
         notify()
         return 'favorites.pickReview.cancel'
-      }
-      if (favoriteSlotManagerOpen && shortcutId === 'Escape') {
-        closeFavoriteSlotManager()
-        return 'favorites.slot.manager.close'
       }
       if (shortcutId === 'Escape') {
         if (state.activeTab === 'ports') {
@@ -10563,60 +10788,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         }
         return null
       }
-      const binding = resolveKeybinding(buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs), shortcutId, keybindingContext(input))
+      const binding = keybindingIndex().resolve(shortcutId, keybindingContext(input), 'main')
       if (!binding) return null
-      if (binding.actionId === 'tab.next' || binding.actionId === 'tab.prev') {
-        const order: AppTabId[] = currentVisibleFeatures().map((feature) => feature.id)
-        const current = order.indexOf(state.activeTab)
-        const offset = binding.actionId === 'tab.next' ? 1 : -1
-        setTab(order[(current + offset + order.length) % order.length])
-        return binding.actionId
-      }
-      if (binding.actionId.startsWith('tab.select.')) {
-        const tab = binding.actionId.replace('tab.select.', '') as AppTabId
-        if (['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'].includes(tab) && isTabEnabled(tab)) setTab(tab)
-        return binding.actionId
-      }
-      if (binding.actionId === 'quickJump.openForward' || binding.actionId === 'codex.quickJump.openForward') {
-        return 'quickJump.openForward'
-      }
-      if (binding.actionId === 'quickJump.openBackward') {
-        return binding.actionId
-      }
-      if (binding.actionId === 'list.up' || binding.actionId === 'windows.list.up') {
-        moveInList(-1)
-        return binding.actionId
-      }
-      if (binding.actionId === 'list.down' || binding.actionId === 'windows.list.down') {
-        moveInList(1)
-        return binding.actionId
-      }
-      if (binding.actionId === 'list.pageUp' || binding.actionId === 'windows.list.pageUp') {
-        moveInList(-1, true)
-        return binding.actionId
-      }
-      if (binding.actionId === 'list.pageDown' || binding.actionId === 'windows.list.pageDown') {
-        moveInList(1, true)
-        return binding.actionId
-      }
-      if (binding.actionId === 'list.toggleSelection') {
-        if (state.activeTab === 'mqtt' && activeMqttPane !== 'messages') return null
-        toggleFocusedSelection()
-        return binding.actionId
-      }
-      const result = actions.dispatch({
-        actionId: binding.actionId,
-        context: context(input),
-        ...(binding.actionId === 'codex.float.toggle'
-          ? { args: { source: 'in-app-shortcut' } }
-          : binding.actionId.startsWith('codex.')
-            ? { args: { source: 'local-shortcut' } }
-            : {})
-      })
-      return result.handled ? binding.actionId : null
-    },
-    get defaultKeybindings() {
-      return buildDefaultKeybindings(state.settings.featureConfigs)
+      return dispatchCatalogOwnedShortcut(binding.actionId, input)
     },
     startCodex() {
       platform.diagnostics?.record({ level: 'info', scope: 'renderer-runtime', event: 'codex-controller-start', outcome: 'started' })

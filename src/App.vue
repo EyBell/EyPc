@@ -7,13 +7,24 @@ import FavoriteRunPromptLayer from './components/FavoriteRunPromptLayer.vue'
 import OperationTooltipLayer from './components/OperationTooltipLayer.vue'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import TabShell from './components/TabShell.vue'
-import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
-import type { QuickJumpTarget } from './domain/quickJump'
-import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'
+import { moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import { createAppRuntime } from './runtime/appRuntime'
 import { routePluginFeature } from './runtime/feature/featureRouting'
+import {
+  selectTabShellRuntimeSliceV7,
+  type CodexRuntimeSliceV7,
+  type FavoritesRuntimeSliceV7,
+  type MqttRuntimeSliceV7,
+  type PortsRuntimeSliceV7,
+  type SettingsRuntimeSliceV7,
+  type WindowsRuntimeSliceV7
+} from './runtime/feature/featureRuntimeSlices'
+import { featureModuleV7 } from './runtime/feature/featureModules'
+import { createRuntimeSliceV7, type RuntimeSliceOwnerV7 } from './runtime/runtimeSlice'
 import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget, shortcutFromEvent, shouldEnableShiftPreview } from './runtime/keyboardEvent'
 import { createShortcutHintTiming } from './runtime/shortcutHintTiming'
+import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, type QuickJumpDomTargetV7 } from './ui/quickJumpRegistry'
+import { dispatchKeyboardContextMenuV7 } from './ui/contextMenuKeyboard'
 
 const platform = getPlatform()
 const PortsPage = defineAsyncComponent(() => import('./pages/PortsPage.vue'))
@@ -24,12 +35,13 @@ const MqttPage = defineAsyncComponent(() => import('./pages/MqttPage.vue'))
 const CodexPage = defineAsyncComponent(() => import('./pages/CodexPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./pages/SettingsPage.vue'))
 const runtime = createAppRuntime(normalizeAppState(platform.storage.getState()))
-const version = ref(0)
+const companionVersion = ref(0)
 const shiftPreview = ref(false)
 const shortcutHints = ref(false)
 const initialMaintenanceSection = ref<'features' | null>(null)
 const appRoot = ref<HTMLElement | null>(null)
-let disposeRuntime: (() => void) | null = null
+const operationTooltipLayer = ref<{ handleSurfaceKeydown: (event: KeyboardEvent) => void } | null>(null)
+let disposeCompanionRuntime: (() => void) | null = null
 let disposeEnterPayload: (() => void) | null = null
 let disposeFloatAction: (() => void) | null = null
 let disposeActionRunnerAction: (() => void) | null = null
@@ -37,9 +49,90 @@ const shortcutHintTiming = createShortcutHintTiming({
   show: () => { shortcutHints.value = true },
   hide: () => { shortcutHints.value = false }
 })
+
+const featureSliceSource = {
+  readSnapshot: runtime.snapshot,
+  subscribeDomain: runtime.subscribeDomain
+}
+
+function createFeatureSlice<TView>(id: 'ports' | 'mqtt' | 'favorites' | 'windows' | 'codex' | 'settings') {
+  return featureModuleV7(id).createSlice(featureSliceSource) as RuntimeSliceOwnerV7<TView>
+}
+
+const shellSlice = createRuntimeSliceV7({
+  id: 'shell',
+  readSource: runtime.snapshot,
+  select: selectTabShellRuntimeSliceV7,
+  subscribeSource: (listener) => runtime.subscribeDomain('shell', listener)
+})
+const portsSlice = createFeatureSlice<PortsRuntimeSliceV7>('ports')
+const mqttSlice = createFeatureSlice<MqttRuntimeSliceV7>('mqtt')
+const favoritesSlice = createFeatureSlice<FavoritesRuntimeSliceV7>('favorites')
+const windowsSlice = createFeatureSlice<WindowsRuntimeSliceV7>('windows')
+const codexSlice = createFeatureSlice<CodexRuntimeSliceV7>('codex')
+const settingsSlice = createFeatureSlice<SettingsRuntimeSliceV7>('settings')
+const runtimeSlices = [shellSlice, portsSlice, mqttSlice, favoritesSlice, windowsSlice, codexSlice, settingsSlice] as const
+const featureSlices = {
+  ports: portsSlice,
+  mqtt: mqttSlice,
+  favorites: favoritesSlice,
+  windows: windowsSlice,
+  codex: codexSlice,
+  settings: settingsSlice
+} as const
+let synchronizingFeatureSlices = false
+
+function featureEnabled(id: keyof typeof featureSlices): boolean {
+  return shellSlice.snapshot().state.settings.featureConfigs.find((item) => item.id === id)?.enabled !== false
+}
+
+function shouldSubscribeFeatureSlice(id: keyof typeof featureSlices): boolean {
+  const activeTab = shellSlice.snapshot().state.activeTab
+  if (id === activeTab) return true
+  const module = featureModuleV7(id)
+  if (!featureEnabled(id)) return false
+  if (module.lifecycle.backgroundPolicy === 'entry-enabled') return true
+  if (module.lifecycle.backgroundPolicy === 'connected-only') {
+    return ['connecting', 'connected', 'reconnecting'].includes(mqttSlice.snapshot().mqttConnectionStatus.state)
+  }
+  return false
+}
+
+function synchronizeFeatureSliceSubscriptions(): void {
+  if (synchronizingFeatureSlices) return
+  synchronizingFeatureSlices = true
+  try {
+    for (const [id, slice] of Object.entries(featureSlices) as [keyof typeof featureSlices, typeof featureSlices[keyof typeof featureSlices]][]) {
+      if (shouldSubscribeFeatureSlice(id)) slice.start()
+      else slice.stop()
+    }
+  } finally {
+    synchronizingFeatureSlices = false
+  }
+}
+
+synchronizeFeatureSliceSubscriptions()
+const runtimeSliceVersions = ref<Record<string, number>>(Object.fromEntries(runtimeSlices.map((slice) => [slice.id, slice.revision])))
+const disposeRuntimeSliceListeners = runtimeSlices.map((slice) => slice.subscribe((revision) => {
+  runtimeSliceVersions.value = { ...runtimeSliceVersions.value, [slice.id]: revision }
+  if (slice.id === 'shell' || slice.id === 'feature:mqtt') synchronizeFeatureSliceSubscriptions()
+}))
+
 const snapshot = computed(() => {
-  version.value
-  return runtime.snapshot()
+  runtimeSliceVersions.value.shell
+  return shellSlice.snapshot()
+})
+const tabShellSnapshot = snapshot
+const portsSnapshot = computed(() => { runtimeSliceVersions.value['feature:ports']; return portsSlice.snapshot() })
+const mqttSnapshot = computed(() => { runtimeSliceVersions.value['feature:mqtt']; return mqttSlice.snapshot() })
+const favoritesSnapshot = computed(() => { runtimeSliceVersions.value['feature:favorites']; return favoritesSlice.snapshot() })
+const quickFavoritesSnapshot = computed(() => favoritesSnapshot.value)
+const windowsSnapshot = computed(() => { runtimeSliceVersions.value['feature:windows']; return windowsSlice.snapshot() })
+const codexSnapshot = computed(() => { runtimeSliceVersions.value['feature:codex']; return codexSlice.snapshot() })
+const settingsSnapshot = computed(() => { runtimeSliceVersions.value['feature:settings']; return settingsSlice.snapshot() })
+const companionPresentation = computed(() => {
+  companionVersion.value
+  return runtime.companionPresentationSnapshot()
 })
 const runtimeReloadRequired = computed(() => platform.runtimeIdentityStatus?.status === 'reload-required')
 const runtimeReloadMessage = computed(() => platform.runtimeIdentityStatus?.message || 'Preload 与 UI 版本不一致，需要重新接入或重载')
@@ -55,9 +148,7 @@ const confirmRestoreFocusSelectors = computed(() => {
 
 type QuickJumpDirection = 'forward' | 'backward'
 
-interface QuickJumpDomTarget extends QuickJumpTarget {
-  element: HTMLElement
-}
+type QuickJumpDomTarget = QuickJumpDomTargetV7
 
 interface QuickJumpState {
   open: boolean
@@ -89,6 +180,7 @@ const QUICK_JUMP_EDITING_SELECTOR = [
   '[data-role="favorite-pick-review"]',
   '[data-role="settings-shortcut-record"]'
 ].join(',')
+const quickJumpRegistry = createQuickJumpRegistryV7({ surfaceId: 'main', root: () => appRoot.value, fallbackSelector: QUICK_JUMP_TARGET_SELECTOR })
 
 const quickJump = ref<QuickJumpState>({
   open: false,
@@ -98,22 +190,6 @@ const quickJump = ref<QuickJumpState>({
   targets: [],
   activeTargetId: null
 })
-
-function targetText(element: HTMLElement, attribute: string) {
-  const value = element.getAttribute(attribute)
-  return value ? value.replace(/\s+/g, ' ').trim() : ''
-}
-
-function quickJumpLabel(element: HTMLElement) {
-  return targetText(element, 'data-quick-jump-label')
-    || targetText(element, 'aria-label')
-    || targetText(element, 'title')
-    || targetText(element, 'placeholder')
-    || targetText(element, 'data-mqtt-shortcut-hint')
-    || targetText(element, 'data-role')
-    || (element.textContent || '').replace(/\s+/g, ' ').trim()
-    || (element.tagName === 'BUTTON' ? 'button' : '')
-}
 
 function isQuickJumpCommandTarget(element: HTMLElement) {
   return element.hasAttribute('data-quick-jump-target')
@@ -130,91 +206,15 @@ function isQuickJumpEditingSurfaceTarget(element: HTMLElement) {
   return isQuickJumpCommandTarget(element) || isQuickJumpFocusableTarget(element)
 }
 
-function quickJumpStyleHidden(style: CSSStyleDeclaration) {
-  return style.display === 'none'
-    || style.visibility === 'hidden'
-    || Number(style.opacity) === 0
-    || style.pointerEvents === 'none'
-}
-
-function quickJumpClippingAncestor(element: HTMLElement) {
-  const style = window.getComputedStyle(element)
-  return /(auto|scroll|hidden|clip)/.test(`${style.overflow} ${style.overflowX} ${style.overflowY}`)
-}
-
-function quickJumpVisibleRect(element: HTMLElement) {
-  const sourceRect = element.getBoundingClientRect()
-  let left = Math.max(0, sourceRect.left)
-  let top = Math.max(0, sourceRect.top)
-  let right = Math.min(window.innerWidth, sourceRect.right)
-  let bottom = Math.min(window.innerHeight, sourceRect.bottom)
-  for (let current = element.parentElement; current; current = current.parentElement) {
-    const style = window.getComputedStyle(current)
-    if (quickJumpStyleHidden(style)) return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }
-    if (quickJumpClippingAncestor(current)) {
-      const rect = current.getBoundingClientRect()
-      left = Math.max(left, rect.left)
-      top = Math.max(top, rect.top)
-      right = Math.min(right, rect.right)
-      bottom = Math.min(bottom, rect.bottom)
-    }
-  }
-  return {
-    left,
-    top,
-    right,
-    bottom,
-    width: Math.max(0, right - left),
-    height: Math.max(0, bottom - top)
-  }
-}
-
-function quickJumpHitTargetVisible(element: HTMLElement, visibleRect: ReturnType<typeof quickJumpVisibleRect>) {
-  if (typeof document.elementsFromPoint !== 'function') return true
-  return quickJumpHitTestPoints(visibleRect).some((point) => quickJumpHitStackContainsTarget(element, document.elementsFromPoint(point.x, point.y)))
-}
-
 function isVisibleQuickJumpTarget(element: HTMLElement) {
   if (element.closest('[data-quick-jump-ignore]') && !element.hasAttribute('data-quick-jump-target')) return false
   if (element.closest(QUICK_JUMP_EDITING_SELECTOR) && !isQuickJumpEditingSurfaceTarget(element)) return false
   if (isEditableTarget(element) && !isQuickJumpFocusableTarget(element)) return false
-  if (element.getAttribute('aria-hidden') === 'true' || element.getAttribute('aria-disabled') === 'true') return false
-  const rect = element.getBoundingClientRect()
-  if (rect.width <= 0 || rect.height <= 0) return false
-  const style = window.getComputedStyle(element)
-  if (quickJumpStyleHidden(style)) return false
-  const visibleRect = quickJumpVisibleRect(element)
-  if (visibleRect.width < 6 || visibleRect.height < 6) return false
-  if (!(visibleRect.bottom >= 0 && visibleRect.right >= 0 && visibleRect.top <= window.innerHeight && visibleRect.left <= window.innerWidth)) return false
-  return quickJumpHitTargetVisible(element, visibleRect)
+  return defaultQuickJumpTargetVisibleV7(element)
 }
 
 function collectQuickJumpTargets(direction: QuickJumpDirection): QuickJumpDomTarget[] {
-  const root = appRoot.value || document.body
-  const elements = Array.from(root.querySelectorAll<HTMLElement>(QUICK_JUMP_TARGET_SELECTOR))
-  const seen = new Set<HTMLElement>()
-  const targets = elements
-    .filter((element) => {
-      if (seen.has(element) || !isVisibleQuickJumpTarget(element)) return false
-      seen.add(element)
-      return true
-    })
-    .map((element, index) => {
-      const rect = element.getBoundingClientRect()
-      const label = quickJumpLabel(element)
-      return {
-        id: element.getAttribute('data-quick-jump-id') || `${index}:${label}:${Math.round(rect.left)}:${Math.round(rect.top)}`,
-        label,
-        searchText: [
-          targetText(element, 'data-quick-jump-search'),
-          targetText(element, 'data-role'),
-          targetText(element, 'data-mqtt-shortcut-hint')
-        ].filter(Boolean).join(' '),
-        element
-      }
-    })
-    .filter((target) => Boolean(target.label))
-  return assignQuickJumpMarkers(direction === 'backward' ? targets.reverse() : targets)
+  return quickJumpRegistry.collect({ backward: direction === 'backward', accept: isVisibleQuickJumpTarget })
 }
 
 function clearQuickJumpActiveTarget() {
@@ -324,6 +324,8 @@ function handleQuickJumpShortcut(shortcutId: string) {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  operationTooltipLayer.value?.handleSurfaceKeydown(event)
+  if (dispatchKeyboardContextMenuV7(event, appRoot.value || document)) return
   shiftPreview.value = shouldEnableShiftPreview(event)
   const shortcutId = shortcutFromEvent(event)
   // Own Escape/Quick Jump in capture before uTools host exit and before defaultPrevented short-circuits.
@@ -344,6 +346,10 @@ function onKeydown(event: KeyboardEvent) {
     textInputFocused,
     activeInputRole: activeInputRoleFromTarget(event.target, snapshot.value.state.activeTab)
   })
+  if (handled && typeof handled === 'object') {
+    if (handled.consumed) blockHandledShortcutEvent(event)
+    return
+  }
   if (handled === 'quickJump.openForward') {
     if (openQuickJump('forward')) blockHandledShortcutEvent(event)
     return
@@ -455,24 +461,13 @@ watch(() => snapshot.value.windowActionsFocusRequestId, () => {
   })
 })
 
-watch(() => ({
-  visible: snapshot.value.visibleFeatures.some((feature) => feature.id === 'codex') && snapshot.value.codex.settings.floatEnabled,
-  baseRevision: snapshot.value.codexFloat.baseRevision || 0,
-  keybindings: JSON.stringify(snapshot.value.codexFloat.keybindings || []),
-  position: snapshot.value.codex.settings.position,
-  expandedSizes: snapshot.value.codex.settings.expandedSizes
-}), (payload) => {
-  platform.float.sync({
-    visible: payload.visible,
-    snapshot: snapshot.value.codexFloat,
-    position: payload.position,
-    expandedSizes: payload.expandedSizes
-  })
+watch(companionPresentation, (payload) => {
+  platform.float.sync(payload)
 }, { deep: true, immediate: true })
 
 onMounted(() => {
-  disposeRuntime = runtime.subscribe(() => {
-    version.value += 1
+  disposeCompanionRuntime = runtime.subscribeDomain('companion', () => {
+    companionVersion.value += 1
   })
   window.addEventListener('keydown', onKeydown, true)
   window.addEventListener('keyup', onKeyup, true)
@@ -493,7 +488,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  disposeRuntime?.()
+  disposeCompanionRuntime?.()
+  disposeRuntimeSliceListeners.forEach((dispose) => dispose())
+  runtimeSlices.forEach((slice) => slice.dispose())
   disposeEnterPayload?.()
   disposeFloatAction?.()
   disposeActionRunnerAction?.()
@@ -517,12 +514,12 @@ onUnmounted(() => {
       :active-tab="snapshot.state.activeTab"
       :command-shortcut-labels="snapshot.commandShortcutLabels"
       :show-shortcut-hints="shortcutHints"
-      :snapshot="snapshot"
+      :snapshot="tabShellSnapshot"
       @select="(tab) => runtime.dispatch(`tab.select.${tab}`)"
     >
       <template #ports>
         <PortsPage
-          :snapshot="snapshot"
+          :snapshot="portsSnapshot"
           :shift-preview="shiftPreview"
           :show-shortcut-hints="shortcutHints"
           @search="runtime.setPortSearch"
@@ -541,7 +538,7 @@ onUnmounted(() => {
       </template>
       <template #mqtt>
         <MqttPage
-          :snapshot="snapshot"
+          :snapshot="mqttSnapshot"
           :shift-preview="shiftPreview"
           :show-shortcut-hints="shortcutHints"
           @search="runtime.setMqttSearch"
@@ -563,7 +560,7 @@ onUnmounted(() => {
       <template #favorites>
         <QuickFavoritesPage
           v-if="snapshot.favoriteQuickMode"
-          :snapshot="snapshot"
+          :snapshot="quickFavoritesSnapshot"
           :show-shortcut-hints="shortcutHints"
           @search="runtime.setFavoriteSearch"
           @focus="runtime.focusFavorite"
@@ -571,7 +568,7 @@ onUnmounted(() => {
         />
         <FavoritesPage
           v-else
-          :snapshot="snapshot"
+          :snapshot="favoritesSnapshot"
           :show-shortcut-hints="shortcutHints"
           @search="runtime.setFavoriteSearch"
           @group-search="runtime.setFavoriteGroupSearch"
@@ -593,7 +590,7 @@ onUnmounted(() => {
       </template>
       <template #windows>
         <WindowsPage
-          :snapshot="snapshot"
+          :snapshot="windowsSnapshot"
           :show-shortcut-hints="shortcutHints"
           @search="runtime.setWindowSearch"
           @focus="runtime.focusWindow"
@@ -604,26 +601,24 @@ onUnmounted(() => {
       </template>
       <template #codex>
         <CodexPage
-          :snapshot="snapshot.codex"
+          :snapshot="codexSnapshot.codex"
           @dispatch="runtime.dispatch"
         />
       </template>
       <template #settings>
         <SettingsPage
-          :actions="runtime.actions()"
-          :default-keybindings="runtime.defaultKeybindings"
-          :overrides="snapshot.state.settings.keybindingOverrides"
-          :shortcut-profiles="snapshot.state.settings.shortcutProfiles"
-          :feature-configs="snapshot.state.settings.featureConfigs"
+          :overrides="settingsSnapshot.state.settings.keybindingOverrides"
+          :shortcut-profiles="settingsSnapshot.state.settings.shortcutProfiles"
+          :feature-configs="settingsSnapshot.state.settings.featureConfigs"
           :initial-maintenance-section="initialMaintenanceSection"
-          :persisted-settings-tab-id="snapshot.state.settingsTabId"
-          :persisted-maintenance-section-id="snapshot.state.settingsMaintenanceSectionId"
-          :settings="snapshot.state.settings"
-          :runtime-diagnostics="snapshot.runtimeDiagnostics"
-          :mqtt-storage-status="snapshot.mqttStorageStatus"
-          :window-activation-diagnostics="snapshot.windowActivationDiagnostics"
-          :window-operation-trace-enabled="snapshot.windowOperationTraceEnabled"
-          :window-operation-traces="snapshot.windowOperationTraces"
+          :persisted-settings-tab-id="settingsSnapshot.state.settingsTabId"
+          :persisted-maintenance-section-id="settingsSnapshot.state.settingsMaintenanceSectionId"
+          :settings="settingsSnapshot.state.settings"
+          :runtime-diagnostics="settingsSnapshot.runtimeDiagnostics"
+          :mqtt-storage-status="settingsSnapshot.mqttStorageStatus"
+          :window-activation-diagnostics="settingsSnapshot.windowActivationDiagnostics"
+          :window-operation-trace-enabled="settingsSnapshot.windowOperationTraceEnabled"
+          :window-operation-traces="settingsSnapshot.windowOperationTraces"
           @update-keybinding="runtime.updateKeybinding"
           @reset-keybinding="runtime.resetKeybinding"
           @save-shortcut-profiles="runtime.saveShortcutProfiles"
@@ -649,7 +644,7 @@ onUnmounted(() => {
       @submit="runtime.submitFavoriteRunPrompt"
       @cancel="runtime.cancelFavoriteRunPrompt"
     />
-    <OperationTooltipLayer :suspended="quickJump.open" />
+    <OperationTooltipLayer ref="operationTooltipLayer" :suspended="quickJump.open" />
     <QuickJumpLayer
       v-if="quickJump.open"
       :targets="quickJump.targets"

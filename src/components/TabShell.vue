@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import type { AppTabId } from '../domain/types'
 import { formatShortcutLabel } from '../domain/shortcuts'
-import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
+import type { TabShellRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
 import CommandHints from './CommandHints.vue'
 
 defineProps<{
   activeTab: AppTabId
   commandShortcutLabels: Record<string, string>
   showShortcutHints: boolean
-  snapshot: AppRuntimeSnapshot
+  snapshot: TabShellRuntimeSliceV7
 }>()
 defineEmits<{ select: [tab: AppTabId] }>()
 </script>

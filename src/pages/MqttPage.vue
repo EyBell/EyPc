@@ -22,6 +22,7 @@ import {
   Pencil,
   Plug,
   Plus,
+  Radio,
   RefreshCw,
   Save,
   Send,
@@ -32,7 +33,8 @@ import {
   Unplug,
   X
 } from '@lucide/vue'
-import type { AppRuntimeSnapshot, MqttConfigDraft, MqttConnectionGroupDraft, MqttFavoriteDraft, MqttPublishDraftHistoryEditDraft, MqttRecordEditDraft, MqttSubscriptionEditorDraft, MqttSubscriptionEditorField, MqttSubscriptionEditorItem } from '../runtime/appRuntime'
+import type { MqttConfigDraft, MqttConnectionGroupDraft, MqttFavoriteDraft, MqttPublishDraftHistoryEditDraft, MqttRecordEditDraft, MqttSubscriptionEditorDraft, MqttSubscriptionEditorField, MqttSubscriptionEditorItem } from '../runtime/appRuntime'
+import type { MqttRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
 import type { MqttConnectionGroup, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos } from '../domain/types'
 import { DEFAULT_MQTT_TOPIC_COLORS, buildMqttWebSocketUrl, mqttEndpointHostPortLabel, mqttPublishTemplateOperationTime, mqttTopicVisualForMessage, normalizeMqttTopicColor } from '../domain/mqtt'
 import { buildMqttInlinePayloadPreviewSegments, buildMqttPayloadPreviewSegments } from '../domain/mqttPayloadPreview'
@@ -50,11 +52,11 @@ interface MqttShortcutHintEntry {
 
 type MqttPreviewTarget = { kind: 'message' | 'publish-template' | 'publish-draft-history'; id: string }
 type MqttPreviewRecord = MqttMessageRecord | MqttPublishTemplate | MqttPublishDraftHistoryEntry
-type MqttCommandTargetKind = NonNullable<AppRuntimeSnapshot['mqttSelectedRecord']>['kind']
-type MqttConnectionRow = AppRuntimeSnapshot['mqttConnectionRows'][number]
+type MqttCommandTargetKind = NonNullable<MqttRuntimeSliceV7['mqttSelectedRecord']>['kind']
+type MqttConnectionRow = MqttRuntimeSliceV7['mqttConnectionRows'][number]
 type MqttConnectionDropPosition = 'before' | 'inside' | 'after'
 
-const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean; shiftPreview?: boolean }>()
+const props = defineProps<{ snapshot: MqttRuntimeSliceV7; showShortcutHints?: boolean; shiftPreview?: boolean }>()
 const emit = defineEmits<{
   search: [value: string]
   focusConfig: [id: string]
@@ -652,6 +654,7 @@ const mqttIconComponents: Record<string, Component> = {
   draft: ClipboardList,
   save: Save,
   refresh: RefreshCw,
+  'follow-latest': Radio,
   preview: Eye,
   detail: Info,
   plug: Plug,
@@ -903,8 +906,8 @@ function handleConnectionGroupInlineRenameKeydown(event: KeyboardEvent) {
   event.stopPropagation()
 }
 
-function statusLabel(state: AppRuntimeSnapshot['mqttConnectionStatus']['state']) {
-  const labels: Record<AppRuntimeSnapshot['mqttConnectionStatus']['state'], string> = {
+function statusLabel(state: MqttRuntimeSliceV7['mqttConnectionStatus']['state']) {
+  const labels: Record<MqttRuntimeSliceV7['mqttConnectionStatus']['state'], string> = {
     idle: 'idle',
     connecting: 'connecting',
     connected: 'connected',
@@ -915,13 +918,13 @@ function statusLabel(state: AppRuntimeSnapshot['mqttConnectionStatus']['state'])
   return labels[state]
 }
 
-function statusTone(state: AppRuntimeSnapshot['mqttConnectionStatus']['state']) {
+function statusTone(state: MqttRuntimeSliceV7['mqttConnectionStatus']['state']) {
   if (state === 'connected') return 'connected'
   if (state === 'error') return 'error'
   return 'idle'
 }
 
-function connectionEndpointTitle(config: AppRuntimeSnapshot['mqttActiveConfig']) {
+function connectionEndpointTitle(config: MqttRuntimeSliceV7['mqttActiveConfig']) {
   return config ? mqttEndpointHostPortLabel(config.url) || config.url || '未配置地址' : '未选择配置'
 }
 
@@ -1089,7 +1092,7 @@ function focusConnectionRowAndDispatch(row: MqttConnectionRow, actionId: string)
   emit('dispatch', actionId, connectionRowArgs(row))
 }
 
-function openConnectionMenu(config: AppRuntimeSnapshot['state']['mqtt']['configs'][number]) {
+function openConnectionMenu(config: MqttRuntimeSliceV7['state']['mqtt']['configs'][number]) {
   selectRecord('config', config.id)
   emit('dispatch', 'mqtt.drawer.open', commandArgs('config', config.id))
 }
@@ -1396,7 +1399,7 @@ function recordTime(record: MqttPreviewRecord) {
   return mqttPublishTemplateOperationTime(record)
 }
 
-function logConfigName(log: AppRuntimeSnapshot['mqttLogs'][number]) {
+function logConfigName(log: MqttRuntimeSliceV7['mqttLogs'][number]) {
   return props.snapshot.state.mqtt.configs.find((config) => config.id === log.connectionId)?.name || '未关联连接'
 }
 
@@ -1469,7 +1472,7 @@ function updateSsl(value: boolean) {
   updateConfigDraft({ ssl: value, protocol: value ? 'wss' : 'ws' })
 }
 
-function subscriptionTitle(row: AppRuntimeSnapshot['mqttSubscriptionRows'][number]) {
+function subscriptionTitle(row: MqttRuntimeSliceV7['mqttSubscriptionRows'][number]) {
   return row.alias ? `${row.alias} · ${row.topic}` : row.topic
 }
 
@@ -2010,6 +2013,7 @@ onUnmounted(() => {
           data-role="mqtt-connections"
           tabindex="0"
           role="treeitem"
+          data-context-menu-target
           draggable="true"
           :data-operation-tooltip="`${row.kind === 'group' ? '连接分组' : 'MQTT 连接'} ${row.name}`"
           data-operation-description="单击聚焦；右键显示相关操作；可拖拽调整层级"
@@ -2145,6 +2149,7 @@ onUnmounted(() => {
           v-for="row in props.snapshot.mqttSubscriptionRows"
           :key="row.topic"
           class="mqtt-subscription-row"
+          data-context-menu-target
           data-role="mqtt-subscriptions"
           role="option"
           tabindex="0"
@@ -2330,6 +2335,18 @@ onUnmounted(() => {
             @click="emit('dispatch', 'mqtt.focus.templates')"
           >
             <MqttIcon name="star" />
+          </button>
+          <button
+            v-if="props.snapshot.activeMqttRecordList === 'messages'"
+            type="button"
+            class="mqtt-filter-button mqtt-icon-button"
+            :class="{ active: props.snapshot.mqttFollowLatest }"
+            v-bind="commandTooltip(props.snapshot.mqttFollowLatest ? '停止跟随最新消息' : '跟随最新消息', 'mqtt.followLatest.toggle')"
+            :aria-label="props.snapshot.mqttFollowLatest ? '停止跟随最新消息' : '跟随最新消息'"
+            :aria-pressed="props.snapshot.mqttFollowLatest"
+            @click="emit('dispatch', 'mqtt.followLatest.toggle')"
+          >
+            <MqttIcon name="follow-latest" />
           </button>
           <button type="button" class="mqtt-filter-button mqtt-icon-button" :class="{ active: props.snapshot.mqttWorkspaceLayout === 'split' }" v-bind="commandTooltip('布局', 'mqtt.layout.toggle', 'c-s-s', '切换布局')" :aria-pressed="props.snapshot.mqttWorkspaceLayout === 'split'" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.layout.toggle')" @click="emit('dispatch', 'mqtt.layout.toggle')">
             <MqttIcon name="layout" />
@@ -2681,6 +2698,7 @@ onUnmounted(() => {
               v-for="message in props.snapshot.mqttMessageRows"
               :key="message.id"
               class="mqtt-message-row"
+              data-context-menu-target
               role="option"
               tabindex="-1"
               :class="{ focused: recordSelected('message', message.id), selected: props.snapshot.mqttRecordListStates.messages.selectedIds.includes(message.id), incoming: message.direction === 'incoming', outgoing: message.direction === 'outgoing' }"
@@ -2843,6 +2861,7 @@ onUnmounted(() => {
                       class="mqtt-publish-draft-row"
                       data-role="mqtt-publish-draft"
                       role="option"
+                      data-context-menu-target
                       tabindex="-1"
                       :data-mqtt-preview-target="previewTargetValue('publish-draft-history', row.id)"
                       :data-quick-jump-label="publishDraftHistoryTitle(row)"
@@ -3206,6 +3225,7 @@ onUnmounted(() => {
             v-for="log in visibleLogs"
             :key="log.id"
             class="mqtt-log-row"
+            data-context-menu-target
             :class="[`mqtt-log-${log.level}`, { focused: recordSelected('log', log.id) }]"
             data-operation-tooltip="右键打开日志操作"
             data-operation-shortcut="Ctrl+→"

@@ -16,11 +16,14 @@ defineEmits<{
 </script>
 
 <template>
-  <div class="list-surface" role="listbox" data-role="port-results-list" tabindex="-1">
+  <div class="list-surface" role="listbox" data-role="port-results-list" tabindex="-1" :aria-activedescendant="focusedId ? `port-row-${focusedId}` : undefined">
     <div
       v-for="item in items"
       :key="item.id"
       class="port-row"
+      :id="`port-row-${item.id}`"
+      data-context-menu-target
+      :data-context-menu-active="focusedId === item.id"
       role="option"
       :aria-selected="selectedIds.includes(item.id)"
       :class="{ selected: selectedIds.includes(item.id), focused: focusedId === item.id, 'selection-hidden': !showSelection }"

@@ -2,9 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AppWindow, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Folder, FolderOpen, Keyboard, LoaderCircle, Pencil, Pin, Power, RefreshCw, ScrollText, ShieldAlert, SquareArrowOutUpRight, Star, X } from '@lucide/vue'
 import type { WindowRow } from '../domain/windowTree'
-import type { AppRuntimeSnapshot, WindowDraft } from '../runtime/appRuntime'
+import type { WindowDraft } from '../runtime/appRuntime'
+import type { WindowsRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
 
-const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean }>()
+const props = defineProps<{ snapshot: WindowsRuntimeSliceV7; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
   search: [value: string]
   focus: [id: string]
@@ -278,15 +279,15 @@ function onDocumentPointerDown(event: PointerEvent) {
   exitSlotBinding()
 }
 
-function activationEntryLabel(diagnostic: AppRuntimeSnapshot['windowActivationDiagnostics'][number]) {
+function activationEntryLabel(diagnostic: WindowsRuntimeSliceV7['windowActivationDiagnostics'][number]) {
   return diagnostic.entry === 'slot' ? `全局槽 ${diagnostic.slot || '—'}` : '手动激活'
 }
 
-function activationPlatformLabel(diagnostic: AppRuntimeSnapshot['windowActivationDiagnostics'][number]) {
+function activationPlatformLabel(diagnostic: WindowsRuntimeSliceV7['windowActivationDiagnostics'][number]) {
   return diagnostic.platform === 'darwin' ? 'macOS' : diagnostic.platform === 'win32' ? 'Windows' : '当前宿主'
 }
 
-function activationStageLabel(diagnostic: AppRuntimeSnapshot['windowActivationDiagnostics'][number]) {
+function activationStageLabel(diagnostic: WindowsRuntimeSliceV7['windowActivationDiagnostics'][number]) {
   const labels: Record<string, string> = {
     entry: '入口',
     capability: '能力',
@@ -304,31 +305,31 @@ function timestampLabel(timestamp: number) {
   return `${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}:${String(stamp.getSeconds()).padStart(2, '0')}`
 }
 
-function activationTimestamp(diagnostic: AppRuntimeSnapshot['windowActivationDiagnostics'][number]) {
+function activationTimestamp(diagnostic: WindowsRuntimeSliceV7['windowActivationDiagnostics'][number]) {
   return timestampLabel(diagnostic.timestamp)
 }
 
-function operationEntryLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+function operationEntryLabel(record: WindowsRuntimeSliceV7['windowOperationTraces'][number]) {
   return record.entry === 'slot' ? `全局槽 ${record.slot || '—'}` : '手动操作'
 }
 
-function operationTargetLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+function operationTargetLabel(record: WindowsRuntimeSliceV7['windowOperationTraces'][number]) {
   return record.targetTitle || '目标尚未解析'
 }
 
-function operationPlatformLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+function operationPlatformLabel(record: WindowsRuntimeSliceV7['windowOperationTraces'][number]) {
   return record.platform === 'darwin' ? 'macOS' : record.platform === 'win32' ? 'Windows' : '当前宿主'
 }
 
-function operationKindLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+function operationKindLabel(record: WindowsRuntimeSliceV7['windowOperationTraces'][number]) {
   return record.operation === 'always-on-top' ? '页面置顶' : '展开并前置'
 }
 
-function operationResultLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+function operationResultLabel(record: WindowsRuntimeSliceV7['windowOperationTraces'][number]) {
   return record.result === 'success' ? '完成' : record.result === 'target-closed' ? '已确认关闭' : '阻断'
 }
 
-function operationStageLabel(stage: AppRuntimeSnapshot['windowOperationTraces'][number]['steps'][number]['stage']) {
+function operationStageLabel(stage: WindowsRuntimeSliceV7['windowOperationTraces'][number]['steps'][number]['stage']) {
   const labels: Record<string, string> = {
     entry: '入口',
     capability: '能力',
@@ -349,7 +350,7 @@ function operationStageLabel(stage: AppRuntimeSnapshot['windowOperationTraces'][
   return labels[stage] || stage
 }
 
-function operationOutcomeLabel(outcome: AppRuntimeSnapshot['windowOperationTraces'][number]['steps'][number]['outcome']) {
+function operationOutcomeLabel(outcome: WindowsRuntimeSliceV7['windowOperationTraces'][number]['steps'][number]['outcome']) {
   const labels: Record<string, string> = {
     ok: '成功',
     skipped: '跳过',
@@ -363,7 +364,7 @@ function operationOutcomeLabel(outcome: AppRuntimeSnapshot['windowOperationTrace
   return labels[outcome] || outcome
 }
 
-function operationDetailLabel(detail: NonNullable<AppRuntimeSnapshot['windowOperationTraces'][number]['steps'][number]['detail']>) {
+function operationDetailLabel(detail: NonNullable<WindowsRuntimeSliceV7['windowOperationTraces'][number]['steps'][number]['detail']>) {
   const labels: Record<string, string> = {
     'instance-match': '窗口实例精确匹配',
     'instance-mismatch': '窗口实例不一致',
@@ -404,14 +405,14 @@ const operationCodeMessages: Record<string, string> = {
   'topmost-enabled': '已成功置顶目标窗口。'
 }
 
-function operationTraceSummary(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+function operationTraceSummary(record: WindowsRuntimeSliceV7['windowOperationTraces'][number]) {
   const kind = operationKindLabel(record)
   const result = operationResultLabel(record)
   const message = operationCodeMessages[record.code] || record.code
   return `${kind} · ${result}：${message}`
 }
 
-function operationTracePlainText(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+function operationTracePlainText(record: WindowsRuntimeSliceV7['windowOperationTraces'][number]) {
   const steps = record.steps.map((step, index) => {
     const detail = step.detail ? `:${step.detail}` : ''
     return `#${index + 1} ${step.stage}=${step.outcome}${detail}`
@@ -429,7 +430,7 @@ function operationTracePlainText(record: AppRuntimeSnapshot['windowOperationTrac
   return parts.join(' | ')
 }
 
-async function copyOperationTracePlainText(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+async function copyOperationTracePlainText(record: WindowsRuntimeSliceV7['windowOperationTraces'][number]) {
   const text = operationTracePlainText(record)
   try {
     if (navigator.clipboard?.writeText) {
@@ -629,6 +630,7 @@ onBeforeUnmount(() => {
               :key="slot"
               type="button"
               class="window-slot-chip"
+              data-context-menu-target
               :class="{ assigned: slotAssigned(slot), picking: slotPickerSlot === slot }"
               :data-slot-chip="slot"
               role="listitem"
@@ -672,6 +674,7 @@ onBeforeUnmount(() => {
               :id="rowDomId(row.id)"
               :key="row.id"
               class="window-row"
+              data-context-menu-target
               :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable, cached: row.cached, candidate: row.candidate, binding: slotPickerSlot != null, 'binding-assigned': bindingSlotAssignedRowId === row.id, 'file-manager-group': row.kind === 'file-manager-group', 'tree-level-2': row.treeLevel === 2 }"
               role="treeitem"
               :aria-level="row.treeLevel"

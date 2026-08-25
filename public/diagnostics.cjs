@@ -14,6 +14,8 @@ const DETAILS_DEPTH_LIMIT = 4
 const DETAILS_KEY_LIMIT = 60
 const DETAILS_ARRAY_LIMIT = 40
 const DETAILS_STRING_LIMIT = 4096
+const DEFAULT_MAX_QUEUE_EVENTS = 512
+const DEFAULT_MAX_QUEUE_BYTES = 2 * 1024 * 1024
 
 const LEVEL_WEIGHT = Object.freeze({ error: 0, info: 1, debug: 2 })
 const FORBIDDEN_KEY_PARTS = Object.freeze([
@@ -91,6 +93,8 @@ function createRuntimeDiagnostics(dependencies = {}) {
   const maxFileBytes = finite(dependencies.maxFileBytes, DEFAULT_MAX_FILE_BYTES)
   const maxTotalBytes = finite(dependencies.maxTotalBytes, DEFAULT_MAX_TOTAL_BYTES)
   const retentionMs = finite(dependencies.retentionMs, DEFAULT_RETENTION_MS)
+  const maxQueueEvents = finite(dependencies.maxQueueEvents, DEFAULT_MAX_QUEUE_EVENTS)
+  const maxQueueBytes = finite(dependencies.maxQueueBytes, DEFAULT_MAX_QUEUE_BYTES)
   const processId = finite(dependencies.processId, typeof process === 'object' ? process.pid : 0)
   const startedAt = now()
   const sessionId = `${startedAt.toString(36)}-${processId.toString(36)}-${Math.floor(random() * 0xffffff).toString(36)}`
@@ -104,6 +108,9 @@ function createRuntimeDiagnostics(dependencies = {}) {
   let lastEventAt = 0
   let lastCleanupAt = 0
   let storage = { fileCount: 0, totalBytes: 0 }
+  let pendingWrites = []
+  let pendingBytes = 0
+  let drainScheduled = false
 
   function ensureDirectory() {
     if (!fs || !directory) return false
@@ -162,6 +169,11 @@ function createRuntimeDiagnostics(dependencies = {}) {
     if (!fs || !path || !directory) {
       return { outcome: 'unavailable', removedFiles: 0, failedFiles: 0, remainingFiles: storage.fileCount, remainingBytes: storage.totalBytes }
     }
+    // A clear is an explicit user operation: queued pre-clear evidence must not
+    // reappear after the owned files have been removed.
+    pendingWrites = []
+    pendingBytes = 0
+    drainScheduled = false
     const files = diagnosticFiles()
     let removedFiles = 0
     let failedFiles = 0
@@ -207,15 +219,12 @@ function createRuntimeDiagnostics(dependencies = {}) {
     return true
   }
 
-  function write(event) {
-    const line = `${JSON.stringify(event)}\n`
-    const bytes = Buffer.byteLength(line)
+  function writeNow(event, line, bytes) {
     if (!activePath || activeBytes + bytes > maxFileBytes) {
       if (!nextFile()) return false
     }
     try {
       fs.appendFileSync(activePath, line, { encoding: 'utf8', mode: 0o600 })
-      fs.chmodSync?.(activePath, 0o600)
       activeBytes += bytes
       storage.totalBytes += bytes
       storage.fileCount = Math.max(1, storage.fileCount)
@@ -225,6 +234,44 @@ function createRuntimeDiagnostics(dependencies = {}) {
       totals.writeFailures += 1
       return false
     }
+  }
+
+  function drainWrites() {
+    drainScheduled = false
+    const queue = pendingWrites
+    pendingWrites = []
+    pendingBytes = 0
+    let ok = true
+    for (const item of queue) {
+      if (!writeNow(item.event, item.line, item.bytes)) ok = false
+    }
+    return ok
+  }
+
+  function scheduleDrain() {
+    if (drainScheduled) return
+    drainScheduled = true
+    const run = () => { drainWrites() }
+    if (typeof dependencies.schedule === 'function') dependencies.schedule(run)
+    else if (typeof setImmediate === 'function') setImmediate(run)
+    else Promise.resolve().then(run)
+  }
+
+  function enqueueWrite(event) {
+    const line = `${JSON.stringify(event)}\n`
+    const bytes = Buffer.byteLength(line)
+    if (pendingWrites.length >= maxQueueEvents || pendingBytes + bytes > maxQueueBytes) {
+      totals.writeFailures += 1
+      return false
+    }
+    pendingWrites.push({ event, line, bytes })
+    pendingBytes += bytes
+    scheduleDrain()
+    return true
+  }
+
+  function flush() {
+    return Promise.resolve(drainWrites())
   }
 
   function buildEvent(input, forced = false) {
@@ -283,7 +330,7 @@ function createRuntimeDiagnostics(dependencies = {}) {
     lastEventAt = event.at
     recent.push(event)
     if (recent.length > RECENT_LIMIT) recent.splice(0, recent.length - RECENT_LIMIT)
-    write(event)
+    enqueueWrite(event)
     return event
   }
 
@@ -359,7 +406,7 @@ function createRuntimeDiagnostics(dependencies = {}) {
       details: { revision: DIAGNOSTICS_REVISION, settings, directory, startedAt }
     })
   }
-  return { revision: DIAGNOSTICS_REVISION, record, configure, snapshot, cleanup, clear, ensureDirectory }
+  return { revision: DIAGNOSTICS_REVISION, record, configure, snapshot, cleanup, clear, ensureDirectory, flush }
 }
 
 module.exports = {
@@ -369,6 +416,8 @@ module.exports = {
   DEFAULT_MAX_FILE_BYTES,
   DEFAULT_MAX_TOTAL_BYTES,
   DEFAULT_RETENTION_MS,
+  DEFAULT_MAX_QUEUE_EVENTS,
+  DEFAULT_MAX_QUEUE_BYTES,
   normalizeSettings,
   createRuntimeDiagnostics
 }

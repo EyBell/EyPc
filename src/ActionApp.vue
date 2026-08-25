@@ -2,13 +2,17 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Archive, ArchiveRestore, Box, ChevronDown, ChevronRight, Clock3, Folder, Pin, Play, Settings, Square, X } from '@lucide/vue'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
-import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery, type QuickJumpTarget } from './domain/quickJump'
-import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'
+import { moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import { codexActionRunCanArchive, formatCodexActionRunTimestamp, type CodexActionLogDeltaV1, type CodexActionRunRecordV1, type CodexActionRunnerActionV1, type CodexActionRunnerSnapshotV1 } from './domain/codexActionRunner'
+import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, type QuickJumpDomTargetV7 } from './ui/quickJumpRegistry'
+import { shortcutFromEvent } from './domain/shortcuts'
+import { buildCommandCatalogV7 } from './runtime/keybinding/keybindingRuntime'
 
-interface QuickJumpDomTarget extends QuickJumpTarget { element: HTMLElement }
+type QuickJumpDomTarget = QuickJumpDomTargetV7
 
 const root = ref<HTMLElement | null>(null)
+const quickJumpRegistry = createQuickJumpRegistryV7({ surfaceId: 'action', root: () => root.value })
+const actionCommandCatalog = buildCommandCatalogV7()
 const snapshot = ref<CodexActionRunnerSnapshotV1 | null>(window.eypcActionRunner?.getSnapshot() || null)
 const selectedLaneId = ref(snapshot.value?.selectedLaneId || '')
 const expandedRunId = ref('')
@@ -22,6 +26,7 @@ let disposeLog: (() => void) | null = null
 let draggingWindow = false
 let resizingWindow: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | '' = ''
 const newestRunByLane = new Map<string, string>()
+const hydratedLogRuns = new Set<string>()
 
 const selectedAction = computed(() => {
   for (const project of snapshot.value?.catalog.projects || []) {
@@ -116,15 +121,44 @@ function applyLogDelta(delta: CodexActionLogDeltaV1) {
   const run = snapshot.value?.runs.find((item) => item.runId === delta.runId)
   if (!run) return
   const cursor = run.cursor || 0
+  if (delta.reset === true) {
+    run.logText = delta.text
+    run.cursor = delta.cursor
+    hydratedLogRuns.add(run.runId)
+    run.logBytes = new TextEncoder().encode(run.logText).length
+    run.logLines = (run.logText.match(/\n/g) || []).length + (run.logText && !run.logText.endsWith('\n') ? 1 : 0)
+    return
+  }
   if (delta.cursor <= cursor) return
   if (delta.cursor !== cursor + 1) {
-    window.eypcActionRunner?.requestSnapshot()
+    window.eypcActionRunner?.requestLog(run.runId, cursor)
     return
   }
   run.logText += delta.text
   run.cursor = delta.cursor
+  hydratedLogRuns.add(run.runId)
   run.logBytes = new TextEncoder().encode(run.logText).length
   run.logLines = (run.logText.match(/\n/g) || []).length + (run.logText && !run.logText.endsWith('\n') ? 1 : 0)
+}
+
+function acceptSnapshot(value: CodexActionRunnerSnapshotV1) {
+  const previous = new Map((snapshot.value?.runs || []).map((run) => [run.runId, run]))
+  const requests: Array<{ runId: string; cursor: number }> = []
+  value.runs = value.runs.map((run) => {
+    const current = previous.get(run.runId)
+    if ((run.cursor || 0) === 0) {
+      hydratedLogRuns.add(run.runId)
+      return { ...run, logText: '' }
+    }
+    if (current && hydratedLogRuns.has(run.runId) && (current.cursor || 0) === (run.cursor || 0)) {
+      return { ...run, logText: current.logText }
+    }
+    const localCursor = current && hydratedLogRuns.has(run.runId) ? current.cursor || 0 : 0
+    requests.push({ runId: run.runId, cursor: localCursor })
+    return { ...run, logText: localCursor ? current?.logText || '' : '', cursor: localCursor }
+  })
+  snapshot.value = value
+  for (const request of requests) window.eypcActionRunner?.requestLog(request.runId, request.cursor)
 }
 
 function headerPointerDown(event: PointerEvent) {
@@ -158,37 +192,8 @@ function hideRunner() {
   window.eypcActionRunner?.hide()
 }
 
-function quickJumpLabel(element: HTMLElement) {
-  return element.dataset.quickJumpLabel || element.getAttribute('aria-label') || (element.textContent || '').replace(/\s+/g, ' ').trim() || '操作'
-}
-
-function quickJumpVisibleRect(element: HTMLElement) {
-  const source = element.getBoundingClientRect()
-  let left = Math.max(0, source.left)
-  let top = Math.max(0, source.top)
-  let right = Math.min(window.innerWidth, source.right)
-  let bottom = Math.min(window.innerHeight, source.bottom)
-  for (let current = element.parentElement; current; current = current.parentElement) {
-    const style = window.getComputedStyle(current)
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0' || style.pointerEvents === 'none') return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }
-    if (!['hidden', 'clip', 'scroll', 'auto'].some((value) => style.overflow === value || style.overflowX === value || style.overflowY === value)) continue
-    const rect = current.getBoundingClientRect()
-    left = Math.max(left, rect.left); top = Math.max(top, rect.top); right = Math.min(right, rect.right); bottom = Math.min(bottom, rect.bottom)
-  }
-  return { left, top, right, bottom, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }
-}
-
-function targetVisible(element: HTMLElement) {
-  if (element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return false
-  const rect = quickJumpVisibleRect(element)
-  if (rect.width < 6 || rect.height < 6) return false
-  return quickJumpHitTestPoints(rect).some((point) => quickJumpHitStackContainsTarget(element, document.elementsFromPoint(point.x, point.y)))
-}
-
 function collectQuickJumpTargets(backward: boolean) {
-  const elements = Array.from((root.value || document.body).querySelectorAll<HTMLElement>('[data-quick-jump-target]')).filter(targetVisible)
-  const targets = elements.map((element, index) => ({ id: element.dataset.quickJumpId || `runner:${index}:${quickJumpLabel(element)}`, label: quickJumpLabel(element), searchText: element.dataset.quickJumpSearch || '', element }))
-  return assignQuickJumpMarkers(backward ? targets.reverse() : targets)
+  return quickJumpRegistry.collect({ backward, accept: defaultQuickJumpTargetVisibleV7 })
 }
 
 function closeQuickJump() {
@@ -223,8 +228,16 @@ function isEditableTarget(target: EventTarget | null) {
   return target instanceof HTMLElement && (target.matches('input, textarea, select, [contenteditable="true"]') || Boolean(target.closest('input, textarea, select, [contenteditable="true"]')))
 }
 
+function actionOwnedCommand(event: KeyboardEvent): string {
+  const shortcutId = shortcutFromEvent(event)
+  return actionCommandCatalog.all()
+    .filter((descriptor) => actionCommandCatalog.executionOwnerFor(descriptor.id, 'action') === 'action-local')
+    .find((descriptor) => descriptor.defaultBindings.some((binding) => binding.shortcutIds.includes(shortcutId)))?.id || ''
+}
+
 function onKeydown(event: KeyboardEvent) {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') {
+  const command = actionOwnedCommand(event)
+  if (command === 'action.runner.hide') {
     event.preventDefault()
     hideRunner()
     return
@@ -252,8 +265,8 @@ function onKeydown(event: KeyboardEvent) {
     }
     return
   }
-  if (event.key.toLowerCase() === 'f' && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditableTarget(event.target)) {
-    event.preventDefault(); event.stopPropagation(); openQuickJump(event.shiftKey)
+  if ((command === 'quickJump.openForward' || command === 'quickJump.openBackward') && !isEditableTarget(event.target)) {
+    event.preventDefault(); event.stopPropagation(); openQuickJump(command === 'quickJump.openBackward')
   }
 }
 
@@ -271,7 +284,7 @@ watch([selectedLaneId, visibleRuns], () => {
 }, { immediate: true })
 
 onMounted(() => {
-  disposeSnapshot = window.eypcActionRunner?.onSnapshot((value) => { snapshot.value = value }) || null
+  disposeSnapshot = window.eypcActionRunner?.onSnapshot(acceptSnapshot) || null
   disposeLog = window.eypcActionRunner?.onLog(applyLogDelta) || null
   window.addEventListener('keydown', onKeydown, true)
   window.addEventListener('pointermove', onWindowPointerMove, true)

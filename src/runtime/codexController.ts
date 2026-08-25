@@ -166,7 +166,14 @@ export interface CodexFloatSnapshotV1 {
   projectArchive: { key: string; status: 'idle' | 'archiving' | 'error'; message: string }
   timeWindowDays: number
   actionDefaultProjectKey?: string
-  keybindings?: Array<{ actionId: string; shortcutId: string; layer: string; when: string; weight: number }>
+  keybindings?: Array<{
+    actionId: string
+    shortcutId: string
+    layer: string
+    when: string
+    weight: number
+    executionOwner: 'runtime-action' | 'shell' | 'main-quick-jump' | 'float-local' | 'action-local'
+  }>
   /**
    * Multi-provider payload. Optional so an older floating child simply ignores
    * it and keeps rendering the Codex-only presentation.

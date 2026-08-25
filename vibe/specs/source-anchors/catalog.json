@@ -4,11 +4,11 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 29,
-    "ordered_anchors": 200,
-    "raw_parent_ordered": 98,
+    "source_documents": 30,
+    "ordered_anchors": 207,
+    "raw_parent_ordered": 105,
     "unparented_ordered": 102,
-    "registered_requirements": 98,
+    "registered_requirements": 105,
     "registry_review_required": 0,
     "source_addressable_not_registered": 102
   },
@@ -301,6 +301,16 @@
       "raw_identity_count": 3,
       "ordered_anchor_count": 0,
       "raw_parent_ordered_count": 0,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260824/eypc-v7-global-refactor",
+      "source_path": "vibe/specs/260824/eypc-v7-global-refactor/raw-requirement.md",
+      "spec_id": "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR",
+      "content_sha256": "3d3c20110aec1f832433bc3f186398d6f71be9f1253dbab11ea53eceb5119068",
+      "raw_identity_count": 1,
+      "ordered_anchor_count": 7,
+      "raw_parent_ordered_count": 7,
       "unparented_ordered_count": 0
     }
   ],
@@ -4700,6 +4710,153 @@
       "disposition": "registered-requirement",
       "semantic_module": "engineering-invariants",
       "linked_current_requirement": "eypc-req-invariants-raw-178-clause-004",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-3AFFFC9D0CE8986C5FFB",
+      "source_task": "260824/eypc-v7-global-refactor",
+      "source_path": "vibe/specs/260824/eypc-v7-global-refactor/raw-requirement.md",
+      "line": 5,
+      "exact_heading_text": "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系",
+      "heading_path": [
+        "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "1",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-179",
+      "qualified_source": "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR::RAW-179#1",
+      "clause_sha256": "62a804de8b1f60584ad17ea19a045b678c0f5bad8f603772958c28472349b29d",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "companion-shared",
+      "linked_current_requirement": "eypc-req-shared-raw-179-clause-001",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-54CB55B0526A2FBDB7FD",
+      "source_task": "260824/eypc-v7-global-refactor",
+      "source_path": "vibe/specs/260824/eypc-v7-global-refactor/raw-requirement.md",
+      "line": 6,
+      "exact_heading_text": "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系",
+      "heading_path": [
+        "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "2",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-179",
+      "qualified_source": "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR::RAW-179#2",
+      "clause_sha256": "97322b91ddca7c760c1f43e106ba61a4d231367811b36209e2b99191f5921aa3",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "companion-shared",
+      "linked_current_requirement": "eypc-req-shared-raw-179-clause-002",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-613699B3A2A5DC735AC3",
+      "source_task": "260824/eypc-v7-global-refactor",
+      "source_path": "vibe/specs/260824/eypc-v7-global-refactor/raw-requirement.md",
+      "line": 7,
+      "exact_heading_text": "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系",
+      "heading_path": [
+        "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "3",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-179",
+      "qualified_source": "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR::RAW-179#3",
+      "clause_sha256": "d96c6bc80a0e06a3a8680777d630d753df9ea8a4e09288983299d78b6b743d75",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "engineering-invariants",
+      "linked_current_requirement": "eypc-req-invariants-raw-179-clause-003",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-2E7EF531FC0590B430F5",
+      "source_task": "260824/eypc-v7-global-refactor",
+      "source_path": "vibe/specs/260824/eypc-v7-global-refactor/raw-requirement.md",
+      "line": 8,
+      "exact_heading_text": "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系",
+      "heading_path": [
+        "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "4",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-179",
+      "qualified_source": "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR::RAW-179#4",
+      "clause_sha256": "9f58b8b86bd6b104d84551d19c217524022fd61cb2afaaff2d110db63fe08e94",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "interaction-shell",
+      "linked_current_requirement": "eypc-req-interaction-raw-179-clause-004",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-40CE421C0E76EB42321C",
+      "source_task": "260824/eypc-v7-global-refactor",
+      "source_path": "vibe/specs/260824/eypc-v7-global-refactor/raw-requirement.md",
+      "line": 9,
+      "exact_heading_text": "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系",
+      "heading_path": [
+        "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "5",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-179",
+      "qualified_source": "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR::RAW-179#5",
+      "clause_sha256": "d1299a27e2c71218437ba9c5d89400744c39173835e88e59ef47d8b4ede35bcf",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "engineering-invariants",
+      "linked_current_requirement": "eypc-req-invariants-raw-179-clause-005",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-B3128440360C64415F1B",
+      "source_task": "260824/eypc-v7-global-refactor",
+      "source_path": "vibe/specs/260824/eypc-v7-global-refactor/raw-requirement.md",
+      "line": 10,
+      "exact_heading_text": "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系",
+      "heading_path": [
+        "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "6",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-179",
+      "qualified_source": "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR::RAW-179#6",
+      "clause_sha256": "a87c13ece35f36f03efeb4cea1f31a5e5253d7fd872d9c94925c33ea2ca7671a",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "interaction-shell",
+      "linked_current_requirement": "eypc-req-interaction-raw-179-clause-006",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-40E394A259D1D3D1A062",
+      "source_task": "260824/eypc-v7-global-refactor",
+      "source_path": "vibe/specs/260824/eypc-v7-global-refactor/raw-requirement.md",
+      "line": 11,
+      "exact_heading_text": "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系",
+      "heading_path": [
+        "RAW-179 · EyPc V7 全局状态、交互、Tab 与 UI 体系"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "7",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-179",
+      "qualified_source": "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR::RAW-179#7",
+      "clause_sha256": "f7e05179b5df1c039de446317c2cac715186b1dee98f8e84e503ac617b04ec8c",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "engineering-invariants",
+      "linked_current_requirement": "eypc-req-invariants-raw-179-clause-007",
       "selection_basis": "ordered-list-item-under-single-raw-heading"
     }
   ]

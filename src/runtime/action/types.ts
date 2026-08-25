@@ -1,8 +1,8 @@
 import type { AppTabId } from '../../domain/types'
 import type { KeybindingContext } from '../keybinding/keybindingRuntime'
+import type { CommandHandlerV7, RuntimeActionRisk, RuntimeActionScope } from '../command/types'
 
-export type RuntimeActionRisk = 'normal' | 'data-write' | 'destructive'
-export type RuntimeActionScope = 'global' | 'tab' | 'row' | 'layer'
+export type { RuntimeActionRisk, RuntimeActionScope } from '../command/types'
 
 export interface RuntimeActionContext {
   tab: AppTabId
@@ -34,6 +34,8 @@ export interface RuntimeActionDefinition {
   when: (context: RuntimeActionContext) => boolean
   run: (context: RuntimeActionContext, args?: Record<string, unknown>) => boolean | { handled: boolean; error?: string }
 }
+
+export type RuntimeActionHandlerV7 = CommandHandlerV7<RuntimeActionContext>
 
 export interface RuntimeActionIntent {
   actionId: string

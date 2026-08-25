@@ -14,7 +14,7 @@ const productRequirementsPath = path.join(specsRoot, 'PRODUCT_REQUIREMENTS.md')
 const sourceCatalogPath = path.join(specsRoot, 'source-anchors', 'catalog.json')
 const architecturePath = path.join(vibeRoot, 'knowledge', 'ARCHITECTURE.md')
 const runtimeIdentityPath = path.join(repoRoot, 'public', 'runtime-identity.cjs')
-const taskStatePath = path.join(repoRoot, 'src', 'domain', 'codex.ts')
+const companionContractSchemaPath = path.join(repoRoot, 'contracts', 'companion-v7.schema.json')
 const writeCurrentTruth = process.argv.includes('--write-current-truth')
 const currentTruthOwnerMarker = '<!-- eypc-current-product-truth-owner:v1 -->'
 const currentTruthStart = '<!-- eypc-current-product-truth:start -->'
@@ -375,9 +375,18 @@ if (!fs.existsSync(runtimeIdentityPath)) {
   }
 }
 
-const taskStateText = fs.existsSync(taskStatePath) ? fs.readFileSync(taskStatePath, 'utf8') : ''
-const taskStateRevision = /CODEX_TASK_STATE_REVISION\s*=\s*['"]([^'"]+)['"]/.exec(taskStateText)?.[1] || null
-if (!taskStateRevision) errors.push('src/domain/codex.ts: missing CODEX_TASK_STATE_REVISION')
+let taskStateRevision = null
+if (!fs.existsSync(companionContractSchemaPath)) {
+  errors.push('contracts/companion-v7.schema.json: missing generated-contract source')
+} else {
+  try {
+    const companionContractSchema = JSON.parse(fs.readFileSync(companionContractSchemaPath, 'utf8'))
+    taskStateRevision = companionContractSchema?.properties?.revisions?.properties?.taskState?.const || null
+  } catch {
+    errors.push('contracts/companion-v7.schema.json: cannot parse generated-contract source')
+  }
+}
+if (!taskStateRevision) errors.push('contracts/companion-v7.schema.json: missing revisions.taskState.const')
 
 if (sourceCatalog && runtimeIdentity && taskStateRevision && truthRange) {
   const registryFiles = [
@@ -426,7 +435,7 @@ if (sourceCatalog && runtimeIdentity && taskStateRevision && truthRange) {
       source_anchor_catalog: sha256(fs.readFileSync(sourceCatalogPath)),
       product_body: sha256(productBody),
       architecture: sha256(fs.readFileSync(architecturePath)),
-      runtime_contract: digestFiles([runtimeIdentityPath, taskStatePath])
+      runtime_contract: digestFiles([runtimeIdentityPath, companionContractSchemaPath])
     }
   }
   const expectedTruthBlock = renderCurrentTruthBlock(truth)
