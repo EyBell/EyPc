@@ -26,17 +26,21 @@ import { resolve } from 'node:path'
 
 const BUDGET = Object.freeze({
   // Total physical lines. Measured the same way `wc -l` counts them.
-  lines: 13811,
+  // 2026-08-25 RAW-181: +124 lines / +3 codex functions / +4 mutable bindings
+  // for the persisted side-relation recovery hints (storage wiring, restore
+  // and the C2 inventory live candidate). Shape logic lives in
+  // preload/codex/side-relation-hints.cjs; the entry keeps only wiring.
+  lines: 13935,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
   // silently undercounts them by more than half.
-  codexFunctions: 271,
+  codexFunctions: 274,
   // Module-level mutable state: top-level `let`/`var` plus top-level `const`
   // bindings holding a fresh `Map`/`Set`. These are the bindings a closure
   // rewrite has to either move or inject, so they measure coupling rather than
   // volume.
-  mutableBindings: 147
+  mutableBindings: 151
 })
 
 const root = resolve(import.meta.dirname, '..')

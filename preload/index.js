@@ -44,6 +44,7 @@ function normalizeHostChildEnvelopeV7(value, surfaceId, channel) {
 
 const STORAGE_KEY = 'eypc/state/v1'
 const CODEX_LAUNCH_PATH_STORAGE_KEY = 'eypc/codex/launch-path/v1'
+const CODEX_DESKTOP_SIDE_RELATION_STORAGE_KEY = 'eypc/codex/desktop-side-relations/v1'
 const MQTT_ARCHIVE_STORAGE_KEY = 'eypc/mqtt/archive/v1'
 const MQTT_SECRETS_LOCAL_STORAGE_KEY = 'eypc/mqtt/secrets-local/v1'
 const MQTT_SECRETS_FILE_NAME = 'mqtt-secrets-local.json'
@@ -1117,6 +1118,35 @@ try {
   }
 } catch { codexDesktopActivityResolution = null }
 
+// A failed load silently disables side-relation hint persistence and restore:
+// the process falls back to today's session-only recovery, never to a
+// partially shaped or unvalidated persisted payload.
+let codexSideRelationHints = null
+try {
+  let sideRelationHintsModule = null
+  try {
+    sideRelationHintsModule = require('./codex/side-relation-hints.cjs')
+  } catch {}
+  if (!sideRelationHintsModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        sideRelationHintsModule = require(path.join(base, 'codex', 'side-relation-hints.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof sideRelationHintsModule?.createCodexSideRelationHints === 'function') {
+    codexSideRelationHints = sideRelationHintsModule.createCodexSideRelationHints({
+      timestampMs: codexTimestampMs,
+      validThreadId: validCodexThreadId
+    })
+  }
+} catch { codexSideRelationHints = null }
+
 
 // A failed load degrades to the bare minimum safe fields (`key` plus an
 // `unavailable` unread authority) rather than a partial passthrough: this is
@@ -1298,10 +1328,17 @@ let codexDesktopBridge = null
 // Process-private Kernel owner. Declared before Provider callbacks so an early
 // Desktop/App Server event can safely no-op until Kernel construction finishes.
 let companionTaskKernel = null
-// Session-only recovery hints intentionally survive Desktop/App Server bridge
-// teardown inside this preload process. They carry topology only: never live
-// state, unread state, prompts, or Renderer-visible identifiers.
+// Recovery hints intentionally survive Desktop/App Server bridge teardown
+// inside this preload process. They carry topology only: never live state,
+// unread state, prompts, or Renderer-visible identifiers. RAW-181 additionally
+// mirrors them as bounded persisted hints (threadId/parentThreadId/observedAt
+// only) so a fresh preload process can re-follow a Desktop-only Side child;
+// the restored hint asserts no state until the existing follow plus targeted
+// latest-Turn verification confirms it.
 const codexDesktopSideRelations = new Map()
+const codexDesktopSideRelationObservedAt = new Map()
+let codexDesktopSideRelationHintsRestored = false
+let codexDesktopSideRelationPersistTimer = null
 // Verified App Server inventory topology is kept separately from Desktop
 // recovery hints. It is process-private and only contributes anonymized branch
 // evidence to the parent task; Side Chat IDs never become public rows.
@@ -3927,6 +3964,63 @@ function codexDesktopAggregateUnread(bridge, known, parentThreadId, ownShadow, c
     : { hasUnreadTurn: false, unreadAuthority: 'unavailable' }
 }
 
+function codexPersistDesktopSideRelationHints() {
+  if (codexDesktopSideRelationPersistTimer) clearTimeout(codexDesktopSideRelationPersistTimer)
+  codexDesktopSideRelationPersistTimer = null
+  if (!codexSideRelationHints) return false
+  try {
+    return globalThis.utools?.dbStorage?.setItem?.(
+      CODEX_DESKTOP_SIDE_RELATION_STORAGE_KEY,
+      codexSideRelationHints.codexSideRelationHintPayload(
+        codexDesktopSideRelations,
+        codexDesktopSideRelationObservedAt,
+        Date.now()
+      )
+    ) !== false
+  } catch {
+    return false
+  }
+}
+
+function codexScheduleDesktopSideRelationHintPersist() {
+  if (!codexSideRelationHints || codexDesktopSideRelationPersistTimer) return
+  codexDesktopSideRelationPersistTimer = setTimeout(codexPersistDesktopSideRelationHints, 50)
+  codexDesktopSideRelationPersistTimer.unref?.()
+}
+
+function codexRestoreDesktopSideRelationHints() {
+  if (codexDesktopSideRelationHintsRestored) return
+  codexDesktopSideRelationHintsRestored = true
+  if (!codexSideRelationHints) return
+  let rows = []
+  try {
+    rows = codexSideRelationHints.codexRestoredSideRelationHints(
+      globalThis.utools?.dbStorage?.getItem?.(CODEX_DESKTOP_SIDE_RELATION_STORAGE_KEY),
+      Date.now()
+    )
+  } catch {
+    return
+  }
+  let restored = 0
+  for (const row of rows) {
+    if (codexDesktopSideRelations.has(row.threadId)) continue
+    // Restore fills the in-memory hint table only. No goal RPC, no shadow, no
+    // activity: the follow plus targeted latest-Turn machinery decides state.
+    codexDesktopSideRelations.set(row.threadId, row.parentThreadId)
+    codexDesktopSideRelationObservedAt.set(row.threadId, row.observedAt)
+    restored += 1
+  }
+  if (!restored) return
+  recordCompanionDiagnosticEvent({
+    level: 'info',
+    scope: 'task-topology',
+    event: 'side-relation-hints-restored',
+    outcome: 'restored',
+    provider: 'codex',
+    details: { count: restored }
+  })
+}
+
 function codexSideParentThreadId(threadId) {
   return codexInventorySideRelations.get(threadId)
     || codexDesktopSideRelations.get(threadId)
@@ -3970,13 +4064,16 @@ function codexRememberDesktopSideRelation(threadId, parentThreadId) {
   }
   codexDesktopSideRelations.delete(threadId)
   codexDesktopSideRelations.set(threadId, parentThreadId)
+  codexDesktopSideRelationObservedAt.set(threadId, Date.now())
   while (codexDesktopSideRelations.size > CODEX_DESKTOP_SIDE_RELATION_LIMIT) {
     const oldest = codexDesktopSideRelations.keys().next().value
     if (!oldest) break
     const oldestParent = codexDesktopSideRelations.get(oldest)
     if (validCodexThreadId(oldestParent)) codexForgetPrivateBranchTerminal(oldestParent, oldest)
     codexDesktopSideRelations.delete(oldest)
+    codexDesktopSideRelationObservedAt.delete(oldest)
   }
+  codexScheduleDesktopSideRelationHintPersist()
   if (!codexThreadGoalCache.has(threadId) && codexThreadGoalRpcAvailable !== false) {
     void refreshCodexThreadGoal(threadId, { publish: true })
   }
@@ -3986,14 +4083,21 @@ function codexRememberDesktopSideRelation(threadId, parentThreadId) {
 function codexForgetDesktopSideRelation(threadId) {
   const parentThreadId = codexDesktopSideRelations.get(threadId)
   if (validCodexThreadId(parentThreadId)) codexForgetPrivateBranchTerminal(parentThreadId, threadId)
-  codexDesktopSideRelations.delete(threadId)
+  const removed = codexDesktopSideRelations.delete(threadId)
+  codexDesktopSideRelationObservedAt.delete(threadId)
+  if (removed) codexScheduleDesktopSideRelationHintPersist()
 }
 
 function codexForgetDesktopSideRelationsForParent(parentThreadId) {
   codexForgetPrivateBranchTerminal(parentThreadId)
+  let removed = false
   for (const [threadId, parent] of codexDesktopSideRelations) {
-    if (parent === parentThreadId) codexDesktopSideRelations.delete(threadId)
+    if (parent !== parentThreadId) continue
+    codexDesktopSideRelations.delete(threadId)
+    codexDesktopSideRelationObservedAt.delete(threadId)
+    removed = true
   }
+  if (removed) codexScheduleDesktopSideRelationHintPersist()
 }
 
 function codexRememberDesktopOpenedRead(threadId, parentThreadId, known) {
@@ -6791,6 +6895,7 @@ class CodexDesktopCompanionBridge {
 }
 
 function codexEnsureDesktopBridge() {
+  codexRestoreDesktopSideRelationHints()
   if (!codexDesktopBridge || codexDesktopBridge.closed) codexDesktopBridge = new CodexDesktopCompanionBridge()
   codexDesktopBridge.ensure()
   return codexDesktopBridge
@@ -7845,21 +7950,25 @@ function codexInventoryThreadTopology(rows) {
     : { rowById: new Map(), relations: new Map(), depths: new Map(), isolated: new Set() }
 }
 
-function codexRecordSideTopologyDecision(sourceCount, relations, depths, orphanCount) {
+function codexRecordSideTopologyDecision(sourceCount, relations, depths, orphanCount, recoveredLiveByParent = new Map()) {
   const byParent = new Map()
   for (const [threadId, parentThreadId] of relations) {
     const current = byParent.get(parentThreadId) || { sideCount: 0, nestedSideCount: 0 }
     current.sideCount += 1
     if ((depths.get(threadId) || 0) > 1) current.nestedSideCount += 1
+    const recoveredLiveCount = recoveredLiveByParent.get(parentThreadId) || 0
+    if (recoveredLiveCount > 0) current.recoveredLiveCount = recoveredLiveCount
     byParent.set(parentThreadId, current)
   }
+  const recoveredLiveTotal = [...recoveredLiveByParent.values()].reduce((sum, count) => sum + count, 0)
   const nextFingerprints = new Map()
   const aggregateDetails = {
     rootCount: Math.max(0, sourceCount - relations.size),
     sideCount: relations.size,
     orphanCount: Math.max(0, orphanCount),
     nestedSideCount: [...depths.entries()].filter(([threadId, depth]) => relations.has(threadId) && depth > 1).length,
-    mergedParentCount: byParent.size
+    mergedParentCount: byParent.size,
+    ...(recoveredLiveTotal > 0 ? { recoveredLiveCount: recoveredLiveTotal } : {})
   }
   const aggregateSignature = JSON.stringify(aggregateDetails)
   nextFingerprints.set('aggregate', aggregateSignature)
@@ -7899,6 +8008,7 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
     codexForgetInventorySideRelation(threadId)
   }
   const nextEvidence = new Map()
+  const recoveredLiveByParent = new Map()
   for (const [threadId, parentThreadId] of relations) {
     // A row that was previously standalone may already have a public action
     // alias. Once verified as a Side Chat it must not remain a direct-open
@@ -7921,7 +8031,15 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
       && previous?.parentThreadId === parentThreadId
       && codexTimestampMs(previous.turnStartedAt) === codexTimestampMs(turn.startedAt)
       && (!turn.id || !previous.turnId || turn.id === previous.turnId)
-    const turnLive = connectorStatus === 'active' && turn?.status === 'inProgress'
+    // A connector row can lag behind a turn actually running in another
+    // process. The fresh targeted latest-Turn read this cycle is itself the
+    // verification, so fresh inProgress opens live even on an idle/notLoaded
+    // row; a cached inProgress never does (RAW-181#4).
+    const turnLive = turn?.status === 'inProgress'
+      && (connectorStatus === 'active' || turns.readSucceededIds?.has(threadId) === true)
+    if (turnLive && connectorStatus !== 'active') {
+      recoveredLiveByParent.set(parentThreadId, (recoveredLiveByParent.get(parentThreadId) || 0) + 1)
+    }
     const persistedWaiting = connectorStatus === 'active' && activeFlags.length > 0 && turn?.status !== 'inProgress'
     const activeEvidenceSequence = turnLive
       ? sameTurn && Number(previous?.activeEvidenceSequence) > 0
@@ -7959,7 +8077,7 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
   }
   codexInventorySideBranchEvidence.clear()
   for (const [threadId, evidence] of nextEvidence) codexInventorySideBranchEvidence.set(threadId, evidence)
-  codexRecordSideTopologyDecision(rowById.size, relations, depths, orphanCount)
+  codexRecordSideTopologyDecision(rowById.size, relations, depths, orphanCount, recoveredLiveByParent)
 }
 
 function codexPrivateBranchEvidence(parentThreadId, known) {
@@ -9150,7 +9268,12 @@ async function readCodexThreadTurnStatuses(rows, dirtyThreadIds = new Set()) {
 
   for (const thread of candidates) {
     const cached = codexThreadTurnStatusCache.get(thread.id)
-    if (!useEventFastPath || dirtyThreadIds.has(thread.id) || !cached) {
+    // A cached inProgress turn on a row whose connector status is not active
+    // is contradictory evidence, not a fast-path hit: only a fresh targeted
+    // read may decide whether that turn is still running (RAW-181#4).
+    const contradictoryCachedLive = cached?.turn?.status === 'inProgress'
+      && codexRecord(thread.status).type !== 'active'
+    if (!useEventFastPath || dirtyThreadIds.has(thread.id) || !cached || contradictoryCachedLive) {
       queue.push(thread)
       continue
     }
@@ -9298,6 +9421,7 @@ async function scanVerifiedCodexInventory() {
   // The queued inventory signal has now been consumed. A new signal arriving
   // during this scan may schedule one more scan; identical repeats do not.
   codexInventoryRefreshPending = false
+  codexRestoreDesktopSideRelationHints()
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const previousInventoryFingerprint = codexActivityInventorySemanticFingerprint()
     const previousActivityInventory = codexActivityInventory

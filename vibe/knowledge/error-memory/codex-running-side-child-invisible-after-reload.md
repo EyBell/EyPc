@@ -53,10 +53,11 @@ Codex 任务的子任务（Side 分支）仍在运行、主任务已完成且已
 
 ## 预防规则
 
-修复方向（未实施，需求裁决）：把 side→parent 关系提示做有界持久化（重载后据此重新 follow 并触发定向 latest-Turn 校验），或重连时向 Desktop 请求运行中会话枚举（若协议支持）；同时补齐 C2 缺口（idle/notLoaded 行 + inProgress turn 应产生候选并走已有的定向核验）。任何方案不得削弱 2026-08-15 法定人数规则的清理边界。
+已实施（2026-08-25，[RAW-181](../../specs/260825/codex-side-reload-recovery/raw-requirement.md#L1)）：side→parent 关系提示有界持久化（仅 ID+observedAt，上限 200、TTL 48h，[side-relation-hints.cjs](../../../preload/codex/side-relation-hints.cjs#L1)），重载后恢复进提示表并由既有 followAll/sideRecoveryPending + 定向 latest-Turn 校验决定状态；提示不产生任何状态，遗忘/清退/归档同批删除持久化条目。C2 一并补齐：库存 Side 行 idle/notLoaded + inProgress turn 强制新鲜定向读，fresh inProgress 才判活并记 `recoveredLiveCount` 诊断。Desktop 会话枚举方向被否决：当前协议面无枚举请求方法证据，确认需真实协议探测（未授权）。法定人数清理边界未被削弱（恢复的提示走同一清退门）。
 
 ## 记录历史
 
 | 日期 | 任务 | 触发 | 失败路线 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-25 | Codex 子任务活动聚合核验 | 用户报子任务进行中但父卡片显示已完成 | 怀疑聚合规则 | 9 代理对抗核验：聚合正确，C1 重载证据丢失 CONFIRMED、C2 潜在、C3 排除 | verified（根因）/ 补救待需求裁决 |
+| 2026-08-25 | RAW-181 重载恢复实现 | 用户指派裁决+实现 | 方向 B 无协议枚举证据被否决 | 方向 A 有界持久化提示 + C2 补齐；重载往返/不虚构/TTL/判活 4 个新回归用例，platform 全量 627/627 | 预防规则已实施 / 真实宿主重载验收待用户 |
