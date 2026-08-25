@@ -1,7 +1,7 @@
 # EyPc V7 Global Refactor — Verification Record
 
-status: `automated-verified / artifact-ready / real-host-unverified`
-updated: `2026-08-24`
+status: `automated-verified / artifact-ready / integrated / real-host-unverified`
+updated: `2026-08-25`
 
 ## Verified Evidence
 
@@ -11,7 +11,7 @@ updated: `2026-08-24`
 - Kernel truth/lifecycle/concurrency matrix: `72/72` tests passed, including invalid cross-Provider batch atomic rejection and corrected same-revision retry.
 - Repository suite: `106/106` files and `1494/1494` tests passed.
 - `pnpm run typecheck` passed.
-- Production `pnpm run verify` passed end to end, including generated preload sync, all tests, `validate:contracts`, typecheck, Vite build, runtime preparation, `validate:utools` and mirror validation; final artifact identity is `host-cb0294e803978c67b881 / renderer-bf96c22c752c95dd2d6b`.
+- Production `pnpm run verify` passed end to end, including generated preload sync, all tests, `validate:contracts`, typecheck, Vite build, runtime preparation, `validate:utools` and mirror validation; final artifact identity is `host-cb0294e803978c67b881 / renderer-6817c1e4fe6fd2808739`.
 - Requirements and source authorities pass: `30` source documents, `207` ordered anchors, `315` leaves, `287` active, `22` superseded, `6` proposed, `0` conflicted. The six proposed leaves are pre-existing unconfirmed proposals and remain warnings, not silently promoted.
 - Error memory passes with `123` leaves (`88` verified, `24` candidate, `11` superseded). Five pre-existing candidate-review dates remain warnings.
 - Static ownership gates find no production V4 reducer, Host phase feedback, Renderer whole-snapshot Page contract or non-surface page/component keydown owner. Provider waiting strings remain only in the evidence adapter's interaction extraction, never as activity evidence.
@@ -21,7 +21,8 @@ updated: `2026-08-24`
 - Automated/source/build acceptance proves the V7 artifact is internally coherent; it does not prove the installed uTools Host loaded that artifact.
 - Not run without separate authorization: installation/reload, real Host identity readback, reply/cancel/execute under 300ms, 30-second no-rebound, Float reconnect/refollow/Provider/Host restart, or Codex/Claude/Cursor live canaries.
 - Product Design live visual QA was not run: no browser/Playwright or real Host screenshots were captured. System light/dark, compact/comfortable, forced-colors, text scaling and keyboard/focus behavior remain Host-visual gates despite passing static/component checks.
-- No commit, push, integration, installation or publication was performed.
+- 2026-08-25 integration round: the worktree tree re-passed `pnpm run verify` before staging (`106/106` files, `1494/1494` tests, contracts, typecheck, production build, uTools validator, `62` verified mirror pairs plus the `2` new generated pairs), and `validate:requirements` / `validate:error-memory` passed with only pre-existing proposed/candidate warnings. After merging into `codex/port-management-redesign` the merged tree re-passed the same full `verify` with `64` mirror pairs. Because `package.json` is a Renderer content-identity input, the target branch's own script wiring changed the Renderer asset id to `renderer-6817c1e4fe6fd2808739` while the Host id stayed `host-cb0294e803978c67b881`; the PRODUCT_REQUIREMENTS truth snapshot was regenerated with `validate-requirements.mjs --write-current-truth` rather than hand-edited.
+- Push, installation and publication were not performed.
 
 ## Documentation Impact
 
