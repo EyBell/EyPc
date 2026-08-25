@@ -108,20 +108,24 @@ function harness(options: HarnessOptions = {}) {
   let codeReads = 0
   let stateReads = 0
   let unreadReads = 0
+  let inspectReads = 0
   let notifications = 0
   const messages: string[] = []
 
   const claude = {
-    inspect: async () => ({
-      version: 1 as const,
-      installed: true,
-      homeReady: true,
-      authenticated: true,
-      cliVersion: '2.1.220',
-      hooks: 'installed' as const,
-      statusline: 'installed' as const,
-      checkedAt: Date.now()
-    }),
+    inspect: async () => {
+      inspectReads += 1
+      return {
+        version: 1 as const,
+        installed: true,
+        homeReady: true,
+        authenticated: true,
+        cliVersion: '2.1.220',
+        hooks: 'installed' as const,
+        statusline: 'installed' as const,
+        checkedAt: Date.now()
+      }
+    },
     readSnapshot: async () => {
       quotaReads += 1
       if (options.throwQuota) throw new Error('quota failed')
@@ -495,6 +499,7 @@ function harness(options: HarnessOptions = {}) {
     codeReads: () => codeReads,
     stateReads: () => stateReads,
     unreadReads: () => unreadReads,
+    inspectReads: () => inspectReads,
     notifications: () => notifications,
     setCodeRows: (rows: CodeSeed[]) => { codeRows = rows },
     setThrowCode: (value: boolean) => { throwCode = value },
@@ -549,6 +554,25 @@ describe('Claude tasks through the V6 Kernel', () => {
     context.controller.dispose()
   })
 
+  it('reads Claude hook registration on start without opening inventory or unread lanes', async () => {
+    const context = harness({
+      kernelActions: true,
+      codeSessions: [{ sessionId: LOCAL_A, phase: 'running' }]
+    })
+    expect(context.controller.view().claudeEnvironment.hooks).toBe('unknown')
+    context.controller.start()
+    await settle()
+    expect(context.controller.view().claudeEnvironment.hooks).toBe('installed')
+    expect(context.controller.view().claudeEnvironment.statusline).toBe('installed')
+    expect({
+      inspect: context.inspectReads(),
+      code: context.codeReads(),
+      state: context.stateReads(),
+      unread: context.unreadReads()
+    }).toEqual({ inspect: 1, code: 0, state: 0, unread: 0 })
+    context.controller.dispose()
+  })
+
   it('accepts Host evidence updates without starting Renderer-side Claude task readers or watchers', async () => {
     const context = harness({
       kernelActions: true,
@@ -557,10 +581,11 @@ describe('Claude tasks through the V6 Kernel', () => {
     context.controller.start()
     await settle()
     expect({
+      inspect: context.inspectReads(),
       code: context.codeReads(),
       state: context.stateReads(),
       unread: context.unreadReads()
-    }).toEqual({ code: 0, state: 0, unread: 0 })
+    }).toEqual({ inspect: 1, code: 0, state: 0, unread: 0 })
 
     context.setCodeRows([{ sessionId: LOCAL_A, phase: 'waiting-input' }])
     context.emitEvent()
@@ -569,10 +594,11 @@ describe('Claude tasks through the V6 Kernel', () => {
     expect(context.controller.view().taskSnapshot.tasks.find((task) => task.key === companionTaskKey('claude', LOCAL_A))?.phase)
       .toBe('waiting-input')
     expect({
+      inspect: context.inspectReads(),
       code: context.codeReads(),
       state: context.stateReads(),
       unread: context.unreadReads()
-    }).toEqual({ code: 0, state: 0, unread: 0 })
+    }).toEqual({ inspect: 1, code: 0, state: 0, unread: 0 })
     context.controller.dispose()
   })
 

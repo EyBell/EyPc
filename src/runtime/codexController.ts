@@ -1025,6 +1025,27 @@ export function createCodexController(options: CodexControllerOptions) {
     cursorHookStates.clear()
   }
 
+  function cursorHookInstallState(value: unknown): typeof cursorHooks {
+    return value === 'installed' || value === 'outdated' || value === 'missing' || value === 'unknown'
+      ? value
+      : 'unknown'
+  }
+
+  async function refreshCursorRegistration() {
+    if (disposed || !cursorEnabled()) return false
+    const inspect = options.platform.cursor?.inspect
+    if (typeof inspect !== 'function') return false
+    try {
+      const inspected = await inspect()
+      const nextHooks = cursorHookInstallState(inspected?.hooks)
+      if (nextHooks === cursorHooks) return false
+      cursorHooks = nextHooks
+      return true
+    } catch {
+      return false
+    }
+  }
+
   async function refreshCursor() {
     if (disposed || !cursorEnabled()) return false
     const bridge = options.platform.cursor
@@ -1065,20 +1086,8 @@ export function createCodexController(options: CodexControllerOptions) {
       lastCursorReadAt = Date.now()
       cursorInventorySettled = true
       const hookChanged = applyCursorHookState()
-      if (typeof bridge.inspect === 'function') {
-        try {
-          const inspected = await bridge.inspect()
-          const hooks = inspected?.hooks
-          const nextHooks = hooks === 'installed' || hooks === 'outdated' || hooks === 'missing' || hooks === 'unknown'
-            ? hooks
-            : 'unknown'
-          if (nextHooks !== cursorHooks) {
-            cursorHooks = nextHooks
-            return true
-          }
-        } catch { /* inspect degrades independently */ }
-      }
-      return changed || hookChanged
+      const registrationChanged = await refreshCursorRegistration()
+      return changed || hookChanged || registrationChanged
     } catch {
       cursorAvailable = false
       cursorInventoryReason = 'degraded'
@@ -1125,17 +1134,32 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   async function refreshClaudeEnvironment() {
-    const bridge = options.platform.claude
-    if (!bridge) return false
+    const inspect = options.platform.claude?.inspect
+    if (typeof inspect !== 'function') return false
     const previous = JSON.stringify(claudeEnvironment)
     try {
-      claudeEnvironment = await bridge.inspect()
+      claudeEnvironment = await inspect()
     } catch {
       claudeEnvironment = emptyClaudeEnvironment()
     }
     const changed = previous !== JSON.stringify(claudeEnvironment)
     if (changed) claudeControllerRevision += 1
     return changed
+  }
+
+  /** Settings-page telemetry only. Host/Kernel still own task inventory. */
+  function refreshCompanionRegistrationTelemetry() {
+    if (disposed || !isFeatureEnabled()) return
+    if (claudeEnabled()) {
+      void refreshClaudeEnvironment().then((changed) => {
+        if (!disposed && changed) options.notify()
+      }).catch(() => undefined)
+    }
+    if (cursorEnabled()) {
+      void refreshCursorRegistration().then((changed) => {
+        if (!disposed && changed) options.notify()
+      }).catch(() => undefined)
+    }
   }
 
   function refreshClaudeInventory(now = Date.now()): Promise<boolean> {
@@ -3269,6 +3293,7 @@ export function createCodexController(options: CodexControllerOptions) {
       subscribeClaudeQuotaLifecycle()
       if (isFeatureEnabled()) void inspectEnvironment()
       syncActivation(true)
+      refreshCompanionRegistrationTelemetry()
     },
     dispose() {
       disposed = true
