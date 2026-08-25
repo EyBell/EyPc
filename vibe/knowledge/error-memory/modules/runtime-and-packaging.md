@@ -25,6 +25,7 @@ Link-only route for GUI launch environments、preload/runtime identity、packagi
 - [Port scan snapshot misses new listeners](../port-scan-snapshot-misses-new-listeners.md#L1)
 - [Preload module `instanceof` crosses vm sandbox realm](../preload-module-instanceof-crosses-vm-sandbox-realm.md#L1)
 - [Preload module forgets injection at call site](../preload-module-forgets-injection-at-call-site.md#L1)
+- [Module loader lands inside a block scope](../module-loader-lands-inside-a-block-scope.md#L1)
 - [pnpm store/build-policy mismatch](../pnpm-store-build-policy-mismatch.md#L1)
 - [Real Claude binary breaks empty-machine fixtures](../sandbox-real-claude-binary-breaks-empty-machine-fixtures.md#L1)
 - [Dev Float entry is not HMR](../utools-dev-float-entry-not-hmr.md#L1)

@@ -38,7 +38,6 @@ Link-only route for general data contracts、testing、type narrowing、document
 - [Producer built before checking the consumer](../producer-built-before-checking-the-consumer-can-express-it.md#L1)
 - [Shallow extraction of nested payload](../shallow-pattern-extraction-of-nested-payload.md#L1)
 - [Stale-base force write clobbers concurrent edits](../stale-base-force-write-clobbers-concurrent-edit.md#L1)
-- [Module loader lands inside a block scope](../module-loader-lands-inside-a-block-scope.md#L1)
 - [Superseded rule cited as authority](../superseded-rule-cited-as-authority.md#L1)
 - [Test double froze an invented contract](../test-double-froze-an-invented-cross-module-contract.md#L1)
 - [Tests that cannot fail](../tests-that-cannot-fail.md#L1)

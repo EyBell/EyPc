@@ -11,7 +11,7 @@ evidence:
   - tests/platform/codexAppServerBridge.test.ts
   - vibe/specs/requirements/invariants-raw-169.md
 tags:
-  - engineering-contracts
+  - runtime-and-packaging
   - refactor-safety
   - verification-selection
 ---
