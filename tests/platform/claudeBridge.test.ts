@@ -202,6 +202,81 @@ describe('ordered hook state', () => {
     expect(state.get(CLI_A)).toMatchObject({ phase: 'unknown', turnStartedAt: 0, lastActivityAt: 20, turnOpen: false })
   })
 
+  it('reconciles only the earliest pending active subagent per type-less orphan SubagentStop after Stop', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStart', t: 20, p: 42, a: 'agent_a', g: 'explore' }),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStart', t: 25, p: 42, a: 'agent_b', g: 'general' }),
+      event(CLI_A, 'Stop', 30),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStop', t: 35, p: 42, a: 'orphan_1' })
+    ])
+    const hook = state.get(CLI_A)
+    expect(hook.phase).toBe('completed')
+    expect(hook.subagents.agent_a).toMatchObject({ active: false, stoppedAt: 35, reconciledAt: 35 })
+    expect(hook.subagents.agent_b).toMatchObject({ active: true, stoppedAt: 0 })
+    expect(hook.subagents.orphan_1).toMatchObject({ active: false, startedAt: 0, stoppedAt: 35 })
+
+    const swept = events.foldQueueEntries([
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStop', t: 40, p: 42, a: 'orphan_2' })
+    ], state)
+    expect(swept.get(CLI_A).subagents.agent_b).toMatchObject({ active: false, stoppedAt: 40, reconciledAt: 40 })
+  })
+
+  it('keeps a typed orphan SubagentStop as a placeholder without sweeping pending actives', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStart', t: 20, p: 42, a: 'agent_a', g: 'explore' }),
+      event(CLI_A, 'Stop', 30),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStop', t: 35, p: 42, a: 'orphan_1', g: 'other' })
+    ])
+    expect(state.get(CLI_A).subagents.agent_a).toMatchObject({ active: true, stoppedAt: 0 })
+    expect(state.get(CLI_A).subagents.orphan_1).toMatchObject({ active: false, stoppedAt: 35 })
+  })
+
+  it('does not sweep pending actives while the parent Turn is open', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStart', t: 20, p: 42, a: 'agent_a', g: 'explore' }),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStop', t: 25, p: 42, a: 'orphan_1' })
+    ])
+    expect(state.get(CLI_A)).toMatchObject({ phase: 'running', turnOpen: true })
+    expect(state.get(CLI_A).subagents.agent_a).toMatchObject({ active: true, stoppedAt: 0 })
+    expect(state.get(CLI_A).subagents.orphan_1).toMatchObject({ active: false, stoppedAt: 25 })
+  })
+
+  it('revives a reconciled subagent on direct same-id evidence and closes it on its own stop', () => {
+    const reconciled = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStart', t: 20, p: 42, a: 'agent_a', g: 'explore' }),
+      event(CLI_A, 'Stop', 30),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStop', t: 35, p: 42, a: 'orphan_1' })
+    ])
+    expect(reconciled.get(CLI_A).subagents.agent_a).toMatchObject({ active: false, reconciledAt: 35 })
+
+    const revived = events.foldQueueEntries([
+      events.normalizeQueueEntry({ s: CLI_A, e: 'PostToolUse', t: 50, p: 42, a: 'agent_a' })
+    ], reconciled)
+    expect(revived.get(CLI_A).subagents.agent_a).toMatchObject({ active: true, stoppedAt: 0, reconciledAt: 0 })
+
+    const closed = events.foldQueueEntries([
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStop', t: 60, p: 42, a: 'agent_a', g: 'explore' })
+    ], revived)
+    expect(closed.get(CLI_A).subagents.agent_a).toMatchObject({ active: false, stoppedAt: 60, reconciledAt: 0 })
+  })
+
+  it('finalizes reconciled closures at SessionEnd so stray tails cannot revive them', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStart', t: 20, p: 42, a: 'agent_a', g: 'explore' }),
+      event(CLI_A, 'Stop', 30),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStop', t: 35, p: 42, a: 'orphan_1' }),
+      event(CLI_A, 'SessionEnd', 40),
+      events.normalizeQueueEntry({ s: CLI_A, e: 'PostToolUse', t: 50, p: 42, a: 'agent_a' })
+    ])
+    expect(state.get(CLI_A).phase).toBe('completed')
+    expect(state.get(CLI_A).subagents.agent_a).toMatchObject({ active: false, stoppedAt: 35, reconciledAt: 0 })
+  })
+
   it('lets only a new prompt reopen the parent after Stop', () => {
     const state = events.foldQueueEntries([
       event(CLI_A, 'UserPromptSubmit', 10),

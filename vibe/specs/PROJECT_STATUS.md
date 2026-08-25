@@ -16,6 +16,7 @@ This hub routes current implementation, verification gates and durable authoriti
 
 ## Current Snapshot
 
+- RAW-181 孤儿 SubagentStop 保守收敛未决 active 子代理 is `implementation-landed / focused-automated-verified / real-queue-replay-verified`。真机队列证实错位类载荷双重签名（agent_id 未知且 agent_type 缺失，7/7 在父 `Stop` 后 2–7 秒到达）；[events.cjs](../../preload/claude/events.cjs#L1) 归约器新增完全源结构化的一对一收敛（无 TTL）：类型缺失孤儿 stop 在父 Turn 关闭后关闭最早未决 active 子代理并标 `reconciledAt`，同 id 直接证据复活、SessionEnd 终态化；带类型孤儿/开 Turn/重复 stop/无候选保持占位。修复对既有队列重放即时生效：真机重放仅 53836e7e 幽灵 live 成员收敛，其余 10 会话逐条无差异。聚焦 `tests/platform/claudeBridge.test.ts` `80/80`（新增 5 用例）+ 下游 topology/preload-core `13/13`，`sync:preloads` 后 `73` 对镜像验证通过，需求登记与真值快照已同步。用户报告的「已完成已读却永久进行中 + 归档被 liveCount 抑制」由证据侧收敛解除，Kernel 聚合未动。上游载荷缺陷已报告：anthropics/claude-code#89555。Current authority: [spec](260825/2242-claude-orphan-subagent-reconcile/spec.md#L1).
 - RAW-180 Codex 配置页静默刷新与运行区整合 is `implementation-landed / focused-automated-verified / host-visual-pending`. 已有成功快照后，例行额度/环境重读不再把顶部药丸和运行诊断改写成「正在读取 / 正在核查」；运行区改为叠层换行并常显主诊断详情；主窗 Tooltip 改为不透明。聚焦 `tests/domain/codexEnvironmentPresentation.test.ts` + `tests/ui/codexCompanion.test.ts` + `tests/ui/operationTooltip.test.ts` 为 `93/93`，需求登记与来源目录已同步。五 Tab 与快捷键不回读仍属 RAW-087。真实运行页目视仍待宿主。Current authority: [spec](260825/codex-config-silent-integration/spec.md#L1).
 - Product: keyboard-first uTools plugin for local PC capability calls.
 - Active lines: port management, file favorites, cross-platform window jump, MQTT workbench, Quick Jump, Codex Companion and settings feature help.

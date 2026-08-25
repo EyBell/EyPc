@@ -16,11 +16,11 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 316 leaves / 6 modules / 289 active / 22 superseded / 5 proposed / 0 conflicted |
+| 需求登记 | 317 leaves / 6 modules / 290 active / 22 superseded / 5 proposed / 0 conflicted |
 | 取代关系 | 22 whole / 70 scoped |
-| 原始来源 | 31 documents / 207 ordered / 105 RAW-parent / 102 source-only |
+| 原始来源 | 32 documents / 207 ordered / 105 RAW-parent / 102 source-only |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-53250b3a26d17acaac83 / renderer-062423525f05293b47ce` · `artifact-ready` |
+| 当前构建产物 | `host-a882f08c486a075f4f3d / renderer-982f123c074a510564df` · `artifact-ready` |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -32,10 +32,10 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 316,
+    "leaves": 317,
     "modules": 6,
     "proposed": 5,
-    "active": 289,
+    "active": 290,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
@@ -43,7 +43,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "scoped_relations": 70
   },
   "source_anchor_catalog": {
-    "documents": 31,
+    "documents": 32,
     "ordered_anchors": 207,
     "raw_parent_ordered": 105,
     "registered_requirements": 105,
@@ -58,8 +58,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-53250b3a26d17acaac83",
-    "renderer_asset": "renderer-062423525f05293b47ce",
+    "host_asset": "host-a882f08c486a075f4f3d",
+    "renderer_asset": "renderer-982f123c074a510564df",
     "artifact_state": "artifact-ready"
   },
   "content_digests": {
@@ -235,7 +235,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - App 已有的重复 Code 行严格保留，不由 EyPc 自动隐藏、合并、删除或修复。多个本地行共享一个 `cliSessionId` 时，Hook 状态必须经唯一映射或定向元数据脉冲关联；不能唯一归属则状态未知，不得一对多扇出。
 - Claude phase 与 unread 是两个正交维度。phase 为 `running / waiting-approval / waiting-input / completed / stopped / unknown`；待审批与待回答进入「待输入」，运行进入「进行中」，stopped 在卡片内显示「待继续」，完成且 App 原生未读进入「已完成未读」，其余完成进入「已完成」。一张卡只能进入一个可见状态分组；待继续不新增顶层 Tab、角标或快捷入口。
 - Claude phase 的生产路线是**版本门禁 App 私有日志 + 可唯一映射的官方 Hooks + Code 元数据历史恢复**：App local id 精确事件优先，唯一 Hook 次之，`completedTurns > 0` 且无更新 active 证据时恢复历史 completed，歧义或冲突保持 unknown。日志只接受已门禁版本的发送、权限/提问、request-id 响应、完成、停止/失败固定模板；失配 fail closed，原始行/正文/工具参数不跨 Bridge。Hooks-only 和私有 IPC 注入均为已拒绝路线。
-- 只有 `UserPromptSubmit` 开启 Claude 父 Turn。成功 `Stop` 关闭当前 Turn 为 completed。Hook `StopFailure` 只记录水位，可以暂标 `stopped`，但同一 Turn 内随后的 prompt/tool/permission 必须恢复 running/waiting，不得保持「待继续」。SessionEnd 只有在同一 reducer 已实际观察到 open Turn 时才可关闭它。冷启动或生命周期扫描得到的 SessionEnd 只记录 session lifecycle，不能凭空创建 stopped，也不能压制 `completedTurns > 0` 的历史 completed。已观察 Turn 内，同一 Turn 已有成功 Stop/Result 时保持 completed；无成功结果的 SessionEnd 或显式 App failed/interrupted 才进入 stopped。SubagentStop、工具和 lifecycle 尾事件不得在成功 Stop 或 observed SessionEnd 之后把旧任务恢复为 running。App live-append 的 running/waiting 压过 Hook `stopped`，除非 Hook `turnStartedAt` 严格新于该 App 证据；App 明确终态仍优先同 Turn Hook 尾事件；source generation 优先于事件时间参与版本纠错。RAW-174 是该 StopFailure 合同的当前条款。
+- 只有 `UserPromptSubmit` 开启 Claude 父 Turn。成功 `Stop` 关闭当前 Turn 为 completed。Hook `StopFailure` 只记录水位，可以暂标 `stopped`，但同一 Turn 内随后的 prompt/tool/permission 必须恢复 running/waiting，不得保持「待继续」。SessionEnd 只有在同一 reducer 已实际观察到 open Turn 时才可关闭它。冷启动或生命周期扫描得到的 SessionEnd 只记录 session lifecycle，不能凭空创建 stopped，也不能压制 `completedTurns > 0` 的历史 completed。已观察 Turn 内，同一 Turn 已有成功 Stop/Result 时保持 completed；无成功结果的 SessionEnd 或显式 App failed/interrupted 才进入 stopped。SubagentStop、工具和 lifecycle 尾事件不得在成功 Stop 或 observed SessionEnd 之后把旧任务恢复为 running。App live-append 的 running/waiting 压过 Hook `stopped`，除非 Hook `turnStartedAt` 严格新于该 App 证据；App 明确终态仍优先同 Turn Hook 尾事件；source generation 优先于事件时间参与版本纠错。RAW-174 是该 StopFailure 合同的当前条款。子代理成员收敛完全源结构化：无 agent_type 的孤儿 `SubagentStop` 在父 Turn 关闭后一对一关闭同会话最早未决 active 子代理；带类型孤儿、同 id 重复 stop、开 Turn 到达或无候选时只记 inactive 占位；被收敛者遇同 id 直接证据立即复活，`SessionEnd` 全量清扫后终态化；任何 TTL/时效降级仍被禁止。RAW-181 是该收敛合同的当前条款。
 - Claude 未读持久基线是 App Local Storage 中包含 Chromium string tag 的 `epitaxy-unread-v1` 精确键。EyPc 只在权限 `0700` 的完整 LevelDB 临时快照上用真实 reader 读取，复制前后源指纹一致才接纳并立即清理；失败返回 unknown。已门禁 App 的 exact live completion 与 `[CCD] LocalSessions.setFocusedSession` 另形成 process-private hot overlay：聚焦任务完成保持已读，非聚焦任务完成立即未读，聚焦到任务立即清除，新 running 清旧 completion hint。更新 hot edge 不被迟到 LevelDB true/false 回滚；只有先看到该会话的相反持久边缘、再由事件后的新鲜快照匹配，才确认追平，上一 completion 遗留的同值不算。cold replay 不从历史 completion/focus 伪造未读，同秒事件用单调 hint revision。目录首个不同指纹由进程 Node 原生回调立即通知，已登记目录/文件由一秒 StatWatcher 补漏；禁止持久回执、WAL/`.ldb` 字节扫描或写 App 未读。全局 focus 不能证明多窗格 visible-but-unfocused 已读，因此该边界不宣称原生未读完全等价。
 - Claude 功能启用期间由进程生命周期 Host 维护 `inventory / phase / unread / quota / appPresence` 物化视图；切页、Main/Float 显隐和快捷键复用同一缓存，重启后从真实来源冷启动且不持久化 live phase。五条 authority 独立增量更新；Hook/App state、已登记任务成员文件和 unread LevelDB 的首个完整文件事件在 Node 原生回调中立即 drain/read，不进入可被 `background-hidden` 节流的 JavaScript timer；部分任务元数据 JSON 保留最后可信成员关系，目录 `fs.watch` 为快路，已登记文件的 1 秒 `fs.watchFile` StatWatcher 只作漏通知恢复，Renderer Controller 不另设 phase 轮询。等价 reduced-state/package 指纹完整 no-op，不增加 revision 或推送；source generation、Kernel revision、Float applied revision 全链拒绝倒退。额度网络不得阻塞任务状态，watcher callback 延迟不得冒充最终 Float applied 延迟。
 - RAW-160 requires the current Claude `session.phase` evidence to outrank `previous.phase` whenever its causal event is newer；a delayed older inventory generation cannot regress a newer watcher/open-refresh event。App state 固定语法当前仅门禁已核验的 Claude App `1.26832.0 / 1.28929.0 / 1.30096.5 / 1.34493.1`，相邻未知版本 fail closed；日志冷重放的普通 running/waiting 不得推导 live activity。phase、phaseRevision、statusEnteredAt、unread and capabilities are accepted atomically through the same State Store。D′ archive success text is exactly split into EyPc convergence and native-sidebar capability：EyPc 已归档并移除；Claude 原生侧栏同步未确认，当前不受支持。Occasional native sidebar refresh is observation only，never a supported postcondition。
