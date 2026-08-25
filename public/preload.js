@@ -1280,9 +1280,6 @@ const codexInventoryMembershipWatchers = new Map()
 const codexInventoryMembershipStatPaths = new Set()
 const codexLocalArchiveRecoverySuppressions = new Set()
 let codexLiveEvidenceSequence = 0
-const CODEX_ARCHIVE_NATIVE_ACK_TIMEOUT_MS = 2_000
-const CODEX_ARCHIVE_VERIFY_DELAY_MS = 300
-const codexArchiveNativeAckWaiters = new Map()
 let codexActivityDecisionCounters = {
   liveEpochOpened: 0,
   hydrationActiveDeferred: 0,
@@ -5682,7 +5679,7 @@ class CodexDesktopCompanionBridge {
     if (message.method === 'thread-archived' || message.method === 'thread-unarchived') {
       if (params.hostId === 'local' && validCodexThreadId(params.conversationId)) {
         if (message.method === 'thread-archived'
-          && observeCodexArchiveNativeAck(params.conversationId, 'desktop', message.sourceClientId)) return
+          && (codexArchiveBridge?.observeNativeAck(params.conversationId, 'desktop', message.sourceClientId) ?? false)) return
         const archivedKey = message.method === 'thread-archived'
           ? codexArchivedActivityKey(params.conversationId)
           : ''
@@ -7688,7 +7685,7 @@ function handleCodexServerMessage(message) {
   }
   if (method === 'thread/archived') {
     const threadId = typeof params.threadId === 'string' ? params.threadId : typeof params.conversationId === 'string' ? params.conversationId : ''
-    if (validCodexThreadId(threadId) && observeCodexArchiveNativeAck(threadId, 'app-server')) return true
+    if (validCodexThreadId(threadId) && (codexArchiveBridge?.observeNativeAck(threadId, 'app-server') ?? false)) return true
     if (validCodexThreadId(threadId)) codexClearDesktopOpenedRead(codexDesktopBridge, threadId)
     const archivedKey = validCodexThreadId(threadId) ? codexArchivedActivityKey(threadId) : ''
     emitCodexActivityDelta([], true, archivedKey ? 'urgent' : 'normal', archivedKey ? [archivedKey] : [])
@@ -9815,477 +9812,6 @@ function readCompanionCodexPreflightSnapshotV7() {
     return Promise.resolve(result)
   }
   return readCodexSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
-}
-
-function codexArchiveOperationId(value) {
-  return typeof value === 'string' && /^[A-Za-z0-9:_-]{8,160}$/.test(value)
-    ? value
-    : `archive-${crypto.randomUUID()}`
-}
-
-function codexArchiveShortOperationId(operationId) {
-  return String(operationId || '').slice(-8)
-}
-
-function recordCodexArchiveStage(event, outcome, context = {}, extra = {}) {
-  const abnormal = outcome === 'failed' || outcome === 'indeterminate' || event === 'archive-local-retained'
-  runtimeDiagnostics.record({
-    level: abnormal ? 'error' : event === 'archive-preflight' || event === 'archive-reconciliation' && outcome === 'started' ? 'debug' : 'info',
-    scope: 'archive-transaction',
-    event,
-    outcome,
-    operationId: context.operationId,
-    source: context.source,
-    provider: 'codex',
-    taskRef: companionDiagnosticTaskRef('codex', context.threadId),
-    beforePhase: context.beforePhase,
-    afterPhase: context.currentPhase,
-    terminalAt: context.terminalEpoch,
-    semanticRevision: context.currentRevision,
-    durationMs: Date.now() - (context.startedAt || Date.now()),
-    code: extra.errorCode,
-    details: {
-      terminalEpoch: Number(context.terminalEpoch) || 0,
-      requestedRevision: Number(context.requestedRevision) || 0,
-      currentRevision: Number(context.currentRevision) || 0,
-      beforePhase: context.beforePhase || '',
-      currentPhase: context.currentPhase || '',
-      archiveCapability: context.archiveCapability || '',
-      providerWriteOutcome: context.providerWriteOutcome || '',
-      unarchivedPresent: context.unarchivedPresent,
-      archivedPresent: context.archivedPresent,
-      desktopBridgeState: context.desktopBridgeState || '',
-      desktopSyncOutcome: context.desktopSyncOutcome || '',
-      nativeAckOutcome: context.nativeAckOutcome || '',
-      verificationAttempt: Number(context.verificationAttempt) || 0,
-      finalOutcome: context.finalOutcome || outcome,
-      ...extra.details
-    }
-  })
-}
-
-function observeCodexArchiveNativeAck(threadId, source, sourceClientId = '') {
-  const pending = codexArchiveNativeAckWaiters.get(threadId)
-  if (!pending) return false
-  if (source === 'desktop' && sourceClientId && sourceClientId === codexDesktopBridge?.clientId) return true
-  if (!pending.ack) pending.ack = { source, observedAt: Date.now() }
-  for (const resolve of pending.listeners.splice(0)) resolve(pending.ack)
-  return true
-}
-
-function waitForCodexArchiveNativeAck(threadId, timeoutMs = CODEX_ARCHIVE_NATIVE_ACK_TIMEOUT_MS) {
-  const pending = codexArchiveNativeAckWaiters.get(threadId)
-  if (!pending) return Promise.resolve(null)
-  if (pending.ack) return Promise.resolve(pending.ack)
-  return new Promise((resolve) => {
-    const finish = (value) => {
-      clearTimeout(timer)
-      const index = pending.listeners.indexOf(finish)
-      if (index >= 0) pending.listeners.splice(index, 1)
-      resolve(value)
-    }
-    const timer = setTimeout(() => finish(null), timeoutMs)
-    timer.unref?.()
-    pending.listeners.push(finish)
-  })
-}
-
-function beginCodexArchiveNativeAck(threadId, operationId) {
-  codexLocalArchiveRecoverySuppressions.add(threadId)
-  codexArchiveNativeAckWaiters.set(threadId, { operationId, ack: null, listeners: [] })
-}
-
-function endCodexArchiveNativeAck(threadId, operationId) {
-  const pending = codexArchiveNativeAckWaiters.get(threadId)
-  if (!pending || pending.operationId !== operationId) return
-  for (const resolve of pending.listeners.splice(0)) resolve(null)
-  codexArchiveNativeAckWaiters.delete(threadId)
-}
-
-async function verifyCodexArchivePersistence(threadId) {
-  const [unarchivedRows, archivedRows] = await Promise.all([
-    listAllCodexThreads(false),
-    listAllCodexThreads(true)
-  ])
-  return {
-    unarchivedPresent: unarchivedRows.some((row) => row.id === threadId),
-    archivedPresent: archivedRows.some((row) => row.id === threadId)
-  }
-}
-
-function waitCodexArchiveVerificationDelay() {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, CODEX_ARCHIVE_VERIFY_DELAY_MS)
-    timer.unref?.()
-  })
-}
-
-function retainCodexArchiveTask(context, outcome, errorCode, message) {
-  context.finalOutcome = outcome
-  if (context.lastStage) recordCodexArchiveStage(context.lastStage, outcome, context, { errorCode })
-  recordCodexArchiveStage('archive-local-retained', outcome, context, { errorCode })
-  try {
-    globalThis.utools?.showNotification?.(`${message}（操作 ${codexArchiveShortOperationId(context.operationId)}）`)
-  } catch {}
-  recordCodexArchiveStage('archive-reconciliation', 'retained', context, { details: { directedVerificationCompleted: context.verificationAttempt > 0 } })
-  return { outcome, operationId: context.operationId, errorCode, message: `${message}（操作 ${codexArchiveShortOperationId(context.operationId)}）` }
-}
-
-async function commitVerifiedCodexArchive(context) {
-  const known = codexActivityInventory.get(context.threadId)
-  const archivedKey = typeof known?.key === 'string' ? known.key : ''
-  if (!archivedKey) throw codexError('archive-commit-missing', 'Codex archive commit target is missing')
-  const committed = companionTaskKernel?.commitArchived?.({
-    provider: 'codex',
-    key: archivedKey,
-    operationId: context.operationId,
-    terminalEpoch: context.terminalEpoch,
-    membershipRevision: Math.max(Number(context.currentRevision) || 0, Date.now()),
-    verified: true
-  })
-  if (committed?.outcome !== 'archived') throw codexError('archive-kernel-commit-failed', 'Codex archive kernel commit failed')
-  const removedKey = codexArchivedActivityKey(context.threadId)
-  if (removedKey !== archivedKey) throw codexError('archive-local-cleanup-failed', 'Codex archive local cleanup failed')
-  codexLocalArchiveRecoverySuppressions.delete(context.threadId)
-  emitCodexActivityDelta([], true, 'urgent', [archivedKey])
-  recordCodexArchiveStage('archive-kernel-commit', 'archived', context)
-  recordCodexArchiveStage('archive-ui-removal', 'archived', context)
-  recordCodexArchiveStage('archive-reconciliation', 'verified', context, { details: { directedVerificationCompleted: true } })
-  return archivedKey
-}
-
-async function archiveCodexThread(actionAlias, request) {
-  const input = codexRecord(request)
-  const operationId = codexArchiveOperationId(input.operationId)
-  const hintedEntry = typeof actionAlias === 'string' ? codexThreadActions.get(actionAlias) : null
-  const context = {
-    operationId,
-    source: typeof input.source === 'string' ? input.source : 'archive-button',
-    threadId: validCodexThreadId(hintedEntry?.threadId) ? hintedEntry.threadId : '',
-    startedAt: Date.now(),
-    requestedRevision: Number(input.requestedRevisionAt || input.expectedRevisionAt) || 0,
-    currentRevision: 0,
-    terminalEpoch: Number(input.expectedLastTurnStartedAt) || 0,
-    beforePhase: input.evidence === 'stopped' ? 'stopped' : 'completed',
-    currentPhase: input.evidence === 'stopped' ? 'stopped' : 'completed',
-    archiveCapability: 'requested',
-    providerWriteOutcome: 'not-started',
-    desktopBridgeState: 'not-checked',
-    desktopSyncOutcome: 'not-started',
-    nativeAckOutcome: 'not-started',
-    verificationAttempt: 0,
-    lastStage: 'archive-preflight'
-  }
-  if (input.intentRecorded !== true) recordCodexArchiveStage('archive-intent', 'started', context)
-  if (input.confirmationRecorded !== true) recordCodexArchiveStage('archive-confirmation-confirmed', 'confirmed', context)
-  const expectedUpdatedAt = Number.isFinite(input.expectedUpdatedAt) && input.expectedUpdatedAt > 0 ? input.expectedUpdatedAt : 0
-  const expectedRevisionAt = Number.isFinite(input.expectedRevisionAt) && input.expectedRevisionAt > 0 ? input.expectedRevisionAt : 0
-  const expectedCompletionAt = Number.isFinite(input.expectedCompletionAt) && input.expectedCompletionAt > 0 ? input.expectedCompletionAt : 0
-  const expectedLastTurnStartedAt = Number.isFinite(input.expectedLastTurnStartedAt) && input.expectedLastTurnStartedAt > 0 ? input.expectedLastTurnStartedAt : 0
-  const expectedSourceFingerprint = typeof input.expectedSourceFingerprint === 'string' && /^[a-f0-9]{64}$/.test(input.expectedSourceFingerprint) ? input.expectedSourceFingerprint : ''
-  const evidence = input.evidence === 'completed' || input.evidence === 'stopped' ? input.evidence : ''
-  const requestIsValid = typeof actionAlias === 'string'
-    && /^ct_[A-Za-z0-9_-]{16,80}$/.test(actionAlias)
-    && expectedUpdatedAt > 0
-    && expectedRevisionAt > 0
-    && expectedLastTurnStartedAt > 0
-    && Boolean(expectedSourceFingerprint)
-    && Boolean(evidence)
-    && (evidence !== 'stopped' || expectedCompletionAt === 0)
-    && expectedRevisionAt === (expectedCompletionAt || expectedLastTurnStartedAt)
-  if (!requestIsValid) {
-    return retainCodexArchiveTask(context, 'failed', 'invalid-request', '归档请求已失效，任务已保留')
-  }
-  const entry = codexThreadActions.get(actionAlias)
-  if (!entry || entry.expiresAt <= Date.now() || !validCodexThreadId(entry.threadId)) {
-    codexThreadActions.delete(actionAlias)
-    return retainCodexArchiveTask(context, 'failed', 'expired-alias', '任务动作已过期，任务已保留')
-  }
-  context.threadId = entry.threadId
-  context.lastStage = 'archive-preflight'
-  try {
-    const registry = readCodexNativeRegistry()
-    if (registry.fingerprint !== expectedSourceFingerprint || entry.sourceFingerprint !== expectedSourceFingerprint) {
-      return retainCodexArchiveTask(context, 'failed', 'source-changed', 'Codex 项目状态已更新，未执行归档')
-    }
-    const [threadResult, turnPage] = await Promise.all([
-      requestCodexRpc('thread/read', { threadId: entry.threadId, includeTurns: false }),
-      requestCodexRpc('thread/turns/list', { threadId: entry.threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS)
-    ])
-    const response = codexRecord(threadResult)
-    const thread = codexRecord(response.thread)
-    const status = codexRecord(thread.status).type
-    const recencyAt = codexTimestampMs(thread.recencyAt) || codexTimestampMs(thread.updatedAt) || 0
-    const turnPageSource = codexRecord(turnPage)
-    const turnRows = Array.isArray(turnPageSource.data) ? turnPageSource.data : null
-    const turn = sanitizeCodexTurnStatusPage(turnPage)
-    const native = codexThreadNativeProject(thread, registry)
-    const validStatus = ['active', 'idle', 'notLoaded', 'systemError'].includes(status)
-    const validTurnShape = turnRows !== null && (turnRows.length === 0 || Boolean(turn))
-    context.currentRevision = Math.max(recencyAt, Number(turn?.completedAt) || 0, Number(turn?.startedAt) || 0)
-    context.terminalEpoch = Number(turn?.startedAt) || context.terminalEpoch
-    context.desktopBridgeState = codexEnsureDesktopBridge().state
-    recordCodexArchiveStage('archive-preflight', 'observed', context, {
-      details: { providerStatus: status, turnStatus: turn?.status || '', projectMatched: native?.project.key === entry.projectKey }
-    })
-    if (thread.id !== entry.threadId || !validStatus || recencyAt <= 0 || recencyAt !== expectedUpdatedAt || !validTurnShape || !native || native.project.key !== entry.projectKey) {
-      return retainCodexArchiveTask(context, 'failed', 'state-changed', '任务状态已更新，未执行归档')
-    }
-    if (!turn || turn.startedAt !== expectedLastTurnStartedAt) {
-      return retainCodexArchiveTask(context, 'failed', 'turn-changed', '任务最新提问已更新，未执行归档')
-    }
-    const desktopBridge = codexEnsureDesktopBridge()
-    const desktopActivity = desktopBridge.activityForThread(entry.threadId)
-    const currentActivity = codexActivityInventory.get(entry.threadId)
-    const exactInterruptedTerminal = evidence === 'stopped'
-      && turn?.status === 'interrupted'
-      && currentActivity?.lastTurnStatus === 'interrupted'
-      && currentActivity.lastTurnStartedAt === turn.startedAt
-      && codexIsConfirmedTurnEvidence(currentActivity.lastTurnEvidence)
-      && (!currentActivity.activeEvidenceSequence
-        || !currentActivity.terminalEvidenceSequence
-        || currentActivity.terminalEvidenceSequence >= currentActivity.activeEvidenceSequence)
-      && !currentActivity.activeFlags?.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
-    if (!exactInterruptedTerminal
-      && (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress')) {
-      return evidence === 'stopped'
-        ? retainCodexArchiveTask(context, 'failed', 'state-changed', '任务已恢复进行中，未执行归档')
-        : retainCodexArchiveTask(context, 'failed', 'active-task', '任务已恢复进行中，未执行归档')
-    }
-    if (evidence === 'completed') {
-      if (turn.status !== 'completed' || (turn.completedAt || turn.startedAt) !== expectedRevisionAt || (expectedCompletionAt > 0 && turn.completedAt !== expectedCompletionAt)) {
-        return retainCodexArchiveTask(context, 'failed', 'completion-changed', '任务完成版本已更新，未执行归档')
-      }
-    } else {
-      const stoppedBoundary = exactInterruptedTerminal
-        || (turn.status === 'failed' || turn.status === 'interrupted')
-          && (desktopActivity?.status === 'idle' || desktopBridge.state === 'not-running')
-      if (!stoppedBoundary || turn.startedAt !== expectedRevisionAt) {
-        return retainCodexArchiveTask(context, 'failed', 'state-changed', '任务已不再满足待继续归档边界，未执行归档')
-      }
-    }
-    context.archiveCapability = 'verified'
-    recordCodexArchiveStage('archive-preflight', 'verified', context)
-    beginCodexArchiveNativeAck(entry.threadId, operationId)
-    context.lastStage = 'archive-provider-write'
-    await requestCodexRpc('thread/archive', { threadId: entry.threadId })
-    context.providerWriteOutcome = 'completed'
-    recordCodexArchiveStage('archive-provider-write', 'completed', context)
-
-    context.lastStage = 'archive-server-verify-1'
-    context.verificationAttempt = 1
-    const verify1 = await verifyCodexArchivePersistence(entry.threadId)
-    Object.assign(context, verify1)
-    if (verify1.unarchivedPresent || !verify1.archivedPresent) {
-      return retainCodexArchiveTask(context, 'indeterminate', 'archive-verify-1-failed', 'Codex 第一次持久化核验未通过，任务已保留')
-    }
-    recordCodexArchiveStage('archive-server-verify-1', 'verified', context)
-
-    context.lastStage = 'archive-desktop-sync'
-    const desktopRunning = desktopBridge.state === 'connected'
-      ? true
-      : desktopBridge.state === 'not-running' ? false : await codexDesktopIsRunning()
-    context.desktopBridgeState = desktopRunning ? desktopBridge.state : 'not-running'
-    if (context.desktopBridgeState === 'connected') {
-      context.desktopSyncOutcome = await desktopBridge.notifyThreadArchived(
-        entry.threadId,
-        typeof thread.cwd === 'string' ? thread.cwd : ''
-      )
-      if (context.desktopSyncOutcome !== 'dispatched') {
-        return retainCodexArchiveTask(context, 'indeterminate', 'archive-desktop-sync-failed', 'Codex 桌面同步未确认，任务已保留')
-      }
-      recordCodexArchiveStage('archive-desktop-sync', 'dispatched', context)
-      context.lastStage = 'archive-native-ack'
-      const nativeAck = await waitForCodexArchiveNativeAck(entry.threadId)
-      context.nativeAckOutcome = nativeAck ? `acknowledged:${nativeAck.source}` : 'timeout'
-      if (!nativeAck) {
-        return retainCodexArchiveTask(context, 'indeterminate', 'archive-native-ack-timeout', 'Codex 原生归档确认超时，任务已保留')
-      }
-      recordCodexArchiveStage('archive-native-ack', 'acknowledged', context)
-    } else if (context.desktopBridgeState === 'not-running') {
-      context.desktopSyncOutcome = 'not-running'
-      context.nativeAckOutcome = 'not-required'
-      recordCodexArchiveStage('archive-desktop-sync', 'not-required', context)
-    } else {
-      context.desktopSyncOutcome = desktopBridge.state || 'failed'
-      return retainCodexArchiveTask(context, 'indeterminate', 'archive-desktop-state-indeterminate', 'Codex 桌面连接状态无法确认，任务已保留')
-    }
-
-    await waitCodexArchiveVerificationDelay()
-    context.lastStage = 'archive-server-verify-2'
-    context.verificationAttempt = 2
-    const verify2 = await verifyCodexArchivePersistence(entry.threadId)
-    Object.assign(context, verify2)
-    if (verify2.unarchivedPresent || !verify2.archivedPresent) {
-      return retainCodexArchiveTask(context, 'indeterminate', 'archive-verify-2-failed', 'Codex 第二次持久化核验未通过，任务已保留')
-    }
-    recordCodexArchiveStage('archive-server-verify-2', 'verified', context)
-
-    context.lastStage = 'archive-kernel-commit'
-    await commitVerifiedCodexArchive(context)
-    context.finalOutcome = 'archived'
-    return {
-      outcome: 'archived',
-      operationId,
-      desktopSync: context.desktopSyncOutcome,
-      nativeAck: context.nativeAckOutcome,
-      message: `已确认原生归档（操作 ${codexArchiveShortOperationId(operationId)}）`
-    }
-  } catch (error) {
-    const source = codexRecord(error)
-    return retainCodexArchiveTask(
-      context,
-      context.providerWriteOutcome === 'completed' ? 'indeterminate' : 'failed',
-      typeof source.code === 'string' ? source.code : 'archive-failed',
-      'Codex 任务归档失败，任务已保留'
-    )
-  } finally {
-    if (context.threadId) {
-      endCodexArchiveNativeAck(context.threadId, operationId)
-      // The recovery suppression only protects an archive write whose native
-      // result may already be persisted. Once the Provider write never
-      // completed, or an authoritative verification still sees the thread in
-      // the unarchived inventory, a later real Desktop archive must be allowed
-      // through the external-membership recovery lane.
-      if (context.providerWriteOutcome !== 'completed' || context.unarchivedPresent === true) {
-        codexLocalArchiveRecoverySuppressions.delete(context.threadId)
-      }
-    }
-  }
-}
-
-async function archiveCodexProject(actionAlias, request) {
-  const input = codexRecord(request)
-  const operationId = codexArchiveOperationId(input.operationId)
-  const projectArchiveSource = typeof input.source === 'string' ? input.source : 'project-archive'
-  if (input.intentRecorded !== true) {
-    runtimeDiagnostics.record({
-      level: 'info',
-      scope: 'archive-transaction',
-      event: 'archive-intent',
-      outcome: 'started',
-      operationId,
-      source: projectArchiveSource,
-      provider: 'codex',
-      details: { mode: 'project' }
-    })
-  }
-  if (input.confirmationRecorded !== true) {
-    runtimeDiagnostics.record({
-      level: 'info',
-      scope: 'archive-transaction',
-      event: 'archive-confirmation-confirmed',
-      outcome: 'confirmed',
-      operationId,
-      source: projectArchiveSource,
-      provider: 'codex',
-      details: { mode: 'project', owner: 'provider-boundary' }
-    })
-  }
-  const expectedSourceFingerprint = typeof input.expectedSourceFingerprint === 'string' && /^[a-f0-9]{64}$/.test(input.expectedSourceFingerprint) ? input.expectedSourceFingerprint : ''
-  const emptyResult = (errorCode, message) => ({
-    outcome: 'failed',
-    archivedKeys: [],
-    skippedActiveKeys: [],
-    failed: [],
-    desktopSyncedKeys: [],
-    desktopSyncFailedKeys: [],
-    errorCode,
-    message
-  })
-  if (typeof actionAlias !== 'string' || !/^cp_[A-Za-z0-9_-]{16,80}$/.test(actionAlias) || !expectedSourceFingerprint) {
-    return emptyResult('invalid-request', '项目归档请求已失效，请刷新后重试')
-  }
-  const action = codexProjectActions.get(actionAlias)
-  if (!action || action.expiresAt <= Date.now()) {
-    codexProjectActions.delete(actionAlias)
-    return emptyResult('expired-alias', '项目动作已过期，请刷新后重试')
-  }
-  try {
-    const registry = readCodexNativeRegistry()
-    if (registry.fingerprint !== expectedSourceFingerprint || action.sourceFingerprint !== expectedSourceFingerprint) {
-      return emptyResult('source-changed', 'Codex 项目状态已更新，未执行批量归档')
-    }
-    const unarchivedRows = await listAllCodexThreads(false)
-    const candidates = []
-    for (const thread of unarchivedRows) {
-      const native = codexThreadNativeProject(thread, registry)
-      if (native?.project.key === action.projectKey) candidates.push(thread)
-    }
-    const archivedKeys = []
-    const skippedActiveKeys = []
-    const failed = []
-    const desktopSyncedKeys = []
-    const desktopSyncFailedKeys = []
-    for (let batchStart = 0; batchStart < candidates.length; batchStart += 20) {
-      if (readCodexNativeRegistry().fingerprint !== expectedSourceFingerprint) {
-        for (const thread of candidates.slice(batchStart)) failed.push({ key: codexThreadKey(thread.id), errorCode: 'source-changed' })
-        break
-      }
-      const batch = candidates.slice(batchStart, batchStart + 20)
-      const queue = [...batch]
-      const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
-        for (;;) {
-          const listedThread = queue.shift()
-          if (!listedThread) return
-          const key = codexThreadKey(listedThread.id)
-          try {
-            const [threadResult, turnPage] = await Promise.all([
-              requestCodexRpc('thread/read', { threadId: listedThread.id, includeTurns: false }),
-              requestCodexRpc('thread/turns/list', { threadId: listedThread.id, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS)
-            ])
-            const thread = codexRecord(codexRecord(threadResult).thread)
-            const turnSource = codexRecord(turnPage)
-            if (!Array.isArray(turnSource.data)) throw codexError('protocol-error', 'Codex latest Turn response is invalid')
-            const turn = turnSource.data.length ? sanitizeCodexTurnStatusPage(turnPage) : null
-            if (turnSource.data.length && (!turn || !turn.startedAt)) throw codexError('protocol-error', 'Codex latest Turn is missing startedAt')
-            const status = codexRecord(thread.status).type
-            const native = codexThreadNativeProject(thread, registry)
-            const listedRecency = codexTimestampMs(listedThread.recencyAt) || codexTimestampMs(listedThread.updatedAt) || 0
-            const currentRecency = codexTimestampMs(thread.recencyAt) || codexTimestampMs(thread.updatedAt) || 0
-            if (thread.id !== listedThread.id || !native || native.project.key !== action.projectKey || !listedRecency || currentRecency !== listedRecency) {
-              failed.push({ key, errorCode: 'state-changed' })
-              continue
-            }
-            const desktopActivity = codexEnsureDesktopBridge().activityForThread(listedThread.id)
-            if (desktopActivity?.status === 'active' || status === 'active' || turn?.status !== 'completed') {
-              skippedActiveKeys.push(key)
-              continue
-            }
-            const alias = codexThreadAlias(listedThread.id, Date.now(), {
-              projectKey: action.projectKey,
-              sourceFingerprint: expectedSourceFingerprint,
-              cwd: codexNormalizeNativeRoot(thread.cwd)
-            })
-            const result = await archiveCodexThread(alias.alias, {
-              expectedUpdatedAt: currentRecency,
-              expectedRevisionAt: turn.completedAt || turn.startedAt,
-              ...(turn.completedAt ? { expectedCompletionAt: turn.completedAt } : {}),
-              expectedLastTurnStartedAt: turn.startedAt,
-              expectedSourceFingerprint,
-              evidence: 'completed',
-              operationId: `${operationId}:${key.slice(0, 12)}`,
-              source: 'project-archive'
-            })
-            if (result.outcome === 'archived') {
-              archivedKeys.push(key)
-              if (result.desktopSync === 'dispatched' || result.desktopSync === 'not-running') desktopSyncedKeys.push(key)
-            } else {
-              failed.push({ key, errorCode: result.errorCode || 'archive-not-verified' })
-              desktopSyncFailedKeys.push(key)
-            }
-          } catch (error) {
-            failed.push({ key, errorCode: typeof codexRecord(error).code === 'string' ? codexRecord(error).code : 'archive-failed' })
-          }
-        }
-      })
-      await Promise.all(workers)
-    }
-    const outcome = failed.length ? archivedKeys.length || skippedActiveKeys.length ? 'partial' : 'failed' : 'complete'
-    return { outcome, archivedKeys, skippedActiveKeys, failed, desktopSyncedKeys, desktopSyncFailedKeys }
-  } catch (error) {
-    return emptyResult(typeof codexRecord(error).code === 'string' ? codexRecord(error).code : 'archive-failed', '项目批量归档失败，请刷新后重试')
-  }
 }
 
 async function removeCodexProject(actionAlias, request) {
@@ -13163,14 +12689,21 @@ const companionHostRegistry = createCompanionHostRegistry?.({
     inspect: inspectCodexEnvironment,
     open: openCompanionCodexTarget,
     executePlan: executeCompanionCodexPlan,
-    archive: (target, request) => archiveCodexThread(target.actionAlias, {
+    // `codexArchiveBridge` is constructed further below, after the Kernel --
+    // a genuine bidirectional dependency (the bridge's own
+    // `commitVerifiedCodexArchive` calls back into
+    // `companionTaskKernel.commitArchived`). This adapter is an arrow
+    // evaluated per call, so it reads the binding only once a real archive
+    // request fires, by which time construction has completed. V7 owns the
+    // adapter here in the Host Registry rather than inline in the Kernel.
+    archive: (target, request) => codexArchiveBridge ? codexArchiveBridge.archiveCodexThread(target.actionAlias, {
       ...(target.archiveRequest || {}),
       operationId: request?.operationId,
       source: request?.source,
       requestedRevisionAt: request?.revisionAt,
       intentRecorded: request?.intentRecorded === true,
       confirmationRecorded: request?.confirmationRecorded === true
-    }),
+    }) : Promise.resolve({ outcome: 'failed', errorCode: 'archive-unavailable', message: '归档服务不可用，任务已保留' }),
     close: () => undefined
   },
   claude: {
@@ -13221,6 +12754,70 @@ if (!companionPlanPauseStorageReady) {
     details: { namespace: 'v7', legacyPreserved: true }
   })
 }
+
+// route-3 (RAW-169) closure rewrite. Constructed here, right after
+// `companionTaskKernel`, because of a genuine bidirectional dependency: the
+// kernel's own `adapters.codex.archive` (above) calls into this bridge, and
+// this bridge's `commitVerifiedCodexArchive` calls back into
+// `companionTaskKernel.commitArchived`. `codexArchivedActivityKey`,
+// `codexThreadActions`/`codexProjectActions`/`codexActivityInventory`/
+// `codexLocalArchiveRecoverySuppressions` stay in the entry and are injected
+// by reference -- they are genuinely shared with Desktop Bridge, the App
+// Server message router, inventory reconciliation and session-lifecycle
+// code, not archive-private. A failed load degrades every method to the
+// shape documented at the `window.eypcPlatform.codex.archiveThread`/
+// `archiveProject` wiring and the two `observeNativeAck` call sites below.
+let codexArchiveBridge = null
+try {
+  let archiveBridgeModule = null
+  try {
+    archiveBridgeModule = require('./codex/archive-bridge.cjs')
+  } catch {}
+  if (!archiveBridgeModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        archiveBridgeModule = require(path.join(base, 'codex', 'archive-bridge.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof archiveBridgeModule?.createCodexArchiveBridge === 'function') {
+    codexArchiveBridge = archiveBridgeModule.createCodexArchiveBridge({
+      utools: globalThis.utools,
+      record: codexRecord,
+      timestampMs: codexTimestampMs,
+      error: codexError,
+      threadKey: codexThreadKey,
+      validThreadId: validCodexThreadId,
+      crypto,
+      runtimeDiagnostics,
+      requestCodexRpc,
+      readCodexNativeRegistry,
+      codexDesktopIsRunning,
+      sanitizeCodexTurnStatusPage,
+      codexIsConfirmedTurnEvidence,
+      codexThreadNativeProject,
+      codexNormalizeNativeRoot,
+      codexThreadAlias,
+      listAllCodexThreads,
+      codexEnsureDesktopBridge,
+      desktopBridgeClientId: () => codexDesktopBridge?.clientId,
+      companionDiagnosticTaskRef,
+      emitCodexActivityDelta,
+      threadTurnStatusTimeoutMs: CODEX_THREAD_TURN_STATUS_TIMEOUT_MS,
+      threadActions: codexThreadActions,
+      projectActions: codexProjectActions,
+      activityInventory: () => codexActivityInventory,
+      localArchiveRecoverySuppressions: codexLocalArchiveRecoverySuppressions,
+      activityKeyForArchivedThread: codexArchivedActivityKey,
+      companionTaskKernel
+    })
+  }
+} catch { codexArchiveBridge = null }
 
 if (companionTaskKernel?.onPackage) {
   companionTaskKernel.onPackage((taskPackage) => {
@@ -15091,8 +14688,12 @@ window.eypcPlatform = {
     openThread: (...args) => runtimeIdentityCompatible ? openCodexThread(...args) : Promise.resolve(runtimeIdentityTaskFailure()),
     createThread: (...args) => runtimeIdentityCompatible ? createCodexThread(...args) : Promise.resolve(runtimeIdentityTaskFailure()),
     openBlank: (...args) => runtimeIdentityCompatible ? openCodexBlank(...args) : Promise.resolve(runtimeIdentityTaskFailure()),
-    archiveThread: (...args) => runtimeIdentityCompatible ? archiveCodexThread(...args) : Promise.resolve(runtimeIdentityTaskFailure()),
-    archiveProject: (...args) => runtimeIdentityCompatible ? archiveCodexProject(...args) : Promise.resolve(runtimeIdentityTaskFailure()),
+    archiveThread: (...args) => runtimeIdentityCompatible
+      ? (codexArchiveBridge ? codexArchiveBridge.archiveCodexThread(...args) : Promise.resolve({ outcome: 'failed', errorCode: 'archive-unavailable', message: '归档服务不可用，任务已保留' }))
+      : Promise.resolve(runtimeIdentityTaskFailure()),
+    archiveProject: (...args) => runtimeIdentityCompatible
+      ? (codexArchiveBridge ? codexArchiveBridge.archiveCodexProject(...args) : Promise.resolve({ outcome: 'failed', archivedKeys: [], skippedActiveKeys: [], failed: [], desktopSyncedKeys: [], desktopSyncFailedKeys: [], errorCode: 'archive-unavailable', message: '归档服务不可用，请稍后重试' }))
+      : Promise.resolve(runtimeIdentityTaskFailure()),
     removeProject: (...args) => runtimeIdentityCompatible ? removeCodexProject(...args) : Promise.resolve(runtimeIdentityTaskFailure()),
     listProjectEnvironments: (...args) => codexEnvironmentBridge
       ? codexEnvironmentBridge.listCodexProjectEnvironments(...args)
