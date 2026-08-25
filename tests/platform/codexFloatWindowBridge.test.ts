@@ -339,11 +339,20 @@ function loadPreloadHarness() {
       if (name === 'node:os') return os
       if (name === 'node:path') return path
       if (name === 'electron') return { ipcRenderer: { on: (channel: string, listener: (...args: unknown[]) => void) => ipcHandlers.set(channel, listener) } }
+      // The entry loads its own module groups (float-bridge.cjs etc.) by
+      // relative path under RAW-169. This shim stands in for the module
+      // system, so it has to resolve those the way the real one does --
+      // from `preload/`, not from this test file.
+      if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
       throw new Error(`unexpected require: ${name}`)
     }
   }
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nwindow.__codexFloatGeometry = { codexFloatDesiredSize, codexFloatExpandedHeight, resizeFloatBounds }; window.__codexFloatTaskTest = { kernel: companionTaskKernel };`, sandbox, { filename: 'preload.js' })
+  // codexFloatDesiredSize/codexFloatExpandedHeight/resizeFloatBounds moved
+  // into preload/codex/float-bridge.cjs under RAW-169 -- no longer free
+  // identifiers in this scope, reachable only through the constructed
+  // bridge instance's `__internal` test escape hatch.
+  vm.runInNewContext(`${preload}\nwindow.__codexFloatGeometry = codexFloatBridge.__internal; window.__codexFloatTaskTest = { kernel: companionTaskKernel };`, sandbox, { filename: 'preload.js' })
   return {
     bridge: sandbox.window.eypcPlatform.float as {
       sync(payload: Record<string, unknown>): boolean
