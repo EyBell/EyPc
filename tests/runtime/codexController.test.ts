@@ -56,14 +56,14 @@ function hostDraft(
 ) {
   const generation = (provider: keyof typeof providers) => providers[provider] ? revision : 0
   const lanes = {
-    codex: { membership: generation('codex'), phase: generation('codex'), unread: generation('codex'), metadata: generation('codex'), topology: generation('codex') },
-    claude: { membership: generation('claude'), phase: generation('claude'), unread: generation('claude'), metadata: generation('claude'), topology: generation('claude') },
-    cursor: { membership: generation('cursor'), phase: generation('cursor'), unread: generation('cursor'), metadata: generation('cursor'), topology: generation('cursor') }
+    codex: { membership: generation('codex'), activity: generation('codex'), interaction: generation('codex'), unread: generation('codex'), planArtifact: generation('codex'), metadata: generation('codex'), topology: generation('codex') },
+    claude: { membership: generation('claude'), activity: generation('claude'), interaction: generation('claude'), unread: generation('claude'), planArtifact: generation('claude'), metadata: generation('claude'), topology: generation('claude') },
+    cursor: { membership: generation('cursor'), activity: generation('cursor'), interaction: generation('cursor'), unread: generation('cursor'), planArtifact: generation('cursor'), metadata: generation('cursor'), topology: generation('cursor') }
   }
   const evidenceBatches = Object.fromEntries((['codex', 'claude', 'cursor'] as const).map((provider) => [provider, {
-    revision: 'companion-provider-evidence-batch-v2',
+    revision: 'companion-provider-evidence-batch-v3',
     provider,
-    channels: Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
+    channels: Object.fromEntries(['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology'].map((channel) => [channel, {
       mode: 'delta',
       complete: false,
       generation: lanes[provider][channel as keyof typeof lanes.codex],
@@ -72,8 +72,7 @@ function hostDraft(
     nodes: tasks.filter((value) => value.provider === provider).map((value) => {
       const phase = value.phase
       const activityKind = phase === 'running' ? 'turn-running'
-        : phase === 'waiting-input' ? 'waiting-input'
-          : phase === 'waiting-approval' ? 'waiting-approval'
+        : phase === 'waiting-input' || phase === 'waiting-approval' ? 'turn-completed'
             : phase === 'completed' ? 'turn-completed'
               : phase === 'stopped' ? value.error === true ? 'turn-failed' : 'turn-interrupted'
                 : 'unknown'
@@ -86,7 +85,7 @@ function hostDraft(
         activity: {
           kind: activityKind,
           causalKey: value.causalKey || '',
-          sequence: lanes[provider].phase || Number(value.phaseRevision) || Number(value.revisionAt) || 1,
+          sequence: Number(value.phaseRevision) || Number(value.statusEnteredAt) || lanes[provider].activity || Number(value.revisionAt) || 1,
           exact: value.freshness !== 'verifying',
           observedAt: Number(value.observedAt) || now,
           statusEnteredAt: Number(value.statusEnteredAt) || 0,
@@ -98,11 +97,13 @@ function hostDraft(
           value: value.unread === true,
           sequence: lanes[provider].unread || Number(value.unreadRevision) || 0
         },
-        plan: {
-          state: value.planLifecycleState === 'cleared'
-            ? 'cleared'
-            : value.planReady === true || value.planImplementation === true ? 'ready' : 'unknown',
+        planArtifact: {
+          revision: 'companion-plan-artifact-v1',
+          state: value.planReady === true || value.planImplementation === true
+            ? 'available'
+            : value.planLifecycleState === 'cleared' ? 'consumed' : 'unknown',
           sequence: Number(value.planLifecycleRevision) || 0,
+          actionable: value.planReady === true || value.planImplementation === true,
           reason: ['cancel', 'execution-start', 'archive', 'removal'].includes(String(value.planClearReason)) ? value.planClearReason : ''
         },
         metadata: { ...value, partial: false },
@@ -113,6 +114,31 @@ function hostDraft(
         error: value.error === true
       }
     }),
+    interactions: tasks.filter((value) => value.provider === provider
+      && (value.phase === 'waiting-input' || value.phase === 'waiting-approval')).map((value) => {
+      const sequence = Number(value.phaseRevision) || Number(value.statusEnteredAt) || Number(value.revisionAt) || 1
+      return {
+        revision: 'companion-interaction-evidence-v1',
+        provider,
+        taskKey: value.key,
+        branchRef: value.role === 'child' ? 'child' : 'root',
+        interactionRef: `${sequence.toString(16).padStart(16, '0')}aaaaaaaaaaaaaaaa`,
+        kind: value.phase === 'waiting-approval' ? 'approval' : value.planImplementation === true ? 'plan-implementation' : 'user-input',
+        state: 'opened',
+        sequence,
+        turnEpoch: Number(value.turnStartedAt) || 0,
+        requestSetRevision: sequence,
+        authority: 'provider-live',
+        exact: value.freshness !== 'verifying'
+      }
+    }),
+    interactionSets: tasks.filter((value) => value.provider === provider).map((value) => ({
+      revision: 'companion-interaction-evidence-v1',
+      provider,
+      taskKey: value.key,
+      requestSetRevision: Number(value.phaseRevision) || Number(value.statusEnteredAt) || Number(value.revisionAt) || 1,
+      complete: true
+    })),
     relations: [],
     relationMode: 'delta',
     relationsComplete: false,
@@ -120,9 +146,9 @@ function hostDraft(
     health: providers[provider] ? 'ready' : 'unavailable'
   }]))
   return {
-    schema: 'companion-task-evidence-draft-v6',
+    schema: 'companion-task-evidence-draft-v7',
     producer: 'host-evidence',
-    sourceTaskStateRevision: 'task-state-v11',
+    sourceTaskStateRevision: 'task-state-v12',
     draftRevision: revision,
     acceptedAt: now,
     enabled: true,
@@ -142,7 +168,7 @@ function hostDraft(
 }
 
 describe('Codex controller', () => {
-  it('fails closed instead of reconstructing task actions when the V6 Kernel is missing', () => {
+  it('fails closed instead of reconstructing task actions when the V7 Kernel is missing', () => {
     const state = createInitialState(1)
     const messages: string[] = []
     const controller = createCodexController({
@@ -1587,7 +1613,7 @@ describe('Codex controller', () => {
       setMessage: () => undefined
     })
 
-    const firstBindings = [{ actionId: 'codex.input.open', shortcutId: 'Alt+I', layer: 'codex', when: "tab == 'codex'", weight: 100 }]
+    const firstBindings = [{ actionId: 'codex.input.open', shortcutId: 'Alt+I', layer: 'codex', when: "tab == 'codex'", weight: 100, executionOwner: 'runtime-action' as const }]
     const first = controller.floatSnapshot(firstBindings)
     expect(first).toMatchObject({ style: 'water', colors: state.codex.settings.colors, baseRevision: 1, keybindings: firstBindings })
     expect(controller.floatSnapshot(firstBindings)).toBe(first)

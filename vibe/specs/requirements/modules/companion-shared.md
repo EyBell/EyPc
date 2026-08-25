@@ -6,7 +6,8 @@
 
 ## Current Authorities And Routes
 
-- 当前增量权威：[Companion Task Topology V6 corrective revision](../../260823/companion-task-topology-v5/spec.md#L1)
+- 当前增量权威：[EyPc V7 Global Refactor](../../260824/eypc-v7-global-refactor/spec.md#L1)
+- V6 历史基础：[Companion Task Topology V6 corrective revision](../../260823/companion-task-topology-v5/spec.md#L1)
 - 当前条款正文：[companion-task-topology-v5/raw-requirement.md](../../260823/companion-task-topology-v5/raw-requirement.md#L1)
 - 历史基础：[install-runtime-diagnostics/spec.md](../../260810/1155-install-runtime-diagnostics/spec.md#L1)
 - 每节下的编号条款已按 `RAW-nnn#n` 单独入册，见下方「编号条款」与 [coverage](../coverage.md#L1)。
@@ -23,6 +24,8 @@
 - [RAW-177](../shared-raw-177.md#L1) — `active`
 - [RAW-177#2](../shared-raw-177-clause-002.md#L1) — `active` · 唯一 V6 平台入口
 - [RAW-177#3](../shared-raw-177-clause-003.md#L1) — `active` · 原生交接与 ACK 边界
+- [RAW-179#1](../shared-raw-179-clause-001.md#L1) — `active` · interaction 与 Plan artifact 独立生命周期
+- [RAW-179#2](../shared-raw-179-clause-002.md#L1) — `active` · 七条 evidence lane、生成合同与唯一 V7 Kernel
 
 
 ### 编号条款

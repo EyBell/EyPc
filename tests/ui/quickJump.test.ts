@@ -47,9 +47,10 @@ describe('global quick jump UI wiring', () => {
 
   it('keeps icon command buttons targetable even inside editor surfaces', () => {
     const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+    const registry = readFileSync(resolve(process.cwd(), 'src/ui/quickJumpRegistry.ts'), 'utf8')
 
-    expect(app).toContain("targetText(element, 'data-mqtt-shortcut-hint')")
-    expect(app).toContain("targetText(element, 'placeholder')")
+    expect(registry).toContain("textAttribute(element, 'data-mqtt-shortcut-hint')")
+    expect(registry).toContain("textAttribute(element, 'placeholder')")
     expect(app).toContain('function isQuickJumpCommandTarget')
     expect(app).toContain('function isQuickJumpEditingSurfaceTarget')
     expect(app).toContain('!isQuickJumpEditingSurfaceTarget(element)')
@@ -68,32 +69,34 @@ describe('global quick jump UI wiring', () => {
   })
 
   it('skips command buttons hidden by ancestor clipping or non-interactive styles', () => {
-    const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+    const registry = readFileSync(resolve(process.cwd(), 'src/ui/quickJumpRegistry.ts'), 'utf8')
 
-    expect(app).toContain('function quickJumpVisibleRect')
-    expect(app).toContain('function quickJumpClippingAncestor')
-    expect(app).toContain("style.pointerEvents === 'none'")
-    expect(app).toContain('quickJumpVisibleRect(element)')
-    expect(app).toContain('visibleRect.width < 6 || visibleRect.height < 6')
+    expect(registry).toContain('function clipsChildren')
+    expect(registry).toContain('function hiddenStyle')
+    expect(registry).toContain("style.pointerEvents === 'none'")
+    expect(registry).toContain('quickJumpVisibleRectV7(element)')
+    expect(registry).toContain('rect.width < 6 || rect.height < 6')
   })
 
   it('skips targets covered by a higher interactive layer while keeping top-layer buttons targetable', () => {
     const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+    const registry = readFileSync(resolve(process.cwd(), 'src/ui/quickJumpRegistry.ts'), 'utf8')
 
-    expect(app).toContain("import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'")
-    expect(app).toContain('function quickJumpHitTargetVisible')
-    expect(app).toContain('document.elementsFromPoint')
-    expect(app).toContain('quickJumpHitTestPoints(visibleRect).some')
-    expect(app).toContain('quickJumpHitStackContainsTarget(element, document.elementsFromPoint(point.x, point.y))')
+    expect(app).toContain('defaultQuickJumpTargetVisibleV7(element)')
+    expect(registry).toContain("import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from '../domain/quickJumpHitTest'")
+    expect(registry).toContain('document.elementsFromPoint')
+    expect(registry).toContain('quickJumpHitTestPoints(rect).some')
+    expect(registry).toContain('quickJumpHitStackContainsTarget(element, document.elementsFromPoint(point.x, point.y))')
   })
 
   it('applies clipping, hit-stack and transient-layer filtering inside the independent Codex renderer', () => {
     const float = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
+    const registry = readFileSync(resolve(process.cwd(), 'src/ui/quickJumpRegistry.ts'), 'utf8')
 
-    expect(float).toContain('function quickJumpVisibleRect')
-    expect(float).toContain('function quickJumpClippingAncestor')
-    expect(float).toContain("style.pointerEvents === 'none'")
-    expect(float).toContain('document.elementsFromPoint')
+    expect(float).toContain('createQuickJumpRegistryV7')
+    expect(float).toContain('defaultQuickJumpTargetVisibleV7')
+    expect(registry).toContain("style.pointerEvents === 'none'")
+    expect(registry).toContain('document.elementsFromPoint')
     expect(float).toContain('if (composer.value || shiftPreview.value) return false')
     expect(float).toContain("if (panel.value && !element.closest('.float-side-panel')) return false")
     expect(float).toContain('closeShiftPreview(true)')

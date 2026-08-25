@@ -1,6 +1,7 @@
 'use strict'
 
 const manifest = require('./provider-manifest.json')
+const { COMPANION_V7_REVISIONS } = require('./contracts-v7.cjs')
 
 const PROVIDER_REGISTRY_REVISION = 'companion-provider-registry-v1'
 
@@ -9,9 +10,9 @@ function loadProviderRegistry(value = manifest) {
     throw new Error('companion-provider-registry-invalid')
   }
   const providers = value.providers && typeof value.providers === 'object' ? value.providers : {}
-  if (value.kernelRevision !== 'companion-task-kernel-v6'
+  if (value.kernelRevision !== COMPANION_V7_REVISIONS.kernel
     || value.topologyRevision !== 'companion-task-topology-v2'
-    || value.snapshotRevision !== 'companion-task-snapshot-v6'
+    || value.snapshotRevision !== COMPANION_V7_REVISIONS.snapshot
     || value.commandRevision !== 'companion-task-command-v1'
     || value.subscribeRevision !== 'companion-task-subscribe-v1'
     || value.ackRevision !== 'companion-task-ack-v2') {

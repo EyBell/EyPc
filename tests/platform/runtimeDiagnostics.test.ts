@@ -11,6 +11,7 @@ const diagnosticsModule = require_(resolve(process.cwd(), 'preload/diagnostics.c
     configure(input: Record<string, unknown>): any
     snapshot(): any
     clear(): any
+    flush(): Promise<boolean>
   }
 }
 
@@ -21,7 +22,7 @@ afterEach(() => {
 })
 
 describe('runtime diagnostics v3', () => {
-  it('keeps exact operational evidence while structurally excluding conversation and command bodies', () => {
+  it('keeps exact operational evidence while structurally excluding conversation and command bodies', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-runtime-diagnostics-'))
     roots.push(root)
     const diagnostics = diagnosticsModule.createRuntimeDiagnostics({
@@ -63,13 +64,14 @@ describe('runtime diagnostics v3', () => {
         nested: { terminalWatermark: 37 }
       }
     })
+    await diagnostics.flush()
     const persisted = readdirSync(root).map((name) => readFileSync(join(root, name), 'utf8')).join('')
     expect(persisted).toContain('local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
     expect(persisted).toContain('/Users/example/.claude/projects/project.jsonl')
     expect(persisted).not.toContain('must never be persisted')
   })
 
-  it('applies error/info/debug thresholds and a persistent manual off switch', () => {
+  it('applies error/info/debug thresholds and a persistent manual off switch', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-runtime-diagnostics-'))
     roots.push(root)
     const diagnostics = diagnosticsModule.createRuntimeDiagnostics({
@@ -87,9 +89,10 @@ describe('runtime diagnostics v3', () => {
     diagnostics.configure({ enabled: true, level: 'debug' })
     expect(diagnostics.record({ level: 'debug', scope: 'state-storage', event: 'write', outcome: 'persisted' })).toMatchObject({ level: 'debug' })
     expect(diagnostics.snapshot().totals.filtered).toBe(3)
+    await diagnostics.flush()
   })
 
-  it('rejects calls without an explicit level and leaves a forced error breadcrumb', () => {
+  it('rejects calls without an explicit level and leaves a forced error breadcrumb', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-runtime-diagnostics-'))
     roots.push(root)
     const diagnostics = diagnosticsModule.createRuntimeDiagnostics({
@@ -115,9 +118,38 @@ describe('runtime diagnostics v3', () => {
       ]
     })
     expect(JSON.stringify(diagnostics.snapshot().recent)).not.toContain('should-not-write')
+    await diagnostics.flush()
   })
 
-  it('rotates bounded JSONL files, removes expired files, and reports exact storage limits', () => {
+  it('keeps synchronous file I/O out of record() and bounds the pending queue', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-runtime-diagnostics-'))
+    roots.push(root)
+    const nodeFs = require_('node:fs')
+    let appendCalls = 0
+    const diagnostics = diagnosticsModule.createRuntimeDiagnostics({
+      fs: {
+        ...nodeFs,
+        appendFileSync(...args: unknown[]) {
+          appendCalls += 1
+          return nodeFs.appendFileSync(...args)
+        }
+      },
+      path: require_('node:path'),
+      directory: root,
+      maxQueueEvents: 2,
+      schedule: () => {}
+    })
+
+    diagnostics.record({ level: 'info', scope: 'runtime-action', event: 'one', outcome: 'handled' })
+    diagnostics.record({ level: 'info', scope: 'runtime-action', event: 'two', outcome: 'handled' })
+    expect(appendCalls).toBe(0)
+    expect(diagnostics.snapshot().totals.writeFailures).toBe(1)
+
+    await diagnostics.flush()
+    expect(appendCalls).toBe(2)
+  })
+
+  it('rotates bounded JSONL files, removes expired files, and reports exact storage limits', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-runtime-diagnostics-'))
     roots.push(root)
     const stalePath = join(root, 'runtime-1-1.jsonl')
@@ -143,6 +175,7 @@ describe('runtime diagnostics v3', () => {
         details: { generation: index, phase: index % 2 ? 'running' : 'completed' }
       })
     }
+    await diagnostics.flush()
 
     const files = readdirSync(root).filter((name) => name.endsWith('.jsonl'))
     expect(files.length).toBeGreaterThan(1)
@@ -159,7 +192,7 @@ describe('runtime diagnostics v3', () => {
     })
   })
 
-  it('clears only diagnostics-owned JSONL files and starts a fresh file on the next event', () => {
+  it('clears only diagnostics-owned JSONL files and starts a fresh file on the next event', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-runtime-diagnostics-'))
     roots.push(root)
     const diagnostics = diagnosticsModule.createRuntimeDiagnostics({
@@ -170,6 +203,7 @@ describe('runtime diagnostics v3', () => {
     })
     const foreignFile = join(root, 'keep.jsonl')
     writeFileSync(foreignFile, '{"owned":false}\n')
+    await diagnostics.flush()
     expect(readdirSync(root).some((name) => /^runtime-[0-9]+-[0-9]+\.jsonl$/.test(name))).toBe(true)
 
     expect(diagnostics.clear()).toEqual({
@@ -188,6 +222,7 @@ describe('runtime diagnostics v3', () => {
     })
 
     diagnostics.record({ level: 'info', scope: 'runtime-diagnostics', event: 'after-clear', outcome: 'written' })
+    await diagnostics.flush()
     expect(diagnostics.snapshot()).toMatchObject({
       totals: { events: 1 },
       storage: { fileCount: 1 }

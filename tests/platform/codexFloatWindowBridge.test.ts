@@ -24,10 +24,10 @@ const TEST_RUNTIME_IDENTITY = {
   artifactState: 'artifact-ready',
   hostAssetId: 'host-test-current',
   rendererAssetId: 'renderer-test-current',
-  kernelRevision: 'companion-task-kernel-v6',
+  kernelRevision: 'companion-task-kernel-v7',
   registryRevision: 'companion-provider-registry-v1',
   topologyRevision: 'companion-task-topology-v2',
-  taskPackageRevision: 'companion-task-snapshot-v6',
+  taskPackageRevision: 'companion-task-snapshot-v7',
   commandRevision: 'companion-task-command-v1',
   subscribeRevision: 'companion-task-subscribe-v1',
   ackRevision: 'companion-task-ack-v2'
@@ -84,9 +84,9 @@ function companionTask(revision: number, overrides: Record<string, unknown> = {}
 function companionDraft(revision: number, taskOverrides: Record<string, unknown> = {}) {
   const task = companionTask(revision, taskOverrides)
   return {
-    schema: 'companion-task-evidence-draft-v6',
+    schema: 'companion-task-evidence-draft-v7',
     producer: 'host-evidence',
-    sourceTaskStateRevision: 'task-state-v11',
+    sourceTaskStateRevision: 'task-state-v12',
     draftRevision: revision,
     acceptedAt: 10_000 + revision,
     enabled: true,
@@ -95,9 +95,9 @@ function companionDraft(revision: number, taskOverrides: Record<string, unknown>
     focusedKey: '',
     sourceGenerations: { codex: revision, claude: 0, cursor: 0 },
     sourceLaneGenerations: {
-      codex: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
-      claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
-      cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
+      codex: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision },
+      claude: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
+      cursor: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 }
     },
     providerHealth: {
       codex: { status: 'ready', generation: revision, errorCode: '' },
@@ -107,9 +107,9 @@ function companionDraft(revision: number, taskOverrides: Record<string, unknown>
     tasks: [],
     evidenceBatches: {
       codex: {
-        revision: 'companion-provider-evidence-batch-v2',
+        revision: 'companion-provider-evidence-batch-v3',
         provider: 'codex',
-        channels: Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
+        channels: Object.fromEntries(['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology'].map((channel) => [channel, {
           mode: 'delta', complete: false, generation: revision, removedKeys: []
         }])),
         nodes: [{
@@ -119,7 +119,7 @@ function companionDraft(revision: number, taskOverrides: Record<string, unknown>
           role: 'root',
           membership: 'present',
           activity: {
-            kind: task.phase === 'waiting-input' ? 'waiting-input' : 'turn-running',
+            kind: task.phase === 'waiting-input' ? 'turn-completed' : 'turn-running',
             causalKey: `turn:${revision}`,
             sequence: revision,
             exact: true,
@@ -129,11 +129,32 @@ function companionDraft(revision: number, taskOverrides: Record<string, unknown>
             terminalAt: 0
           },
           unread: { known: true, value: false, sequence: revision },
-          plan: { state: 'unknown', sequence: 0, reason: '' },
+          planArtifact: { revision: 'companion-plan-artifact-v1', state: 'unknown', sequence: 0, actionable: false, reason: '' },
           metadata: { ...task, partial: false },
           capabilities: ['open'],
           standaloneEligible: true,
           error: false
+        }],
+        interactions: task.phase === 'waiting-input' ? [{
+          revision: 'companion-interaction-evidence-v1',
+          provider: 'codex',
+          taskKey: task.key,
+          branchRef: 'root',
+          interactionRef: `${revision.toString(16).padStart(16, '0')}aaaaaaaaaaaaaaaa`,
+          kind: 'user-input',
+          state: 'opened',
+          sequence: 10_000 + revision,
+          turnEpoch: task.lastQuestionAt,
+          requestSetRevision: 10_000 + revision,
+          authority: 'provider-live',
+          exact: true
+        }] : [],
+        interactionSets: [{
+          revision: 'companion-interaction-evidence-v1',
+          provider: 'codex',
+          taskKey: task.key,
+          requestSetRevision: 10_000 + revision,
+          complete: true
         }],
         relations: [],
         relationMode: 'delta',
@@ -179,6 +200,13 @@ function companionDraftWithTaskCount(revision: number, count: number) {
       }
     }
   })
+  draft.evidenceBatches.codex.interactionSets = draft.evidenceBatches.codex.nodes.map((node: Record<string, any>) => ({
+    revision: 'companion-interaction-evidence-v1',
+    provider: 'codex',
+    taskKey: node.key,
+    requestSetRevision: node.activity.sequence,
+    complete: true
+  }))
   return draft
 }
 
@@ -186,14 +214,14 @@ function taskPackage(revision: number, taskOverrides: Record<string, unknown> = 
   const task = companionTask(revision, taskOverrides)
   const group = task.phase === 'running' ? 'active' : task.phase === 'waiting-input' ? 'input' : 'none'
   return {
-    schema: 'companion-task-snapshot-v6',
-    kernelRevision: 'companion-task-kernel-v6',
+    schema: 'companion-task-snapshot-v7',
+    kernelRevision: 'companion-task-kernel-v7',
     registryRevision: 'companion-provider-registry-v1',
     topologySchemaRevision: 'companion-task-topology-v2',
     commandRevision: 'companion-task-command-v1',
     packageRevision: revision,
     topologyRevision: revision,
-    sourceTaskStateRevision: 'task-state-v11',
+    sourceTaskStateRevision: 'task-state-v12',
     publishedAt: 10_000 + revision,
     enabled: true,
     providers: { codex: true, claude: false, cursor: false },
@@ -202,9 +230,9 @@ function taskPackage(revision: number, taskOverrides: Record<string, unknown> = 
     focusedKey: '',
     sourceGenerations: { codex: revision, claude: 0, cursor: 0 },
     sourceLaneGenerations: {
-      codex: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
-      claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
-      cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
+      codex: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision },
+      claude: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
+      cursor: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 }
     },
     providerHealth: {
       codex: { status: 'ready', generation: revision, errorCode: '' },

@@ -1,5 +1,7 @@
 'use strict'
 
+const { COMPANION_V7_REVISIONS } = require('../companion/contracts-v7.cjs')
+
 /**
  * How the desktop plan bridge classifies a live Codex request: a stable
  * correlation identity, a best-effort timestamp, and whether the request is
@@ -19,7 +21,7 @@
  * is injected on the node-runtime precedent.
  */
 
-const CODEX_DESKTOP_REQUEST_PROJECTION_REVISION = 'codex-desktop-request-projection-v1'
+const CODEX_DESKTOP_REQUEST_PROJECTION_REVISION = COMPANION_V7_REVISIONS.desktopRequestProjection
 
 function createCodexDesktopRequestProjection(dependencies = {}) {
   const record = dependencies.record
@@ -29,7 +31,20 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     throw new TypeError('codex desktop request projection requires record, timestampMs and nextLiveEvidenceSequence')
   }
   const crypto = dependencies.crypto || require('node:crypto')
-  const correlationSalt = crypto.randomBytes(16)
+  const suppliedSalt = dependencies.correlationSalt
+  const correlationSalt = Buffer.isBuffer(suppliedSalt) && suppliedSalt.length >= 16
+    ? Buffer.from(suppliedSalt)
+    : typeof suppliedSalt === 'string' && /^[a-f0-9]{32,128}$/i.test(suppliedSalt)
+      ? Buffer.from(suppliedSalt, 'hex')
+      : crypto.randomBytes(16)
+
+  function anonymousInteractionRef(...parts) {
+    const hash = crypto.createHash('sha256')
+      .update(correlationSalt)
+      .update('\0interaction-v1')
+    for (const part of parts) hash.update('\0').update(String(part || ''))
+    return hash.digest('hex').slice(0, 32)
+  }
 
   function codexDesktopRequestTimestamp(value) {
     const source = record(value)
@@ -71,13 +86,19 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
           && (!suppliedStartedAt || !previous.startedAt || previous.startedAt === suppliedStartedAt))
     const correlation = suppliedCorrelation
       || (sameInstance ? previous.correlation : '')
+    const observedSequence = sameInstance && Number.isInteger(previous?.observedSequence)
+      ? previous.observedSequence
+      : nextLiveEvidenceSequence()
+    const interactionRef = suppliedCorrelation
+      || (sameInstance && typeof previous?.interactionRef === 'string' ? previous.interactionRef : '')
+      || anonymousInteractionRef(type, method, suppliedStartedAt, observedSequence)
     const projection = {
       type,
       method,
       observedAt: timestampMs(observedAt) || Date.now(),
-      observedSequence: sameInstance && Number.isInteger(previous?.observedSequence)
-        ? previous.observedSequence
-        : nextLiveEvidenceSequence()
+      observedSequence,
+      interactionRef,
+      identityExact: Boolean(suppliedCorrelation)
     }
     if (correlation) projection.correlation = correlation
     const startedAt = suppliedStartedAt || (sameInstance ? timestampMs(previous?.startedAt) : 0)
@@ -88,6 +109,12 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       && !suppliedStartedAt
       && !startedAt
       && timestampMs(previous.observedAt)) projection.observedAt = previous.observedAt
+    if (sameInstance && ['resolved', 'cancelled', 'execution-started'].includes(previous?.interactionState)) {
+      projection.interactionState = previous.interactionState
+      if (Number.isInteger(previous.resolutionSequence) && previous.resolutionSequence > 0) {
+        projection.resolutionSequence = previous.resolutionSequence
+      }
+    }
     return projection
   }
 
@@ -116,6 +143,18 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     return String(request?.method || '').toLowerCase() === 'item/plan/requestimplementation'
   }
 
+  function codexDesktopRequestKind(request) {
+    const type = String(request?.type || '').toLowerCase()
+    const method = String(request?.method || '').toLowerCase()
+    if (codexDesktopIsPlanImplementationRequest(request)) return 'plan-implementation'
+    if (method === 'item/plan/requestuserinput'
+      || method === 'item/plan/requestchoice'
+      || type === 'planchoice') return 'plan-choice'
+    if (codexDesktopRequestFlag(request) === 'waitingOnApproval') return 'approval'
+    if (codexDesktopRequestFlag(request) === 'waitingOnUserInput') return 'user-input'
+    return ''
+  }
+
   function codexDesktopRequestFlag(request) {
     const type = String(request?.type || '').toLowerCase()
     const method = String(request?.method || '').toLowerCase()
@@ -141,6 +180,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     codexDesktopProjectedRequest,
     codexDesktopProjectedRequests,
     codexDesktopIsPlanImplementationRequest,
+    codexDesktopRequestKind,
     codexDesktopRequestFlag
   }
 }

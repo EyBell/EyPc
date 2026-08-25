@@ -135,9 +135,9 @@ function canonicalSnapshot(taskState: CodexTaskStatePackageV1): CompanionTaskSna
     freshness: 'fresh',
     sourceGenerations: { codex: revision, claude: revision, cursor: revision },
     sourceLaneGenerations: {
-      codex: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
-      claude: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
-      cursor: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision }
+      codex: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision },
+      claude: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision },
+      cursor: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision }
     },
     providerHealth: {
       codex: { status: 'ready', generation: revision, errorCode: '' },
@@ -360,7 +360,14 @@ describe('Codex Companion V4 UI contract', () => {
     const { wrapper, action } = mountFloat(true, source)
     await wrapper.vm.$nextTick()
     const row = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    expect(row.findAll('.task-inline-actions button').map((button) => button.text())).toEqual(['顶', '暂', '归', '执'])
+    expect(row.findAll('.task-inline-actions button')).toHaveLength(4)
+    expect(row.findAll('.task-inline-actions button svg')).toHaveLength(4)
+    expect(row.findAll('.task-inline-actions button').map((button) => button.attributes('aria-label'))).toEqual([
+      expect.stringContaining('置顶'),
+      expect.stringContaining('暂停 Plan'),
+      expect.stringContaining('归档'),
+      expect.stringContaining('执行')
+    ])
     expect(row.get('.action-hide').attributes('aria-label')).toContain('暂停 Plan')
     expect(row.get('.action-create').attributes('aria-label')).toContain('执行')
 
@@ -368,11 +375,11 @@ describe('Codex Companion V4 UI contract', () => {
     expect(action).toHaveBeenCalledWith('codex.task.pausePlan', { key: TASK_FAILED, revisionAt: task.revisionAt })
     action.mockClear()
     await row.get('.action-create').trigger('click')
-    expect(row.get('.action-create').text()).toBe('确')
+    expect(row.get('.action-create').attributes('aria-label')).toContain('确认执行')
     expect(action).toHaveBeenCalledWith('codex.task.executePlan', { key: TASK_FAILED, revisionAt: task.revisionAt })
     await row.get('.action-create').trigger('click')
     expect(action).toHaveBeenCalledTimes(2)
-    expect(row.get('.action-create').text()).toBe('执')
+    expect(row.get('.action-create').attributes('aria-label')).toContain('执行')
 
     await row.trigger('contextmenu')
     expect(wrapper.get('[data-drawer-action-id="task-new-thread"]').text()).toContain('在当前项目新建会话')
@@ -410,7 +417,9 @@ describe('Codex Companion V4 UI contract', () => {
       expect.stringContaining('普通隐藏')
     ])
     const pausedRow = wrapper.get(`[data-focus-key="task:${TASK_HIDDEN}"]`)
-    expect(pausedRow.findAll('.task-inline-actions button').map((button) => button.text())).toEqual(['顶', '恢', '归', '执'])
+    expect(pausedRow.findAll('.task-inline-actions button')).toHaveLength(4)
+    expect(pausedRow.findAll('.task-inline-actions button svg')).toHaveLength(4)
+    expect(pausedRow.get('.action-hide').attributes('aria-label')).toContain('恢复 Plan')
     await pausedRow.get('.action-hide').trigger('click')
     expect(action).toHaveBeenCalledWith('codex.task.resumePlan', { key: TASK_HIDDEN, revisionAt: paused.revisionAt })
   })
@@ -876,7 +885,7 @@ describe('Codex Companion V4 UI contract', () => {
     expect(css).toContain('.action-pin[data-pin-source="local"]')
     expect(css).toContain('var(--codex-warning)')
     const component = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
-    expect(component).toContain("element.getAttribute('aria-disabled') === 'true' && !element.matches('.action-pin')")
+    expect(component).toContain("allowAriaDisabled: element.matches('.action-pin')")
   })
 
   it('moves only the floating batch bar between top and bottom without changing list flow', async () => {
@@ -1110,7 +1119,7 @@ describe('Codex Companion V4 UI contract', () => {
 
   it('honors resolved Codex shortcut bindings and suppresses list commands in the search input', async () => {
     const source = floatSnapshot('all')
-    source.keybindings = [{ actionId: 'codex.search.focus', shortcutId: 'Ctrl+K', layer: 'codex', when: "tab == 'codex' && !textInputFocused", weight: 100 }]
+    source.keybindings = [{ actionId: 'codex.search.focus', shortcutId: 'Ctrl+K', layer: 'codex', when: "tab == 'codex' && !textInputFocused", weight: 100, executionOwner: 'float-local' }]
     const { wrapper } = mountFloat(true, source)
     await wrapper.vm.$nextTick()
     await wrapper.get('.float-expanded-card').trigger('keydown', { key: 'k', code: 'KeyK', ctrlKey: true })

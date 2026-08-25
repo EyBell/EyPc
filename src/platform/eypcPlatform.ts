@@ -1,6 +1,6 @@
 import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
-import type { AppState, FavoriteNode, FavoritePlatform, FavoriteRunnerMode, FavoriteRunRecord, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess, RuntimeDiagnosticsSettings } from '../domain/types'
+import type { AppState, FavoriteNode, FavoritePlatform, FavoriteRunnerMode, FavoriteRunRecord, KillRequest, KillResult, MqttArchiveState, MqttConnectionSnapshot, MqttMessageRecord, MqttSessionRecord, MqttStorageStatus, PortProcess, RuntimeDiagnosticsSettings } from '../domain/types'
 import type { LiveWindow, NativeWindowObservation, WindowActivationRequest, WindowInstanceProbeResult, WindowPlatform } from '../domain/windows'
 import {
   CODEX_TASK_STATE_REVISION,
@@ -48,6 +48,14 @@ import {
 export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
 export type PickedFavorite = Pick<FavoriteNode, 'path' | 'name' | 'parentId' | 'tags' | 'color'> & { kind: PickedFavoriteKind }
 export type MqttSecretMap = Record<string, string>
+
+export interface MqttArchiveAppendMessageMutationV1 {
+  revision: 'mqtt-archive-mutation-v1'
+  kind: 'append-message'
+  connectionSnapshot: MqttConnectionSnapshot
+  session: MqttSessionRecord
+  message: MqttMessageRecord
+}
 export type FileActionOutcome = 'success' | 'dispatched' | 'revealed-instead' | 'failed'
 export type FileErrorCode = 'invalid-path' | 'not-found' | 'permission-denied' | 'no-handler' | 'timeout' | 'unsupported' | 'io-error'
 export type FavoritePathStatus = 'available' | 'missing' | 'permission-denied' | 'offline' | 'invalid' | 'unknown'
@@ -552,6 +560,7 @@ export interface EypcPlatformApi {
     setState(state: AppState): boolean
     getMqttArchive(): MqttArchiveState
     setMqttArchive(archive: MqttArchiveState): boolean
+    mutateMqttArchive?(mutation: MqttArchiveAppendMessageMutationV1): boolean
     getMqttStorageStatus(): MqttStorageStatus
     getMqttSecrets(): MqttSecretMap
     setMqttSecrets(secrets: MqttSecretMap): boolean
@@ -1281,6 +1290,7 @@ export function getPlatform(): EypcPlatformApi {
         setState: hostStorage.setState || writeFallbackState,
         getMqttArchive: hostStorage.getMqttArchive || readFallbackMqttArchive,
         setMqttArchive: hostStorage.setMqttArchive || writeFallbackMqttArchive,
+        mutateMqttArchive: hostStorage.mutateMqttArchive,
         getMqttStorageStatus: hostStorage.getMqttStorageStatus || fallbackMqttStorageStatus,
         getMqttSecrets: hostStorage.getMqttSecrets || readFallbackMqttSecrets,
         setMqttSecrets: hostStorage.setMqttSecrets || writeFallbackMqttSecrets

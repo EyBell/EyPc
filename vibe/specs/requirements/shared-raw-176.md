@@ -4,6 +4,10 @@ qualified_source: SPEC-260823-COMPANION-TASK-TOPOLOGY-V5::RAW-176
 status: active
 domain: companion-shared
 authority: user-stated
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-shared-raw-179-clause-002
+    scope: "V7 以七条原始 evidence lane、生成合同和唯一 Kernel 取代 V6 预归约反馈与重复公共投影"
 ---
 
 # RAW-176 · companion-shared

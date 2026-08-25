@@ -1,0 +1,131 @@
+/* EyPc V7 project-level design contract.
+ *
+ * Primitives are intentionally private to this file. Product surfaces consume
+ * semantic tokens so Main, Float and Action keep the same density, focus and
+ * accessibility behavior while retaining their established visual identity.
+ */
+:root {
+  color-scheme: light dark;
+
+  --eypc-font-sans: "IBM Plex Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --eypc-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --eypc-space-1: 2px;
+  --eypc-space-2: 4px;
+  --eypc-space-3: 6px;
+  --eypc-space-4: 8px;
+  --eypc-space-5: 12px;
+  --eypc-space-6: 16px;
+
+  --eypc-radius-control: 7px;
+  --eypc-radius-panel: 12px;
+  --eypc-control-compact: 24px;
+  --eypc-control-default: 28px;
+  --eypc-control-comfortable: 32px;
+  --eypc-control-size: var(--eypc-control-default);
+  --eypc-hit-target: var(--eypc-control-size);
+
+  --eypc-motion-instant: 90ms;
+  --eypc-motion-fast: 120ms;
+  --eypc-motion-standard: 180ms;
+  --eypc-ease-standard: cubic-bezier(.2, 0, 0, 1);
+
+  --eypc-z-base: 0;
+  --eypc-z-raised: 2;
+  --eypc-z-popover: 40;
+  --eypc-z-drawer: 60;
+  --eypc-z-modal: 80;
+  --eypc-z-tooltip: 100;
+  --eypc-z-shortcut-layer: 2147483000;
+
+  --eypc-color-canvas: #f5f7fa;
+  --eypc-color-surface: #ffffff;
+  --eypc-color-surface-raised: #f8fbfc;
+  --eypc-color-text: #172026;
+  --eypc-color-text-muted: #5c7180;
+  --eypc-color-border: #aebfc9;
+  --eypc-color-border-soft: #c9d6dd;
+  --eypc-color-focus: #176b87;
+  --eypc-color-accent: #c47a10;
+  --eypc-color-success: #247a62;
+  --eypc-color-warning: #a75d00;
+  --eypc-color-danger: #b4233d;
+  --eypc-color-on-accent: #ffffff;
+  --eypc-shadow-popover: 0 8px 22px rgb(16 24 32 / 18%);
+  --eypc-focus-ring: 0 0 0 2px var(--eypc-color-focus);
+}
+
+:root[data-eypc-density="compact"],
+.eypc-density-compact {
+  --eypc-control-size: var(--eypc-control-compact);
+}
+
+:root[data-eypc-density="comfortable"],
+.eypc-density-comfortable {
+  --eypc-control-size: var(--eypc-control-comfortable);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --eypc-color-canvas: #080d19;
+    --eypc-color-surface: #0d1424;
+    --eypc-color-surface-raised: #121c30;
+    --eypc-color-text: #e7edf8;
+    --eypc-color-text-muted: #9aa8bc;
+    --eypc-color-border: #43526d;
+    --eypc-color-border-soft: #263249;
+    --eypc-color-focus: #71c9e3;
+    --eypc-color-accent: #f4c542;
+    --eypc-color-success: #51d49b;
+    --eypc-color-warning: #ffb35f;
+    --eypc-color-danger: #ff879d;
+    --eypc-color-on-accent: #171304;
+    --eypc-shadow-popover: 0 8px 22px rgb(0 0 0 / 42%);
+  }
+}
+
+@media (max-width: 720px) {
+  :root:not([data-eypc-density]) {
+    --eypc-control-size: var(--eypc-control-compact);
+  }
+}
+
+:where(button, [role="button"], [role="menuitem"], [tabindex]):focus-visible {
+  outline-color: var(--eypc-color-focus);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --eypc-motion-instant: 0ms;
+    --eypc-motion-fast: 0ms;
+    --eypc-motion-standard: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :root {
+    --eypc-color-canvas: Canvas;
+    --eypc-color-surface: Canvas;
+    --eypc-color-surface-raised: Canvas;
+    --eypc-color-text: CanvasText;
+    --eypc-color-text-muted: CanvasText;
+    --eypc-color-border: ButtonText;
+    --eypc-color-border-soft: ButtonText;
+    --eypc-color-focus: Highlight;
+    --eypc-color-accent: Highlight;
+    --eypc-color-success: CanvasText;
+    --eypc-color-warning: CanvasText;
+    --eypc-color-danger: CanvasText;
+    --eypc-color-on-accent: HighlightText;
+    --eypc-shadow-popover: none;
+  }
+}

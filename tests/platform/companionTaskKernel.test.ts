@@ -1,16 +1,19 @@
 import { createRequire } from 'node:module'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { createCompanionTaskKernel: createCompanionTaskKernelRaw, reduceCodexTaskEvidenceV4, reduceCodexParentBranchEvidenceV4, reduceClaudeTaskEvidenceV4, UNKNOWN_GRACE_MS } = require('../../preload/companion/task-kernel.cjs') as {
+const { createCompanionTaskKernel: createCompanionTaskKernelRaw, UNKNOWN_GRACE_MS } = require('../../preload/companion/task-kernel.cjs') as {
   createCompanionTaskKernel(options?: Record<string, unknown>): any
-  reduceCodexTaskEvidenceV4(value?: Record<string, unknown>): Record<string, any>
-  reduceCodexParentBranchEvidenceV4(value?: Record<string, unknown>): Record<string, any>
-  reduceClaudeTaskEvidenceV4(value?: Record<string, unknown>): Record<string, any>
   UNKNOWN_GRACE_MS: number
 }
+const {
+  codexBranchObservationV7,
+  createEvidenceNodeV7,
+  createEvidenceBatchV7
+} = require('../../preload/companion/evidence-adapter-v7.cjs') as Record<string, (...args: any[]) => any>
 
 function createCompanionTaskKernel(options: Record<string, unknown> = {}) {
   return createCompanionTaskKernelRaw({ now: () => 1_000, ...options })
@@ -70,8 +73,7 @@ function task(overrides: Record<string, unknown> = {}) {
 function evidenceNode(value: Record<string, any>, lanes: Record<string, number> = {}) {
   const phase = value.phase
   const activityKind = phase === 'running' ? 'turn-running'
-    : phase === 'waiting-input' ? 'waiting-input'
-      : phase === 'waiting-approval' ? 'waiting-approval'
+    : phase === 'waiting-input' || phase === 'waiting-approval' ? 'turn-completed'
         : phase === 'completed' ? 'turn-completed'
           : phase === 'stopped' ? value.error === true ? 'turn-failed' : 'turn-interrupted'
             : 'unknown'
@@ -90,7 +92,7 @@ function evidenceNode(value: Record<string, any>, lanes: Record<string, number> 
     activity: {
       kind: activityKind,
       causalKey: typeof value.causalKey === 'string' ? value.causalKey : '',
-      sequence: Number(lanes.phase) || Number(value.phaseRevision) || Number(value.revisionAt) || 1,
+      sequence: Number(value.phaseRevision) || Number(value.statusEnteredAt) || Number(lanes.activity) || Number(value.revisionAt) || 1,
       exact: value.freshness !== 'verifying',
       observedAt: Number(value.observedAt) || 0,
       statusEnteredAt: Number(value.statusEnteredAt) || 0,
@@ -102,15 +104,75 @@ function evidenceNode(value: Record<string, any>, lanes: Record<string, number> 
       value: value.unread === true,
       sequence: Number(lanes.unread) || Number(value.unreadRevision) || 0
     },
-    plan: {
-      state: planState,
+    planArtifact: {
+      revision: 'companion-plan-artifact-v1',
+      state: planState === 'ready'
+        ? 'available'
+        : planState === 'cleared'
+          ? value.planClearReason === 'cancel' ? 'cancelled'
+            : value.planClearReason === 'archive' || value.planClearReason === 'removal' ? 'removed'
+              : value.planClearReason === 'execution-start' ? 'executing' : 'consumed'
+          : 'unknown',
       sequence: Number(value.planLifecycleRevision) || 0,
+      actionable: planState === 'ready',
       reason: ['cancel', 'execution-start', 'archive', 'removal'].includes(value.planClearReason) ? value.planClearReason : ''
     },
     metadata: { ...value, partial: false },
     capabilities,
     standaloneEligible: value.standaloneEligible !== false,
     error: value.error === true
+  }
+}
+
+function interactionEvidence(value: Record<string, any>, authority = 'provider-live') {
+  if (value.phase !== 'waiting-input' && value.phase !== 'waiting-approval') return []
+  const kind = value.phase === 'waiting-approval'
+    ? 'approval'
+    : value.planImplementation === true ? 'plan-implementation' : 'user-input'
+  const sequence = Number(value.phaseRevision) || Number(value.statusEnteredAt) || Number(value.revisionAt) || 1
+  return [{
+    revision: 'companion-interaction-evidence-v1',
+    provider: value.provider,
+    taskKey: value.key,
+    branchRef: value.role === 'child' ? 'child' : 'root',
+    interactionRef: createHash('sha256').update(`${value.provider}\0${value.key}\0${kind}\0${sequence}`).digest('hex').slice(0, 32),
+    kind,
+    state: 'opened',
+    sequence,
+    turnEpoch: Number(value.turnStartedAt) || 0,
+    requestSetRevision: sequence,
+    authority,
+    exact: value.freshness !== 'verifying'
+  }]
+}
+
+function interactionSetEvidence(value: Record<string, any>) {
+  const requestSetRevision = Number(value.phaseRevision) || Number(value.statusEnteredAt) || Number(value.revisionAt) || 1
+  return {
+    revision: 'companion-interaction-evidence-v1',
+    provider: value.provider,
+    taskKey: value.key,
+    requestSetRevision,
+    complete: true
+  }
+}
+
+function interaction(overrides: Record<string, any> = {}) {
+  const sequence = Number(overrides.sequence) || 100
+  return {
+    revision: 'companion-interaction-evidence-v1',
+    provider: 'codex',
+    taskKey: 'codex-a',
+    branchRef: 'root',
+    interactionRef: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    kind: 'user-input',
+    state: 'opened',
+    sequence,
+    turnEpoch: sequence,
+    requestSetRevision: Number(overrides.requestSetRevision) || sequence,
+    authority: 'provider-live',
+    exact: true,
+    ...overrides
   }
 }
 
@@ -129,9 +191,9 @@ function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown
   }
   const sourceLaneGenerations = (overrides.sourceLaneGenerations as Record<string, unknown> | undefined)
     || {
-      codex: { membership: sourceGenerations.codex || 0, phase: sourceGenerations.codex || 0, unread: sourceGenerations.codex || 0, metadata: sourceGenerations.codex || 0, topology: sourceGenerations.codex || 0 },
-      claude: { membership: sourceGenerations.claude || 0, phase: sourceGenerations.claude || 0, unread: sourceGenerations.claude || 0, metadata: sourceGenerations.claude || 0, topology: sourceGenerations.claude || 0 },
-      cursor: { membership: sourceGenerations.cursor || 0, phase: sourceGenerations.cursor || 0, unread: sourceGenerations.cursor || 0, metadata: sourceGenerations.cursor || 0, topology: sourceGenerations.cursor || 0 }
+      codex: { membership: sourceGenerations.codex || 0, activity: sourceGenerations.codex || 0, interaction: sourceGenerations.codex || 0, unread: sourceGenerations.codex || 0, planArtifact: sourceGenerations.codex || 0, metadata: sourceGenerations.codex || 0, topology: sourceGenerations.codex || 0 },
+      claude: { membership: sourceGenerations.claude || 0, activity: sourceGenerations.claude || 0, interaction: sourceGenerations.claude || 0, unread: sourceGenerations.claude || 0, planArtifact: sourceGenerations.claude || 0, metadata: sourceGenerations.claude || 0, topology: sourceGenerations.claude || 0 },
+      cursor: { membership: sourceGenerations.cursor || 0, activity: sourceGenerations.cursor || 0, interaction: sourceGenerations.cursor || 0, unread: sourceGenerations.cursor || 0, planArtifact: sourceGenerations.cursor || 0, metadata: sourceGenerations.cursor || 0, topology: sourceGenerations.cursor || 0 }
     }
   const producer = typeof overrides.producer === 'string' ? overrides.producer : 'host-evidence'
   const relations = Array.isArray(overrides.relations) ? overrides.relations : []
@@ -140,15 +202,20 @@ function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown
     const snapshot = producer === 'host-preflight'
     const providerRelations = relations.filter((relation: any) => relation?.provider === provider)
     return [provider, {
-      revision: 'companion-provider-evidence-batch-v2',
+      revision: 'companion-provider-evidence-batch-v3',
       provider,
-      channels: Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
+      channels: Object.fromEntries(['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology'].map((channel) => [channel, {
         mode: snapshot ? 'snapshot' : 'delta',
         complete: snapshot,
         generation: Number(lanes[channel]) || 0,
         removedKeys: []
       }])),
       nodes: (tasks as Record<string, any>[]).filter((value) => value.provider === provider).map((value) => evidenceNode(value, lanes)),
+      interactions: (Array.isArray(overrides.interactions) ? overrides.interactions as Record<string, any>[] : (tasks as Record<string, any>[]).flatMap((value) => interactionEvidence(value)))
+        .filter((value) => value.provider === provider),
+      interactionSets: (tasks as Record<string, any>[])
+        .filter((value) => value.provider === provider)
+        .map(interactionSetEvidence),
       relations: providerRelations,
       relationMode: snapshot ? 'snapshot' : 'delta',
       relationsComplete: snapshot,
@@ -157,9 +224,9 @@ function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown
     }]
   }))
   return {
-    schema: 'companion-task-evidence-draft-v6',
+    schema: 'companion-task-evidence-draft-v7',
     producer: 'host-evidence',
-    sourceTaskStateRevision: 'task-state-v11',
+    sourceTaskStateRevision: 'task-state-v12',
     draftRevision: revision,
     acceptedAt: 1_000 + revision,
     enabled: true,
@@ -179,10 +246,105 @@ function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown
   }
 }
 
+function publishCodexParentEvidenceV7(
+  kernel: Record<string, any>,
+  generation: number,
+  parents: Array<{ key: string; complete?: boolean; branches: Record<string, any>[] }>
+) {
+  const nodes: Record<string, any>[] = []
+  const relations: Record<string, any>[] = []
+  let order = 0
+  for (const parent of parents) {
+    const family = `codex:${parent.key}`
+    parent.branches.forEach((branch, branchIndex) => {
+      const isRoot = branch.branchKind === 'main' || (branch.branchKind !== 'side' && branchIndex === 0)
+      const nodeKey = isRoot ? parent.key : `codex-child:${branch.ref}`
+      const observation = codexBranchObservationV7(branch)
+      const node = createEvidenceNodeV7({
+        provider: 'codex',
+        key: nodeKey,
+        family,
+        role: isRoot ? 'root' : 'child',
+        observation,
+        causalKey: `codex:${nodeKey}:${Number(observation.turnStartedAt) || Number(observation.sequence) || generation}`,
+        observedAt: Number(observation.sequence) || generation,
+        metadata: {
+          kind: isRoot ? 'codex-thread' : 'topology-child',
+          actionAlias: isRoot ? 'ct_codex_a_1234567890' : '',
+          capabilityToken: isRoot ? 'ct_codex_a_1234567890' : '',
+          revisionAt: Math.max(1, Number(observation.sequence) || generation),
+          membershipRevision: generation,
+          visibilityRevision: generation,
+          metadataRevision: generation,
+          lastQuestionAt: Math.max(1, Number(observation.turnStartedAt) || Number(observation.sequence) || generation),
+          createdAt: Math.max(1, Number(observation.turnStartedAt) || Number(observation.sequence) || generation),
+          displayOrder: order,
+          cycleOrder: order,
+          attentionOrder: order,
+          hidden: false,
+          idleConfirmed: !(observation.candidates || []).some((candidate: Record<string, any>) => candidate.kind === 'turn-running'),
+          localPin: false,
+          dynamicEligible: true,
+          ...(isRoot ? { displayName: 'Kernel task', originalTitle: 'Kernel task' } : {})
+        },
+        capabilities: isRoot ? ['open'] : [],
+        standaloneEligible: isRoot
+      })
+      if (node) nodes.push(node)
+      if (!isRoot) {
+        relations.push({
+          childKey: nodeKey,
+          parentKey: parent.key,
+          provider: 'codex',
+          family,
+          relation: 'side-thread',
+          authority: 'test-provider-fixture',
+          exact: parent.complete === true,
+          generation
+        })
+      }
+      order += 1
+    })
+  }
+  const lanes = {
+    membership: generation,
+    activity: generation,
+    interaction: generation,
+    unread: generation,
+    planArtifact: generation,
+    metadata: generation,
+    topology: generation
+  }
+  const base = draft([], generation, {
+    providers: { codex: true, claude: false },
+    sourceGenerations: { codex: generation, claude: 0 },
+    sourceLaneGenerations: {
+      codex: lanes,
+      claude: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 }
+    }
+  }) as Record<string, any>
+  return kernel.publishEvidence({
+    ...base,
+    evidenceBatches: {
+      ...base.evidenceBatches,
+      codex: createEvidenceBatchV7({
+        provider: 'codex',
+        nodes,
+        relations,
+        laneGenerations: lanes,
+        snapshotLanes: ['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology'],
+        completeLanes: ['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology'],
+        relationsComplete: true,
+        health: 'ready'
+      })
+    }
+  })
+}
+
 afterEach(() => vi.useRealTimers())
 
 describe('CompanionTaskKernel', () => {
-  it('keeps canonical selectors and production fallback ownership inside the V6 Kernel', () => {
+  it('keeps canonical selectors and production fallback ownership inside the V7 Kernel', () => {
     const kernelSource = readFileSync(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'), 'utf8')
     const hostSource = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
     const domainSource = readFileSync(resolve(process.cwd(), 'src/domain/companionTaskPackage.ts'), 'utf8')
@@ -192,7 +354,10 @@ describe('CompanionTaskKernel', () => {
     expect(kernelSource).toContain('function derivedCycleTier(task)')
     expect(kernelSource).toContain('function derivedDynamicGroup(task)')
     expect(kernelSource).toContain('function buildViews(tasks)')
-    expect(kernelSource).toContain('function reduceClaudeTaskEvidenceV4(value = {})')
+    expect(kernelSource).toContain('function reduceActivityCandidatesV7(activity = {})')
+    expect(kernelSource).not.toContain('function reduceCodexTaskEvidenceV4(')
+    expect(kernelSource).not.toContain('function reduceCodexParentBranchEvidenceV4(')
+    expect(kernelSource).not.toContain('function reduceClaudeTaskEvidenceV4(')
     expect(controllerSource).not.toContain('buildCompanionTaskPackageDraft')
     expect(domainSource).not.toContain('buildCompanionTaskPackageDraft')
     expect(domainSource).not.toContain('function canonicalPhase(')
@@ -207,1050 +372,10 @@ describe('CompanionTaskKernel', () => {
     expect(floatSource).not.toMatch(/(?:cycleTier|dynamicGroup|cycleKeys)\s*:/)
     expect(hostSource).not.toContain('function companionCycleTier(')
     expect(hostSource).not.toContain('function companionDynamicGroup(')
-    expect(hostSource).toContain('return reduceClaudeTaskEvidenceV4({ phase: value, unread: unread === true })')
+    expect(hostSource).toContain('claudeSessionObservationV7(session, unread')
+    expect(hostSource).not.toContain('return reduceClaudeTaskEvidenceV4({ phase: value, unread: unread === true })')
     expect([...hostSource.matchAll(/cycleTier:\s*([^,\n]+)/g)].map((match) => match[1].trim()).every((value) => value === "'none'")).toBe(true)
     expect([...hostSource.matchAll(/dynamicGroup:\s*([^,\n]+)/g)].map((match) => match[1].trim()).every((value) => value === "'none'")).toBe(true)
-  })
-
-  it('uses causal Turn watermarks as the sole Codex phase truth table', () => {
-    const base = {
-      previousPhase: 'running',
-      status: 'active',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: []
-    }
-
-    expect(reduceCodexTaskEvidenceV4({
-      ...base,
-      lastTurnStatus: 'interrupted',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 10,
-      terminalEvidenceSequence: 11
-    })).toMatchObject({ phase: 'running', freshness: 'verifying', reason: 'terminal-verifying' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      ...base,
-      status: 'idle',
-      lastTurnStatus: 'interrupted',
-      lastTurnEvidence: 'targeted-after-exit',
-      activeEvidenceSequence: 10,
-      terminalEvidenceSequence: 11,
-      idleConfirmed: true
-    })).toMatchObject({ phase: 'stopped', freshness: 'fresh', reason: 'ordinary-interrupted-idle-confirmed' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      ...base,
-      lastTurnStatus: 'interrupted',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 12,
-      terminalEvidenceSequence: 11
-    })).toMatchObject({ phase: 'running', freshness: 'verifying', reason: 'active-terminal-conflict' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      ...base,
-      previousPhase: 'stopped',
-      lastTurnStatus: 'interrupted',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 0,
-      terminalEvidenceSequence: 11,
-      idleConfirmed: true
-    })).toMatchObject({ phase: 'running', freshness: 'verifying', reason: 'active-terminal-conflict' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      ...base,
-      activeFlags: ['waitingOnUserInput'],
-      lastTurnStatus: 'interrupted',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 12,
-      terminalEvidenceSequence: 11
-    })).toMatchObject({ phase: 'waiting-input', freshness: 'fresh', reason: 'causal-waiting-input' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      ...base,
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 10,
-      terminalEvidenceSequence: 11
-    })).toMatchObject({ phase: 'running', freshness: 'fresh', reason: 'causal-active' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      ...base,
-      previousPhase: 'completed',
-      status: 'notLoaded',
-      statusAuthority: 'inventory',
-      lastTurnStatus: 'failed',
-      lastTurnEvidence: 'inventory',
-      activeEvidenceSequence: 0,
-      terminalEvidenceSequence: 0
-    })).toMatchObject({ phase: 'completed', freshness: 'verifying', reason: 'terminal-verifying' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      previousPhase: 'completed',
-      status: 'active',
-      statusAuthority: 'desktop-live',
-      activityEvidence: 'initial-snapshot',
-      activeFlags: [],
-      lastTurnStatus: 'completed',
-      lastTurnEvidence: 'turn-completed',
-      terminalEvidenceSequence: 11
-    })).toMatchObject({ phase: 'completed', freshness: 'fresh', reason: 'exact-completed' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      previousPhase: 'unknown',
-      status: 'active',
-      statusAuthority: 'desktop-live',
-      activityEvidence: 'initial-snapshot',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'inventory'
-    })).toMatchObject({ phase: 'unknown', freshness: 'verifying', reason: 'insufficient-evidence' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      previousPhase: 'unknown',
-      status: 'active',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'initial-snapshot',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'inventory'
-    })).toMatchObject({ phase: 'unknown', freshness: 'verifying', reason: 'insufficient-evidence' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      previousPhase: 'unknown',
-      status: 'active',
-      statusAuthority: 'persisted-decision',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress'
-    })).toMatchObject({ phase: 'unknown', freshness: 'verifying', reason: 'insufficient-evidence' })
-
-    expect(reduceCodexTaskEvidenceV4({
-      previousPhase: 'unknown',
-      status: 'active',
-      statusAuthority: 'desktop-live',
-      activityEvidence: 'initial-snapshot',
-      activeFlags: ['waitingOnUserInput']
-    })).toMatchObject({ phase: 'waiting-input', freshness: 'fresh', reason: 'causal-waiting-input' })
-  })
-
-  it('reduces every main and Side Chat bead with attention then active then unread then completed priority', () => {
-    const branch = (ref: string, overrides: Record<string, unknown> = {}) => ({
-      ref,
-      branchKind: ref.startsWith('main') ? 'main' : 'side',
-      unreadKnown: true,
-      hasUnreadTurn: false,
-      status: 'idle',
-      statusAuthority: 'desktop-live',
-      activeFlags: [],
-      lastTurnStatus: 'completed',
-      lastTurnEvidence: 'targeted-after-exit',
-      terminalEvidenceSequence: 20,
-      idleConfirmed: true,
-      ...overrides
-    })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'stopped',
-      branches: [
-        branch('main', { status: 'active', lastTurnStatus: 'inProgress', activeEvidenceSequence: 21, idleConfirmed: true }),
-        branch('side-terminal')
-      ]
-    })).toMatchObject({ phase: 'running', freshness: 'fresh', reason: 'branch-running' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'stopped',
-      branches: [
-        branch('main-interrupted', { lastTurnStatus: 'interrupted' }),
-        branch('side-running', { status: 'active', lastTurnStatus: 'inProgress', activeEvidenceSequence: 21, idleConfirmed: true })
-      ]
-    })).toMatchObject({
-      phase: 'running',
-      freshness: 'fresh',
-      reason: 'branch-running',
-      details: { aggregationPolicy: 'all-branches', selectedBranchCount: 2 }
-    })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'completed',
-      branches: [
-        branch('main'),
-        branch('side-running', { status: 'active', lastTurnStatus: 'inProgress', activeEvidenceSequence: 21, idleConfirmed: false })
-      ]
-    })).toMatchObject({
-      phase: 'running',
-      unreadKnown: true,
-      unread: false,
-      reason: 'branch-running',
-      details: { aggregationPolicy: 'all-branches', selectedBranchCount: 2 }
-    })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      branches: [
-        branch('main', { status: 'active', activeFlags: ['waitingOnApproval'], lastTurnStatus: 'inProgress', activeEvidenceSequence: 21 }),
-        branch('side-input', { status: 'active', activeFlags: ['waitingOnUserInput'], lastTurnStatus: 'inProgress', activeEvidenceSequence: 22 })
-      ]
-    })).toMatchObject({ phase: 'waiting-approval', reason: 'branch-waiting-approval' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      branches: [
-        branch('main', { status: 'active', activeFlags: ['waitingOnUserInput'], lastTurnStatus: 'inProgress', activeEvidenceSequence: 23 }),
-        branch('side-running', { status: 'active', lastTurnStatus: 'inProgress', activeEvidenceSequence: 24, idleConfirmed: false })
-      ]
-    })).toMatchObject({ phase: 'waiting-input', reason: 'branch-waiting-input' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      branches: [
-        branch('main', { status: 'active', activeFlags: ['waitingOnApproval'], lastTurnStatus: 'inProgress', activeEvidenceSequence: 25 }),
-        branch('side-running', { status: 'active', lastTurnStatus: 'inProgress', activeEvidenceSequence: 26, idleConfirmed: false })
-      ]
-    })).toMatchObject({ phase: 'waiting-approval', reason: 'branch-waiting-approval' })
-
-    expect(reduceCodexParentBranchEvidenceV4({ previousPhase: 'running', branches: [branch('main'), branch('side')] }))
-      .toMatchObject({ phase: 'completed', freshness: 'fresh', unreadKnown: true, unread: false, reason: 'all-branches-completed' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'completed',
-      branches: [
-        branch('main'),
-        branch('side-unread', { hasUnreadTurn: true })
-      ]
-    })).toMatchObject({
-      phase: 'completed',
-      unreadKnown: true,
-      unread: true,
-      details: { aggregationPolicy: 'all-branches', selectedBranchCount: 2, unreadCount: 1 }
-    })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'completed',
-      branches: [
-        branch('main', { hasUnreadTurn: true }),
-        branch('side-running', { status: 'active', lastTurnStatus: 'inProgress', activeEvidenceSequence: 21, idleConfirmed: false })
-      ]
-    })).toMatchObject({
-      phase: 'running',
-      unreadKnown: true,
-      unread: true,
-      reason: 'branch-running',
-      details: { aggregationPolicy: 'all-branches', selectedBranchCount: 2, unreadCount: 1 }
-    })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      branches: [
-        branch('main', { lastTurnStatus: 'interrupted' }),
-        branch('side', { lastTurnStatus: 'failed' })
-      ]
-    })).toMatchObject({ phase: 'stopped', freshness: 'fresh', reason: 'all-branches-idle-terminal' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'waiting-input',
-      branches: [branch('main', { lastTurnEvidence: 'inventory', idleConfirmed: false })]
-    })).toMatchObject({ phase: 'waiting-input', freshness: 'verifying', reason: 'branch-terminal-verifying' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'completed',
-      branches: [branch('hydrated', {
-        status: 'active',
-        activityEvidence: 'initial-snapshot',
-        activeEvidenceSequence: 0,
-        terminalEvidenceSequence: 0,
-        lastTurnStatus: 'inProgress',
-        lastTurnEvidence: 'inventory',
-        idleConfirmed: false
-      })]
-    })).toMatchObject({ outcome: 'abstain', phase: null, freshness: 'unchanged', reason: 'branch-evidence-insufficient' })
-  })
-
-  it('uses Goal status as the long-running task boundary without changing the public phase union', () => {
-    const completedTurn = (goalStatus: string, overrides: Record<string, unknown> = {}) => ({
-      ref: 'branch-main-anonymous',
-      branchKind: String(overrides.ref || 'branch-main-anonymous').includes('side') ? 'side' : 'main',
-      unreadKnown: true,
-      hasUnreadTurn: false,
-      status: 'idle',
-      statusAuthority: 'connector',
-      activeFlags: [],
-      lastTurnStatus: 'completed',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 10,
-      terminalEvidenceSequence: 20,
-      turnStartedAt: 2_000,
-      terminalAt: 2_100,
-      idleConfirmed: true,
-      goalStatus,
-      goalFreshness: 'fresh',
-      goalEvidenceSequence: 30,
-      goalUpdatedAt: 2_050,
-      ...overrides
-    })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      previousNonterminalPhase: 'running',
-      branches: [completedTurn('active')]
-    })).toMatchObject({ phase: 'running', freshness: 'fresh', reason: 'goal-active' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      previousNonterminalPhase: 'running',
-      branches: [completedTurn('active', { hasUnreadTurn: true })]
-    })).toMatchObject({
-      phase: 'running',
-      unreadKnown: true,
-      unread: true,
-      reason: 'goal-active',
-      details: { unreadCount: 1 }
-    })
-
-    for (const goalStatus of ['paused', 'blocked', 'usageLimited', 'budgetLimited']) {
-      expect(reduceCodexParentBranchEvidenceV4({
-        previousPhase: 'running',
-        previousNonterminalPhase: 'running',
-        branches: [completedTurn(goalStatus)]
-      })).toMatchObject({ phase: 'stopped', freshness: 'fresh', reason: `goal-${goalStatus}` })
-    }
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      previousNonterminalPhase: 'running',
-      branches: [completedTurn('complete')]
-    })).toMatchObject({ phase: 'completed', freshness: 'fresh', reason: 'goal-complete' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      previousNonterminalPhase: 'running',
-      branches: [completedTurn('complete', { hasUnreadTurn: true })]
-    })).toMatchObject({
-      phase: 'completed',
-      unreadKnown: true,
-      unread: true,
-      reason: 'goal-complete'
-    })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'completed',
-      previousNonterminalPhase: 'running',
-      branches: [
-        completedTurn('complete', { ref: 'branch-main-anonymous' }),
-        completedTurn('active', { ref: 'branch-side-anonymous', goalEvidenceSequence: 31 })
-      ]
-    })).toMatchObject({ phase: 'running', freshness: 'fresh', reason: 'goal-active' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      previousNonterminalPhase: 'running',
-      branches: [completedTurn('unknown', { goalFreshness: 'verifying' })]
-    })).toMatchObject({ phase: 'running', freshness: 'verifying', reason: 'goal-evidence-verifying' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'stopped',
-      previousNonterminalPhase: 'stopped',
-      branches: [completedTurn('paused', { goalFreshness: 'verifying' })]
-    })).toMatchObject({ phase: 'stopped', freshness: 'verifying', reason: 'goal-evidence-verifying' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      previousNonterminalPhase: 'running',
-      branches: [
-        completedTurn('complete', { ref: 'branch-main-anonymous' }),
-        completedTurn('unknown', { ref: 'branch-side-anonymous', goalFreshness: 'verifying' })
-      ]
-    })).toMatchObject({ phase: 'running', freshness: 'verifying', reason: 'goal-evidence-verifying' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'unknown',
-      branches: [completedTurn('unknown', { goalFreshness: 'verifying' })]
-    })).toMatchObject({ phase: 'unknown', freshness: 'verifying', reason: 'goal-evidence-verifying' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'running',
-      previousNonterminalPhase: 'running',
-      branches: [completedTurn('complete', {
-        goalEvidenceSequence: 5,
-        goalUpdatedAt: 1_500,
-        activeEvidenceSequence: 10,
-        turnStartedAt: 2_000
-      })]
-    })).toMatchObject({ phase: 'completed', freshness: 'fresh', reason: 'all-branches-completed' })
-
-    expect(reduceCodexParentBranchEvidenceV4({
-      previousPhase: 'completed',
-      previousNonterminalPhase: 'running',
-      branches: [completedTurn('complete', {
-        status: 'active',
-        statusAuthority: 'app-server-live',
-        lastTurnStatus: 'inProgress',
-        lastTurnEvidence: 'turn-started',
-        activeEvidenceSequence: 31,
-        terminalEvidenceSequence: 0,
-        goalEvidenceSequence: 30,
-        goalUpdatedAt: 2_000,
-        turnStartedAt: 2_000,
-        idleConfirmed: false
-      })]
-    })).toMatchObject({ phase: 'running', freshness: 'fresh', reason: 'branch-running' })
-  })
-
-  it('atomically suppresses an intermediate Turn completion while the Goal remains active', () => {
-    const kernel = createCompanionTaskKernel({
-      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
-    })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task({ phase: 'running', unreadKnown: true, unread: true, turnStartedAt: 100 })], 1, {
-        providers: { codex: true, claude: false }
-      })
-    })
-    const publications: Array<{ phase: string; unread: boolean; active: number; completedUnread: number }> = []
-    const stop = kernel.onPackage((value: Record<string, any>) => {
-      if (!value.tasks[0]) return
-      publications.push({
-        phase: value.tasks[0].phase,
-        unread: value.tasks[0].unread === true,
-        active: value.views.counts.active,
-        completedUnread: value.views.counts.unread
-      })
-    })
-
-    const branch = (goalStatus: 'active' | 'complete', hasUnreadTurn: boolean) => ({
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      unreadKnown: true,
-      hasUnreadTurn,
-      status: 'idle',
-      statusAuthority: 'connector',
-      activeFlags: [],
-      lastTurnStatus: 'completed',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 1,
-      terminalEvidenceSequence: 2,
-      turnStartedAt: 100,
-      terminalAt: 120,
-      idleConfirmed: true,
-      goalStatus,
-      goalFreshness: 'fresh',
-      goalEvidenceSequence: goalStatus === 'active' ? 1 : 3,
-      goalUpdatedAt: goalStatus === 'active' ? 90 : 130
-    })
-    const publish = (generation: number, goalStatus: 'active' | 'complete', hasUnreadTurn: boolean, deferPublish = false) => {
-      kernel.publishCodexBranchEvidence({
-        generation,
-        deferPublish,
-        parents: [{
-        key: 'codex-a',
-        complete: true,
-          branches: [branch(goalStatus, hasUnreadTurn)]
-        }]
-      })
-    }
-    publish(2, 'active', true, true)
-    kernel.publishEvidence(draft([
-      task({
-        phase: 'completed',
-        unreadKnown: true,
-        unread: true,
-        turnStartedAt: 100,
-        terminalAt: 120,
-        statusEnteredAt: 120
-      })
-    ], 2, {
-      providers: { codex: true, claude: false },
-      sourceLaneGenerations: {
-        codex: { membership: 1, phase: 2, unread: 1 },
-        claude: { membership: 0, phase: 0, unread: 0 }
-      }
-    }))
-
-    expect(kernel.getLatest()).toMatchObject({
-      tasks: [{ phase: 'running', unreadKnown: true, unread: true, freshness: 'fresh', terminalAt: 0 }],
-      views: { counts: { active: 1, unread: 0 } }
-    })
-    expect(publications.map((entry) => entry.phase)).not.toContain('completed')
-    expect(publications.at(-1)).toMatchObject({ phase: 'running', unread: true, active: 1, completedUnread: 0 })
-
-    publish(3, 'complete', true)
-    expect(kernel.getLatest()).toMatchObject({
-      tasks: [{ phase: 'completed', unreadKnown: true, unread: true }],
-      views: { counts: { active: 0, unread: 1 } }
-    })
-    const completedUnreadPublicationCount = publications.filter((entry) => entry.phase === 'completed' && entry.unread).length
-    publish(4, 'complete', true)
-    expect(publications.filter((entry) => entry.phase === 'completed' && entry.unread)).toHaveLength(completedUnreadPublicationCount)
-
-    publish(5, 'complete', false)
-    expect(kernel.getLatest()).toMatchObject({
-      tasks: [{ phase: 'completed', unreadKnown: true, unread: false }],
-      views: { counts: { active: 0, unread: 0 } }
-    })
-    publish(4, 'complete', true)
-    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'completed', unread: false })
-    stop()
-  })
-
-  it('stores private branch evidence and clears stale idle when a newer branch is active', () => {
-    const kernel = createCompanionTaskKernel({
-      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
-    })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task({ phase: 'stopped', idleConfirmed: true })], 1, { providers: { codex: true, claude: false } })
-    })
-
-    kernel.publishCodexBranchEvidence({
-      generation: 2,
-      parents: [{
-        key: 'codex-a',
-        complete: true,
-        branches: [
-          {
-            ref: 'branch-main-anonymous',
-            status: 'active',
-            statusAuthority: 'desktop-live',
-            activeFlags: [],
-            lastTurnStatus: 'inProgress',
-            lastTurnEvidence: 'turn-started',
-            activeEvidenceSequence: 12,
-            terminalEvidenceSequence: 11,
-            idleConfirmed: true
-          },
-          {
-            ref: 'branch-side-anonymous',
-            status: 'idle',
-            statusAuthority: 'desktop-live',
-            activeFlags: [],
-            lastTurnStatus: 'interrupted',
-            lastTurnEvidence: 'targeted-after-exit',
-            activeEvidenceSequence: 10,
-            terminalEvidenceSequence: 11,
-            idleConfirmed: true
-          }
-        ]
-      }]
-    })
-
-    expect(kernel.getPackage()).toMatchObject({
-      tasks: [{ key: 'codex-a', phase: 'running', freshness: 'fresh', idleConfirmed: false }],
-      views: { counts: { active: 1 }, groups: { active: ['codex-a'], stopped: [] } }
-    })
-    expect(kernel.diagnostics()).toMatchObject({ codexBranchParentCount: 1, codexBranchCount: 2 })
-    expect(kernel.commitArchived({ provider: 'codex', key: 'codex-a', verified: true, membershipRevision: 3 }))
-      .toMatchObject({ outcome: 'failed', errorCode: 'active-members' })
-    expect(kernel.diagnostics()).toMatchObject({ codexBranchParentCount: 1, codexBranchCount: 2 })
-  })
-
-  it('materializes all-bead Side Chat phase and unread decisions into mutually exclusive canonical views', () => {
-    const kernel = createCompanionTaskKernel({
-      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
-    })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task({ phase: 'completed', unreadKnown: true, unread: false, idleConfirmed: true })], 1, {
-        providers: { codex: true, claude: false }
-      })
-    })
-    const completedBranch = (branchKind: 'main' | 'side', hasUnreadTurn = false) => ({
-      ref: `branch-${branchKind}-anonymous`,
-      branchKind,
-      unreadKnown: true,
-      hasUnreadTurn,
-      status: 'idle',
-      statusAuthority: 'desktop-live',
-      activeFlags: [],
-      lastTurnStatus: 'completed',
-      lastTurnEvidence: 'targeted-after-exit',
-      terminalEvidenceSequence: 30,
-      turnStartedAt: 200,
-      terminalAt: 250,
-      idleConfirmed: true
-    })
-    const publish = (generation: number, branches: Record<string, unknown>[]) => kernel.publishCodexBranchEvidence({
-      generation,
-      parents: [{ key: 'codex-a', complete: true, branches }]
-    })
-
-    publish(2, [
-      completedBranch('main'),
-      {
-        ...completedBranch('side'),
-        status: 'active',
-        lastTurnStatus: 'inProgress',
-        lastTurnEvidence: 'turn-started',
-        activeEvidenceSequence: 21,
-        terminalEvidenceSequence: 0,
-        turnStartedAt: 200,
-        idleConfirmed: false
-      }
-    ])
-    expect(kernel.getPackage()).toMatchObject({
-      tasks: [{ phase: 'running', unreadKnown: true, unread: false }],
-      views: { counts: { active: 1, unread: 0 } }
-    })
-
-    publish(3, [completedBranch('main'), completedBranch('side', true)])
-    expect(kernel.getPackage()).toMatchObject({
-      tasks: [{ phase: 'completed', unreadKnown: true, unread: true }],
-      views: { counts: { active: 0, unread: 1 } }
-    })
-
-    publish(4, [
-      completedBranch('main', true),
-      {
-        ...completedBranch('side'),
-        status: 'active',
-        lastTurnStatus: 'inProgress',
-        lastTurnEvidence: 'turn-started',
-        activeEvidenceSequence: 22,
-        terminalEvidenceSequence: 0,
-        turnStartedAt: 300,
-        idleConfirmed: false
-      }
-    ])
-    expect(kernel.getPackage()).toMatchObject({
-      tasks: [{ phase: 'running', unreadKnown: true, unread: true }],
-      views: { counts: { active: 1, unread: 0 } }
-    })
-  })
-
-  it('does not let transport generation turn an older terminal snapshot into newer causal evidence', () => {
-    const kernel = createCompanionTaskKernel({
-      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
-    })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task({ phase: 'running' })], 1, { providers: { codex: true, claude: false } })
-    })
-    const publish = (generation: number, branch: Record<string, unknown>) => kernel.publishCodexBranchEvidence({
-      generation,
-      parents: [{ key: 'codex-a', complete: true, branches: [branch] }]
-    })
-
-    publish(2, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'active',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: ['waitingOnUserInput'],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-started',
-      activeEvidenceSequence: 10,
-      turnStartedAt: 200,
-      idleConfirmed: false
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'waiting-input' })
-
-    publish(3, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'idle',
-      statusAuthority: 'connector',
-      activityEvidence: 'initial-snapshot',
-      activeFlags: [],
-      lastTurnStatus: 'interrupted',
-      lastTurnEvidence: 'targeted-after-exit',
-      activeEvidenceSequence: 10,
-      terminalEvidenceSequence: 11,
-      turnStartedAt: 100,
-      terminalAt: 150,
-      idleConfirmed: true
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'waiting-input' })
-
-    publish(4, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'idle',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'completed',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 10,
-      terminalEvidenceSequence: 12,
-      turnStartedAt: 200,
-      terminalAt: 250,
-      idleConfirmed: true
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
-  })
-
-  it('orders live evidence by Turn epoch in both directions instead of transport generation', () => {
-    const kernel = createCompanionTaskKernel({
-      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
-    })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task({ phase: 'running' })], 1, { providers: { codex: true, claude: false } })
-    })
-    const publish = (generation: number, branch: Record<string, unknown>) => kernel.publishCodexBranchEvidence({
-      generation,
-      parents: [{ key: 'codex-a', complete: true, branches: [branch] }]
-    })
-
-    publish(2, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'active',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: ['waitingOnUserInput'],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-started',
-      activeEvidenceSequence: 20,
-      turnStartedAt: 200,
-      waitingSince: 220,
-      idleConfirmed: false
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'waiting-input' })
-
-    publish(3, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'active',
-      statusAuthority: 'desktop-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-started',
-      activeEvidenceSequence: 10,
-      turnStartedAt: 100,
-      idleConfirmed: false
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'waiting-input' })
-
-    publish(4, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'active',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-started',
-      activeEvidenceSequence: 30,
-      turnStartedAt: 300,
-      idleConfirmed: false
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running' })
-
-    publish(5, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'idle',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'completed',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 30,
-      terminalEvidenceSequence: 40,
-      turnStartedAt: 300,
-      terminalAt: 350,
-      idleConfirmed: true
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
-
-    publish(6, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'active',
-      statusAuthority: 'desktop-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-started',
-      activeEvidenceSequence: 50,
-      turnStartedAt: 200,
-      idleConfirmed: false
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
-
-    publish(7, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'active',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-started',
-      activeEvidenceSequence: 60,
-      turnStartedAt: 400,
-      idleConfirmed: false
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running' })
-  })
-
-  it('uses real event sequence when a Provider omits comparable Turn timestamps', () => {
-    const kernel = createCompanionTaskKernel({
-      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
-    })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task({ phase: 'running' })], 1, { providers: { codex: true, claude: false } })
-    })
-    const publish = (generation: number, branch: Record<string, unknown>) => kernel.publishCodexBranchEvidence({
-      generation,
-      parents: [{ key: 'codex-a', complete: true, branches: [branch] }]
-    })
-
-    publish(2, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'active',
-      statusAuthority: 'desktop-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-started',
-      activeEvidenceSequence: 10,
-      turnStartedAt: 0,
-      idleConfirmed: false
-    })
-    publish(3, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'idle',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'completed',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 10,
-      terminalEvidenceSequence: 20,
-      turnStartedAt: 0,
-      terminalAt: 200,
-      idleConfirmed: true
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
-
-    publish(4, {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'active',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-started',
-      activeEvidenceSequence: 30,
-      turnStartedAt: 0,
-      idleConfirmed: false
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running' })
-  })
-
-  it('merges branch phase, unread and Goal as independent evidence lanes', () => {
-    const kernel = createCompanionTaskKernel({
-      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
-    })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task({ phase: 'running', unreadKnown: false, unread: false })], 1, {
-        providers: { codex: true, claude: false }
-      })
-    })
-    const publish = (generation: number, branch: Record<string, unknown>) => kernel.publishCodexBranchEvidence({
-      generation,
-      parents: [{ key: 'codex-a', complete: true, branches: [branch] }]
-    })
-    const live = {
-      ref: 'branch-main-anonymous',
-      branchKind: 'main',
-      status: 'active',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-started',
-      activeEvidenceSequence: 10,
-      turnStartedAt: 100,
-      idleConfirmed: false
-    }
-
-    publish(2, {
-      ...live,
-      unreadKnown: true,
-      hasUnreadTurn: true,
-      goalStatus: 'active',
-      goalFreshness: 'fresh',
-      goalEvidenceSequence: 10,
-      goalUpdatedAt: 90
-    })
-    // Complete Host branch rows carry `unreadKnown: false` when this source
-    // has no unread authority. Unknown must abstain instead of erasing the
-    // previously observed unread lane.
-    publish(3, { ...live, activeEvidenceSequence: 20, unreadKnown: false })
-    kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task({
-        phase: 'running',
-        unreadKnown: false,
-        unread: false,
-        observationGeneration: 3
-      })], 2, { providers: { codex: true, claude: false } })
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running', unreadKnown: true, unread: true })
-
-    const terminal = {
-      ...live,
-      status: 'idle',
-      activeFlags: [],
-      lastTurnStatus: 'completed',
-      lastTurnEvidence: 'turn-completed',
-      activeEvidenceSequence: 20,
-      terminalEvidenceSequence: 30,
-      terminalAt: 150,
-      idleConfirmed: true
-    }
-    publish(4, terminal)
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running', unreadKnown: true, unread: true })
-
-    publish(5, {
-      ...terminal,
-      goalStatus: 'complete',
-      goalFreshness: 'fresh',
-      goalEvidenceSequence: 40,
-      goalUpdatedAt: 160
-    })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed', unreadKnown: true, unread: true })
-  })
-
-  it('records anonymous parent decisions only when aggregate semantics change', () => {
-    const records: Array<Record<string, unknown>> = []
-    const kernel = createCompanionTaskKernel({
-      record: (entry: Record<string, unknown>) => records.push(entry),
-      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
-    })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task({ phase: 'completed', unreadKnown: true, unread: false })], 1, {
-        providers: { codex: true, claude: false }
-      })
-    })
-    const liveBranches = [{
-      ref: 'private-main-ref',
-      branchKind: 'main',
-      unreadKnown: true,
-      hasUnreadTurn: false,
-      status: 'active',
-      statusAuthority: 'app-server-live',
-      activityEvidence: 'activity-event',
-      activeFlags: [],
-      lastTurnStatus: 'inProgress',
-      lastTurnEvidence: 'turn-started',
-      activeEvidenceSequence: 2,
-      turnStartedAt: 200
-    }]
-    const publish = (generation: number, branches: Record<string, unknown>[]) => kernel.publishCodexBranchEvidence({
-      generation,
-      parents: [{ key: 'codex-a', complete: true, branches }]
-    })
-
-    publish(2, liveBranches)
-    publish(3, liveBranches)
-    let decisions = records.filter((entry) => entry.event === 'parent-state-decision')
-    expect(decisions).toHaveLength(1)
-    expect(decisions[0]).toMatchObject({
-      phase: 'running',
-      reason: 'branch-running',
-      details: { aggregationPolicy: 'all-branches', branchCount: 1, runningCount: 1 }
-    })
-    expect(JSON.stringify(decisions)).not.toContain('private-main-ref')
-
-    publish(4, [{
-      ...liveBranches[0],
-      status: 'idle',
-      statusAuthority: 'connector',
-      activityEvidence: 'initial-snapshot',
-      lastTurnStatus: 'completed',
-      lastTurnEvidence: 'turn-completed',
-      terminalEvidenceSequence: 4,
-      terminalAt: 250,
-      idleConfirmed: true
-    }])
-    decisions = records.filter((entry) => entry.event === 'parent-state-decision')
-    expect(decisions).toHaveLength(2)
-    expect(decisions.at(-1)).toMatchObject({ phase: 'completed', reason: 'all-branches-completed' })
-  })
-
-  it('stages branch evidence and publishes it atomically with the matching Host draft', () => {
-    const kernel = createCompanionTaskKernel({
-      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
-    })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task({ phase: 'stopped', idleConfirmed: true })], 1, { providers: { codex: true, claude: false } })
-    })
-    const baselineRevision = kernel.getPackage().packageRevision
-    const publications: number[] = []
-    const stop = kernel.onPackage((value: Record<string, any>) => publications.push(value.packageRevision))
-    const baselinePublicationCount = publications.length
-
-    kernel.publishCodexBranchEvidence({
-      generation: 2,
-      deferPublish: true,
-      parents: [{
-        key: 'codex-a',
-        complete: true,
-        branches: [{
-          ref: 'branch-main-anonymous',
-          status: 'active',
-          statusAuthority: 'app-server-live',
-          activityEvidence: 'activity-event',
-          activeFlags: [],
-          lastTurnStatus: 'inProgress',
-          lastTurnEvidence: 'turn-started',
-          activeEvidenceSequence: 2,
-          terminalEvidenceSequence: 1,
-          idleConfirmed: false
-        }]
-      }]
-    })
-
-    expect(kernel.getPackage().packageRevision).toBe(baselineRevision)
-    expect(publications).toHaveLength(baselinePublicationCount)
-    kernel.publishEvidence(draft([
-      task({
-        phase: 'stopped',
-        idleConfirmed: true,
-        observationGeneration: 2,
-        phaseRevision: 2
-      })
-    ], 2, {
-      providers: { codex: true, claude: false },
-      sourceGenerations: { codex: 2, claude: 0 },
-      sourceLaneGenerations: {
-        codex: { membership: 1, phase: 2, unread: 1 },
-        claude: { membership: 0, phase: 0, unread: 0 }
-      }
-    }))
-
-    expect(kernel.getPackage()).toMatchObject({
-      packageRevision: baselineRevision + 1,
-      tasks: [{ key: 'codex-a', phase: 'running', idleConfirmed: false }]
-    })
-    expect(publications.slice(baselinePublicationCount)).toEqual([baselineRevision + 1])
-    stop()
-  })
-
-  it('keeps Claude live/terminal/unread phase rules inside the shared Kernel reducer', () => {
-    expect(reduceClaudeTaskEvidenceV4({ phase: 'running', unread: true })).toMatchObject({ phase: 'running', reason: 'provider-live' })
-    expect(reduceClaudeTaskEvidenceV4({ phase: 'stopped', unread: true })).toMatchObject({ phase: 'completed', reason: 'native-unread-completion' })
-    expect(reduceClaudeTaskEvidenceV4({ phase: 'unknown', unread: false })).toMatchObject({ phase: 'unknown', freshness: 'verifying' })
   })
 
   it('keeps the Plan lifecycle across a supplementary default Turn, interruption and pause until an explicit execution-start edge', async () => {
@@ -1289,8 +414,15 @@ describe('CompanionTaskKernel', () => {
       unread: false,
       capabilities: { open: true, archive: false, pause: true, resume: true, executePlan: false }
     }, 3)
-    expect(ready.tasks[0]).toMatchObject({ phase: 'waiting-input', planReady: true, planLifecycleRevision: 200 })
-    expect(ready.views.counts.input).toBe(1)
+    expect(ready.tasks[0]).toMatchObject({
+      phase: 'stopped',
+      dynamicGroup: 'stopped',
+      cycleTier: 'plan',
+      planReady: true,
+      planLifecycleRevision: 200
+    })
+    expect(ready.views.counts.input).toBe(0)
+    expect(ready.views.groups.stopped).toEqual(['codex-a'])
     expect(ready.views.cycleKeys).toEqual(['codex-a'])
 
     expect(sync({ turnMode: 'default', phase: 'running', planReady: false, planLifecycleRevision: 0 }, 4).tasks[0])
@@ -1303,8 +435,9 @@ describe('CompanionTaskKernel', () => {
       dynamicEligible: false,
       capabilities: { open: true, archive: true, pause: true, resume: true, executePlan: false }
     }, 5)
-    expect(stopped.tasks[0]).toMatchObject({ phase: 'waiting-input', planReady: true, dynamicGroup: 'input' })
-    expect(stopped.views.groups.input).toEqual(['codex-a'])
+    expect(stopped.tasks[0]).toMatchObject({ phase: 'stopped', planReady: true, dynamicGroup: 'stopped' })
+    expect(stopped.views.groups.stopped).toEqual(['codex-a'])
+    expect(stopped.views.counts.input).toBe(0)
     expect(stopped.views.cycleKeys).toEqual(['codex-a'])
 
     await expect(kernel.dispatch({ action: 'pause', key: 'codex-a', planLifecycleRevision: 200 }))
@@ -1386,10 +519,217 @@ describe('CompanionTaskKernel', () => {
     })
 
     expect(current.tasks[0]).toMatchObject({
-      phase: 'waiting-input',
+      phase: 'stopped',
+      dynamicGroup: 'stopped',
+      cycleTier: 'plan',
       planReady: true,
       capabilities: { pause: true, resume: false, executePlan: true }
     })
+  })
+
+  it('maps an artifact-only completed Plan to stopped and requires an explicit interaction to enter waiting', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const artifactOnly = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        phase: 'completed',
+        unreadKnown: true,
+        unread: false,
+        planReady: true,
+        planLifecycleRevision: 100,
+        capabilities: { open: true, archive: true, pause: true, resume: false, executePlan: true }
+      })], 1, { providers: { codex: true, claude: false } })
+    })
+    expect(artifactOnly.tasks[0]).toMatchObject({
+      phase: 'stopped',
+      planArtifactState: 'available',
+      planArtifactActionable: true
+    })
+    expect(artifactOnly.views).toMatchObject({ groups: { input: [], stopped: ['codex-a'] }, counts: { input: 0 } })
+
+    const planChoice = kernel.publishEvidence(draft([task({
+      phase: 'completed',
+      phaseRevision: 101,
+      statusEnteredAt: 101,
+      unreadKnown: true,
+      unread: false,
+      planReady: true,
+      planLifecycleRevision: 100,
+      capabilities: { open: true, archive: false, pause: true, resume: false, executePlan: true }
+    })], 2, {
+      providers: { codex: true, claude: false },
+      interactions: [interaction({
+        interactionRef: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        kind: 'plan-choice',
+        sequence: 101,
+        requestSetRevision: 101
+      })]
+    }))
+    expect(planChoice.tasks[0]).toMatchObject({ phase: 'waiting-input', planImplementation: true, cycleTier: 'plan' })
+  })
+
+  it('tombstones a resolved interaction, ignores its stale replay and lets only a new instance reopen waiting', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const baseTask = (phaseRevision: number) => task({
+      phase: 'completed',
+      phaseRevision,
+      statusEnteredAt: phaseRevision,
+      terminalAt: phaseRevision,
+      unreadKnown: true,
+      unread: false
+    })
+    const oldRef = 'cccccccccccccccccccccccccccccccc'
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([baseTask(100)], 1, {
+        providers: { codex: true, claude: false },
+        interactions: [interaction({ interactionRef: oldRef, sequence: 100, requestSetRevision: 100 })]
+      })
+    })
+    expect(kernel.getLatest().tasks[0].phase).toBe('waiting-input')
+
+    kernel.publishEvidence(draft([baseTask(101)], 2, {
+      providers: { codex: true, claude: false },
+      interactions: [interaction({ interactionRef: oldRef, state: 'resolved', sequence: 101, requestSetRevision: 101 })]
+    }))
+    expect(kernel.getLatest().tasks[0].phase).toBe('completed')
+
+    kernel.publishEvidence(draft([baseTask(100)], 3, {
+      providers: { codex: true, claude: false },
+      interactions: [interaction({ interactionRef: oldRef, sequence: 100, requestSetRevision: 100 })]
+    }))
+    expect(kernel.getLatest().tasks[0].phase).toBe('completed')
+
+    const newRef = 'dddddddddddddddddddddddddddddddd'
+    kernel.publishEvidence(draft([baseTask(102)], 4, {
+      providers: { codex: true, claude: false },
+      interactions: [interaction({ interactionRef: newRef, sequence: 102, requestSetRevision: 102 })]
+    }))
+    expect(kernel.getLatest().tasks[0].phase).toBe('waiting-input')
+    expect(JSON.stringify(kernel.getLatest())).not.toContain(oldRef)
+    expect(JSON.stringify(kernel.getLatest())).not.toContain(newRef)
+    expect(kernel.diagnostics()).toMatchObject({ openInteractionCount: 1, interactionTombstoneCount: 1 })
+  })
+
+  it('restores anonymous interaction tombstones across a Kernel restart and persists later terminal edges', () => {
+    const oldRef = 'dddddddddddddddddddddddddddddddd'
+    const newRef = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+    const persisted: Record<string, any>[][] = []
+    const restored = interaction({
+      interactionRef: oldRef,
+      state: 'resolved',
+      sequence: 101,
+      requestSetRevision: 101
+    })
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } },
+      initialInteractionTombstones: [restored],
+      persistInteractionTombstones: (rows: Record<string, any>[]) => {
+        persisted.push(rows)
+        return true
+      }
+    })
+
+    kernel.publishEvidence(draft([
+      task({ phase: 'completed', phaseRevision: 100, unreadKnown: true, unread: false })
+    ], 1, {
+      interactions: [interaction({ interactionRef: oldRef, sequence: 100, requestSetRevision: 100 })]
+    }))
+    expect(kernel.getPackage().tasks[0].phase).toBe('completed')
+    expect(kernel.diagnostics().interactionTombstoneCount).toBe(1)
+
+    kernel.publishEvidence(draft([
+      task({ phase: 'completed', phaseRevision: 102, unreadKnown: true, unread: false })
+    ], 2, {
+      interactions: [interaction({ interactionRef: newRef, sequence: 102, requestSetRevision: 102 })]
+    }))
+    expect(kernel.getPackage().tasks[0].phase).toBe('waiting-input')
+
+    kernel.publishEvidence(draft([
+      task({ phase: 'completed', phaseRevision: 103, unreadKnown: true, unread: false })
+    ], 3, {
+      interactions: [interaction({
+        interactionRef: newRef,
+        state: 'resolved',
+        sequence: 103,
+        requestSetRevision: 103
+      })]
+    }))
+    expect(kernel.getPackage().tasks[0].phase).toBe('completed')
+    expect(persisted.at(-1)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ interactionRef: oldRef, state: 'resolved' }),
+      expect.objectContaining({ interactionRef: newRef, state: 'resolved' })
+    ]))
+    kernel.close()
+  })
+
+  it('keeps concurrent approval and input requests independent and lets a complete request set remove only the absent instance', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const base = (revision: number) => task({
+      phase: 'completed',
+      phaseRevision: revision,
+      statusEnteredAt: revision,
+      terminalAt: revision,
+      unreadKnown: true,
+      unread: false
+    })
+    const inputRef = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+    const approvalRef = 'ffffffffffffffffffffffffffffffff'
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([base(200)], 1, {
+        providers: { codex: true, claude: false },
+        interactions: [
+          interaction({ interactionRef: inputRef, sequence: 200, requestSetRevision: 200 }),
+          interaction({ interactionRef: approvalRef, kind: 'approval', sequence: 200, requestSetRevision: 200 })
+        ]
+      })
+    })
+    expect(kernel.getLatest().tasks[0].phase).toBe('waiting-approval')
+
+    kernel.publishEvidence(draft([base(201)], 2, {
+      providers: { codex: true, claude: false },
+      interactions: [interaction({ interactionRef: approvalRef, kind: 'approval', sequence: 201, requestSetRevision: 201 })]
+    }))
+    expect(kernel.getLatest().tasks[0].phase).toBe('waiting-approval')
+    expect(kernel.diagnostics()).toMatchObject({ openInteractionCount: 1, interactionTombstoneCount: 1 })
+
+    kernel.publishEvidence(draft([base(202)], 3, {
+      providers: { codex: true, claude: false },
+      interactions: []
+    }))
+    expect(kernel.getLatest().tasks[0].phase).toBe('completed')
+    expect(kernel.diagnostics()).toMatchObject({ openInteractionCount: 0, interactionTombstoneCount: 2 })
+  })
+
+  it('lets terminal evidence win a same-revision interaction conflict regardless of event order', () => {
+    for (const interactions of [
+      [interaction({ state: 'opened' }), interaction({ state: 'resolved' })],
+      [interaction({ state: 'resolved' }), interaction({ state: 'opened' })]
+    ]) {
+      const kernel = createCompanionTaskKernel({
+        initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+      })
+      const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+      kernel.syncPackage({
+        lease: receipt.lease,
+        draft: draft([task({ phase: 'completed', unreadKnown: true, unread: false })], 1, {
+          providers: { codex: true, claude: false },
+          interactions
+        })
+      })
+      expect(kernel.getLatest().tasks[0].phase).toBe('completed')
+      expect(kernel.diagnostics()).toMatchObject({ openInteractionCount: 0, interactionTombstoneCount: 1 })
+    }
   })
 
   it('does not change the Plan lifecycle revision when only generic metadata advances', () => {
@@ -1806,12 +1146,12 @@ describe('CompanionTaskKernel', () => {
     expect(current.tasks).toHaveLength(1)
     expect(current.tasks[0]).toMatchObject({
       key: 'root',
-      phase: 'waiting-input',
+      phase: 'completed',
       unread: true,
-      topology: { mode: 'aggregate', memberCount: 2, liveCount: 1, attentionCount: 1 }
+      topology: { mode: 'aggregate', memberCount: 2, liveCount: 0, attentionCount: 0 }
     })
-    expect(current.views.counts).toMatchObject({ input: 1, active: 0, unread: 0 })
-    expect(current.views.cycleKeys).toEqual(['root'])
+    expect(current.views.counts).toMatchObject({ input: 0, active: 0, unread: 1 })
+    expect(current.views.cycleKeys).toEqual([])
     expect(JSON.stringify(current)).not.toContain('test-exact-identity')
   })
 
@@ -2020,8 +1360,8 @@ describe('CompanionTaskKernel', () => {
       draft: draft([task(value)], revision, {
         providers: { codex: true, claude: false },
         sourceLaneGenerations: {
-          codex: { membership: revision, phase: phaseGeneration, unread: revision },
-          claude: { membership: 0, phase: 0, unread: 0 }
+          codex: { membership: revision, activity: phaseGeneration, unread: revision },
+          claude: { membership: 0, activity: 0, unread: 0 }
         }
       })
     })
@@ -2064,8 +1404,8 @@ describe('CompanionTaskKernel', () => {
         providers: { codex: false, claude: true },
         sourceGenerations: { codex: 0, claude: 10 },
         sourceLaneGenerations: {
-          codex: { membership: 0, phase: 0, unread: 0 },
-          claude: { membership: 10, phase: 10, unread: 10 }
+          codex: { membership: 0, activity: 0, unread: 0 },
+          claude: { membership: 10, activity: 10, unread: 10 }
         }
       })
     })
@@ -2084,8 +1424,8 @@ describe('CompanionTaskKernel', () => {
         providers: { codex: false, claude: true },
         sourceGenerations: { codex: 0, claude: 12 },
         sourceLaneGenerations: {
-          codex: { membership: 0, phase: 0, unread: 0 },
-          claude: { membership: 10, phase: 11, unread: 12 }
+          codex: { membership: 0, activity: 0, unread: 0 },
+          claude: { membership: 10, activity: 11, unread: 12 }
         }
       })
     })
@@ -2097,7 +1437,15 @@ describe('CompanionTaskKernel', () => {
       capabilities: { open: true, archive: true }
     })
     expect(completed.views.groups.unread).toEqual(['claude-a'])
-    expect(completed.sourceLaneGenerations.claude).toEqual({ membership: 10, phase: 11, unread: 12, metadata: 0, topology: 0 })
+    expect(completed.sourceLaneGenerations.claude).toEqual({
+      membership: 10,
+      activity: 11,
+      interaction: 0,
+      unread: 12,
+      planArtifact: 0,
+      metadata: 0,
+      topology: 0
+    })
   })
 
   it('revokes a stale Codex archive capability on a newer non-terminal phase without inventory', () => {
@@ -2123,8 +1471,8 @@ describe('CompanionTaskKernel', () => {
       draft: draft([completed], 1, {
         providers: { codex: true, claude: false },
         sourceLaneGenerations: {
-          codex: { membership: 10, phase: 10, unread: 10 },
-          claude: { membership: 0, phase: 0, unread: 0 }
+          codex: { membership: 10, activity: 10, unread: 10 },
+          claude: { membership: 0, activity: 0, unread: 0 }
         }
       })
     })
@@ -2143,8 +1491,8 @@ describe('CompanionTaskKernel', () => {
       })], 2, {
         providers: { codex: true, claude: false },
         sourceLaneGenerations: {
-          codex: { membership: 10, phase: 11, unread: 10 },
-          claude: { membership: 0, phase: 0, unread: 0 }
+          codex: { membership: 10, activity: 11, unread: 10 },
+          claude: { membership: 0, activity: 0, unread: 0 }
         }
       })
     })
@@ -2576,9 +1924,9 @@ describe('CompanionTaskKernel', () => {
         providers: { codex: true, claude: false },
         sourceGenerations: { codex: index, claude: 0 },
         sourceLaneGenerations: {
-          codex: { membership: index, phase: index, unread: index, metadata: index, topology: index },
-          claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
-          cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
+          codex: { membership: index, activity: index, interaction: index, unread: index, planArtifact: index, metadata: index, topology: index },
+          claude: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
+          cursor: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 }
         }
       }))
       expect(current.packageRevision).toBe(initialPackageRevision)
@@ -2695,7 +2043,10 @@ describe('phase sets and lane units stay single-owner', () => {
     const phaseSource = readFileSync(resolve(process.cwd(), 'preload/task-phase.cjs'), 'utf8')
     const predicates = ['isLiveTaskPhase', 'isTerminalTaskPhase', 'isAttentionTaskPhase', 'isRetainableTaskPhase']
     for (const predicate of predicates) expect(phaseSource).toContain(`function ${predicate}(phase)`)
-    for (const predicate of predicates) expect(kernelSource).toContain(predicate)
+    for (const predicate of ['isLiveTaskPhase', 'isTerminalTaskPhase', 'isAttentionTaskPhase']) {
+      expect(kernelSource).toContain(predicate)
+    }
+    expect(kernelSource).not.toContain('isRetainableTaskPhase')
     // Assert against the Kernel body: it may call the predicates but never
     // respell their sets.
     const callSites = kernelSource
@@ -2811,7 +2162,7 @@ describe('phase sets and lane units stay single-owner', () => {
   it('never seeds a counter lane from wall-clock time', () => {
     expect(hostSource).not.toMatch(/sourceLaneGenerations\.\w+\.(phase|unread)\s*=[^\n]*(Date\.now\(\)|readAt)/)
     expect(hostSource).toContain('function companionCounterAggregate(lanes)')
-    expect(kernelSource).toContain("lane === 'phase' || lane === 'unread'")
+    expect(kernelSource).toContain("lane === 'activity' ? value?.[provider]?.phase")
   })
 })
 
@@ -2834,9 +2185,9 @@ describe('provider differences are declared, not branched', () => {
     }
   })
 
-  it('routes branch topology through the declared trait', () => {
-    expect(kernelSource).toContain('providerTraits(task.provider).branchTopology')
-    expect(kernelSource).toContain('providerTraits(provider).branchTopology')
+  it('keeps topology relations Provider-neutral instead of branching in traits', () => {
+    expect(kernelSource).not.toContain('branchTopology')
+    expect(kernelSource).toContain('relationStore')
   })
 })
 
@@ -2855,8 +2206,8 @@ describe('claude evidence line uses the shared causal core', () => {
   const claudeLanes = (generation: number) => ({
     sourceGenerations: { codex: 0, claude: generation },
     sourceLaneGenerations: {
-      codex: { membership: 0, phase: 0, unread: 0 },
-      claude: { membership: 0, phase: generation, unread: generation }
+      codex: { membership: 0, activity: 0, unread: 0 },
+      claude: { membership: 0, activity: generation, unread: generation }
     }
   })
 
@@ -2918,12 +2269,12 @@ describe('source lane units', () => {
     kernel.publishEvidence(draft([task()], 1, {
       sourceGenerations: { codex: 7, claude: 0 },
       sourceLaneGenerations: {
-        codex: { membership: 0, phase: 7, unread: 7 },
-        claude: { membership: 0, phase: 0, unread: 0 }
+        codex: { membership: 0, activity: 7, unread: 7 },
+        claude: { membership: 0, activity: 0, unread: 0 }
       }
     }))
     expect(kernel.getPackage().sourceLaneGenerations.codex.membership).toBe(0)
-    expect(kernel.getPackage().sourceLaneGenerations.codex.phase).toBe(7)
+    expect(kernel.getPackage().sourceLaneGenerations.codex.activity).toBe(7)
   })
 
   it('treats an unstated membership lane as unchanged rather than older', () => {
@@ -2931,8 +2282,8 @@ describe('source lane units', () => {
     kernel.publishEvidence(draft([task()], 1, {
       sourceGenerations: { codex: 1, claude: 0 },
       sourceLaneGenerations: {
-        codex: { membership: 1_786_600_000_000, phase: 1, unread: 1 },
-        claude: { membership: 0, phase: 0, unread: 0 }
+        codex: { membership: 1_786_600_000_000, activity: 1, unread: 1 },
+        claude: { membership: 0, activity: 0, unread: 0 }
       }
     }))
     expect(kernel.getPackage().tasks).toHaveLength(1)
@@ -2941,8 +2292,8 @@ describe('source lane units', () => {
     kernel.publishEvidence(draft([task({ phase: 'completed' })], 2, {
       sourceGenerations: { codex: 2, claude: 0 },
       sourceLaneGenerations: {
-        codex: { membership: 0, phase: 2, unread: 2 },
-        claude: { membership: 0, phase: 0, unread: 0 }
+        codex: { membership: 0, activity: 2, unread: 2 },
+        claude: { membership: 0, activity: 0, unread: 0 }
       }
     }))
     const next = kernel.getPackage()
@@ -2951,3 +2302,678 @@ describe('source lane units', () => {
     expect(next.sourceLaneGenerations.codex.membership).toBe(1_786_600_000_000)
   })
 })
+
+  it('atomically suppresses an intermediate Turn completion while the Goal remains active', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'running', unreadKnown: true, unread: true, turnStartedAt: 100 })], 1, {
+        providers: { codex: true, claude: false }
+      })
+    })
+    const publications: Array<{ phase: string; unread: boolean; active: number; completedUnread: number }> = []
+    const stop = kernel.onPackage((value: Record<string, any>) => {
+      if (!value.tasks[0]) return
+      publications.push({
+        phase: value.tasks[0].phase,
+        unread: value.tasks[0].unread === true,
+        active: value.views.counts.active,
+        completedUnread: value.views.counts.unread
+      })
+    })
+
+    const branch = (goalStatus: 'active' | 'complete', hasUnreadTurn: boolean) => ({
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      unreadKnown: true,
+      hasUnreadTurn,
+      status: 'idle',
+      statusAuthority: 'connector',
+      activeFlags: [],
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'turn-completed',
+      activeEvidenceSequence: 1,
+      terminalEvidenceSequence: 2,
+      turnStartedAt: 100,
+      terminalAt: 120,
+      idleConfirmed: true,
+      goalStatus,
+      goalFreshness: 'fresh',
+      goalEvidenceSequence: goalStatus === 'active' ? 1 : 3,
+      goalUpdatedAt: goalStatus === 'active' ? 90 : 130
+    })
+    const publish = (generation: number, goalStatus: 'active' | 'complete', hasUnreadTurn: boolean) => (
+      publishCodexParentEvidenceV7(kernel, generation, [{
+        key: 'codex-a',
+        complete: true,
+        branches: [branch(goalStatus, hasUnreadTurn)]
+      }])
+    )
+    publish(2, 'active', true)
+
+    expect(kernel.getLatest()).toMatchObject({
+      tasks: [{ phase: 'running', unreadKnown: true, unread: true, freshness: 'fresh', terminalAt: 0 }],
+      views: { counts: { active: 1, unread: 0 } }
+    })
+    expect(publications.map((entry) => entry.phase)).not.toContain('completed')
+    expect(publications.at(-1)).toMatchObject({ phase: 'running', unread: true, active: 1, completedUnread: 0 })
+
+    publish(3, 'complete', true)
+    expect(kernel.getLatest()).toMatchObject({
+      tasks: [{ phase: 'completed', unreadKnown: true, unread: true }],
+      views: { counts: { active: 0, unread: 1 } }
+    })
+    const completedUnreadPublicationCount = publications.filter((entry) => entry.phase === 'completed' && entry.unread).length
+    publish(4, 'complete', true)
+    expect(publications.filter((entry) => entry.phase === 'completed' && entry.unread)).toHaveLength(completedUnreadPublicationCount)
+
+    publish(5, 'complete', false)
+    expect(kernel.getLatest()).toMatchObject({
+      tasks: [{ phase: 'completed', unreadKnown: true, unread: false }],
+      views: { counts: { active: 0, unread: 0 } }
+    })
+    publish(4, 'complete', true)
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'completed', unread: false })
+    stop()
+  })
+
+  it('stores V7 topology nodes and clears stale idle when a newer child is active', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'stopped', idleConfirmed: true })], 1, { providers: { codex: true, claude: false } })
+    })
+
+    publishCodexParentEvidenceV7(kernel, 2, [{
+        key: 'codex-a',
+        complete: true,
+        branches: [
+          {
+            ref: 'branch-main-anonymous',
+            status: 'active',
+            statusAuthority: 'desktop-live',
+            activeFlags: [],
+            lastTurnStatus: 'inProgress',
+            lastTurnEvidence: 'turn-started',
+            activeEvidenceSequence: 12,
+            terminalEvidenceSequence: 11,
+            idleConfirmed: true
+          },
+          {
+            ref: 'branch-side-anonymous',
+            status: 'idle',
+            statusAuthority: 'desktop-live',
+            activeFlags: [],
+            lastTurnStatus: 'interrupted',
+            lastTurnEvidence: 'targeted-after-exit',
+            activeEvidenceSequence: 10,
+            terminalEvidenceSequence: 11,
+            idleConfirmed: true
+          }
+        ]
+      }])
+
+    expect(kernel.getPackage()).toMatchObject({
+      tasks: [{ key: 'codex-a', phase: 'running', freshness: 'fresh', idleConfirmed: false }],
+      views: { counts: { active: 1 }, groups: { active: ['codex-a'], stopped: [] } }
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ topology: { mode: 'aggregate', memberCount: 2, liveCount: 1 } })
+    expect(kernel.commitArchived({ provider: 'codex', key: 'codex-a', verified: true, membershipRevision: 3 }))
+      .toMatchObject({ outcome: 'failed', errorCode: 'active-members' })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ topology: { memberCount: 2, liveCount: 1 } })
+  })
+
+  it('materializes all-bead Side Chat phase and unread decisions into mutually exclusive canonical views', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'completed', unreadKnown: true, unread: false, idleConfirmed: true })], 1, {
+        providers: { codex: true, claude: false }
+      })
+    })
+    const completedBranch = (branchKind: 'main' | 'side', hasUnreadTurn = false) => ({
+      ref: `branch-${branchKind}-anonymous`,
+      branchKind,
+      unreadKnown: true,
+      hasUnreadTurn,
+      status: 'idle',
+      statusAuthority: 'desktop-live',
+      activeFlags: [],
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'targeted-after-exit',
+      terminalEvidenceSequence: 30,
+      turnStartedAt: 200,
+      terminalAt: 250,
+      idleConfirmed: true
+    })
+    const publish = (generation: number, branches: Record<string, unknown>[]) => (
+      publishCodexParentEvidenceV7(kernel, generation, [{ key: 'codex-a', complete: true, branches }])
+    )
+
+    publish(2, [
+      completedBranch('main'),
+      {
+        ...completedBranch('side'),
+        status: 'active',
+        lastTurnStatus: 'inProgress',
+        lastTurnEvidence: 'turn-started',
+        activeEvidenceSequence: 21,
+        terminalEvidenceSequence: 0,
+        turnStartedAt: 200,
+        idleConfirmed: false
+      }
+    ])
+    expect(kernel.getPackage()).toMatchObject({
+      tasks: [{ phase: 'running', unreadKnown: true, unread: false }],
+      views: { counts: { active: 1, unread: 0 } }
+    })
+
+    publish(3, [completedBranch('main'), completedBranch('side', true)])
+    expect(kernel.getPackage()).toMatchObject({
+      tasks: [{ phase: 'completed', unreadKnown: true, unread: true }],
+      views: { counts: { active: 0, unread: 1 } }
+    })
+
+    publish(4, [
+      completedBranch('main', true),
+      {
+        ...completedBranch('side'),
+        status: 'active',
+        lastTurnStatus: 'inProgress',
+        lastTurnEvidence: 'turn-started',
+        activeEvidenceSequence: 22,
+        terminalEvidenceSequence: 0,
+        turnStartedAt: 300,
+        idleConfirmed: false
+      }
+    ])
+    expect(kernel.getPackage()).toMatchObject({
+      tasks: [{ phase: 'running', unreadKnown: true, unread: true }],
+      views: { counts: { active: 1, unread: 0 } }
+    })
+  })
+
+  it('does not infer a public interaction from branch flags or let transport generation reorder activity', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'running' })], 1, { providers: { codex: true, claude: false } })
+    })
+    const publish = (generation: number, branch: Record<string, unknown>) => (
+      publishCodexParentEvidenceV7(kernel, generation, [{ key: 'codex-a', complete: true, branches: [branch] }])
+    )
+
+    publish(2, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      activeFlags: ['waitingOnUserInput'],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: 10,
+      turnStartedAt: 200,
+      idleConfirmed: false
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+
+    publish(3, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'idle',
+      statusAuthority: 'connector',
+      activityEvidence: 'initial-snapshot',
+      activeFlags: [],
+      lastTurnStatus: 'interrupted',
+      lastTurnEvidence: 'targeted-after-exit',
+      activeEvidenceSequence: 10,
+      terminalEvidenceSequence: 11,
+      turnStartedAt: 100,
+      terminalAt: 150,
+      idleConfirmed: true
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+
+    publish(4, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'idle',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'turn-completed',
+      activeEvidenceSequence: 10,
+      terminalEvidenceSequence: 12,
+      turnStartedAt: 200,
+      terminalAt: 250,
+      idleConfirmed: true
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+  })
+
+  it('orders live evidence by Turn epoch in both directions instead of transport generation', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'running' })], 1, { providers: { codex: true, claude: false } })
+    })
+    const publish = (generation: number, branch: Record<string, unknown>) => (
+      publishCodexParentEvidenceV7(kernel, generation, [{ key: 'codex-a', complete: true, branches: [branch] }])
+    )
+
+    publish(2, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      activeFlags: ['waitingOnUserInput'],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: 20,
+      turnStartedAt: 200,
+      waitingSince: 220,
+      idleConfirmed: false
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+
+    publish(3, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: 10,
+      turnStartedAt: 100,
+      idleConfirmed: false
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+
+    publish(4, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: 30,
+      turnStartedAt: 300,
+      idleConfirmed: false
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running' })
+
+    publish(5, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'idle',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'turn-completed',
+      activeEvidenceSequence: 30,
+      terminalEvidenceSequence: 40,
+      turnStartedAt: 300,
+      terminalAt: 350,
+      idleConfirmed: true
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+
+    publish(6, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: 50,
+      turnStartedAt: 200,
+      idleConfirmed: false
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+
+    publish(7, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: 60,
+      turnStartedAt: 400,
+      idleConfirmed: false
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running' })
+  })
+
+  it('uses real event sequence when a Provider omits comparable Turn timestamps', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'running' })], 1, { providers: { codex: true, claude: false } })
+    })
+    const publish = (generation: number, branch: Record<string, unknown>) => (
+      publishCodexParentEvidenceV7(kernel, generation, [{ key: 'codex-a', complete: true, branches: [branch] }])
+    )
+
+    publish(2, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: 10,
+      turnStartedAt: 0,
+      idleConfirmed: false
+    })
+    publish(3, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'idle',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'turn-completed',
+      activeEvidenceSequence: 10,
+      terminalEvidenceSequence: 20,
+      turnStartedAt: 0,
+      terminalAt: 200,
+      idleConfirmed: true
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+
+    publish(4, {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: 30,
+      turnStartedAt: 0,
+      idleConfirmed: false
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running' })
+  })
+
+  it('merges branch phase, unread and Goal as independent evidence lanes', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'running', unreadKnown: false, unread: false })], 1, {
+        providers: { codex: true, claude: false }
+      })
+    })
+    const publish = (generation: number, branch: Record<string, unknown>) => (
+      publishCodexParentEvidenceV7(kernel, generation, [{ key: 'codex-a', complete: true, branches: [branch] }])
+    )
+    const live = {
+      ref: 'branch-main-anonymous',
+      branchKind: 'main',
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: 10,
+      turnStartedAt: 100,
+      idleConfirmed: false
+    }
+
+    publish(2, {
+      ...live,
+      unreadKnown: true,
+      hasUnreadTurn: true,
+      goalStatus: 'active',
+      goalFreshness: 'fresh',
+      goalEvidenceSequence: 10,
+      goalUpdatedAt: 90
+    })
+    // Complete Host branch rows carry `unreadKnown: false` when this source
+    // has no unread authority. Unknown must abstain instead of erasing the
+    // previously observed unread lane.
+    publish(3, {
+      ...live,
+      activeEvidenceSequence: 20,
+      unreadKnown: false,
+      goalStatus: 'active',
+      goalFreshness: 'fresh',
+      goalEvidenceSequence: 10,
+      goalUpdatedAt: 90
+    })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        phase: 'running',
+        unreadKnown: false,
+        unread: false,
+        observationGeneration: 3
+      })], 2, { providers: { codex: true, claude: false } })
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running', unreadKnown: true, unread: true })
+
+    const terminal = {
+      ...live,
+      status: 'idle',
+      activeFlags: [],
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'turn-completed',
+      activeEvidenceSequence: 20,
+      terminalEvidenceSequence: 30,
+      terminalAt: 150,
+      idleConfirmed: true,
+      goalStatus: 'active',
+      goalFreshness: 'fresh',
+      goalEvidenceSequence: 10,
+      goalUpdatedAt: 90
+    }
+    publish(4, terminal)
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running', unreadKnown: true, unread: true })
+
+    publish(5, {
+      ...terminal,
+      goalStatus: 'complete',
+      goalFreshness: 'fresh',
+      goalEvidenceSequence: 40,
+      goalUpdatedAt: 160
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed', unreadKnown: true, unread: true })
+  })
+
+  it('publishes aggregate semantics once and records an anonymous no-op for equivalent evidence', () => {
+    const records: Array<Record<string, unknown>> = []
+    const kernel = createCompanionTaskKernel({
+      record: (entry: Record<string, unknown>) => records.push(entry),
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'completed', unreadKnown: true, unread: false })], 1, {
+        providers: { codex: true, claude: false }
+      })
+    })
+    const liveBranches = [{
+      ref: 'private-main-ref',
+      branchKind: 'main',
+      unreadKnown: true,
+      hasUnreadTurn: false,
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: 2,
+      turnStartedAt: 200
+    }]
+    const publish = (generation: number, branches: Record<string, unknown>[]) => (
+      publishCodexParentEvidenceV7(kernel, generation, [{ key: 'codex-a', complete: true, branches }])
+    )
+
+    publish(2, liveBranches)
+    const runningRevision = kernel.getPackage().packageRevision
+    publish(3, liveBranches)
+    expect(kernel.getPackage()).toMatchObject({ packageRevision: runningRevision, tasks: [{ phase: 'running' }] })
+    expect(records.filter((entry) => entry.event === 'same-state-no-op').at(-1)).toMatchObject({ outcome: 'ignored' })
+    expect(JSON.stringify(records)).not.toContain('private-main-ref')
+
+    publish(4, [{
+      ...liveBranches[0],
+      status: 'idle',
+      statusAuthority: 'connector',
+      activityEvidence: 'initial-snapshot',
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'turn-completed',
+      terminalEvidenceSequence: 4,
+      terminalAt: 250,
+      idleConfirmed: true
+    }])
+    expect(kernel.getPackage()).toMatchObject({ packageRevision: runningRevision + 1, tasks: [{ phase: 'completed' }] })
+  })
+
+  it('publishes one complete Provider evidence batch as one atomic Kernel revision', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'stopped', idleConfirmed: true })], 1, { providers: { codex: true, claude: false } })
+    })
+    const baselineRevision = kernel.getPackage().packageRevision
+    const publications: number[] = []
+    const stop = kernel.onPackage((value: Record<string, any>) => publications.push(value.packageRevision))
+    const baselinePublicationCount = publications.length
+
+    publishCodexParentEvidenceV7(kernel, 2, [{
+        key: 'codex-a',
+        complete: true,
+        branches: [{
+          ref: 'branch-main-anonymous',
+          status: 'active',
+          statusAuthority: 'app-server-live',
+          activityEvidence: 'activity-event',
+          activeFlags: [],
+          lastTurnStatus: 'inProgress',
+          lastTurnEvidence: 'turn-started',
+          activeEvidenceSequence: 2,
+          terminalEvidenceSequence: 1,
+          idleConfirmed: false
+        }]
+      }])
+
+    expect(kernel.getPackage()).toMatchObject({
+      packageRevision: baselineRevision + 1,
+      tasks: [{ key: 'codex-a', phase: 'running', idleConfirmed: false }]
+    })
+    expect(publications.slice(baselinePublicationCount)).toEqual([baselineRevision + 1])
+    stop()
+  })
+
+  it('rejects one invalid enabled Provider batch atomically without consuming the producer revision', () => {
+    const records: Array<Record<string, any>> = []
+    const kernel = createCompanionTaskKernel({
+      record: (entry: Record<string, any>) => records.push(entry),
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: true } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: true } })
+    const codexStopped = task({ phase: 'stopped', idleConfirmed: true })
+    const claudeCompleted = task({
+      key: 'claude-b',
+      provider: 'claude',
+      kind: 'claude-session',
+      actionAlias: 'claude:session-b',
+      phase: 'completed',
+      idleConfirmed: true
+    })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([codexStopped, claudeCompleted], 1, { providers: { codex: true, claude: true } })
+    })
+    const baseline = kernel.getPackage()
+    const baselineDiagnostics = kernel.diagnostics()
+    const publications: number[] = []
+    const stop = kernel.onPackage((value: Record<string, any>) => publications.push(value.packageRevision))
+    const baselinePublicationCount = publications.length
+
+    const attempt = draft([
+      task({ phase: 'running', phaseRevision: 200, statusEnteredAt: 200, turnStartedAt: 200 }),
+      task({
+        key: 'claude-b',
+        provider: 'claude',
+        kind: 'claude-session',
+        actionAlias: 'claude:session-b',
+        phase: 'running',
+        phaseRevision: 200,
+        statusEnteredAt: 200,
+        turnStartedAt: 200
+      })
+    ], 2, { providers: { codex: true, claude: true }, producer: 'host-evidence' }) as Record<string, any>
+    attempt.evidenceBatches.codex.revision = 'invalid-provider-evidence-batch'
+
+    expect(kernel.publishEvidence(attempt)).toBeNull()
+    expect(kernel.getPackage()).toEqual(baseline)
+    expect(publications).toHaveLength(baselinePublicationCount)
+    expect(kernel.diagnostics()).toMatchObject({
+      topologyRevision: baselineDiagnostics.topologyRevision,
+      openInteractionCount: baselineDiagnostics.openInteractionCount,
+      interactionTombstoneCount: baselineDiagnostics.interactionTombstoneCount
+    })
+    expect(records.filter((entry) => entry.event === 'provider-evidence-batch').at(-1)).toMatchObject({
+      scope: 'task-kernel',
+      event: 'provider-evidence-batch',
+      outcome: 'rejected',
+      code: 'invalid-batch',
+      details: { producer: 'host-evidence' }
+    })
+
+    attempt.evidenceBatches.codex.revision = 'companion-provider-evidence-batch-v3'
+    expect(kernel.publishEvidence(attempt)).not.toBeNull()
+    expect(kernel.getPackage().packageRevision).toBe(baseline.packageRevision + 1)
+    expect(kernel.getPackage().tasks.map((value: Record<string, any>) => [value.key, value.phase]).sort()).toEqual([
+      ['claude-b', 'running'],
+      ['codex-a', 'running']
+    ])
+    expect(publications.slice(baselinePublicationCount)).toEqual([baseline.packageRevision + 1])
+    stop()
+  })

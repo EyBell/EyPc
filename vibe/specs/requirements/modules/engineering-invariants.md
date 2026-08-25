@@ -8,9 +8,10 @@
 
 - 条款正文：[RAW-167 draft](../../260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1)
 - 当前用户确认的唯一性与同步合同：[RAW-178](../../260823/codex-tab-boundary-optimization/raw-requirement.md#L18)
+- 当前 V7 全局体系合同：[RAW-179](../../260824/eypc-v7-global-refactor/raw-requirement.md#L1)
 - 唯一全局当前产品真值：[PRODUCT_REQUIREMENTS](../../PRODUCT_REQUIREMENTS.md#L1)
 - 交付记录：[verify.md](../../260810/1155-install-runtime-diagnostics/verify.md#L1)
-- RAW-167～172 六条工程草案仍为 `proposed`；RAW-177#1 与 RAW-178 系列为用户明确确认的 `active` 不变量。
+- RAW-167～172 六条工程草案仍为 `proposed`；RAW-177#1、RAW-178 系列与 RAW-179 工程条款为用户明确确认的 `active` 不变量。
 
 ## Primary Requirements
 
@@ -26,10 +27,15 @@
 - [RAW-178#2](../invariants-raw-178-clause-002.md#L1) — `active` · 当前产品语义唯一主文档
 - [RAW-178#3](../invariants-raw-178-clause-003.md#L1) — `active` · 可复核证据与验收真实性
 - [RAW-178#4](../invariants-raw-178-clause-004.md#L1) — `active` · 确定性实时漂移门禁
+- [RAW-179](../invariants-raw-179.md#L1) — `active` · V7 全局状态、交互、Tab 与 UI 体系
+- [RAW-179#3](../invariants-raw-179-clause-003.md#L1) — `active` · FeatureModule 与 RuntimeSlice Tab 体系
+- [RAW-179#5](../invariants-raw-179-clause-005.md#L1) — `active` · 有界增量性能合同
+- [RAW-179#7](../invariants-raw-179-clause-007.md#L1) — `active` · 一次性 V7 切换与外部门禁
 
 ## Related Requirements
 
 - [RAW-177#1](../invariants-raw-177-clause-001.md#L1) 提供来源锚点与需求身份的分层基础；RAW-178 在其上增加唯一当前真值与同步门禁，不把来源条款自动升级为产品需求。
+- [RAW-179#1](../shared-raw-179-clause-001.md#L1)、[#2](../shared-raw-179-clause-002.md#L1)、[#4](../interaction-raw-179-clause-004.md#L1) 与 [#6](../interaction-raw-179-clause-006.md#L1) 分别由状态和交互责任模块主拥有，此处只保留父合同关系。
 
 ## Historical Or Migration Sources
 
