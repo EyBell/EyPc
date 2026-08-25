@@ -21,6 +21,7 @@ describe('Claude App version-gated state log', () => {
   it('admits the currently validated Claude App grammar without widening unknown versions', () => {
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.28929.0')).toBe(true)
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.30096.5')).toBe(true)
+    expect(appState.SUPPORTED_APP_VERSIONS.has('1.34493.1')).toBe(true)
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.30097.0')).toBe(false)
   })
 
