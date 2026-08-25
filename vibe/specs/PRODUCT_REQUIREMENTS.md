@@ -17,7 +17,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
 | 需求登记 | 317 leaves / 6 modules / 290 active / 22 superseded / 5 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 70 scoped |
+| 取代关系 | 22 whole / 71 scoped |
 | 原始来源 | 32 documents / 207 ordered / 105 RAW-parent / 102 source-only |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
 | 当前构建产物 | `host-a882f08c486a075f4f3d / renderer-982f123c074a510564df` · `artifact-ready` |
@@ -40,7 +40,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 70
+    "scoped_relations": 71
   },
   "source_anchor_catalog": {
     "documents": 32,
@@ -63,12 +63,12 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "artifact_state": "artifact-ready"
   },
   "content_digests": {
-    "requirement_registry": "e339ab36eac6356279f1e43441bbc7fe8b9387e2879814b95360cb1d30410456",
-    "raw_sources": "4caf60ba914612cd0008eb6816060682bfc4a049c1922dc5bf5cc37bfaedc35d",
-    "source_anchor_catalog": "cf81ddb20a90d2fdc80b6c4a452d554c96255508cec1e7bd2253de05cd0d2374",
-    "product_body": "c138aef4fa2a3c0f7135b28075cfe750119cba167f427b5d48c4ff8b2e5e2551",
-    "architecture": "26e6ad22578dc67daae01a8745f71719553bceb06122ce7ae2ce1466023c3bfd",
-    "runtime_contract": "5cad632abc17337f8b0ce776fd56e334ed1ac43bf6fdcadf3d1dfc7f9d828f7d"
+    "requirement_registry": "9d24179aa750a6ae34ff2b4e3f4092729c0acf9c5a583bc89db9245f144a073f",
+    "raw_sources": "d64df9dd9a88c841fd8b678e7e33d4036965cafd75d3e3824508977847c0bd01",
+    "source_anchor_catalog": "7506266fd37cca6c6836b9de874d57b10b769fcb4538fc9d0d9de93697aa4249",
+    "product_body": "692ccdb6141afd35cfc5ac5359f58b6c82fceb1079af366c8825b6a76575affb",
+    "architecture": "4644d3419163b45aabb43a9f4ede9a7de35aaba391447975ef65df693f3f46f5",
+    "runtime_contract": "20726324ee91d7eb130443ee89848fe344bf3721f794ae2acdafcaf130a405a8"
   }
 }
 ```
@@ -252,11 +252,11 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - RAW-165 separates transport observation from event-time causality. Inventory/read success never mints a newer terminal sequence；stable branch identity survives connector/Desktop/App Server lane changes，and the Kernel merges complete snapshots per branch using comparable Turn epochs so stale/inventory terminal cannot replace newer running or waiting。Parent attention priority is `waiting-approval > waiting-input/Plan > running > Goal > terminal`，Side live authority cannot leak into main，and Host push diagnostics call a proposal accepted only when the final canonical package matches；otherwise it is anonymously superseded。Claude exact completion/focus provides the hot unread edge described above。No new visible phase、60-second hold or higher polling frequency is introduced。
 - RAW-166 makes the same branch gate bidirectional and lane-orthogonal. A later transport batch containing an older live Turn cannot clear newer waiting or reopen a newer terminal；a genuine newer Turn still advances immediately。Phase、unread and Goal merge independently，then the Kernel recomputes all derived branch fields，so a phase event with no unread/Goal observation cannot erase those authorities。Evidence Adapter diagnostics are `state-proposal/proposed` only；Codex and Claude provider events may say `accepted` only after their proposed fields match the committed canonical package，otherwise they say `superseded`。
 - Codex 原生 completed-unread 变化属于进程 Host authority：目录 `fs.watch` 首回调立即读取，已登记状态文件和 rollout decision 文件由 1 秒 `fs.watchFile` StatWatcher 补漏，watcher error 自动重建；Renderer 不持有 phase-only 周期恢复。persisted unread false→true 且任务仍 active 时，对同一匿名 key 定向复核 latest Turn，即使旧证据为 exact active/turn-started 也不能跳过；未读不直接虚构 terminal，更新正向序号仍拒绝迟到终态。私有 Branch Evidence 与同源公开 draft 在 Kernel 一次语义事务中提交，一次 source 变化最多一次 package revision，同值恢复信号零推送。
-- 静默 uTools 入口必须由 Preload 的 `onPluginEnter` 直接向 V7 Command Gateway 提交命令，不依赖 Renderer 挂载或后续 Alt+Tab。完整 Snapshot 即可按根 selector 派发；`unknown/verifying` 是单任务证据状态，不是成员缺口。只有冷启动、重连或明确成员缺口才做所需 Provider 的 tasks-only 预检，失败保留旧 Snapshot 且不从部分集合跳转。普通 `mainHide`、Float 关闭或 Renderer 重建不清进程缓存；真实进程退出后从 Provider 冷证据重建，动态任务状态不持久化。
+- 静默 uTools 入口必须由 Preload 的 `onPluginEnter` 直接向 V7 Command Gateway 提交命令，不依赖 Renderer 挂载或后续 Alt+Tab。完整 Snapshot 即可按根 selector 派发；`unknown/verifying` 是单任务证据状态，不是成员缺口。只有冷启动、重连或明确成员缺口才做所需 Provider 的 tasks-only 预检，失败保留旧 Snapshot 且不从部分集合跳转。普通 `mainHide`、Float 关闭或 Renderer 重建不清进程缓存；真实进程退出后从 Provider 冷证据重建，动态任务状态不持久化。RAW-181 划定唯一拓扑例外：Desktop Side→parent 恢复提示（仅 threadId/parentThreadId/observedAt，上限 200、TTL 48h）有界持久化，重载后据此重新 follow 并走既有定向 latest-Turn 校验；提示本身不产生 running/unread/waiting，严格法定人数清退原样适用且清退同步删除持久化条目。
 - 明确 waiting/active/completed/interrupted 不得被 debounce、quota、环境、完整库存或非任务 unread 阻塞；同 tick 只做 microtask 合并并在下一帧原子展示。Provider observation → Kernel canonical P95 ≤50ms、最大 ≤200ms，Kernel → Main accepted ≤50ms，Kernel → Float applied ACK P95 ≤250ms，回复/取消/执行 → Float 最终状态 P95 ≤300ms。unknown 保持中立并只做有界核验；无法确认的 interrupted/failed 不猜测 waiting。Codex 冷启动/重连冲突只对该任务 single-flight 精读一次 latest Turn。phase 与 unread 独立；同一 completion epoch 的 unread 保留到明确 read receipt 或新 Turn。Main 与 Float 必须应用同一 package revision。
 - 任务库存与所有消费者不得使用产品级固定条数上限：Claude inventory、Kernel、操作、导航、mutation、批量归档均处理完整已接纳集合；Codex `thread/list limit=100` 仅为协议页大小，必须遍历至 cursor 结束并拒绝 cursor loop。数量增长只能影响分页和性能，不得改变卡片、Tab、角标或动作资格。
 - 每次生产/uTools 构建生成确定性 `hostAssetId / rendererAssetId`，并同时验证 Registry、Topology、Snapshot、Command、Subscribe 与 ACK 能力/版本。Main UI、Main Preload、Float UI、Float Preload 任一身份缺失或不一致时必须显示 `reload-required` 并停止任务动作，不得表现为无响应或继续运行旧逻辑。构建只表示 `artifact-ready`；只有真实 uTools 重新接入/安装产物并完成全链握手才表示 `host-loaded`。产品不调用私有 uTools API，也不自动结束插件后台进程。
-- EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶、隐藏、折叠偏好与 alias 是唯一可持久化的任务侧本地配置，live phase、unread、topology 与 cycle 位置都只在进程内。
+- EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶、隐藏、折叠偏好与 alias 是唯一可持久化的任务侧本地配置；live phase、unread 与 cycle 位置只在进程内，topology 仅 RAW-181 的有界 Side→parent 恢复提示（ID+observedAt）可持久化且不携带任何状态。
 - 水球额度映射随启用组合变化：仅 Codex 时与旧版完全一致；仅 Claude 时 Claude 独占整个水球；两者同时启用时外圈进度表示 Codex、球心百分比表示 Claude 并标注来源，Claude 未连接或无读数时百分比回退为 Codex 原样。
 - 展开卡额度区按来源分区展示；Claude 分区在授权关闭、凭据不可用、Retry-After 或其它失败时显示对应安全原因，已有值保留但标为可能过期。
 - 新设置 `claudeAppQuotaAccess` 默认关闭，旧已授权 quota fallback 配置迁移为开启。授权后 macOS 只读 Claude App `oauth:tokenCacheV2` 并以内存方式使用 Claude 专属 Safe Storage Keychain 项；账号/组织无法唯一仲裁时失败关闭，密钥、令牌和缓存明文不进入诊断/Renderer/持久化。
