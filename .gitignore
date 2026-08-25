@@ -24,3 +24,6 @@ yarn-error.log*
 /.fastRequest
 /preload/*.upxs
 _to_delete
+# uTools 开发插件运行时落在仓库根的产物；正式文件在 public/ 下，此处只锁根目录
+/plugin.json
+/runtime-identity.cjs
