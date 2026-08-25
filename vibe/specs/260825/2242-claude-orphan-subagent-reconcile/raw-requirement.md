@@ -32,6 +32,7 @@ Tool: claude · Date: 2026-08-25 · Level: Standard（需求）
 - 带 agent_type（g=other）的「孤儿」stop 5 条全部聚在队列窗口起点 4 分钟内——是轮转截断了其 SubagentStart 的合法 stop，不属错位类。
 - 文档个例完全命中：53836e7e 会话 `SubagentStart(a8fd658…, other)` 14:09:53 后无同 id stop，父 `Stop` 14:15:45 后 5 秒到达无 Start、无类型的 `SubagentStop(a118fc6…)`。
 - 全队列重放对照：按本条规则，仅该一处触发收敛且恰好解钉文档个例；其余 6 条无类型孤儿到达时会话内无未决 active，规则空转（无误伤面）。
+- 上游缺陷已于 2026-08-25 报告：<https://github.com/anthropics/claude-code/issues/89555>（关联上游 #27423 stale 关闭的无 Start 孤儿类与 #82249 开放的 Stop 缺失类）。
 
 ## 规范化需求
 
