@@ -64,7 +64,7 @@ The frozen runtime chain is `task-state-v12 / companion-provider-registry-v1 / c
   ],
   "commit_mode": "verified-milestone",
   "push_mode": "current-message-only",
-  "verification_state": "automated-verified",
+  "verification_state": "planned",
   "push_state": "not-authorized",
   "integration_state": "not-started",
   "next_action": "obtain separate authorization for real uTools Host install and interaction/visual acceptance"
