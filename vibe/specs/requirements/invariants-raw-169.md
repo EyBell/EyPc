@@ -1,20 +1,22 @@
 ---
 id: eypc-req-invariants-raw-169
 qualified_source: SPEC-260810-1155-INSTALL-RUNTIME-DIAGNOSTICS::RAW-169
-status: proposed
+status: active
 domain: engineering-invariants
-authority: agent-transcribed
+authority: user-stated
 ---
 
 # RAW-169 · engineering-invariants
 
-> 正文由来源草案保存：[RAW-167 draft](../260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1)。该草案标注 `pending-user-confirmation`，用户从未确认其转述忠实于原话，因此全部条款状态为 `proposed`。
+> 正文由来源草案保存：[RAW-167 draft](../260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1)。该草案整体标注 `pending-user-confirmation`。**2026-08-25 用户确认本条转述忠实于原话**，本条据此转为 `active` / `user-stated`；同源的 RAW-167/168/170/171/172 未获同样确认，仍为 `proposed`。
 
-Codex 侧按 preload/claude/ 既有标准拆分，以职责边界而非行数为准，每模块保持与 Claude 侧同量级规模。拆分与行为修改不得在同一提交内混合。
+Codex 侧按 `preload/claude/` 既有标准拆分，**以职责边界而非行数为准**。拆分与行为修改不得在同一提交内混合。
+
+> **模块规模与 Claude 侧同量级是参考描述，不是验收判据**（2026-08-25 用户裁决）。规模应当是职责边界划分的结果，不是需要单独对齐的目标；两者冲突时以职责边界为准。原草案把这半句与判据并列，本次裁决明确其非门槛地位，条款其余部分不变。
 
 ## 交付状态
 
-已交付，条款状态仍为 `proposed`。截至 2026-08-25，`preload/index.js` 为 **13,811 行**、`preload/codex/` 有 **31 个模块 / 5,945 行**；相对草案提出时的 15,046 行基线净 **-1,235**。四项判据的当前结论见文末「2026-08-25 现状复核与口径裁决」一节——判据 1、3、4 达成，判据 2 由 2.7 倍差距收窄到均值 1.9 倍但中位仍差 2.5 倍。**唯一剩余阻塞不是实施，而是本文正文的转述忠实性从未经用户确认**（见顶部说明），因此状态不因交付完成而自动转 `accepted`。
+已交付并已接纳（`active`）。截至 2026-08-25，`preload/index.js` 为 **13,811 行**、`preload/codex/` 有 **31 个模块 / 5,945 行**；相对草案提出时的 15,046 行基线净 **-1,235**。四项判据的当前结论见文末「2026-08-25 现状复核与口径裁决」一节——判据 1、3、4 达成，判据 2 由 2.7 倍差距收窄到均值 1.9 倍但中位仍差 2.5 倍。2026-08-25 用户确认转述忠实并裁定判据 2 为参考描述，本条随之转为 `active`。
 
 ## 2026-08-13 实测：原设计不可执行
 
@@ -325,7 +327,8 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 | 「交付状态」段由「未交付 / 15,046 行 / `preload/codex/` 不存在」改写为当前实测 | `change / factual-correction` | `explicit-current-request` | 该段自 08-13 写下后未更新，与其下方二十段交付记录直接矛盾，属事实更正而非条款变更 |
 | D2 路线口径登记为 route 3 | `change / route-selection` | `explicit-current-request` | 条款正文不变；仅记录实施路线，判据不受影响 |
 | 判据 2 的达成结论按新数据重测 | `change / evidence-refresh` | `explicit-current-request` | 条款正文不变；只更新证据 |
-| 条款状态 `proposed` → `accepted` | `blocked` | 未决 | 阻塞项是转述忠实性确认，非实施进度；不在本轮授权范围内 |
+| 条款状态 `proposed` → `active` | `change / status-transition` | `explicit-current-request` | 2026-08-25 用户确认转述忠实，`authority` 同步转 `user-stated` |
+| 正文「每模块保持与 Claude 侧同量级规模」由判据降为参考描述 | `change / criterion-demotion` | `explicit-current-request` | 用户裁定其非验收判据；判据 1「职责边界而非行数」不变，冲突时以其为准 |
 
 ### D2 路线口径：route 3（闭包化改写）
 
@@ -338,7 +341,7 @@ route 1（低耦合纯函数委托桩抽取）已于第十七块耗尽——TS �
 | # | 判据 | 结论 | 实测 |
 | --- | --- | --- | --- |
 | 1 | 职责边界而非行数 | **达成** | 31 个模块均按职责簇或域闭包抽出，无一按行数切分 |
-| 2 | 与 Claude 侧同量级规模 | **部分达成** | 见下 |
+| 2 | 与 Claude 侧同量级规模 | **不适用（参考描述）** | 2026-08-25 用户裁定其非验收判据；现状数据见下，仅作观察记录 |
 | 3 | 不与行为修改混提交 | **达成** | 抽取提交一律只含「模块 + 入口 + 镜像 + 资产清单 + 该模块测试」；V7 融合轮的行为改动单独成提交 |
 | 4 | Codex 侧离开入口 | **达成** | 15,046 → 13,811，净 -1,235；`preload/codex/` 由 0 增至 31 个模块 |
 
@@ -353,7 +356,7 @@ route 1（低耦合纯函数委托桩抽取）已于第十七块耗尽——TS �
 - **中位仍差 2.5 倍**（117 vs 294），与 08-23 实测基本持平——route 3 只增加了大模块，没有合并小模块。
 - **两侧区间已充分重叠**：codex 最大模块 1,074 行已超过 claude 的 883；claude 最小两个模块（27 / 45 行）低于 codex 的最小值 41。按「同一数量级、分布重叠」理解，判据 2 成立；按「中位数对齐」理解，不成立。
 
-**待用户裁决的仍是同一个问题（原 D1）**：判据 2 是硬验收门槛，还是与判据 1 并列的参考性描述。若为前者，需把 31 个模块按职责重新归并到 claude 侧量级；若为后者，条款正文应删去「每模块保持与 Claude 侧同量级规模」半句并重新入册。**实施方不代为择一。**
+**2026-08-25 裁决：判据 2 为参考描述，不是硬验收门槛。** 条款正文已相应改写（见文首），「每模块保持与 Claude 侧同量级规模」由并列判据降为引注说明，31 个模块不需要按职责重新归并。上表数据自此仅作规模分布的观察记录，不再作为达成/未达成的判定依据。
 
 ### 入口现状补充
 
