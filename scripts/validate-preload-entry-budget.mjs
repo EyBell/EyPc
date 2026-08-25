@@ -10,10 +10,13 @@ import { resolve } from 'node:path'
  * during the V7 merge, which pushed the entry up another 345 lines with nobody
  * noticing until a re-measurement. Extraction cannot outrun unguarded growth.
  *
- * The three numbers below are a ratchet, not a target. Crossing one is not
- * forbidden -- it requires editing this file, which turns "the entry grew again"
- * from an invisible drift into a visible, reviewable decision. Lower them after
- * every extraction so the ceiling follows the floor down.
+ * The three numbers below are a strict ratchet, not a target. It fails in both
+ * directions on purpose: growing past a budget requires editing this file, which
+ * turns "the entry grew again" from an invisible drift into a visible decision;
+ * dropping below one *also* fails, because a ceiling left above the floor is a
+ * ratchet with no tension -- the next round of growth would be free up to the
+ * stale number. Both messages name the exact value to write here, so the fix is
+ * one edit either way.
  *
  * Deliberately not a proxy for quality: RAW-169's own accepted clause puts
  * responsibility boundaries above line counts, and module size is explicitly a
@@ -55,13 +58,13 @@ const labels = {
 }
 
 const errors = []
-const improved = []
 for (const key of Object.keys(BUDGET)) {
   if (measured[key] > BUDGET[key]) {
     errors.push(`${labels[key]}: ${measured[key]} exceeds the recorded budget ${BUDGET[key]}`
       + ` (+${measured[key] - BUDGET[key]}); extract before growing, or lower the budget deliberately`)
   } else if (measured[key] < BUDGET[key]) {
-    improved.push(`${labels[key]} ${measured[key]} (budget ${BUDGET[key]}, -${BUDGET[key] - measured[key]})`)
+    errors.push(`${labels[key]}: ${measured[key]} is below the recorded budget ${BUDGET[key]}`
+      + ` (-${BUDGET[key] - measured[key]}); lower the budget to ${measured[key]} so the ratchet keeps its tension`)
   }
 }
 
@@ -73,7 +76,5 @@ if (errors.length) {
   process.stderr.write('preload entry budget validation failed\n')
   process.exit(1)
 }
-
-for (const note of improved) process.stdout.write(`note: below budget -- ${note}; lower the recorded budget\n`)
 
 process.stdout.write('preload entry budget validation passed\n')

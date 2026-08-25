@@ -65,6 +65,17 @@ describe('preload entry budget ratchet', () => {
     expect(result.stderr).toContain('module-level mutable bindings')
   })
 
+  it('fails when the entry drops below a budget so the ceiling follows the floor', () => {
+    // A strict ratchet: a ceiling left above the floor has no tension, because
+    // the next round of growth would be free up to the stale number. The error
+    // names the exact value to write back, so the fix is one edit.
+    const shrunk = readFileSync(entryPath, 'utf8').split('\n').slice(0, -30).join('\n') + '\n'
+    const result = runBudget(shrunk)
+    expect(result.ok).toBe(false)
+    expect(result.stderr).toContain('is below the recorded budget')
+    expect(result.stderr).toContain('keeps its tension')
+  })
+
   it('counts verb-first codex names that a prefix filter would miss', () => {
     // The infix match is the whole point: `installCodexFloatIpc` and friends do
     // not start with the domain word, and a prefix filter undercounts by more
