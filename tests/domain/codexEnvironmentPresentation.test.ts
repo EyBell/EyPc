@@ -6,6 +6,8 @@ import {
 } from '../../src/domain/codex'
 import {
   buildCodexEnvironmentPresentation,
+  codexConnectionStatusLabel,
+  hasStableCodexEnvironment,
   isLegacyCodexEnvironmentPending
 } from '../../src/domain/codexEnvironmentPresentation'
 
@@ -42,7 +44,7 @@ function environment(patch: Partial<CodexEnvironmentSnapshotV1> = {}): CodexEnvi
 describe('Codex environment presentation', () => {
   it.each([
     ['invalid manual path', { checking: true, manualLaunchPathState: 'invalid' }, 'error', '手动 Codex CLI 位置不可用'],
-    ['checking', { checking: true }, 'checking', '正在核查 Codex 环境'],
+    ['checking', { checking: true, checkedAt: 0 }, 'checking', '正在核查 Codex 环境'],
     ['fully connected', { connectionState: 'connected', desktopBridgeState: 'connected' }, 'ready', 'Codex 数据与桌面实时状态已就绪'],
     ['desktop bridge connecting', { connectionState: 'connected', desktopBridgeState: 'connecting' }, 'checking', 'Codex 数据已就绪，正在连接桌面实时状态'],
     ['desktop not running', { connectionState: 'connected', desktopBridgeState: 'not-running' }, 'warning', 'Codex 数据已就绪，但桌面端未运行'],
@@ -115,5 +117,45 @@ describe('Codex environment presentation', () => {
     const help = buildCodexEnvironmentPresentation(environment({ statusFeedMode: 'connector-fallback' }), DECISIONS).launchHelpText
     expect(help).toContain('兼容连接器降级')
     expect(help).toContain('实时任务状态保持未知')
+  })
+
+  it('keeps a previously verified diagnostic while a silent re-inspect is in flight', () => {
+    const snapshot = environment({
+      checking: true,
+      checkedAt: 400,
+      connectionState: 'connected',
+      desktopBridgeState: 'connected',
+      configState: 'loaded'
+    })
+    const presentation = buildCodexEnvironmentPresentation(snapshot, DECISIONS)
+
+    expect(hasStableCodexEnvironment(snapshot)).toBe(true)
+    expect(presentation.busy).toBe(true)
+    expect(presentation.diagnostic).toMatchObject({
+      tone: 'ready',
+      title: 'Codex 数据与桌面实时状态已就绪'
+    })
+  })
+
+  it('still shows checking only on a cold or legacy-pending environment', () => {
+    const cold = buildCodexEnvironmentPresentation(environment({ checking: true, checkedAt: 0 }), DECISIONS)
+    expect(cold.busy).toBe(true)
+    expect(cold.diagnostic.title).toBe('正在核查 Codex 环境')
+    expect(hasStableCodexEnvironment(environment({ checking: true, checkedAt: 0 }))).toBe(false)
+  })
+
+  it('holds the last successful connection label while quota refresh is in flight', () => {
+    expect(codexConnectionStatusLabel({
+      refreshing: true,
+      quotaStatus: 'ok',
+      desktopBridgeState: 'connected',
+      statusFeedMode: 'desktop-live'
+    })).toBe('数据连接器与桌面实时状态已连接')
+    expect(codexConnectionStatusLabel({
+      refreshing: true,
+      quotaStatus: 'loading',
+      desktopBridgeState: 'not-checked',
+      statusFeedMode: 'unavailable'
+    })).toBe('正在读取 Codex App Server')
   })
 })

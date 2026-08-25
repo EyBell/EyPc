@@ -16,11 +16,11 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 315 leaves / 6 modules / 288 active / 22 superseded / 5 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 68 scoped |
-| 原始来源 | 30 documents / 207 ordered / 105 RAW-parent / 102 source-only |
+| 需求登记 | 316 leaves / 6 modules / 289 active / 22 superseded / 5 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 70 scoped |
+| 原始来源 | 31 documents / 207 ordered / 105 RAW-parent / 102 source-only |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-a882f08c486a075f4f3d / renderer-982f123c074a510564df` · `artifact-ready` |
+| 当前构建产物 | `host-53250b3a26d17acaac83 / renderer-062423525f05293b47ce` · `artifact-ready` |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -32,18 +32,18 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 315,
+    "leaves": 316,
     "modules": 6,
     "proposed": 5,
-    "active": 288,
+    "active": 289,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 68
+    "scoped_relations": 70
   },
   "source_anchor_catalog": {
-    "documents": 30,
+    "documents": 31,
     "ordered_anchors": 207,
     "raw_parent_ordered": 105,
     "registered_requirements": 105,
@@ -58,17 +58,17 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-a882f08c486a075f4f3d",
-    "renderer_asset": "renderer-982f123c074a510564df",
+    "host_asset": "host-53250b3a26d17acaac83",
+    "renderer_asset": "renderer-062423525f05293b47ce",
     "artifact_state": "artifact-ready"
   },
   "content_digests": {
-    "requirement_registry": "4c6403f36f999269832904ef6f967c24f27f8be1cc19ab153074a313d071d694",
-    "raw_sources": "980974008e1c10fcc2365096efd598be317895bc3d9f1003761b3b3870b927f1",
-    "source_anchor_catalog": "6c26895524394e44eac2c1243b684e993234cc4d249f290d9b39f7173f20e9ad",
-    "product_body": "b9b13da724e51a6f85224e67c3a601636ad60ef1d316dc560bfb14c89b47267c",
-    "architecture": "16dc42b1010e2c7fb926de47e15b6467a1da363b81835dd0fea4c2a1f93db0c7",
-    "runtime_contract": "20726324ee91d7eb130443ee89848fe344bf3721f794ae2acdafcaf130a405a8"
+    "requirement_registry": "e339ab36eac6356279f1e43441bbc7fe8b9387e2879814b95360cb1d30410456",
+    "raw_sources": "4caf60ba914612cd0008eb6816060682bfc4a049c1922dc5bf5cc37bfaedc35d",
+    "source_anchor_catalog": "cf81ddb20a90d2fdc80b6c4a452d554c96255508cec1e7bd2253de05cd0d2374",
+    "product_body": "43fea662ff49c84c0236475b49b7185f703dc812c5cc9d7c14f5f0b694957255",
+    "architecture": "e1fe86b8235d5ece3f8f21c1262d2c08879e2f9d660704a01d2dcc509af00920",
+    "runtime_contract": "5cad632abc17337f8b0ce776fd56e334ed1ac43bf6fdcadf3d1dfc7f9d828f7d"
   }
 }
 ```
@@ -132,7 +132,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 
 Current increment authorities: [RAW-179 / EyPc V7](260824/eypc-v7-global-refactor/spec.md#L1), [260713/0834-cross-tab-responsive-command-panels/spec.md](260713/0834-cross-tab-responsive-command-panels/spec.md#L1), [260718/0947-quick-jump-center-overlay/spec.md](260718/0947-quick-jump-center-overlay/spec.md#L1), and [260730/2050-global-operation-tooltip-polish/spec.md](260730/2050-global-operation-tooltip-polish/spec.md#L1).
 
-- Main-app operation controls use one product Tooltip owner with 100ms hover/immediate focus activation, accessible name, current shortcut, description or disabled reason, viewport clamping and `aria-describedby`; native `title` is not the only help surface. Buttons, menu/tab/option/treeitem roles, draggable rows, checkbox/radio/number/range controls and selects are covered. Shortcut-shaped title suffixes are split into a `kbd` hint without duplicating the label, ordinary parenthetical text stays intact, legacy `data-tip` details are absorbed by the shared layer, and active tips refresh when control metadata changes. Pointer action, window blur and Quick Jump clear or suspend the layer; page-owned pseudo-tooltips must not compete with it. The independently rendered Codex Float child retains its child-owned hints and does not mount this owner.
+- Main-app operation controls use one product Tooltip owner with 100ms hover/immediate focus activation, accessible name, current shortcut, description or disabled reason, viewport clamping and `aria-describedby`; native `title` is not the only help surface. The tooltip surface is opaque. Buttons, menu/tab/option/treeitem roles, draggable rows, checkbox/radio/number/range controls and selects are covered. Shortcut-shaped title suffixes are split into a `kbd` hint without duplicating the label, ordinary parenthetical text stays intact, legacy `data-tip` details are absorbed by the shared layer, and active tips refresh when control metadata changes. Pointer action, window blur and Quick Jump clear or suspend the layer; page-owned pseudo-tooltips must not compete with it. When a Codex diagnostic cell would clip or overlap, wrap the status text in-flow and raise the opaque tooltip rather than truncating the prompt. The independently rendered Codex Float child retains its child-owned hints and does not mount this owner.
 - `Ctrl/Cmd+ArrowLeft` opens or switches to target detail and `Ctrl/Cmd+ArrowRight` opens or switches to target actions across Ports, full/Quick Favorites, MQTT row targets and Settings command rows. Explicit action arguments outrank an already-open frozen target; invalid explicit targets fail instead of silently falling back.
 - A focused Port outside the current visible selection becomes the single target; a focus that remains inside the selected batch preserves the batch action target.
 - Ordinary text editors keep native arrow/navigation ownership. Settings only claims left/right panel commands from non-editing command rows, and Quick Favorites exposes safe read-only details/actions only.
@@ -270,7 +270,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-global-refactor/spec.md#L1), with [RAW-176 / Companion Task Topology V6](260823/companion-task-topology-v5/spec.md#L1) retained as historical foundation. Codex Tab feature authority and detailed routes: [codex-quota-float](260718/1148-codex-quota-float/spec.md#current-requirement-and-implementation-map)、[Environment Action](260729/1435-codex-environment-actions/spec.md#L1)、[quick task view / RAW-167](260813/1455-companion-quick-task-view/spec.md#L1)、[search compact](260817/0859-float-search-status-compact/spec.md#L1)、[confirmation popover](260817/1618-float-action-hint-popover/spec.md#L1)、[current truth / RAW-178](260823/codex-tab-boundary-optimization/spec.md#L1) and [V7 current delta](260824/eypc-v7-global-refactor/raw-requirement.md#L1). 条款状态与取代关系见 [companion-codex 登记](requirements/modules/companion-codex.md#L1)、[companion-shared 登记](requirements/modules/companion-shared.md#L1) 与 [engineering-invariants 登记](requirements/modules/engineering-invariants.md#L1)。
 
-- Codex is an independently configurable feature Tab. General Settings controls feature enablement; the Codex page owns the 1–365 day inventory window, the `动态` Tab's 1–8760 hour activity filter and quota auto-refresh (`quotaRefreshSeconds`, default 300, integer 1–86400; legacy zero migrates to 300). There is no user-configurable full-inventory period, broad manual refresh or Ctrl+R task refresh. Trusted Provider push is primary; full inventory runs only for cold start, reconnect or an explicit membership gap. Targeted environment detection and Claude task sync remain. The page also owns companion visibility, appearance, readiness, diagnostics and shortcuts; the product title is “额度任务悬浮球” with eyebrow “CODEX · CLAUDE COMPANION”.
+- Codex is an independently configurable feature Tab. General Settings controls feature enablement; the Codex page owns the 1–365 day inventory window, the `动态` Tab's 1–8760 hour activity filter and quota auto-refresh (`quotaRefreshSeconds`, default 300, integer 1–86400; legacy zero migrates to 300). There is no user-configurable full-inventory period, broad manual refresh or Ctrl+R task refresh. Trusted Provider push is primary; full inventory runs only for cold start, reconnect or an explicit membership gap. Targeted environment detection and Claude task sync remain. The page also owns companion visibility, appearance, readiness, diagnostics and shortcuts; the product title is “额度任务悬浮球” with eyebrow “CODEX · CLAUDE COMPANION”. RAW-180: automatic quota/environment reread is silent once a successful snapshot exists—the header pill and runtime diagnostic keep the last stable copy, with busy indicated only on the pill/redetect control; warning/error still replace the copy immediately. The runtime diagnostic is a stacked, wrapping status panel whose title and detail stay visible; remaining `i` help uses the opaque main-app tooltip, not a transparent overlapping bubble. See [RAW-180](260825/codex-config-silent-integration/spec.md#L1).
 - Runtime diagnostics use the independent `eypc-runtime-diagnostics-v3` plain JSONL Host sink. Installation verification defaults to `{enabled:true, level:debug, userConfigured:false}`；manual error/info/debug/off choices persist. Every call supplies an explicit level. One session/seq/operation/trace timeline records Provider、session-only `h:<hex>` taskRef、before/after state、Turn/watermark/revision、cache、navigation/focus、duration/errorCode and action stages. Files rotate at 8 MB/file、64 MB total、14 days；the sink excludes raw task IDs/paths、prompt/Plan/execute instruction/conversation bodies、commands/argv/tool arguments、stdout/stderr、credentials/tokens、stacks and hidden reasoning. The read-only v2/v3 probe filters session/operation/trace/provider/taskRef/scope/event/level/since/tail and aggregates state changes、no-ops、shortcuts、navigation、archive stages and errors.
 - Codex archive is commit-on-native-postcondition. One operationId covers intent、confirmation、preflight、one provider write、server verify-1、Desktop sync、matching native ACK when connected、server verify-2 after at least 300ms、Kernel commit and reconciliation/UI removal. RPC success、one transient list result or dispatched Desktop message cannot hide a card. Failure/indeterminate retains the card、button、alias/cache/shortcut target and notifies all surfaces with the short operationId. Claude/Cloud archive behavior is unchanged in RAW-159.
 - External Codex archive membership is recovered from authoritative App Server inventories, not from archive broadcasts alone. The process Host watches exact `CODEX_HOME/sessions` and `archived_sessions` membership roots; a native rename triggers immediate full-cursor `thread/list archived:false/true` comparison, and one-second Node StatWatchers recover a dropped directory event within 1.25 seconds. A current anonymous key found only in archived inventory emits urgent `archivedKeys` and bypasses ordinary missing-row quarantine；ambiguous/missing membership only requests Codex tasks-only reconciliation. Plugin enter、Desktop IPC reconnect and watcher rebuild force one such tasks-only check。Dirty-thread `thread/read` recovery excludes archived inventory, and this external path cannot bypass the stricter EyPc-owned archive transaction above.

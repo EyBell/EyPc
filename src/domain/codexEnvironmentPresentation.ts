@@ -1,9 +1,11 @@
 import type {
   CodexActivityDecisionDiagnostics,
+  CodexDesktopBridgeState,
   CodexEnvironmentSnapshotV1,
   CodexLaunchCandidate,
   CodexLaunchMode,
   CodexManualLaunchPathState,
+  CodexQuotaSnapshotV1,
   CodexRuntimeSource,
   CodexStatusFeedMode
 } from './codex'
@@ -25,6 +27,8 @@ export interface CodexEnvironmentDiagnosticRow {
 
 export interface CodexEnvironmentPresentation {
   diagnostic: CodexEnvironmentDiagnostic
+  /** True while a re-inspect is in flight; does not replace a stable diagnostic. */
+  busy: boolean
   rows: CodexEnvironmentDiagnosticRow[]
   launchCandidates: CodexLaunchCandidate[]
   launchHelpText: string
@@ -71,11 +75,34 @@ export function isLegacyCodexEnvironmentPending(environment: CodexEnvironmentSna
     && environment.connectionState === 'not-checked'
 }
 
+export function hasStableCodexEnvironment(environment: CodexEnvironmentSnapshotV1): boolean {
+  return environment.checkedAt > 0 && !isLegacyCodexEnvironmentPending(environment)
+}
+
+export function codexConnectionStatusLabel(input: {
+  refreshing: boolean
+  quotaStatus: CodexQuotaSnapshotV1['status']
+  quotaErrorMessage?: string
+  desktopBridgeState: CodexDesktopBridgeState
+  statusFeedMode: CodexStatusFeedMode
+}): string {
+  const holdStable = input.refreshing && input.quotaStatus !== 'loading' && input.quotaStatus !== 'idle'
+  if (input.refreshing && !holdStable) return '正在读取 Codex App Server'
+  if (input.quotaStatus === 'ok' && input.desktopBridgeState === 'connected') return '数据连接器与桌面实时状态已连接'
+  if (input.quotaStatus === 'ok' && input.statusFeedMode === 'connector-fallback') return '数据连接器已连接 · 实时状态待连接'
+  if (input.quotaStatus === 'ok') return 'Codex 数据连接器已连接'
+  if (input.quotaStatus === 'stale') return '连接异常，正在展示上次成功数据'
+  if (input.quotaStatus === 'error') return input.quotaErrorMessage || 'Codex 状态读取失败'
+  if (input.quotaStatus === 'loading' || input.refreshing) return '正在读取 Codex App Server'
+  return '等待首次读取'
+}
+
 function diagnosticFor(environment: CodexEnvironmentSnapshotV1): Omit<CodexEnvironmentDiagnostic, 'role'> {
   if (environment.manualLaunchPathState === 'invalid') {
     return { tone: 'error', title: '手动 Codex CLI 位置不可用', detail: '请改为可执行文件本身，或恢复自动发现。为保护隐私，已保存的位置不会在此页面回显。' }
   }
-  if (environment.checking) {
+  const holdStableWhileChecking = environment.checking && hasStableCodexEnvironment(environment)
+  if (environment.checking && !holdStableWhileChecking) {
     return { tone: 'checking', title: '正在核查 Codex 环境', detail: '正在识别系统、Codex 运行环境、相关进程与本地配置。' }
   }
   if (environment.connectionState === 'connected' && environment.desktopBridgeState === 'connected') {
@@ -190,6 +217,7 @@ export function buildCodexEnvironmentPresentation(
       ...diagnostic,
       role: diagnostic.tone === 'error' || diagnostic.tone === 'warning' ? 'alert' : 'status'
     },
+    busy: environment.checking === true,
     rows: rowsFor(environment, decisions),
     launchCandidates: environment.launchCandidates || [],
     launchHelpText: launchHelpTextFor(environment)

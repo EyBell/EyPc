@@ -24,11 +24,11 @@
   align-items: center;
   gap: 2px 8px;
   width: max-content;
-  max-width: min(360px, calc(100vw - 16px));
+  max-width: min(420px, calc(100vw - 16px));
   padding: 6px 8px;
   border: 1px solid var(--eypc-color-border);
   border-radius: 5px;
-  background: color-mix(in srgb, var(--eypc-color-surface-raised) 98%, transparent);
+  background: var(--eypc-color-surface-raised);
   box-shadow: var(--eypc-shadow-popover);
   color: var(--eypc-color-text);
   font-size: 12px;
@@ -44,7 +44,7 @@
   width: 7px;
   height: 7px;
   border: solid var(--eypc-color-border);
-  background: color-mix(in srgb, var(--eypc-color-surface-raised) 98%, transparent);
+  background: var(--eypc-color-surface-raised);
   transform: translateX(-50%) rotate(45deg);
 }
 
