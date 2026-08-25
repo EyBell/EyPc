@@ -69,7 +69,8 @@ describe('EyPc V7 design system contract', () => {
     expect(codex).toMatch(/\.codex-theme-save \.codex-input \{[^}]*background: var\(--eypc-color-surface-raised\);[^}]*color: var\(--eypc-color-text\);/s)
     expect(codex).toMatch(/\.codex-color-grid input \{[^}]*border: 1px solid var\(--eypc-color-border\);[^}]*background: var\(--eypc-color-surface-raised\);/s)
     expect(codex).toMatch(/\.codex-card-color-fieldset \{[^}]*border: 1px solid var\(--eypc-color-border-soft\);[^}]*background: var\(--eypc-color-surface\);/s)
-    expect(codex).toMatch(/\.codex-color-card-popover \{[^}]*z-index: var\(--eypc-z-popover\);[^}]*background: color-mix\(in srgb, var\(--eypc-color-surface-raised\)/s)
+    // RAW-180 made overlay popovers opaque; the contract pins the solid surface token.
+    expect(codex).toMatch(/\.codex-color-card-popover \{[^}]*z-index: var\(--eypc-z-popover\);[^}]*background: var\(--eypc-color-surface-raised\);/s)
 
     for (const selector of [
       '.codex-color-grid input',
