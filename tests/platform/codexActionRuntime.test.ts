@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import { createRequire } from 'node:module'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import vm from 'node:vm'
@@ -14,16 +14,13 @@ interface ActionRuntimeTestApi {
     public: { mode: string; state: string; version?: string; source?: string; message?: string }
     resolved: { id: string; nodePath: string } | null
   }
-  launch(command: string, projectRoot: string, projectKey: string): { command?: string; args?: string[]; errorCode?: string; message?: string }
   validate(command: string): { argv: string[]; risk: string } | null
   parseToml(text: string): { version: number } | null
   targetId(kind: 'project' | 'task', projectKey: string, executionCwd: string): string
   confirmIsolation(firstTargetId: string, secondTargetId: string): boolean
   targetKeyIsolation(firstTargetId: string, secondTargetId: string): { laneSeparated: boolean; sessionSeparated: boolean }
-  rejectWrongTargetId(): Promise<string>
   lifecycle(isKill: boolean): { sessions: number; vault: number; tokens: number; runStatus: string; signals: Array<[number, string]>; deferredClose: boolean }
   preflightHide(): { deferredDuringPreflight: boolean; deferredAfterPreflight: boolean }
-  windowsStop(): Promise<{ command: string; args: string[]; fallbackSignals: string[] }>
   setManual(projectKey: string, candidateId: string): void
   projectLog(chunks: Array<string | Buffer>, privatePaths: string[]): { text: string; cursor: number }
   retentionScenario(): string[]
@@ -96,18 +93,22 @@ function loadApi(home: string): ActionRuntimeTestApi {
   vm.runInNewContext(`${preload}\n
     globalThis.__actionRuntimeTest = {
       runtime: (projectKey, projectRoot, force) => codexActionRuntimeProjection(projectKey, projectRoot, force),
-      launch: (command, projectRoot, projectKey) => {
-        const validated = validateCodexEnvironmentActionCommandHost(command)
-        return validated
-          ? resolveCodexActionLaunchPlan(validated, projectRoot, projectKey)
-          : { errorCode: 'action-not-allowed', message: 'rejected by exact argv allowlist' }
-      },
-      validate: (command) => validateCodexEnvironmentActionCommandHost(command),
-      parseToml: (text) => parseCodexEnvironmentTomlText(text),
+      // validateCodexEnvironmentActionCommandHost/parseCodexEnvironmentTomlText
+      // moved into preload/codex/environment-bridge.cjs under RAW-169 as
+      // delegate stubs; the module handles they delegated to
+      // (codexCommandValidation/codexEnvironmentToml) stayed in the entry and
+      // are called directly here, unchanged.
+      validate: (command) => codexCommandValidation ? codexCommandValidation.validateCodexEnvironmentActionCommandHost(command) : null,
+      parseToml: (text) => codexEnvironmentToml ? codexEnvironmentToml.parseCodexEnvironmentTomlText(text) : null,
+      // codexEnvironmentTargetId/codexEnvironmentSessionKey stayed in the
+      // entry (codexActionRunnerCatalogProjection calls both directly too).
       targetId: (kind, projectKey, executionCwd) => codexEnvironmentTargetId({ kind, projectKey, executionCwd }),
+      // issueCodexEnvironmentConfirmToken/consumeCodexEnvironmentConfirmToken
+      // moved into the bridge as delegate stubs; codexActionAuthorization
+      // (the module handle they delegated to) stayed in the entry.
       confirmIsolation: (firstTargetId, secondTargetId) => {
-        const token = issueCodexEnvironmentConfirmToken(firstTargetId, 'environment', 'git-push', 'file', 'command')
-        return consumeCodexEnvironmentConfirmToken(token, secondTargetId, 'environment', 'git-push', 'file', 'command')
+        const token = codexActionAuthorization.issueCodexEnvironmentConfirmToken(firstTargetId, 'environment', 'git-push', 'file', 'command')
+        return codexActionAuthorization.consumeCodexEnvironmentConfirmToken(token, secondTargetId, 'environment', 'git-push', 'file', 'command')
       },
       targetKeyIsolation: (firstTargetId, secondTargetId) => {
         const firstSessionKey = codexEnvironmentSessionKey(firstTargetId, 'environment', 'serve')
@@ -118,20 +119,6 @@ function loadApi(home: string): ActionRuntimeTestApi {
         return {
           laneSeparated: firstLane !== secondLane,
           sessionSeparated: !codexEnvironmentActionSessions.has(secondSessionKey)
-        }
-      },
-      rejectWrongTargetId: async () => {
-        const originalResolve = resolveCodexEnvironmentTargetCwd
-        resolveCodexEnvironmentTargetCwd = () => ({
-          kind: 'task', projectKey: 'project', targetId: 'expected-target', configRoot: '/config', executionCwd: '/worktree'
-        })
-        try {
-          const result = await runCodexProjectEnvironmentAction({
-            targetAlias: 'ct_test', targetId: 'wrong-target', projectKey: 'project', environmentId: 'environment', actionId: 'build'
-          })
-          return result.errorCode || ''
-        } finally {
-          resolveCodexEnvironmentTargetCwd = originalResolve
         }
       },
       lifecycle: (isKill) => {
@@ -173,35 +160,28 @@ function loadApi(home: string): ActionRuntimeTestApi {
         syncCodexActionRunnerCatalog({ version: 1, projects: [], loading: false, generatedAt: Date.now() })
         return { deferredDuringPreflight, deferredAfterPreflight: codexActionDeferredServerClose }
       },
-      windowsStop: async () => {
-        const originalPlatform = process.platform
-        const originalRun = run
-        const calls = []
-        const fallbackSignals = []
-        process.platform = 'win32'
-        run = async (command, args) => {
-          calls.push({ command, args })
-          return { ok: false, command, stdout: '', stderr: '', error: 'fixture' }
-        }
-        try {
-          signalCodexEnvironmentSession({ childPid: 432, child: { kill: (signal) => fallbackSignals.push(signal) } })
-          await Promise.resolve()
-          await Promise.resolve()
-          return { command: calls[0]?.command || '', args: calls[0]?.args || [], fallbackSignals }
-        } finally {
-          run = originalRun
-          process.platform = originalPlatform
-        }
-      },
       setManual: (projectKey, candidateId) => {
         codexActionRunnerPreference.runtimeByProject = { [projectKey]: { mode: 'manual', candidateId } }
       },
+      // appendCodexActionRunLog/finalizeCodexActionRunLogs moved into
+      // preload/codex/environment-bridge.cjs under RAW-169, as thin wrappers
+      // over these three functions -- which stayed in the entry as delegate
+      // stubs to preload/codex/log-stream.cjs (the actual redaction
+      // algorithm, injected into the bridge rather than migrated). Calling
+      // them directly here, replicating the wrapper's own decoder-finalize
+      // sequence, exercises that same algorithm.
       projectLog: (chunks, privatePaths) => {
         const originalPersist = persistCodexActionRun
         persistCodexActionRun = () => {}
         const run = { runId: 'test-run', logText: '', logBytes: 0, logLines: 0, cursor: 0 }
-        for (const chunk of chunks) appendCodexActionRunLog(run, 'stdout', chunk, privatePaths)
-        finalizeCodexActionRunLogs(run)
+        const states = new Map()
+        for (const chunk of chunks) {
+          const state = codexActionLogStream(run, 'stdout', privatePaths)
+          states.set('stdout', state)
+          codexActionConsumeDecodedLog(run, 'stdout', state, state.decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk || ''))))
+        }
+        for (const [stream, state] of states) codexActionConsumeDecodedLog(run, stream, state, state.decoder.end(), true)
+        codexActionFlushLog(run)
         persistCodexActionRun = originalPersist
         return { text: run.logText, cursor: run.cursor }
       },
@@ -229,16 +209,16 @@ afterEach(() => {
 })
 
 describe('Codex Action macOS Node runtime', () => {
-  it('resolves NVM default and launches pnpm through its verified Node instead of Electron', () => {
-    const { home, projectRoot, pnpmEntry } = fixture()
+  // Launch-plan resolution (resolveCodexActionLaunchPlan) moved into
+  // preload/codex/environment-bridge.cjs under RAW-169 and is covered there
+  // via dependency injection (tests/platform/codexEnvironmentBridge.test.ts,
+  // __internal.resolveCodexActionLaunchPlan); this NVM-detection assertion
+  // stays here since codexActionRuntimeProjection itself stayed in the entry.
+  it('resolves the NVM default Node for a project through the real fixture filesystem', () => {
+    const { home, projectRoot } = fixture()
     const api = loadApi(home)
     const runtime = api.runtime('project', projectRoot, true)
     expect(runtime.public).toMatchObject({ mode: 'auto', state: 'ready', version: 'v24.14.0', source: 'nvm' })
-
-    const launch = api.launch('pnpm run build', projectRoot, 'project')
-    expect(launch.errorCode).toBeUndefined()
-    expect(launch.command).not.toContain('uTools.app')
-    expect(launch.args).toEqual([realpathSync(pnpmEntry), 'run', 'build'])
   })
 
   it('fails closed for an unavailable project version but permits an explicit verified manual override', () => {
@@ -246,7 +226,6 @@ describe('Codex Action macOS Node runtime', () => {
     writeFileSync(join(projectRoot, '.nvmrc'), '# project node\nv22.22.1\n', 'utf8')
     const api = loadApi(home)
     expect(api.runtime('project', projectRoot, true).public).toMatchObject({ state: 'invalid-project-version' })
-    expect(api.launch('pnpm run build', projectRoot, 'project')).toMatchObject({ errorCode: 'node-runtime-unavailable' })
 
     const candidate = api.runtime('project', projectRoot, true).resolved
     expect(candidate).toBeNull()
@@ -309,9 +288,11 @@ describe('Codex Action macOS Node runtime', () => {
     expect(api.confirmIsolation(first, second)).toBe(false)
   })
 
-  it('rejects a supplied targetId that does not match the resolved Host target', async () => {
-    expect(await loadApi(fixture().home).rejectWrongTargetId()).toBe('target-mismatch')
-  })
+  // Covered via dependency injection in codexEnvironmentBridge.test.ts
+  // ("rejects when the supplied targetId does not match the resolved Host
+  // target") now that runCodexProjectEnvironmentAction lives in the bridge
+  // and no longer accepts the monkey-patched resolveCodexEnvironmentTargetCwd
+  // this test used to reassign.
 
   it('keeps sessions alive on background hide but interrupts, clears and signals them on real process exit', () => {
     const background = loadApi(fixture().home).lifecycle(false)
@@ -326,10 +307,8 @@ describe('Codex Action macOS Node runtime', () => {
     expect(loadApi(fixture().home).preflightHide()).toEqual({ deferredDuringPreflight: false, deferredAfterPreflight: false })
   })
 
-  it('uses controlled Windows taskkill tree stop without force and falls back to child SIGTERM', async () => {
-    const result = await loadApi(fixture().home).windowsStop()
-    expect(result.command).toBe('C:\\Windows\\System32\\taskkill.exe')
-    expect(result.args).toEqual(['/PID', '432', '/T'])
-    expect(result.fallbackSignals).toEqual(['SIGTERM'])
-  })
+  // Covered via dependency injection in codexEnvironmentBridge.test.ts
+  // ("shells out to taskkill on win32 and falls back to child.kill on
+  // failure") now that signalCodexEnvironmentSession lives in the bridge and
+  // is reachable there through __internal.
 })
