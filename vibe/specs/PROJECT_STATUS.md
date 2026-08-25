@@ -16,6 +16,7 @@ This hub routes current implementation, verification gates and durable authoriti
 
 ## Current Snapshot
 
+- RAW-181 Codex Side 子线程重载恢复 is `implementation-landed / focused-automated-verified / host-reload-pending`。裁决采用方向 A：Desktop Side→parent 关系以有界提示持久化（仅 ID+observedAt，上限 200、TTL 48h，新模块 [side-relation-hints.cjs](../../preload/codex/side-relation-hints.cjs#L1)），重载后恢复并复用既有 follow + 定向 latest-Turn 校验；提示不产生状态，法定人数清退原样适用且清退同步删持久化条目。方向 B（Desktop 运行中会话枚举）因协议面无枚举请求证据被否决。C2 一并补齐：库存 Side 行 idle/notLoaded + fresh inProgress turn 判活（缓存 inProgress 强制新鲜重读），诊断记 `recoveredLiveCount`。入口预算棘轮按可见决定回写为 `13,935 / 274 / 151`。聚焦 `tests/platform/codexAppServerBridge.test.ts` `154/154`（含 4 个新用例：持久化往返+重载恢复、提示不虚构、TTL 过期丢弃、idle 行判活+缓存不作数），platform 全量 `36` 文件 `627/627`，preload 镜像 `74` 对、需求登记与真值快照已同步。真实宿主重载验收待用户。Current authority: [spec](260825/codex-side-reload-recovery/spec.md#L1).
 - RAW-180 Codex 配置页静默刷新与运行区整合 is `implementation-landed / focused-automated-verified / host-visual-pending`. 已有成功快照后，例行额度/环境重读不再把顶部药丸和运行诊断改写成「正在读取 / 正在核查」；运行区改为叠层换行并常显主诊断详情；主窗 Tooltip 改为不透明。聚焦 `tests/domain/codexEnvironmentPresentation.test.ts` + `tests/ui/codexCompanion.test.ts` + `tests/ui/operationTooltip.test.ts` 为 `93/93`，需求登记与来源目录已同步。五 Tab 与快捷键不回读仍属 RAW-087。真实运行页目视仍待宿主。Current authority: [spec](260825/codex-config-silent-integration/spec.md#L1).
 - Product: keyboard-first uTools plugin for local PC capability calls.
 - Active lines: port management, file favorites, cross-platform window jump, MQTT workbench, Quick Jump, Codex Companion and settings feature help.
