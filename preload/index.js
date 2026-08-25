@@ -1022,6 +1022,108 @@ try {
   }
 } catch { codexActionRuntimeProjectionModule = null }
 
+// A failed load degrades both probes to "not running": the connection
+// attempts they gate simply do not fire, the same outcome a genuine "not
+// running" verdict produces.
+let codexDesktopProcessProbe = null
+try {
+  let processProbeModule = null
+  try {
+    processProbeModule = require('./codex/desktop-process-probe.cjs')
+  } catch {}
+  if (!processProbeModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        processProbeModule = require(path.join(base, 'codex', 'desktop-process-probe.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof processProbeModule?.createCodexDesktopProcessProbe === 'function') {
+    codexDesktopProcessProbe = processProbeModule.createCodexDesktopProcessProbe({
+      execFile,
+      process,
+      run,
+      record: codexRecord
+    })
+  }
+} catch { codexDesktopProcessProbe = null }
+
+// A failed load can no longer resolve anything under $CODEX_HOME: paths
+// degrade to empty strings (callers already treat an empty path as "nothing
+// found" rather than a claimed location), the roots list degrades to empty,
+// containment checks degrade to `false` (reject rather than guess trust),
+// and rollout candidate resolution degrades to `null` (the same verdict a
+// genuinely missing or untrusted rollout file produces).
+let codexNativeStatePathsModule = null
+try {
+  let nativeStatePathsModule = null
+  try {
+    nativeStatePathsModule = require('./codex/native-state-paths.cjs')
+  } catch {}
+  if (!nativeStatePathsModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        nativeStatePathsModule = require(path.join(base, 'codex', 'native-state-paths.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof nativeStatePathsModule?.createCodexNativeStatePaths === 'function') {
+    codexNativeStatePathsModule = nativeStatePathsModule.createCodexNativeStatePaths({
+      process,
+      path,
+      os,
+      fs
+    })
+  }
+} catch { codexNativeStatePathsModule = null }
+
+
+// A failed load degrades each of the six functions to its own existing
+// "no evidence" answer: shadow activity resolves to `null` (the same value
+// a shadow with no runtime already produces), the sticky/terminal/defer
+// booleans resolve to `false`, and the live sequence resolves to `0` (the
+// same value every early-return branch inside the original function already
+// produces) -- no caller learns a new case.
+let codexDesktopActivityResolution = null
+try {
+  let activityResolutionModule = null
+  try {
+    activityResolutionModule = require('./codex/desktop-activity-resolution.cjs')
+  } catch {}
+  if (!activityResolutionModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        activityResolutionModule = require(path.join(base, 'codex', 'desktop-activity-resolution.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof activityResolutionModule?.createCodexDesktopActivityResolution === 'function') {
+    codexDesktopActivityResolution = activityResolutionModule.createCodexDesktopActivityResolution({
+      timestampMs: codexTimestampMs,
+      validThreadId: validCodexThreadId,
+      isConfirmedTurnEvidence: codexIsConfirmedTurnEvidence,
+      waitingEvidenceVisible: codexWaitingEvidenceVisible,
+      desktopRequestFlag: codexDesktopRequestFlag,
+      desktopIsPlanImplementationRequest: codexDesktopIsPlanImplementationRequest
+    })
+  }
+} catch { codexDesktopActivityResolution = null }
+
 // A failed load degrades to "no special handling": the raw candidate is handed
 // to the OS path lookup, and no proxy is injected. Both are the same answers
 // these modules give when they find nothing, so no caller learns a new case.
@@ -3158,24 +3260,13 @@ function codexMarkConfirmedTerminalEvidence(known, evidence, sequence = codexNex
 }
 
 function codexHasConfirmedTerminalEvidence(known) {
-  return Boolean(known)
-    && ['completed', 'interrupted', 'failed'].includes(known.lastTurnStatus)
-    && codexIsConfirmedTurnEvidence(known.lastTurnEvidence)
+  return codexDesktopActivityResolution ? codexDesktopActivityResolution.codexHasConfirmedTerminalEvidence(known) : false
 }
 
 function codexShouldDeferHydrationActive(bridge, known, parentThreadId, branchThreadId, activity) {
-  if (!codexHasConfirmedTerminalEvidence(known) || activity?.status !== 'active' || activity.activeFlags?.length) return false
-  if (known.appServerLiveActive === true
-    && (!validCodexThreadId(known.appServerLiveBranchThreadId) || known.appServerLiveBranchThreadId === branchThreadId)) return false
-  const shadow = branchThreadId === parentThreadId
-    ? bridge?.shadows?.get(branchThreadId)
-    : bridge?.sideShadows?.get(branchThreadId) || bridge?.shadows?.get(branchThreadId)
-  const desktopActivity = codexDesktopShadowActivity(shadow)
-  const desktopSequence = Number(shadow?.activityEventSequence) || 0
-  const terminalSequence = Number(known.terminalEvidenceSequence) || 0
-  return !(desktopActivity?.status === 'active'
-    && shadow?.activityEvidence === 'activity-event'
-    && desktopSequence > terminalSequence)
+  return codexDesktopActivityResolution
+    ? codexDesktopActivityResolution.codexShouldDeferHydrationActive(bridge, known, parentThreadId, branchThreadId, activity)
+    : false
 }
 
 function codexDeferHydrationActive(bridge, known, parentThreadId, branchThreadId) {
@@ -3274,18 +3365,8 @@ function codexPrivateBranchIdleConfirmed(parentThreadId, branchThreadId, known) 
 }
 
 function codexInventorySnapshotLiveSequence(parentThreadId, branchThreadId, known, shadow) {
-  if (branchThreadId !== parentThreadId || !known || !shadow) return 0
-  const activity = codexDesktopShadowActivity(shadow)
-  if (shadow.activityEvidence !== 'initial-snapshot'
-    || activity?.status !== 'active'
-    || activity.activeFlags.length > 0
-    || known.lastTurnStatus !== 'inProgress') return 0
-  const sequence = Number(known.inventoryTurnEvidenceSequence) || 0
-  const startedAt = codexTimestampMs(known.inventoryTurnStartedAt)
-  return sequence > 0
-    && startedAt > 0
-    && startedAt === codexTimestampMs(known.lastTurnStartedAt)
-    ? sequence
+  return codexDesktopActivityResolution
+    ? codexDesktopActivityResolution.codexInventorySnapshotLiveSequence(parentThreadId, branchThreadId, known, shadow)
     : 0
 }
 
@@ -3814,29 +3895,9 @@ function codexDesktopRuntimeWaitingSequences(flags, previousFlags = [], previous
  * method payloads and rollout correlations never cross the preload boundary.
  */
 function codexReduceWaitingEdge(input = {}) {
-  const active = input.active !== false
-  const flags = active
-    ? [...new Set((Array.isArray(input.flags) ? input.flags : [])
-      .filter((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval'))]
-    : []
-  const previousFlags = [...new Set((Array.isArray(input.previousFlags) ? input.previousFlags : [])
-    .filter((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval'))]
-  const signature = flags.slice().sort().join('|')
-  const previousSignature = previousFlags.slice().sort().join('|')
-  const waiting = flags.length > 0
-  const previousWaitingSince = codexTimestampMs(input.previousWaitingSince)
-  const evidenceAt = codexTimestampMs(input.evidenceAt)
-  const waitingSince = waiting
-    ? signature === previousSignature && previousWaitingSince
-      ? previousWaitingSince
-      : evidenceAt || previousWaitingSince || 0
-    : 0
-  return {
-    flags,
-    waiting,
-    waitingSince,
-    changed: signature !== previousSignature
-  }
+  return codexDesktopActivityResolution
+    ? codexDesktopActivityResolution.codexReduceWaitingEdge(input)
+    : { flags: [], waiting: false, waitingSince: 0, changed: false }
 }
 
 function codexDesktopPersistedUnread(known) {
@@ -4110,65 +4171,11 @@ function codexDesktopShadowFromSnapshot(change, previousShadow = null, waitingSt
 }
 
 function codexDesktopShadowActivity(shadow) {
-  if (!shadow?.runtime) return null
-  const waitingState = shadow.waitingState || null
-  const activeFlags = new Set()
-  const visibleRuntimeFlags = []
-  for (const flag of shadow.runtime.activeFlags || []) {
-    if (!codexWaitingEvidenceVisible(waitingState, flag, shadow.runtimeWaitingSequences?.[flag])) continue
-    activeFlags.add(flag)
-    visibleRuntimeFlags.push(flag)
-  }
-  let hasPlanImplementationRequest = false
-  let hasOtherWaitingRequest = false
-  let requestWaitingSince = 0
-  for (const request of shadow.requests || []) {
-    const flag = codexDesktopRequestFlag(request)
-    const visible = flag && codexWaitingEvidenceVisible(waitingState, flag, request.observedSequence)
-    if (visible) activeFlags.add(flag)
-    if (visible) requestWaitingSince = Math.max(
-      requestWaitingSince,
-      codexTimestampMs(request.startedAt) || codexTimestampMs(request.observedAt)
-    )
-    if (visible && codexDesktopIsPlanImplementationRequest(request)) hasPlanImplementationRequest = true
-    else if (visible) hasOtherWaitingRequest = true
-  }
-  // Desktop keeps unresolved requests in conversationState.requests. A plan
-  // implementation request is created only after the Plan turn is complete,
-  // so it is authoritative user-waiting evidence even if runtime status has
-  // already moved to idle in the same patch batch.
-  const waitingEdge = codexReduceWaitingEdge({
-    flags: [...activeFlags],
-    previousFlags: visibleRuntimeFlags,
-    previousWaitingSince: requestWaitingSince ? 0 : shadow.runtimeWaitingSince,
-    evidenceAt: requestWaitingSince
-  })
-  const status = waitingEdge.waiting
-    ? 'active'
-    : shadow.suppressUncorroboratedActive === true && shadow.runtime.type === 'active'
-      ? 'notLoaded'
-      : shadow.runtime.type
-  const desktopActiveSince = status === 'active' ? codexTimestampMs(shadow.desktopActiveSince) : 0
-  const waitingSince = status === 'active' && waitingEdge.waiting
-    ? waitingEdge.waitingSince || desktopActiveSince
-    : 0
-  const planImplementationOnly = status === 'active'
-    && hasPlanImplementationRequest
-    && !hasOtherWaitingRequest
-    && !activeFlags.has('waitingOnApproval')
-  return {
-    status,
-    activeFlags: status === 'active' ? waitingEdge.flags : [],
-    ...(planImplementationOnly ? { planImplementationOnly: true } : {}),
-    ...(waitingSince ? { waitingSince } : {}),
-    ...(desktopActiveSince ? { desktopActiveSince } : {})
-  }
+  return codexDesktopActivityResolution ? codexDesktopActivityResolution.codexDesktopShadowActivity(shadow) : null
 }
 
 function codexDesktopHasStickyPendingRequest(shadow) {
-  const activity = codexDesktopShadowActivity(shadow)
-  return activity?.status === 'active'
-    && activity.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+  return codexDesktopActivityResolution ? codexDesktopActivityResolution.codexDesktopHasStickyPendingRequest(shadow) : false
 }
 
 function codexRecordDesktopShadowInventoryBaseline(shadow, known) {
@@ -7025,11 +7032,7 @@ function codexInventoryMembershipEnabled() {
 }
 
 function codexInventoryMembershipRoots() {
-  const { codexHome } = codexNativeStatePaths()
-  return [
-    path.join(codexHome, 'sessions'),
-    path.join(codexHome, 'archived_sessions')
-  ]
+  return codexNativeStatePathsModule ? codexNativeStatePathsModule.codexInventoryMembershipRoots() : []
 }
 
 function codexForgetExternallyArchivedThread(threadId, expectedKey = '') {
@@ -8355,11 +8358,9 @@ function codexNormalizeNativeRoot(value) {
 }
 
 function codexNativeStatePaths() {
-  const codexHome = typeof process.env.CODEX_HOME === 'string' && process.env.CODEX_HOME.trim()
-    ? path.resolve(process.env.CODEX_HOME)
-    : path.join(os.homedir(), '.codex')
-  const primary = path.join(codexHome, '.codex-global-state.json')
-  return { codexHome, primary, backup: `${primary}.bak` }
+  return codexNativeStatePathsModule
+    ? codexNativeStatePathsModule.codexNativeStatePaths()
+    : { codexHome: '', primary: '', backup: '' }
 }
 
 function readCodexNativeRegistry() {
@@ -8415,23 +8416,11 @@ function codexRolloutRuntimeStateText(text) {
 }
 
 function codexPathInside(root, candidate) {
-  const relative = path.relative(root, candidate)
-  return relative === '' || Boolean(relative && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+  return codexNativeStatePathsModule ? codexNativeStatePathsModule.codexPathInside(root, candidate) : false
 }
 
 function codexThreadRolloutCandidate(thread) {
-  if (!thread || typeof thread.path !== 'string') return null
-  const { codexHome } = codexNativeStatePaths()
-  try {
-    const sessionsRoot = fs.realpathSync(path.join(codexHome, 'sessions'))
-    const candidate = fs.realpathSync(thread.path)
-    if (!codexPathInside(sessionsRoot, candidate)) return null
-    const stat = fs.statSync(candidate)
-    if (!stat?.isFile?.() || !Number.isFinite(stat.size) || stat.size <= 0) return null
-    return { candidate, stat }
-  } catch {
-    return null
-  }
+  return codexNativeStatePathsModule ? codexNativeStatePathsModule.codexThreadRolloutCandidate(thread) : null
 }
 
 function codexReadRolloutTail(candidate, stat, maximumBytes) {
@@ -9038,36 +9027,13 @@ function readCodexNativePrimaryState() {
 }
 
 function codexProbeExactProcess(command, args, noMatchCode = 1) {
-  return new Promise((resolve, reject) => {
-    execFile(command, args, { windowsHide: true, timeout: 3_000 }, (error, stdout) => {
-      if (!error) {
-        resolve(Boolean(String(stdout || '').trim()))
-        return
-      }
-      const code = codexRecord(error).code
-      if (code === noMatchCode || String(code) === String(noMatchCode)) {
-        resolve(false)
-        return
-      }
-      reject(error)
-    })
-  })
+  return codexDesktopProcessProbe
+    ? codexDesktopProcessProbe.codexProbeExactProcess(command, args, noMatchCode)
+    : Promise.resolve(false)
 }
 
 async function codexDesktopIsRunning() {
-  if (process.platform === 'darwin' || process.platform === 'linux') {
-    for (const executable of ['Codex', 'ChatGPT']) {
-      if (await codexProbeExactProcess('/usr/bin/pgrep', ['-x', executable])) return true
-    }
-    return false
-  }
-  if (process.platform === 'win32') {
-    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
-    const result = await run(`${systemRoot}\\System32\\tasklist.exe`, ['/NH', '/FO', 'CSV'])
-    if (!result.ok && !result.stdout) throw new Error(result.error || 'Codex desktop process check failed')
-    return /"(?:ChatGPT|Codex)\.exe"/i.test(result.stdout)
-  }
-  throw new Error('Codex desktop process check is unsupported')
+  return codexDesktopProcessProbe ? codexDesktopProcessProbe.codexDesktopIsRunning() : false
 }
 
 function codexWriteSyncedTemp(target, data, mode) {
