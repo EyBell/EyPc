@@ -20,7 +20,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 取代关系 | 22 whole / 68 scoped |
 | 原始来源 | 30 documents / 207 ordered / 105 RAW-parent / 102 source-only |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-cb0294e803978c67b881 / renderer-bf96c22c752c95dd2d6b` · `artifact-ready` |
+| 当前构建产物 | `host-cb0294e803978c67b881 / renderer-6817c1e4fe6fd2808739` · `artifact-ready` |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -59,7 +59,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
     "host_asset": "host-cb0294e803978c67b881",
-    "renderer_asset": "renderer-bf96c22c752c95dd2d6b",
+    "renderer_asset": "renderer-6817c1e4fe6fd2808739",
     "artifact_state": "artifact-ready"
   },
   "content_digests": {
@@ -68,7 +68,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "source_anchor_catalog": "6c26895524394e44eac2c1243b684e993234cc4d249f290d9b39f7173f20e9ad",
     "product_body": "b9b13da724e51a6f85224e67c3a601636ad60ef1d316dc560bfb14c89b47267c",
     "architecture": "16dc42b1010e2c7fb926de47e15b6467a1da363b81835dd0fea4c2a1f93db0c7",
-    "runtime_contract": "2a6968f195ac85aff1cbd28e837cf89689c90d83a29dea4fd7dca9c317ad35bb"
+    "runtime_contract": "469dcdfd2f44afae587e9412e84cdb8fca5bf95711d04ea488865ed60827a773"
   }
 }
 ```
