@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import * as pathModule from 'node:path'
@@ -8496,8 +8496,12 @@ draft: v7EvidenceDraft({
     const removal = preload.slice(preload.indexOf('async function removeCodexProject'), preload.indexOf('async function openCodexThread'))
 
     expect(preload).toContain('removeProject: (...args) => runtimeIdentityCompatible ? removeCodexProject(...args)')
-    expect(preload).toContain("for (const executable of ['Codex', 'ChatGPT'])")
-    expect(preload).toContain('(?:ChatGPT|Codex)\\.exe')
+    // The running-process check ('Codex'/'ChatGPT' executable probing) moved
+    // into preload/codex/desktop-process-probe.cjs under RAW-169's route-1
+    // extraction; the entry now only holds a delegate stub.
+    const desktopProcessProbe = readFileSync(resolve(process.cwd(), 'preload/codex/desktop-process-probe.cjs'), 'utf8')
+    expect(desktopProcessProbe).toContain("for (const executable of ['Codex', 'ChatGPT'])")
+    expect(desktopProcessProbe).toContain('(?:ChatGPT|Codex)\\.exe')
     expect(removal).toContain("return failed('codex-running'")
     expect(removal).toContain("return failed('stale-source'")
     expect(removal).toContain("return failed('unsupported-schema'")
