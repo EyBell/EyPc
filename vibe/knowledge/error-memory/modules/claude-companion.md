@@ -21,6 +21,8 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 - [Metadata activity is not completion evidence](../claude-metadata-activity-is-not-completion-evidence.md#L1)
 - [Metadata archive does not prove native sidebar convergence](../claude-metadata-archive-does-not-prove-native-sidebar-convergence.md#L1)
 - [New phase must outrank previous cache](../claude-new-phase-must-outrank-previous-cache.md#L1)
+- [Unread decay blocked by version gate and minute flush](../claude-unread-decay-blocked-by-version-gate-and-minute-flush.md#L1)
+- [Orphan active subagent pins family running](../claude-orphan-active-subagent-pins-family-running.md#L1)
 - [Readiness must not depend on an unneeded capability](../claude-readiness-gated-on-unneeded-capability.md#L1)
 - [Session family、open route and state authority are distinct](../claude-session-family-open-route-and-state-authority-conflation.md#L1)
 
@@ -28,6 +30,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 
 - [Independent authorities must not share full refresh](../independent-authorities-coupled-by-full-refresh.md#L1)
 - [Watcher callback latency is not publication latency](../watcher-callback-latency-is-not-end-to-end-publication-latency.md#L1)
+- [Settings telemetry must inspect on start](../settings-telemetry-must-inspect-on-start.md#L1)
 
 ## Historical Or Migration Sources
 

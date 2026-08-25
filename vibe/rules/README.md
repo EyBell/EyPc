@@ -18,6 +18,7 @@ design-preference-gate: accepted
 
 ## Project Rules
 
+- Git worktree tasks follow the CodeNote [worktree lane layout](../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Skills/global/manage-worktree-task/references/worktree-lane-layout.md#L1): branch `<lane>/yyMMdd-<functional-core>`, path `EyPc-worktrees/{lane}/{yyMMdd-<functional-core>}/`, same-round branch+worktree bootstrap, mandatory closeout ask (cleanup / park / continue), index-only batch sync unless the current message explicitly authorizes merge/rebase. Historical paths such as `EyPc-worktrees/260824-...` without a `{lane}/` segment remain adoptable; do not bulk-rename live worktrees.
 - EyPc is a uTools plugin, not a standalone Electron app.
 - Use Vue 3 + TypeScript + Vite for the UI and runtime.
 - Reusable uTools host/preload/window/HMR/packaging/Esc/`mainHide`/hotkey contracts and failure usage are owned by the CodeNote [uTools plugin development module](../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/README.md#L1). EyPc does not maintain a second full technical archive; project tasks keep only raw/verify evidence and thin local pointers.

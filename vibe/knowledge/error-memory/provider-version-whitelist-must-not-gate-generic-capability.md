@@ -58,3 +58,4 @@ tags:
 | 日期 | 任务 | 触发 | 失败路线 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-21 | 归档统一为状态门禁 | 用户报 Claude/Cursor 归档全部被拒 | Claude 版本白名单硬闸 + Cursor 投影写死不可归档 | 拆白名单、Cursor 落地写库归档、门禁改状态筛选 | verified |
+| 2026-08-25 | 状态消退慢核验 | 用户报 Claude 已完成/未读消失特别慢 | 同一白名单滞后（1.34493.1 未入 `SUPPORTED_APP_VERSIONS`）令 app-log 热未读快清车道熄火，落到 LevelDB 分钟刷盘地板；属证据质量门的合法形态，症状换成延迟而非拒绝 | 诊断链沉淀至 [claude-unread-decay-blocked-by-version-gate-and-minute-flush](claude-unread-decay-blocked-by-version-gate-and-minute-flush.md#L1)，扩白名单为 candidate 路线 | verified |
