@@ -232,12 +232,19 @@ for (const marker of [
   'EXECUTE_PLAN_PROMPT_V1',
   "requestCodexRpc('collaborationMode/list'",
   "requestCodexRpc('thread/resume'",
-  "requestCodexRpc('turn/start'",
+  "requestCodexRpc('turn/start'"
+]) {
+  assert(canonicalMainPreload.includes(marker), `RAW-160 main preload contract is missing: ${marker}`)
+}
+// task-package-ack / stage-applied / requestCodexFloatRecreate moved into
+// preload/codex/float-bridge.cjs under RAW-169's route-3 closure rewrite.
+const floatBridgeSource = preloadModuleSources.get('codex/float-bridge.cjs') || ''
+for (const marker of [
   'task-package-ack',
   "stage === 'applied'",
   'requestCodexFloatRecreate'
 ]) {
-  assert(canonicalMainPreload.includes(marker), `RAW-160 main preload contract is missing: ${marker}`)
+  assert(floatBridgeSource.includes(marker), `RAW-160 float bridge contract is missing: ${marker}`)
 }
 const claudeAppState = claudeAppStateSource
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
