@@ -2,8 +2,8 @@
 
 spec_id: `SPEC-260824-EYPC-V7-GLOBAL-REFACTOR`
 spec_revision: `2`
-status: `implementation-landed / automated-verified / artifact-ready / host-unverified`
-updated: `2026-08-24`
+status: `implementation-landed / automated-verified / artifact-ready / integrated / host-unverified`
+updated: `2026-08-25`
 
 ## Execution Authority
 
@@ -58,16 +58,16 @@ The frozen runtime chain is `task-state-v12 / companion-provider-registry-v1 / c
       "base_sha": "6e1d6e3704e628b4d1fa5c7fa845403f39cbb0ff",
       "worktree_branch": "codex/260824-eypc-v7-global-refactor",
       "task_owner": "vibe/specs/260824/eypc-v7-global-refactor/spec.md",
-      "head": "6e1d6e3704e628b4d1fa5c7fa845403f39cbb0ff",
+      "head": "3ca704314b506945745551c740b2f0c53feccb06",
       "upstream": null
     }
   ],
   "commit_mode": "verified-milestone",
   "push_mode": "current-message-only",
-  "verification_state": "planned",
+  "verification_state": "verified-commit",
   "push_state": "not-authorized",
-  "integration_state": "not-started",
-  "next_action": "obtain separate authorization for real uTools Host install and interaction/visual acceptance"
+  "integration_state": "integrated",
+  "next_action": "obtain separate authorization for target-branch push and real uTools Host install/interaction/visual acceptance"
 }
 ```
 
