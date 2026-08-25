@@ -4,6 +4,8 @@ Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 
 Repository-owned entry for Claude Code. **Mirror of [AGENTS.md](AGENTS.md#L1)** — that file is the canonical adapter body; keep this one synchronized with it and change both together. Neither restates the CodeNote master.
 
+> **Mirror scope.** «Both together» covers the adapter body only — the read-first list, hard constraints and orientation. Host- or environment-specific sections live in `AGENTS.md` alone and are deliberately absent here; a divergence limited to such a section is not drift. `## Cursor Cloud specific instructions` is the current one.
+
 > A global SessionStart hook may also inject `AGENTS.md`. That is convenience, not discovery: it travels with the machine, not this repository. This file is what makes the repo self-sufficient for Claude Code; when both arrive, treat them as one authority, not two.
 
 Read first:
