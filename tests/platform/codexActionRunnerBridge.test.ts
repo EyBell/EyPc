@@ -41,8 +41,12 @@ describe('Codex Action Runner host bridge contract', () => {
     expect(supervisor).toContain('validateCodexEnvironmentActionCommandHost(action.command)')
     expect(supervisor).toContain('resolveCodexActionLaunchPlan(hostAction.validatedCommand, resolved.executionCwd, resolved.projectKey)')
     expect(supervisor).toContain('path.isAbsolute(candidate)')
-    expect(supervisor).toContain('codexActionNvmRoots()')
-    expect(supervisor).toContain("codexActionReadNvmAlias(root, 'default')")
+    // codexActionRuntimeProjection's real NVM-default-alias resolution loop
+    // moved into preload/codex/action-runtime-projection.cjs, where the
+    // dependency-injected locals drop the codexAction prefix (nvmRoots,
+    // readNvmAlias) -- the entry keeps only thin delegate stubs.
+    expect(supervisor).toContain('nvmRoots()')
+    expect(supervisor).toContain("readNvmAlias(root, 'default')")
     expect(supervisor).toContain('runtimeByProject')
     expect(supervisor).toContain('shell: false')
     expect(supervisor).not.toContain('shell: true')
@@ -64,9 +68,19 @@ describe('Codex Action Runner host bridge contract', () => {
     expect(supervisor).toContain("require('node:string_decoder')")
     expect(supervisor).toContain('finalizeCodexActionRunLogs(run)')
     expect(supervisor).toContain("stdio: ['ignore', 'pipe', 'pipe']")
-    const createRun = supervisor.slice(supervisor.indexOf('function createCodexActionRun'), supervisor.indexOf('function recordCodexActionRestartFailure'))
+    // 'function createCodexActionRun' also prefix-matches
+    // 'function createCodexActionRunner' (the Action Runner window opener,
+    // which legitimately calls pushCodexActionRunnerSnapshot) -- the '(' is
+    // required so indexOf can't fall through to that unrelated match now
+    // that the real createCodexActionRun lives in environment-bridge.cjs.
+    const createRun = supervisor.slice(supervisor.indexOf('function createCodexActionRun('), supervisor.indexOf('function recordCodexActionRestartFailure'))
     expect(createRun).not.toContain('pushCodexActionRunnerSnapshot')
-    const execution = supervisor.slice(supervisor.indexOf('async function runCodexProjectEnvironmentAction'), supervisor.indexOf('function codexActionRunnerCatalogProjection'))
+    // codexActionRunnerCatalogProjection stayed in preload/index.js while
+    // runCodexProjectEnvironmentAction moved into environment-bridge.cjs
+    // (appended after the entry slice), so it can no longer bound this
+    // region -- the bridge's own __internal escape hatch, which textually
+    // follows every function in the file, does instead.
+    const execution = supervisor.slice(supervisor.indexOf('async function runCodexProjectEnvironmentAction'), supervisor.indexOf('__internal: {'))
     expect(execution.indexOf('codexEnvironmentActionSessions.set(sessionKey, session)')).toBeLessThan(execution.indexOf('pushCodexActionRunnerSnapshot(session.message)'))
   })
 

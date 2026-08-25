@@ -2145,8 +2145,11 @@ describe('phase sets and lane units stay single-owner', () => {
       const body = source.slice(at, source.indexOf('}', at))
       return [...body.matchAll(/'(ok|started|running|stopping|confirm-required|rejected|failed)'/g)].map((m) => m[1]).sort()
     }
-    expect(outcomes(domain, 'export function isCodexActionStartAccepted(')).toEqual(outcomes(hostSource, 'function codexActionStartAccepted('))
-    for (const [file, source] of [['preload/index.js', hostSource], ['src/runtime/codexController.ts', controller]] as const) {
+    // codexActionStartAccepted moved into preload/codex/environment-bridge.cjs
+    // under RAW-169, alongside the run-lifecycle logic that calls it.
+    const environmentBridge = readFileSync(resolve(process.cwd(), 'preload/codex/environment-bridge.cjs'), 'utf8')
+    expect(outcomes(domain, 'export function isCodexActionStartAccepted(')).toEqual(outcomes(environmentBridge, 'function codexActionStartAccepted('))
+    for (const [file, source] of [['preload/index.js', hostSource], ['preload/codex/environment-bridge.cjs', environmentBridge], ['src/runtime/codexController.ts', controller]] as const) {
       expect(source, file).not.toMatch(/\['ok', 'started', 'running', 'stopping'\]/)
     }
   })
