@@ -1117,6 +1117,37 @@ try {
   }
 } catch { codexDesktopActivityResolution = null }
 
+
+// A failed load degrades to the bare minimum safe fields (`key` plus an
+// `unavailable` unread authority) rather than a partial passthrough: this is
+// an allowlist gate between an internal record and the renderer, so an
+// unvalidated field must never leak through just because the validator
+// could not be loaded.
+let codexActivityPublicProjection = null
+try {
+  let activityProjectionModule = null
+  try {
+    activityProjectionModule = require('./codex/activity-public-projection.cjs')
+  } catch {}
+  if (!activityProjectionModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        activityProjectionModule = require(path.join(base, 'codex', 'activity-public-projection.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof activityProjectionModule?.createCodexActivityPublicProjection === 'function') {
+    codexActivityPublicProjection = activityProjectionModule.createCodexActivityPublicProjection({
+      record: codexRecord,
+      timestampMs: codexTimestampMs
+    })
+  }
+} catch { codexActivityPublicProjection = null }
 // A failed load degrades to "no special handling": the raw candidate is handed
 // to the OS path lookup, and no proxy is injected. Both are the same answers
 // these modules give when they find nothing, so no caller learns a new case.
@@ -6835,90 +6866,9 @@ function sanitizeCodexActivityStatus(value) {
 }
 
 function codexActivityPublicEntry(value) {
+  if (codexActivityPublicProjection) return codexActivityPublicProjection.codexActivityPublicEntry(value)
   const source = codexRecord(value)
-  const minimalMembership = source.minimalMembership === true
-  const readStateOnly = source.readStateOnly === true
-  const status = ['active', 'idle', 'notLoaded', 'systemError'].includes(source.status) ? source.status : undefined
-  const activeFlags = status === 'active' && Array.isArray(source.activeFlags)
-    ? [...new Set(source.activeFlags.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput'))]
-    : []
-  const statusAuthority = ['desktop-live', 'app-server-live', 'persisted-decision', 'connector', 'unavailable'].includes(source.statusAuthority)
-    ? source.statusAuthority
-    : 'unavailable'
-  const activityEvidence = ['connector', 'initial-snapshot', 'activity-event'].includes(source.activityEvidence)
-    ? source.activityEvidence
-    : undefined
-  const activityRevision = Number.isInteger(source.activityRevision) && source.activityRevision >= 0
-    ? source.activityRevision
-    : undefined
-  const unreadAuthority = ['desktop-live', 'desktop-persisted', 'unavailable'].includes(source.unreadAuthority)
-    ? source.unreadAuthority
-    : 'unavailable'
-  const lastTurnStatus = ['completed', 'interrupted', 'failed', 'inProgress'].includes(source.lastTurnStatus)
-    ? source.lastTurnStatus
-    : undefined
-  const lastTurnStartedAt = codexTimestampMs(source.lastTurnStartedAt)
-  const lastTurnCompletedAt = lastTurnStatus === 'completed' ? codexTimestampMs(source.lastTurnCompletedAt) : 0
-  const desktopActiveSince = status === 'active' && statusAuthority === 'desktop-live'
-    ? codexTimestampMs(source.desktopActiveSince)
-    : 0
-  const waitingSince = status === 'active'
-    && activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
-    ? codexTimestampMs(source.waitingSince)
-    : 0
-  const lastTurnEvidence = ['inventory', 'turn-started', 'turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(source.lastTurnEvidence)
-    ? source.lastTurnEvidence
-    : undefined
-  const activeEvidenceSequence = Number.isInteger(source.activeEvidenceSequence) && source.activeEvidenceSequence > 0
-    ? source.activeEvidenceSequence
-    : undefined
-  const terminalEvidenceSequence = Number.isInteger(source.terminalEvidenceSequence) && source.terminalEvidenceSequence > 0
-    ? source.terminalEvidenceSequence
-    : undefined
-  const planLifecycleState = source.planLifecycleState === 'ready' || source.planLifecycleState === 'cleared'
-    ? source.planLifecycleState
-    : source.planReady === true || source.planImplementationOnly === true ? 'ready' : 'unknown'
-  const planClearReason = planLifecycleState === 'cleared'
-    && ['cancel', 'execution-start', 'archive', 'removal'].includes(source.planClearReason)
-    ? source.planClearReason
-    : ''
-  return {
-    key: typeof source.key === 'string' ? source.key : '',
-    ...(minimalMembership && typeof source.actionAlias === 'string' ? { actionAlias: source.actionAlias } : {}),
-    ...(minimalMembership && typeof source.displayName === 'string' ? { displayName: source.displayName } : {}),
-    ...(minimalMembership && codexTimestampMs(source.updatedAt) ? { updatedAt: codexTimestampMs(source.updatedAt) } : {}),
-    ...(minimalMembership && typeof source.projectKey === 'string' ? { projectKey: source.projectKey } : {}),
-    ...(minimalMembership && typeof source.projectName === 'string' ? { projectName: source.projectName } : {}),
-    ...(minimalMembership && (source.projectKind === 'project' || source.projectKind === 'chats') ? { projectKind: source.projectKind } : {}),
-    ...(readStateOnly
-      ? { readStateOnly: true }
-      : {
-          ...(status ? { status } : {}),
-          activeFlags,
-          planImplementationOnly: source.planImplementationOnly === true,
-          planReady: source.planReady === true || source.planImplementationOnly === true,
-          planLifecycleState,
-          ...(planClearReason ? { planClearReason } : {}),
-          ...(Number.isFinite(source.planLifecycleRevision) && source.planLifecycleRevision > 0
-            ? { planLifecycleRevision: Math.trunc(source.planLifecycleRevision) }
-            : {}),
-          ...(source.turnMode === 'plan' || source.turnMode === 'default' ? { turnMode: source.turnMode } : {}),
-          ...(source.idleConfirmed === true ? { idleConfirmed: true } : {}),
-          statusAuthority,
-          ...(activityEvidence ? { activityEvidence } : {}),
-          ...(activityRevision !== undefined ? { activityRevision } : {}),
-          ...(waitingSince ? { waitingSince } : {}),
-          ...(desktopActiveSince ? { desktopActiveSince } : {}),
-          ...(lastTurnStatus ? { lastTurnStatus } : {}),
-          ...(lastTurnStartedAt ? { lastTurnStartedAt } : {}),
-          ...(lastTurnCompletedAt ? { lastTurnCompletedAt } : {}),
-          ...(lastTurnEvidence ? { lastTurnEvidence } : {}),
-          ...(activeEvidenceSequence !== undefined ? { activeEvidenceSequence } : {}),
-          ...(terminalEvidenceSequence !== undefined ? { terminalEvidenceSequence } : {})
-        }),
-    ...(typeof source.hasUnreadTurn === 'boolean' ? { hasUnreadTurn: source.hasUnreadTurn } : {}),
-    unreadAuthority
-  }
+  return { key: typeof source.key === 'string' ? source.key : '', unreadAuthority: 'unavailable' }
 }
 
 function codexArchivedActivityKey(threadId) {
