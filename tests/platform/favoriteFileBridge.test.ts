@@ -445,8 +445,11 @@ describe('favorite file bridge source', () => {
     expect(packageJson.scripts?.['sync:preloads']).toBe('pnpm run generate:contracts && node scripts/sync-utools-preloads.mjs')
     // `validate:mirrors` joined the pipeline because the working-tree mirror
     // check that `build` already runs stays green when the *committed* state is
-    // broken, and the host loads the committed mirror.
-    expect(packageJson.scripts?.verify).toBe('pnpm run sync:preloads && pnpm run test && pnpm run build && pnpm run validate:mirrors')
+    // broken, and the host loads the committed mirror. `validate:entry-budget`
+    // joined under RAW-169: sixteen extraction blocks were fully cancelled out
+    // by concurrent growth because nothing pinned the entry's size.
+    expect(packageJson.scripts?.verify).toBe('pnpm run sync:preloads && pnpm run test && pnpm run build && pnpm run validate:mirrors && pnpm run validate:entry-budget')
+    expect(packageJson.scripts?.['validate:entry-budget']).toBe('node scripts/validate-preload-entry-budget.mjs')
     expect(validateScript).toContain("['index.html', 'float.html', 'action.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'action-preload.js', 'runtime-identity.cjs', 'logo.svg']")
     expect(validateScript).toContain('UTOOLS_PRELOAD_ASSETS.map')
     expect(validateScript).toContain("dist package.json type must be commonjs")
