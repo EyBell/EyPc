@@ -17,7 +17,7 @@
 
 - [RAW-167](../invariants-raw-167.md#L1) — `proposed` · `agent-transcribed`
 - [RAW-168](../invariants-raw-168.md#L1) — `proposed` · `agent-transcribed`
-- [RAW-169](../invariants-raw-169.md#L1) — `proposed` · `agent-transcribed`
+- [RAW-169](../invariants-raw-169.md#L1) — `active` · `user-stated`
 - [RAW-170](../invariants-raw-170.md#L1) — `proposed` · `agent-transcribed`
 - [RAW-171](../invariants-raw-171.md#L1) — `proposed` · `agent-transcribed`
 - [RAW-172](../invariants-raw-172.md#L1) — `proposed` · `agent-transcribed`
