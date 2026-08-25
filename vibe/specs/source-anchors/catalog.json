@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 30,
+    "source_documents": 31,
     "ordered_anchors": 207,
     "raw_parent_ordered": 105,
     "unparented_ordered": 102,
@@ -311,6 +311,16 @@
       "raw_identity_count": 1,
       "ordered_anchor_count": 7,
       "raw_parent_ordered_count": 7,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260825/codex-config-silent-integration",
+      "source_path": "vibe/specs/260825/codex-config-silent-integration/raw-requirement.md",
+      "spec_id": "SPEC-260825-CODEX-CONFIG-SILENT-INTEGRATION",
+      "content_sha256": "7ff995581d48bc9172e36944ee72ad7dad6f8da656c66899ee972f3a42d482b7",
+      "raw_identity_count": 3,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
       "unparented_ordered_count": 0
     }
   ],
