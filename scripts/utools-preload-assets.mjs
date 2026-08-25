@@ -19,7 +19,7 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
   {
     id: 'codex',
     directory: 'codex',
-    files: ['action-authorization.cjs', 'command-validation.cjs', 'desktop-activity-aggregation.cjs', 'desktop-ipc-endpoint.cjs', 'desktop-request-projection.cjs', 'desktop-shadow.cjs', 'environment-toml.cjs', 'inventory-thread-topology.cjs', 'inventory-turn-fields.cjs', 'launch-path-preference.cjs', 'native-registry.cjs', 'node-runtime.cjs', 'log-redaction.cjs', 'log-stream.cjs', 'launch-plan.cjs', 'proxy-discovery.cjs', 'quota-sanitizer.cjs', 'rollout-evidence.cjs', 'rollout-runtime-state.cjs', 'run-database.cjs', 'runner-bounds.cjs', 'waiting-evidence.cjs']
+    files: ['action-authorization.cjs', 'action-runtime-projection.cjs', 'command-validation.cjs', 'desktop-activity-aggregation.cjs', 'desktop-ipc-endpoint.cjs', 'desktop-request-projection.cjs', 'desktop-shadow.cjs', 'environment-bridge.cjs', 'environment-toml.cjs', 'inventory-thread-topology.cjs', 'inventory-turn-fields.cjs', 'launch-path-preference.cjs', 'native-registry.cjs', 'node-runtime.cjs', 'log-redaction.cjs', 'log-stream.cjs', 'launch-plan.cjs', 'proxy-discovery.cjs', 'quota-sanitizer.cjs', 'rollout-evidence.cjs', 'rollout-runtime-state.cjs', 'run-database.cjs', 'runner-bounds.cjs', 'waiting-evidence.cjs']
   },
   {
     id: 'companion',
