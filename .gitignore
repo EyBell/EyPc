@@ -23,3 +23,4 @@ yarn-error.log*
 /.playwright-cli
 /.fastRequest
 /preload/*.upxs
+_to_delete
