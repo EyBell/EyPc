@@ -20,7 +20,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 取代关系 | 22 whole / 68 scoped |
 | 原始来源 | 30 documents / 207 ordered / 105 RAW-parent / 102 source-only |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-87cb3352c1db0564c478 / renderer-762ce50de7a677ef4d42` · `artifact-ready` |
+| 当前构建产物 | `host-c391c69d93688de86535 / renderer-4c2d7cb16c738a29bd02` · `artifact-ready` |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -58,8 +58,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-87cb3352c1db0564c478",
-    "renderer_asset": "renderer-762ce50de7a677ef4d42",
+    "host_asset": "host-c391c69d93688de86535",
+    "renderer_asset": "renderer-4c2d7cb16c738a29bd02",
     "artifact_state": "artifact-ready"
   },
   "content_digests": {
@@ -68,7 +68,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "source_anchor_catalog": "6c26895524394e44eac2c1243b684e993234cc4d249f290d9b39f7173f20e9ad",
     "product_body": "b9b13da724e51a6f85224e67c3a601636ad60ef1d316dc560bfb14c89b47267c",
     "architecture": "16dc42b1010e2c7fb926de47e15b6467a1da363b81835dd0fea4c2a1f93db0c7",
-    "runtime_contract": "626229f9486d3037b0e9d269fce90a02f260acde151350bf35ff804cdf001352"
+    "runtime_contract": "93b2a68a2de7ca22adb0df0f05c3bb6d0ab2209243cef13957d7ec973485e776"
   }
 }
 ```
