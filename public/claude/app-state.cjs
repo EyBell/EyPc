@@ -16,15 +16,16 @@ const { LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
 const CLAUDE_APP_STATE_REVISION = 'claude-app-log-state-v2'
 const CLAUDE_APP_STATE_VERSION = 2
 // Each version is admitted only after its privacy-safe lifecycle grammar has
-// been checked against the installed App logs. 1.28929.0 and 1.30096.5
-// preserve the exact Code session messages accepted below; unrelated Cowork
-// identifiers remain outside LOCAL_SESSION_PATTERN and therefore fail closed.
-// Single owner of the Claude App version gate. Both the state reader and the
-// archive adapter fail closed on an unlisted version, so the list has to be
-// one thing: two copies agreeing today is discipline, not structure, and a
-// version added to one side alone silently splits the gate in half.
+// been checked against the installed App logs. 1.28929.0, 1.30096.5 and
+// 1.34493.1 preserve the exact Code session messages accepted below; unrelated
+// Cowork identifiers and non-local `session_*` ids remain outside
+// LOCAL_SESSION_PATTERN and therefore fail closed.
+// Single owner of the Claude App version gate. The state reader fails closed
+// on an unlisted version, so the list has to be one thing: two copies agreeing
+// today is discipline, not structure, and a version added to one side alone
+// silently splits the gate in half.
 const SUPPORTED_APP_VERSION = '1.26832.0'
-const SUPPORTED_APP_VERSIONS = new Set([SUPPORTED_APP_VERSION, '1.28929.0', '1.30096.5'])
+const SUPPORTED_APP_VERSIONS = new Set([SUPPORTED_APP_VERSION, '1.28929.0', '1.30096.5', '1.34493.1'])
 const LOG_FILE_NAMES = ['main1.log', 'main.log']
 const LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024
 const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
