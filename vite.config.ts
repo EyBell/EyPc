@@ -22,7 +22,12 @@ export default defineConfig({
     __EYPC_HOST_ASSET_ID__: JSON.stringify(runtimeIdentity.hostAssetId),
     __EYPC_RENDERER_ASSET_ID__: JSON.stringify(runtimeIdentity.rendererAssetId),
     __EYPC_COMPANION_KERNEL_REVISION__: JSON.stringify(runtimeIdentity.kernelRevision),
-    __EYPC_COMPANION_TASK_PACKAGE_REVISION__: JSON.stringify(runtimeIdentity.taskPackageRevision)
+    __EYPC_COMPANION_PROVIDER_REGISTRY_REVISION__: JSON.stringify(runtimeIdentity.registryRevision),
+    __EYPC_COMPANION_TASK_TOPOLOGY_REVISION__: JSON.stringify(runtimeIdentity.topologyRevision),
+    __EYPC_COMPANION_TASK_PACKAGE_REVISION__: JSON.stringify(runtimeIdentity.taskPackageRevision),
+    __EYPC_COMPANION_TASK_COMMAND_REVISION__: JSON.stringify(runtimeIdentity.commandRevision),
+    __EYPC_COMPANION_TASK_SUBSCRIBE_REVISION__: JSON.stringify(runtimeIdentity.subscribeRevision),
+    __EYPC_COMPANION_TASK_ACK_REVISION__: JSON.stringify(runtimeIdentity.ackRevision)
   },
   plugins: [
     {
