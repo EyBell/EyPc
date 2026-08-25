@@ -3,8 +3,8 @@
 Date: 2026-08-23
 Type: `re-verification / plan`
 Requirement owner: [invariants-raw-169](../../requirements/invariants-raw-169.md#L13)
-Status: `plan / superseded-by-260825-delivery / D1 未裁决`
-> **2026-08-25 更新**：本文 §3 的 D2（路线口径）与 D3（scope 是否扩到全 Provider）已由后续交付回答——route 1 耗尽后正式转 route 3 闭包化改写，共交付四个域；`preload/cursor/` 经实测在本文落笔时即已存在 7 个模块，§2.4「该目录不存在」的表述当时即不成立。§4 的 P1 入口预算门禁仍未实施。§2 的四项判据结论、§2.2 的入口轨迹与 §2.3 的绑定计数均已被 [需求叶子的 08-25 复核节](../../requirements/invariants-raw-169.md#L18) 取代，以后者为准。**仅 D1（判据 2 是否为硬门槛）仍待裁决。**
+Status: `plan / superseded-by-260825-delivery / 三项决策全部结案`
+> **2026-08-25 更新**：本文 §3 的 D2（路线口径）与 D3（scope 是否扩到全 Provider）已由后续交付回答——route 1 耗尽后正式转 route 3 闭包化改写，共交付四个域；`preload/cursor/` 经实测在本文落笔时即已存在 7 个模块，§2.4「该目录不存在」的表述当时即不成立。§4 的 P1 入口预算门禁仍未实施。§2 的四项判据结论、§2.2 的入口轨迹与 §2.3 的绑定计数均已被 [需求叶子的 08-25 复核节](../../requirements/invariants-raw-169.md#L18) 取代，以后者为准。**D1 已于 2026-08-25 裁决：判据 2 为参考描述，非硬门槛；RAW-169 随之转 `active`。本文三项决策全部结案。**
 
 > 本文件是计划与核验证据，不是需求。RAW-169 条款正文与其 `proposed` 状态仍由需求叶子拥有。
 > 与今日 [Codex 架构审计](../companion-task-topology-v5/assessment/260823-codex-architecture-audit.md#L1) 互补：那份审计覆盖 V5 需求谱系与渲染侧架构，完全没有触及 preload 入口的体量与拆分线，本文件补的正是这一段。
