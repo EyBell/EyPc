@@ -550,14 +550,14 @@ describe('Codex controller', () => {
       await vi.advanceTimersByTimeAsync(0)
       await Promise.resolve()
       expect(codexTaskReads).toBe(1)
-      expect(claudeReads).toEqual({ environment: 0, inventory: 0, unread: 0, quota: 1 })
+      expect(claudeReads).toEqual({ environment: 1, inventory: 0, unread: 0, quota: 1 })
       expect(onActivityChanged).not.toHaveBeenCalled()
 
       await vi.advanceTimersByTimeAsync(201)
       await Promise.resolve()
 
       expect(codexTaskReads).toBe(1)
-      expect(claudeReads).toEqual({ environment: 0, inventory: 0, unread: 0, quota: 1 })
+      expect(claudeReads).toEqual({ environment: 1, inventory: 0, unread: 0, quota: 1 })
       controller.dispose()
     } finally {
       vi.useRealTimers()
@@ -2098,6 +2098,49 @@ describe('Codex controller', () => {
     await vi.waitFor(() => expect(controller.view().taskState.conversations.all.find((task) => task.key === cursorKey)?.pinSource).toBe('local'))
     expect(controller.toggleLocalPin('task', cursorKey)).toBe(true)
     await vi.waitFor(() => expect(controller.view().taskState.conversations.all.find((task) => task.key === cursorKey)?.pinSource).toBeUndefined())
+    controller.dispose()
+  })
+
+  it('reads Cursor hook registration on start without opening inventory', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.providers = { codex: true, claude: false, cursor: true }
+    let inspectReads = 0
+    let inventoryReads = 0
+    const controller = createCodexController({
+      platform: {
+        codex: {
+          taskStateRevision: CODEX_TASK_STATE_REVISION,
+          readSnapshot: async () => ({
+            ok: false as const,
+            receivedAt: now,
+            error: { code: 'unavailable' as const, message: 'Codex 未运行' }
+          }),
+          close: () => undefined
+        },
+        cursor: {
+          inspect: async () => {
+            inspectReads += 1
+            return { available: true, reason: 'ready', sessionCount: 0, readAt: now, hooks: 'installed' as const }
+          },
+          readInventory: async () => {
+            inventoryReads += 1
+            return { revision: 'inventory-test', available: true, reason: 'ready', sessions: [], truncated: false, readAt: now }
+          },
+          close: () => undefined
+        }
+      } as unknown as EypcPlatformApi,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+    expect(controller.view().cursorHooks).toBe('unknown')
+    controller.start()
+    await vi.waitFor(() => expect(controller.view().cursorHooks).toBe('installed'))
+    expect(inspectReads).toBe(1)
+    expect(inventoryReads).toBe(0)
     controller.dispose()
   })
 
