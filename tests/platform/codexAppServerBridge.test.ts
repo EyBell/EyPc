@@ -8440,9 +8440,16 @@ draft: v7EvidenceDraft({
     expect(child.exitCode).toBe(0)
     expect(preload).not.toContain('wham/usage')
     expect(preload).not.toContain('.codex/auth.json')
-    expect(preload.match(/requestCodexRpc\('thread\/read'/g)?.length || 0).toBeGreaterThanOrEqual(3)
-    expect(preload).toContain("requestCodexRpc('thread/read', { threadId: entry.threadId, includeTurns: false })")
-    expect(preload).toContain('closeable: false')
+    // archiveCodexThread/archiveCodexProject's thread/read calls moved into
+    // preload/codex/archive-bridge.cjs under RAW-169; scanning the whole
+    // module group keeps these assertions accurate as further blocks move out.
+    const reachableForRpcAssertions = preload + '\n' + readdirSync(resolve(process.cwd(), 'preload/codex'))
+      .filter((name) => name.endsWith('.cjs'))
+      .map((name) => readFileSync(resolve(process.cwd(), 'preload/codex', name), 'utf8'))
+      .join('\n')
+    expect(reachableForRpcAssertions.match(/requestCodexRpc\('thread\/read'/g)?.length || 0).toBeGreaterThanOrEqual(3)
+    expect(reachableForRpcAssertions).toContain("requestCodexRpc('thread/read', { threadId: entry.threadId, includeTurns: false })")
+    expect(reachableForRpcAssertions).toContain('closeable: false')
   })
 
   it('parses only the native project registry projection, falls back to .bak, and applies assignment precedence', () => {
