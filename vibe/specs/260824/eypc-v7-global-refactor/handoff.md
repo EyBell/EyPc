@@ -3,7 +3,7 @@
 status: `implementation-complete / automated-accepted / external-host-gate-pending`
 
 - Controller: App Root Thread.
-- Worktree: `/Users/gdkmjd/work/czzWork/EyBell/EyPc-worktrees/260824-eypc-v7-global-refactor`.
+- Worktree: dated task worktree `260824-eypc-v7-global-refactor`; resolve its physical path at runtime with `git worktree list --porcelain`.
 - Branch/base: `codex/260824-eypc-v7-global-refactor` at uncommitted base `6e1d6e3704e628b4d1fa5c7fa845403f39cbb0ff`.
 - Canonical task owner: [spec.md](spec.md#L1); execution [plan.md](plan.md#L1); journal [tasks.md](tasks.md#L1); evidence [verify.md](verify.md#L1).
 - Last material event: `EV-V7-008`, automated artifact acceptance.
