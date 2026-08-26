@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: companion-materialized-view__independent-inventory-state-unread-quota-presence-authorities-coupled-by-one-full-refresh__slow-or-failed-source-blocks-or-erases-unrelated-state__split-lanes-with-authority-specific-failure-semantics
 first_seen: 2026-08-07
-last_verified: 2026-08-11
+last_verified: 2026-08-26
 review_after: 2027-02-07
 evidence:
   - vibe/specs/260807/claude-code-companion-authority-reset/research.md
@@ -12,6 +12,7 @@ evidence:
   - preload/claude/index.cjs
   - src/runtime/codexController.ts
   - tests/runtime/claudeCompanionController.test.ts
+  - tests/platform/codexAppServerBridge.test.ts
 tags:
   - claude-companion
   - materialized-view
@@ -37,6 +38,7 @@ Claude 的新任务能出现，但历史状态、已完成未读和既有变更�
 - 全量 replacement 没有 authority-owned patch 规则，慢 inventory 可能覆盖更新 state，失败读取可能把最后有效 membership 当成空。
 - 页面/打开动作重建缓存，快捷键又重复做窗口枚举，破坏 feature-lifetime 热路径。
 - 即使 reader 已分 lane，最终任务包仍可用一个 Provider generation 同时推进 phase/unread，或让异步 callback 捕获旧整包后覆盖新 membership；单 callback 订阅还会让 Renderer 覆盖 Host listener。这些都是“逻辑层的全量替换”，效果与共享 full refresh 相同。
+- V7 曾让 Claude metadata membership mutation 用自己的高频 delivery generation 同时推进 activity、interaction、unread 和 topology；真实 state counter 随后即使携带新的 completed/stopped，也会因小于被污染的 activity waterline 而永久判旧，表现为「已完成/已中断仍进行中」。
 
 ## Detection Order
 
@@ -70,7 +72,7 @@ Ordered steps:
 
 1. 建立 feature-lifetime inventory Map、state evidence Map、unread Set/unknown、quota snapshot、presence cache 和 target-only mutation generation/tombstone。
 2. 为各来源分别注册 watcher/read lane 和单飞；删除共享 full-refresh 回调。
-3. inventory 只拥有结构校对/metadata，state 只 patch evidence/phase，unread 只 patch membership，quota/presence 不触碰 task fields；verified mutation 只 upsert/remove exact key 并阻止迟到完整库存复活它。
+3. inventory 只拥有结构校对/metadata，state 只 patch evidence/phase/interaction/topology，unread 只 patch set membership，quota/presence 不触碰 task fields；verified mutation 先只 upsert/remove exact key，再由独立 state microtask 读取当前成员，不携带或推进其它 lane。
 4. 应用 per-authority generation/evidence barrier、Kernel semantic/package revision 和 Float applied revision，再由 Kernel 一次计算互斥 cards/groups/counts/virtual projects/actions。
 5. 测试 quota 阻塞、inventory 失败、state 连续失败降级、unread 失败、slow-inventory/new-state 竞态和旧 Float snapshot 拒绝；再测试 surface 隐藏/快捷键复用。
 
@@ -95,3 +97,4 @@ Applicability boundary:
 | 2026-08-09 | RAW-154 Claude archive mutation convergence | Claude App 归档后卡片更新依赖慢完整库存，插件归档又被全局 latch/Provider 分支耦合 | 把已验证 membership mutation 当作 inventory refresh 的副作用，并让 quota/state/unread/full inventory 共享完成门槛 | 新增 target-only mutation generation/tombstone 与统一 Controller reducer；exact watcher/1s watchdog 独立发布 | focused mutation、blocked-promise、stale-inventory and multi-upsert tests pass；real host pending |
 | 2026-08-10 | RAW-155 / Claude RAW-027 | Claude running→completed-unread 变化消失，延迟期间打开后再也看不到 | Provider 共享 phase/unread generation、Host/Renderer 单 callback 覆盖、异步 unread 持有旧整包 | V2 三 lane generation、多订阅、unread singleflight、latest-package rebase、trusted-push 零全量读取 | focused automated verified；real host pending |
 | 2026-08-11 | RAW-160 V4 materialized owner | Claude terminal/new unread and navigation could diverge when Controller/consumers retained independent projections | Treat lane separation plus Controller revision as end-to-end convergence | Kernel V4 atomic reducer/latest cache、per-consumer selector cache、Float applied ACK and same-revision metadata rebase | affected/full automation verified；real host pending |
+| 2026-08-26 | V7 Claude terminal starvation | Claude state generation 已包含 completed/stopped，Kernel 仍长期显示 running | membership mutation generation 被复制到 activity/interaction/unread，且 mutation 内联读取 state | mutation 仅发布 indexed metadata；activity/interaction/unread/topology 保持各自水位，随后独立 state microtask 发布；新增 state-after-many-inventory 回归 | focused automation + current-log replay verified；host reload pending |

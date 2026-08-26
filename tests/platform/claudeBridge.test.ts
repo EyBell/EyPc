@@ -1338,6 +1338,8 @@ describe('Claude membership mutation watcher', () => {
         session: expect.objectContaining({ sessionId: LOCAL_B })
       })]
     })])
+    expect((deltas[0] as any).mutations[0].session).not.toHaveProperty('phase')
+    expect((deltas[0] as any).mutations[0].session).not.toHaveProperty('stateGeneration')
     context.bridge.close()
   })
 

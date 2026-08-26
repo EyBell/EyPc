@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: claude-completed-unread-slow-clear__app-log-version-gate-lapsed__leveldb-minute-flush-floor
 first_seen: 2026-08-25
-last_verified: 2026-08-25
+last_verified: 2026-08-26
 review_after: 2026-11-25
 evidence:
   - preload/claude/app-state.cjs
@@ -38,7 +38,9 @@ Claude Code 任务在 Claude App 内读完后，EyPc 的「已完成未读/未�
 2. **兜底通道的地板是 Claude App 每分钟一次的刷盘。** LevelDB 镜像（[unread.cjs](../../../preload/claude/unread.cjs#L148-L183) 快照 + 指纹稳定门）本身很快（读取 14–38ms、零失败），但 Claude App 只在每分钟 hh:mm:16 把 Local Storage 刷盘（leveldb 目录全部 mtime 实测锁在 :16；诊断日志 14 次 `claude-unread-v7` 推送间隔 59.7–60.3s）。热车道熄火时，未读翻转最快也要等下一个分钟栅格，均值 ~30s、上限 ~60s，再叠加保守 catch-up（相反持久边缘 + 事后快照，规格 RAW-165 条款 72）可再加 1–2 个栅格。
 3. **从 EyPc 打开不构成已读。** [open.cjs](../../../preload/claude/open.cjs#L10-L15) 深链派发永远不报 `confirmsRead`，因此 [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1089-L1094) 为 claude 独设的 `readAcknowledgements` 本地快清路径从未触发过。
 
-「已完成」卡片本身滞留是设计而非故障：completed-unread 组免时间窗（[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L146-L155)），未读不清则卡片不退场；已读后按 `dynamicTaskWindowHours`（默认 24h，可在 Codex 设置页调整）退出动态区。Codex 对照：未读经 `~/.codex/ipc/ipc.sock` 的 `thread-read-state-changed` 推送毫秒级到达，这就是不对称感的全部来源。
+2026-08-26 同一路径在 App 自动更新到 `1.37937.0` 后再次发生：固定 running/focus/completed/waiting/permission 行式仍兼容，新增可确认的额度耗尽 warn 也可被严格限定；仅白名单滞后令 phase/hot-unread 快车道再次 fail closed。此轮同时确认，卡片点击与快捷入口虽然 selector/source 不同，但在同一个 Navigation/Provider open 回执边界汇合，`dispatched` 均为 `confirmsRead=false`；观察到的点击即消除不能证明存在第二条本地已读通路。
+
+「已完成」卡片本身滞留是设计而非故障：completed-unread 组免时间窗（[codexPresentation.ts](../../../src/domain/codexPresentation.ts#L146-L155)），未读不清则卡片不退场；已读后按 `dynamicTaskWindowHours`（默认 24h，可在 Codex 设置页调整）退出动态区。Codex 对照：未读经 `~/.codex/ipc/ipc.sock` 的 `thread-read-state-changed` 推送毫秒级到达，这就是不对称感的全部来源。
 
 ## 检测顺序
 
@@ -53,9 +55,9 @@ Claude App 升级后，按隐私语法验证流程把新版本及时加入 `SUPP
 
 ## 替代路线
 
-- 状态：`candidate`（2026-08-25 实施落地、自动化验证通过；真机 focused 快清 ≤1s 复验待插件重载，通过后转 `verified`）。
-- 前置条件：对 1.34493.1 完成隐私边界内的语法核对（八类固定行全部锚定命中，无新增携带内容的行式；唯一近似行为非 local 的 `session_*` id，按设计拒收）。已于 2026-08-25 满足。
-- 有序步骤：将 `'1.34493.1'` 加入 `SUPPORTED_APP_VERSIONS`（canonical `preload/claude/app-state.cjs`，`sync:preloads` 同步镜像）→ 重跑 hot-unread 相关平台/e2e 测试 → 真机验证 focused 快清 ≤1s 恢复。前两步已完成（`88/88`、镜像 73 对）。
+- 状态：`candidate`（`1.34493.1` 与 `1.37937.0` 均已完成语法核对和自动化；真机 focused 快清 ≤1s 仍待插件重载，通过后转 `verified`）。
+- 前置条件：对待加入版本完成隐私边界内的固定行式核对，不输出原始日志或会话身份；相邻未知版本继续 fail closed。`1.37937.0` 已于 2026-08-26 满足，并额外确认固定 usage-limit interrupted 行式。
+- 有序步骤：把已核验版本加入 canonical `SUPPORTED_APP_VERSIONS` → 同步 preload 镜像 → 重跑 app-state/hot-unread/state-lane regressions → 真机验证 focused 快清 ≤1s 恢复。前三步已完成；宿主重载未执行。
 - 验证：`pnpm exec vitest run tests/platform/claudeAppStateBridge.test.ts tests/platform/claudeBridge.test.ts tests/runtime/claudeCompanionWatcherE2E.test.ts`。
 - 适用边界：仅语法未漂移的版本；语法漂移时按 [同类记录](provider-version-whitelist-must-not-gate-generic-capability.md#L1) 的边界重新适配，不得拆掉证据质量版本门。
 - 回退：新版本实测语法漂移时保持熄火（安全方向：只漏熄、不误熄）。
@@ -65,3 +67,4 @@ Claude App 升级后，按隐私语法验证流程把新版本及时加入 `SUPP
 | 日期 | 任务 | 触发 | 失败路线 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-25 | 状态消退慢核验 | 用户报 Claude 任务已完成/未读消失特别慢 | 假设 EyPc 轮询/渲染慢 | 定位版本门滞后 + 分钟刷盘地板；同日扩白名单落地（`88/88`、镜像 73 对），真机复验待重载 | verified（根因）/ candidate（路线待真机验收） |
+| 2026-08-26 | V7 已读入口与状态复核 | 快捷方式未立即已读、鼠标点击似乎立即；完成/额度耗尽任务仍进行中 | 把入口观感当成两条已读 mutation，且 inventory delivery 共用 state/unread generation | 证明两入口在相同回执边界汇合；扩 `1.37937.0` 版本门；分离 mutation/state/unread lane；固定 usage-limit 为 stopped | focused automation/current-log replay verified；host reload pending |

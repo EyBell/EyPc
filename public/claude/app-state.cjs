@@ -16,16 +16,22 @@ const { LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
 const CLAUDE_APP_STATE_REVISION = 'claude-app-log-state-v2'
 const CLAUDE_APP_STATE_VERSION = 2
 // Each version is admitted only after its privacy-safe lifecycle grammar has
-// been checked against the installed App logs. 1.28929.0, 1.30096.5 and
-// 1.34493.1 preserve the exact Code session messages accepted below; unrelated
-// Cowork identifiers and non-local `session_*` ids remain outside
+// been checked against the installed App logs. 1.28929.0, 1.30096.5,
+// 1.34493.1 and 1.37937.0 preserve the exact Code session messages accepted
+// below; unrelated Cowork identifiers and non-local `session_*` ids remain outside
 // LOCAL_SESSION_PATTERN and therefore fail closed.
 // Single owner of the Claude App version gate. The state reader fails closed
 // on an unlisted version, so the list has to be one thing: two copies agreeing
 // today is discipline, not structure, and a version added to one side alone
 // silently splits the gate in half.
 const SUPPORTED_APP_VERSION = '1.26832.0'
-const SUPPORTED_APP_VERSIONS = new Set([SUPPORTED_APP_VERSION, '1.28929.0', '1.30096.5', '1.34493.1'])
+const SUPPORTED_APP_VERSIONS = new Set([
+  SUPPORTED_APP_VERSION,
+  '1.28929.0',
+  '1.30096.5',
+  '1.34493.1',
+  '1.37937.0'
+])
 const LOG_FILE_NAMES = ['main1.log', 'main.log']
 const LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024
 const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
@@ -57,6 +63,19 @@ function normalizeRequestId(value) {
 /** Fixed log grammar -> content-free state event. */
 function parseAppStateLine(line) {
   const value = textOf(line)
+  const warning = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[warn\] (.+)$/.exec(value)
+  if (warning) {
+    const at = safeTime(warning[1])
+    if (!at) return null
+    // Claude 1.37937.0 reports a model/plan exhaustion after the preceding
+    // successful query hook. It is an explicit current-Turn interruption, not
+    // a generic session teardown and not proof of task completion. Admit only
+    // the fixed content-free CycleHealth grammar and discard the model label.
+    const match = /^\[CCD CycleHealth\] (local_[0-9a-f-]+) api_error \(success\): You've reached your [A-Za-z0-9][A-Za-z0-9 ._-]{0,79} limit\. Switch to another model, or manage usage credits at claude\.ai\/settings\/usage\?from=cc_cli_limit_message, to continue\.$/.exec(warning[2])
+    if (!match) return null
+    const sessionId = normalizeLocalId(match[1])
+    return sessionId ? { kind: 'stopped', sessionId, requestId: '', at } : null
+  }
   const prefix = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[info\] (.+)$/.exec(value)
   if (!prefix) return null
   const at = safeTime(prefix[1])
@@ -143,6 +162,10 @@ function foldAppStateEvents(events, previous, previousRequests) {
   const requests = new Map(previousRequests instanceof Map ? previousRequests : [])
   let changed = false
   for (const event of Array.isArray(events) ? events : []) {
+    // Focus owns only the hot-unread lane. Folding it into phase used to renew
+    // phaseUpdatedAt/evidenceProvenance without any Turn transition, allowing a
+    // navigation event to masquerade as fresher activity evidence.
+    if (event.kind === 'focus-changed') continue
     let sessionId = event.sessionId
     if (event.kind === 'permission-response') sessionId = requests.get(event.requestId) || ''
     if (!sessionId) continue
