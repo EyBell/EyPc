@@ -2,9 +2,9 @@
 
 <!-- eypc-current-product-truth-owner:v1 -->
 
-Effective date: `2026-08-24`
+Effective date: `2026-08-26`
 
-Requirement version: `2026-08-24.1`
+Requirement version: `2026-08-26.1`
 
 Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 
@@ -19,8 +19,10 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 需求登记 | 318 leaves / 6 modules / 291 active / 22 superseded / 5 proposed / 0 conflicted |
 | 取代关系 | 22 whole / 71 scoped |
 | 原始来源 | 33 documents / 207 ordered / 105 RAW-parent / 102 source-only |
+| 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
 | 当前构建产物 | `host-c8d259978cc3975e902f / renderer-7c5f2cefc86156e0f41f` · `artifact-ready` |
+| 当前构建时间 | `2026/08/26 08:18:46`（`2026-08-26T00:18:46.892Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -50,6 +52,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "source_only": 102
   },
   "runtime_identity": {
+    "core_version": "V7",
+    "core_version_label": "EyPc V7",
     "task_state": "task-state-v12",
     "registry": "companion-provider-registry-v1",
     "topology": "companion-task-topology-v2",
@@ -60,15 +64,18 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "ack": "companion-task-ack-v2",
     "host_asset": "host-c8d259978cc3975e902f",
     "renderer_asset": "renderer-7c5f2cefc86156e0f41f",
-    "artifact_state": "artifact-ready"
+    "artifact_state": "artifact-ready",
+    "built_at": "2026-08-26T00:18:46.892Z",
+    "built_at_local": "2026/08/26 08:18:46",
+    "package_version": "0.1.0"
   },
   "content_digests": {
     "requirement_registry": "0b2ded92b869f9cddb72eb48dc6765b7923ca976964b6d7fb3965c44333082b7",
     "raw_sources": "198c783a84b284a84e0791f7418e97c3fd089ef7aafc4e44fd3bea1c268a9c9a",
     "source_anchor_catalog": "c15bd752692da765c3f51dda7ee9706655fc2a20423868262c41204efeb4cf87",
-    "product_body": "c06d0daeefe2a753e75fd747e14342ba3e02398adbaba767e2e625501cf1bf7f",
+    "product_body": "2a59074d0af12e786357c084bda1b73ee5925ece9062547472d4c062f175e49a",
     "architecture": "08e6eff88563ea4ef94541265cab1f11c2458dd002ff0b6b29fb21aee3efaa2b",
-    "runtime_contract": "5b8d8079e34b6b3648ab046e4de3ba60d935ce3cecd4a26e744f75a4aa2ca3fe"
+    "runtime_contract": "bbddc893237c30c73eac27afbf25b570dcbd79b22e7d1e73d35ab81aebacf0da"
   }
 }
 ```

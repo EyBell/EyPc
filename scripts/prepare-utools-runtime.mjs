@@ -2,7 +2,12 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writ
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { syncUtoolsPreloads } from './utools-preload-assets.mjs'
-import { buildUtoolsRuntimeIdentity, runtimeIdentityCommonJs } from './utools-runtime-identity.mjs'
+import {
+  buildUtoolsRuntimeIdentity,
+  printEyPcBuildSummary,
+  runtimeIdentityCommonJs,
+  withArtifactMetadata
+} from './utools-runtime-identity.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const pluginSource = resolve(root, 'public/plugin.json')
@@ -12,8 +17,10 @@ const distPlugin = resolve(distDir, 'plugin.json')
 const distPackageJson = resolve(distDir, 'package.json')
 const commonJsPackageScope = `${JSON.stringify({ type: 'commonjs' }, null, 2)}\n`
 const developmentMode = process.argv.includes('--development')
+const packageVersion = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version
 const runtimeIdentity = buildUtoolsRuntimeIdentity(root)
-const runtimeIdentitySource = runtimeIdentityCommonJs(runtimeIdentity)
+const artifactIdentity = withArtifactMetadata(runtimeIdentity, { packageVersion })
+const runtimeIdentitySource = runtimeIdentityCommonJs(artifactIdentity)
 const developmentFloatEntry = `<!doctype html>
 <html lang="zh-CN">
   <head><meta charset="UTF-8" /><title>EyPc Codex Float Development</title></head>
@@ -92,4 +99,7 @@ if (existsSync(distDir)) {
   }
 }
 
-console.log(`uTools artifact-ready ${runtimeIdentity.hostAssetId} ${runtimeIdentity.rendererAssetId}`)
+printEyPcBuildSummary(artifactIdentity, {
+  label: 'EyPc uTools artifact',
+  mode: developmentMode ? 'development' : 'production'
+})

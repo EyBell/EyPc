@@ -1,5 +1,7 @@
 export interface UtoolsRuntimeIdentityV1 {
   readonly revision: 'runtime-identity-v2'
+  readonly coreVersion: 'V7'
+  readonly coreVersionLabel: 'EyPc V7'
   readonly hostAssetId: string
   readonly rendererAssetId: string
   readonly kernelRevision: 'companion-task-kernel-v7'
@@ -12,6 +14,12 @@ export interface UtoolsRuntimeIdentityV1 {
   readonly artifactState: 'artifact-ready'
 }
 
+export interface UtoolsRuntimeIdentityArtifactV1 extends UtoolsRuntimeIdentityV1 {
+  readonly builtAt: string
+  readonly builtAtLocal: string
+  readonly packageVersion: string
+}
+
 export const RUNTIME_IDENTITY_REVISION: UtoolsRuntimeIdentityV1['revision']
 export const COMPANION_TASK_KERNEL_REVISION: UtoolsRuntimeIdentityV1['kernelRevision']
 export const COMPANION_PROVIDER_REGISTRY_REVISION: UtoolsRuntimeIdentityV1['registryRevision']
@@ -20,5 +28,14 @@ export const COMPANION_TASK_PACKAGE_REVISION: UtoolsRuntimeIdentityV1['taskPacka
 export const COMPANION_TASK_COMMAND_REVISION: UtoolsRuntimeIdentityV1['commandRevision']
 export const COMPANION_TASK_SUBSCRIBE_REVISION: UtoolsRuntimeIdentityV1['subscribeRevision']
 export const COMPANION_TASK_ACK_REVISION: UtoolsRuntimeIdentityV1['ackRevision']
+export function formatEyPcBuildStamp(date?: Date): string
+export function withArtifactMetadata(
+  identity: UtoolsRuntimeIdentityV1,
+  options?: { builtAt?: Date; packageVersion?: string }
+): UtoolsRuntimeIdentityArtifactV1
+export function printEyPcBuildSummary(
+  identity: UtoolsRuntimeIdentityArtifactV1,
+  options?: { label?: string; mode?: string }
+): void
 export function buildUtoolsRuntimeIdentity(root: string): UtoolsRuntimeIdentityV1
-export function runtimeIdentityCommonJs(identity: UtoolsRuntimeIdentityV1): string
+export function runtimeIdentityCommonJs(identity: UtoolsRuntimeIdentityV1 | UtoolsRuntimeIdentityArtifactV1): string
