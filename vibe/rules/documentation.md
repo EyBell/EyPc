@@ -46,6 +46,25 @@ User-facing operation help is product surface, not optional developer notes. Aut
 
 Medium/larger feature or interaction tasks must list whether the matching `src/help/guides/{id}.md` was added or updated, or explicitly state why no user-visible guide impact exists.
 
+## Build And Core Version Sync (required)
+
+EyPc **核心版本**（当前架构代际，如 `EyPc V7` / `V7`）由 [eypc-core-version.mjs](../../scripts/eypc-core-version.mjs#L1) 唯一声明；`hostAssetId` / `rendererAssetId`、运行合同 revision 链与 `builtAt` 由 [utools-runtime-identity.mjs](../../scripts/utools-runtime-identity.mjs#L1) 与 `public/runtime-identity.cjs` 生成。
+
+### 何时必须同步
+
+任何会改变 Runtime Identity 输入或生产/uTools 产物的迭代（`src/`、`preload/`、`contracts/`、`public/` 预加载镜像、`vite` 构建边界、Companion 合同生成）在收尾前必须完成版本同步，不得只改代码不更新真值。
+
+### 收尾门禁
+
+1. 运行 `pnpm run build`（或至少 `node scripts/prepare-utools-runtime.mjs` 且 `dist/` 已存在）。
+2. 运行 `node scripts/validate-requirements.mjs --write-current-truth` 回写 [PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1) 全局真值快照（核心版本、构建产物、`builtAt`、登记统计）。
+3. 若本轮为实质交付，在 [PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1) 用同一 `host / renderer / builtAt` 更新当前产物句，并提醒用户重新接入 uTools 开发插件或安装新包。
+4. 架构代际跃迁（如 V7→V8）时，先改 [eypc-core-version.mjs](../../scripts/eypc-core-version.mjs#L1)，再同步合同、登记与帮助文档。
+
+### Agent 主动提醒
+
+每轮实现/修复/重构收尾的 `E 提醒事项` 或 `D 推荐代做` 中，若本轮触及上述路径且未跑完步骤 1–2，必须显式提醒用户（或代跑）**版本真值同步**与 **uTools 重载**，并给出终端摘要中的 `core` / `host` / `renderer` / `builtAt` 四元组供对照。
+
 ## Requirement Registry (required)
 
 需求条款的身份、状态与取代关系由 [需求登记](../specs/requirements/README.md#L1) 唯一承载。`RAW-nnn` 编号是任务局部的——同一个编号在不同任务里是不同需求——所以身份是 `SPEC-<任务>::RAW-nnn`，不是编号本身。

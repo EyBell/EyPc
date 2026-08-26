@@ -98,6 +98,9 @@ function renderCurrentTruthBlock(truth) {
     runtime.subscribe,
     runtime.ack
   ].join(' / ')
+  const builtAtLine = runtime.built_at_local && runtime.built_at
+    ? `| 当前构建时间 | \`${runtime.built_at_local}\`（\`${runtime.built_at}\`） |`
+    : ''
   return `${currentTruthStart}
 ## 全局当前真值快照
 
@@ -109,8 +112,10 @@ function renderCurrentTruthBlock(truth) {
 | 需求登记 | ${registry.leaves} leaves / ${registry.modules} modules / ${registry.active} active / ${registry.superseded} superseded / ${registry.proposed} proposed / ${registry.conflicted} conflicted |
 | 取代关系 | ${registry.whole_supersession_edges} whole / ${registry.scoped_relations} scoped |
 | 原始来源 | ${sources.documents} documents / ${sources.ordered_anchors} ordered / ${sources.raw_parent_ordered} RAW-parent / ${sources.source_only} source-only |
+| 当前核心版本 | \`${runtime.core_version_label}\`（\`${runtime.core_version}\`） |
 | 当前统一运行合同 | \`${runtimeChain}\` |
 | 当前构建产物 | \`${runtime.host_asset} / ${runtime.renderer_asset}\` · \`${runtime.artifact_state}\` |
+${builtAtLine}
 | 新鲜度合同 | \`${truth.freshness}\` |
 
 <details>
@@ -417,6 +422,8 @@ if (sourceCatalog && runtimeIdentity && taskStateRevision && truthRange) {
       source_only: sourceCatalog.summary?.source_addressable_not_registered ?? null
     },
     runtime_identity: {
+      core_version: runtimeIdentity.coreVersion,
+      core_version_label: runtimeIdentity.coreVersionLabel,
       task_state: taskStateRevision,
       registry: runtimeIdentity.registryRevision,
       topology: runtimeIdentity.topologyRevision,
@@ -427,7 +434,10 @@ if (sourceCatalog && runtimeIdentity && taskStateRevision && truthRange) {
       ack: runtimeIdentity.ackRevision,
       host_asset: runtimeIdentity.hostAssetId,
       renderer_asset: runtimeIdentity.rendererAssetId,
-      artifact_state: runtimeIdentity.artifactState
+      artifact_state: runtimeIdentity.artifactState,
+      built_at: runtimeIdentity.builtAt || null,
+      built_at_local: runtimeIdentity.builtAtLocal || null,
+      package_version: runtimeIdentity.packageVersion || null
     },
     content_digests: {
       requirement_registry: digestFiles(registryFiles),

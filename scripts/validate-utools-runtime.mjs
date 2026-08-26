@@ -6,7 +6,10 @@ import { resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import vm from 'node:vm'
 import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS, UTOOLS_PRELOAD_MODULE_GROUPS } from './utools-preload-assets.mjs'
-import { buildUtoolsRuntimeIdentity, RUNTIME_IDENTITY_REVISION } from './utools-runtime-identity.mjs'
+import {
+  buildUtoolsRuntimeIdentity,
+  RUNTIME_IDENTITY_REVISION
+} from './utools-runtime-identity.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const distDir = resolve(root, 'dist')
@@ -82,6 +85,8 @@ const expectedRuntimeIdentity = buildUtoolsRuntimeIdentity(root)
 const actualRuntimeIdentity = distRequire('./runtime-identity.cjs')
 assert(actualRuntimeIdentity.revision === RUNTIME_IDENTITY_REVISION, 'runtime identity revision must be current')
 for (const field of [
+  'coreVersion',
+  'coreVersionLabel',
   'hostAssetId',
   'rendererAssetId',
   'kernelRevision',
@@ -96,6 +101,11 @@ for (const field of [
   assert(actualRuntimeIdentity[field] === expectedRuntimeIdentity[field], `runtime identity ${field} must match this artifact`)
 }
 assert(actualRuntimeIdentity.artifactState === 'artifact-ready', 'build output may report artifact-ready only')
+assert(typeof actualRuntimeIdentity.coreVersion === 'string' && actualRuntimeIdentity.coreVersion.length > 0, 'runtime identity coreVersion must be set')
+assert(typeof actualRuntimeIdentity.coreVersionLabel === 'string' && actualRuntimeIdentity.coreVersionLabel.length > 0, 'runtime identity coreVersionLabel must be set')
+assert(typeof actualRuntimeIdentity.builtAt === 'string' && actualRuntimeIdentity.builtAt.length > 0, 'runtime identity builtAt must be set')
+assert(typeof actualRuntimeIdentity.builtAtLocal === 'string' && actualRuntimeIdentity.builtAtLocal.length > 0, 'runtime identity builtAtLocal must be set')
+assert(typeof actualRuntimeIdentity.packageVersion === 'string' && actualRuntimeIdentity.packageVersion.length > 0, 'runtime identity packageVersion must be set')
 const windowModule = distRequire('./windows/index.cjs')
 assert(typeof windowModule.createWindowSubsystem === 'function', 'window preload module must expose createWindowSubsystem')
 const windowModuleProbe = windowModule.createWindowSubsystem({ execFile() { throw new Error('native window command must stay lazy during validation') } })
@@ -563,4 +573,4 @@ assert(typeof actionSandbox.window.eypcActionRunner?.onSnapshot === 'function', 
 assert(typeof actionSandbox.window.eypcActionRunner?.onLog === 'function', 'action preload must expose ordered log deltas')
 assert(typeof actionSandbox.window.eypcActionRunner?.action === 'function', 'action preload must expose runtime actions')
 
-console.log('uTools runtime validation passed')
+console.log(`EyPc uTools validation passed · core ${actualRuntimeIdentity.coreVersionLabel} (${actualRuntimeIdentity.coreVersion}) · package ${actualRuntimeIdentity.packageVersion} · builtAt ${actualRuntimeIdentity.builtAtLocal} (${actualRuntimeIdentity.builtAt}) · ${actualRuntimeIdentity.hostAssetId} · ${actualRuntimeIdentity.rendererAssetId}`)

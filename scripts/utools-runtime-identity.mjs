@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { relative, resolve } from 'node:path'
 import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS } from './utools-preload-assets.mjs'
+import { EYPC_CORE_VERSION, EYPC_CORE_VERSION_LABEL } from './eypc-core-version.mjs'
 
 const require = createRequire(import.meta.url)
 const providerManifest = require('../preload/companion/provider-manifest.json')
@@ -46,6 +47,59 @@ function contentIdentity(root, prefix, files, seed = '') {
   return `${prefix}-${hash.digest('hex').slice(0, 20)}`
 }
 
+export function formatEyPcBuildStamp(date = new Date()) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).format(date)
+}
+
+export function withArtifactMetadata(identity, options = {}) {
+  const builtAt = options.builtAt ?? new Date()
+  const packageVersion = options.packageVersion ?? ''
+  return Object.freeze({
+    ...identity,
+    builtAt: builtAt.toISOString(),
+    builtAtLocal: formatEyPcBuildStamp(builtAt),
+    packageVersion
+  })
+}
+
+export function printEyPcBuildSummary(identity, options = {}) {
+  const label = options.label ?? 'EyPc build'
+  const mode = options.mode ?? 'production'
+  const builtAtLocal = identity.builtAtLocal
+    || (identity.builtAt ? formatEyPcBuildStamp(new Date(identity.builtAt)) : '-')
+  const builtAtIso = identity.builtAt || '-'
+  const revisionLine = [
+    identity.kernelRevision,
+    identity.registryRevision,
+    identity.topologyRevision,
+    identity.taskPackageRevision,
+    identity.commandRevision,
+    identity.subscribeRevision,
+    identity.ackRevision
+  ].join(' / ')
+  console.log([
+    '',
+    `${label} (${mode})`,
+    `  core: ${identity.coreVersionLabel || EYPC_CORE_VERSION_LABEL} (${identity.coreVersion || EYPC_CORE_VERSION})`,
+    `  package: ${identity.packageVersion || '-'}`,
+    `  builtAt: ${builtAtLocal} (${builtAtIso})`,
+    `  artifact: ${identity.artifactState}`,
+    `  host: ${identity.hostAssetId}`,
+    `  renderer: ${identity.rendererAssetId}`,
+    `  revisions: ${revisionLine}`,
+    ''
+  ].join('\n'))
+}
+
 export function buildUtoolsRuntimeIdentity(root) {
   const hostFiles = [
     resolve(root, 'public/plugin.json'),
@@ -63,6 +117,8 @@ export function buildUtoolsRuntimeIdentity(root) {
   const hostAssetId = contentIdentity(root, 'host', hostFiles)
   return Object.freeze({
     revision: RUNTIME_IDENTITY_REVISION,
+    coreVersion: EYPC_CORE_VERSION,
+    coreVersionLabel: EYPC_CORE_VERSION_LABEL,
     hostAssetId,
     // Main/Float embed the expected Host id. Seeding their identity with it
     // makes rendererAssetId identify the actual compiled UI contract, not only
