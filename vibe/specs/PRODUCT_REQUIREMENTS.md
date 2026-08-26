@@ -18,7 +18,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
 | 需求登记 | 318 leaves / 6 modules / 291 active / 22 superseded / 5 proposed / 0 conflicted |
 | 取代关系 | 22 whole / 71 scoped |
-| 原始来源 | 32 documents / 207 ordered / 105 RAW-parent / 102 source-only |
+| 原始来源 | 33 documents / 207 ordered / 105 RAW-parent / 102 source-only |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
 | 当前构建产物 | `host-c8d259978cc3975e902f / renderer-7c5f2cefc86156e0f41f` · `artifact-ready` |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
@@ -43,7 +43,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "scoped_relations": 71
   },
   "source_anchor_catalog": {
-    "documents": 32,
+    "documents": 33,
     "ordered_anchors": 207,
     "raw_parent_ordered": 105,
     "registered_requirements": 105,
@@ -65,7 +65,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "content_digests": {
     "requirement_registry": "0b2ded92b869f9cddb72eb48dc6765b7923ca976964b6d7fb3965c44333082b7",
     "raw_sources": "198c783a84b284a84e0791f7418e97c3fd089ef7aafc4e44fd3bea1c268a9c9a",
-    "source_anchor_catalog": "d338e3403dc402743fa98a7d122669f8eb4ed9d3966f2dc9a8d5a42ffc7e8a20",
+    "source_anchor_catalog": "c15bd752692da765c3f51dda7ee9706655fc2a20423868262c41204efeb4cf87",
     "product_body": "c06d0daeefe2a753e75fd747e14342ba3e02398adbaba767e2e625501cf1bf7f",
     "architecture": "08e6eff88563ea4ef94541265cab1f11c2458dd002ff0b6b29fb21aee3efaa2b",
     "runtime_contract": "5b8d8079e34b6b3648ab046e4de3ba60d935ce3cecd4a26e744f75a4aa2ca3fe"

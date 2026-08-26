@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 32,
+    "source_documents": 33,
     "ordered_anchors": 207,
     "raw_parent_ordered": 105,
     "unparented_ordered": 102,
