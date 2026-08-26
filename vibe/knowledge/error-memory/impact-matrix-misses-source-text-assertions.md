@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: impact-selected-matrix-follows-code-dependency__source-text-assertion-on-edited-file-not-selected__grep-tests-for-the-edited-path
 first_seen: 2026-08-13
-last_verified: 2026-08-13
+last_verified: 2026-08-26
 review_after: 2026-11-13
 evidence:
   - tests/platform/favoriteFileBridge.test.ts
@@ -50,3 +50,4 @@ grep -rl "preload/index.js" tests/
 ## Occurrence History
 
 - 2026-08-13：为守住 HEAD 镜像成对性给 `verify` 加入 `validate:mirrors`，`favoriteFileBridge.test.ts` 的精确断言随即失败，跨两个提交未被发现。同一次全仓套件里的另一处失败（MQTT 焦点用例超时）经回退复验确认为既有问题，与本轮无关。
+- 2026-08-26：RAW-180（b5cd77b）把 `codex.css` 弹层背景改为不透明，聚焦矩阵只跑三个 UI/domain 文件，漏掉 `designSystemV7.test.ts` 对该文件的源文本断言（`color-mix` 正则）；直至双 worktree 合流后的全仓 `verify` 才暴露（1 failed / 1529 passed），按已落地产品意图更新断言收敛（f67c949）。
