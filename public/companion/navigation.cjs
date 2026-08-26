@@ -255,7 +255,12 @@ function createCompanionNavigation(dependencies = {}) {
         taskRef: request.target.key,
         source: request.source,
         durationMs: Date.now() - startedAt,
-        slowMs: 200
+        slowMs: 200,
+        details: {
+          confirmsRead: result.confirmsRead === true,
+          handoffStage: result.handoff?.stage || 'none',
+          nativeVisible: result.handoff?.nativeVisible === true
+        }
       })
       // A rapid sequence may return to the target already being opened. The
       // final intent has then already been satisfied, so do not call Provider

@@ -705,9 +705,20 @@ draft: v7EvidenceDraft({
   return kernel
 }
 
-function seedSingleClaudeKernelTask(context: Record<string, any>) {
+function seedSingleClaudeKernelTask(
+  context: Record<string, any>,
+  overrides: Record<string, any> = {}
+) {
   const kernel = context.platform.companionKernel
   const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: true } })
+  const capabilities = {
+    open: true,
+    archive: true,
+    pause: false,
+    resume: false,
+    executePlan: false,
+    ...(overrides.capabilities || {})
+  }
   kernel.syncPackage({
     lease: receipt.lease,
 draft: v7EvidenceDraft({
@@ -754,7 +765,8 @@ draft: v7EvidenceDraft({
         idleConfirmed: true,
         localPin: false,
         dynamicEligible: true,
-        capabilities: { open: true, archive: true, pause: false, resume: false, executePlan: false }
+        ...overrides,
+        capabilities
       }]
     })
   })
@@ -1251,6 +1263,23 @@ draft: v7EvidenceDraft({
       true,
       {
         inspect: () => ({ available: true }),
+        readCodeStateSnapshot: () => ({
+          generation: 3,
+          stateGeneration: 3,
+          readAt: 350,
+          sessions: [{
+            sessionId: 'local-b',
+            phase: 'completed',
+            stateCompatibility: 'compatible',
+            stateGeneration: 3,
+            phaseUpdatedAt: 300,
+            turnStartedAt: 250,
+            lastStopAt: 300,
+            lastActivityAt: 300,
+            metadataUpdatedAt: 300,
+            createdAt: 100
+          }]
+        }),
         readCodeUnread: async () => ({ ids: [], generation: 2, readAt: 200 }),
         watchCodeState: noopWatch,
         watchCodeSessions: noopWatch,
@@ -1284,11 +1313,141 @@ draft: v7EvidenceDraft({
       }]
     })).toBe(true)
     expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === 'claude:local-b'))
+      .toMatchObject({ phase: 'unknown', unreadKnown: true, unread: false })
+    expect(context.native.applyClaudeStateToCompanionKernel()).toBe(true)
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === 'claude:local-b'))
       .toMatchObject({ phase: 'completed', unreadKnown: true, unread: false })
     expect(context.diagnosticEvents.filter((event) => event.event === 'claude-unread-v7').at(-1))
       .toMatchObject({ outcome: 'accepted' })
     expect(context.diagnosticEvents.filter((event) => event.event === 'claude-inventory-v7').at(-1))
       .toMatchObject({ outcome: 'accepted' })
+    context.bridge.close()
+  })
+
+  it('keeps Claude inventory delivery off the activity, interaction and unread waterlines', () => {
+    const noopWatch = () => () => undefined
+    const context = loadCodexBridge(
+      new FakeCodexProcess(),
+      () => nativeRegistryText(),
+      null,
+      false,
+      true,
+      {
+        inspect: () => ({ available: true }),
+        readCodeStateSnapshot: () => ({
+          generation: 2,
+          stateGeneration: 2,
+          readAt: 400,
+          sessions: [{
+            sessionId: 'local-a',
+            phase: 'completed',
+            stateCompatibility: 'compatible',
+            stateGeneration: 2,
+            phaseUpdatedAt: 200,
+            turnStartedAt: 100,
+            lastStopAt: 200,
+            lastActivityAt: 180,
+            metadataUpdatedAt: 150,
+            createdAt: 80
+          }]
+        }),
+        watchCodeState: noopWatch,
+        watchCodeSessions: noopWatch,
+        watchCodeUnread: noopWatch,
+        close: () => undefined
+      }
+    )
+    const kernel = seedSingleClaudeKernelTask(context, {
+      phase: 'running',
+      dynamicGroup: 'active',
+      idleConfirmed: false,
+      capabilities: { archive: false }
+    })
+
+    const before = { ...kernel.getPackage().sourceLaneGenerations.claude }
+    expect(context.native.applyClaudeInventoryDeltaToCompanionKernel({
+      generation: 90,
+      acceptedAt: 300,
+      mutations: [{
+        mutation: 'upsert',
+        key: 'claude:local-a',
+        session: {
+          sessionId: 'local-a',
+          phase: 'running',
+          stateCompatibility: 'compatible',
+          stateGeneration: 1,
+          phaseUpdatedAt: 150,
+          turnStartedAt: 100,
+          lastActivityAt: 150,
+          metadataUpdatedAt: 300,
+          createdAt: 80
+        }
+      }]
+    })).toBe(true)
+
+    const afterInventory = kernel.getPackage()
+    expect(afterInventory.sourceLaneGenerations.claude).toMatchObject({
+      activity: before.activity,
+      interaction: before.interaction,
+      unread: before.unread,
+      topology: before.topology
+    })
+    expect(afterInventory.tasks.find((task: Record<string, any>) => task.key === 'claude:local-a'))
+      .toMatchObject({ phase: 'running' })
+
+    expect(context.native.applyClaudeStateToCompanionKernel()).toBe(true)
+    const afterState = kernel.getPackage()
+    expect(afterState.sourceLaneGenerations.claude.activity).toBe(2)
+    expect(afterState.tasks.find((task: Record<string, any>) => task.key === 'claude:local-a'))
+      .toMatchObject({ phase: 'completed' })
+    context.bridge.close()
+  })
+
+  it('does not manufacture a Claude read from an inventory mutation without unread authority', () => {
+    const noopWatch = () => () => undefined
+    const context = loadCodexBridge(
+      new FakeCodexProcess(),
+      () => nativeRegistryText(),
+      null,
+      false,
+      true,
+      {
+        inspect: () => ({ available: true }),
+        watchCodeState: noopWatch,
+        watchCodeSessions: noopWatch,
+        watchCodeUnread: noopWatch,
+        close: () => undefined
+      }
+    )
+    const kernel = seedSingleClaudeKernelTask(context, {
+      unreadKnown: true,
+      unread: true
+    })
+
+    expect(context.native.applyClaudeInventoryDeltaToCompanionKernel({
+      generation: 50,
+      acceptedAt: 300,
+      mutations: [{
+        mutation: 'upsert',
+        key: 'claude:local-a',
+        session: {
+          sessionId: 'local-a',
+          phase: 'completed',
+          stateCompatibility: 'compatible',
+          stateGeneration: 1,
+          phaseUpdatedAt: 300,
+          turnStartedAt: 90,
+          lastStopAt: 300,
+          lastActivityAt: 300,
+          metadataUpdatedAt: 300,
+          createdAt: 80
+        }
+      }]
+    })).toBe(true)
+
+    expect(kernel.getPackage().sourceLaneGenerations.claude.unread).toBe(1)
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === 'claude:local-a'))
+      .toMatchObject({ phase: 'completed', unreadKnown: true, unread: true })
     context.bridge.close()
   })
 

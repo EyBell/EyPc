@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: claude-phase-cache-merge__new-terminal-overwritten-by-old-running__causal-event-first-atomic-state-reduction
 first_seen: 2026-08-11
-last_verified: 2026-08-13
+last_verified: 2026-08-26
 review_after: 2026-09-11
 evidence:
   - preload/companion/task-kernel.cjs
@@ -42,6 +42,8 @@ RAW-165 adds the unread-side instance of the same error: Claude completion/focus
 
 RAW-166 closes the corresponding known/value split. An exact unread snapshot previously updated `unread` in the Host incremental path without necessarily setting `unreadKnown=true`，and a newly admitted Claude session could inherit the same partial value。That left an exact false value indistinguishable from unknown。The current route admits known/value together for both unread and inventory deltas；an unavailable source abstains and preserves the previous trusted lane。
 
+2026-08-26 的 V7 recurrence 有两条同源缺口：Claude metadata mutation 把 delivery generation 写进 activity/interaction/unread，令真实较小 state generation 永久判旧；同时 `1.37937.0` 的固定 `CycleHealth api_error` 额度耗尽行未被解析，后续 focus 又错误续写 phase revision。前者可保留旧 running，后者可保留旧 completed/running；两者都不是 Renderer 分组问题。
+
 ## Evidence
 
 - [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1) owns `reduceClaudeTaskEvidenceV4`, including causal phase precedence.
@@ -54,7 +56,7 @@ RAW-166 closes the corresponding known/value split. An exact unread snapshot pre
 
 ## Prevention Rule
 
-Prefer the causally newer current `session.phase`; use previous phase only when the current evidence is absent or older. Never use independent producer generation or persistence read time as the sole cross-lane comparator. Commit phase, phase revision/time, unread-known/value and capabilities atomically through the canonical reducer, and publish only when a consumer selector changes. An exact unread snapshot must establish both `unreadKnown=true` and its boolean value；unknown/unavailable must abstain instead of clearing a trusted value。Treat confirmed-open and live completion/focus unread hints as bounded exact edges；do not let delayed LevelDB/replay undo them or let them suppress a later completion. Cold replay may restore persisted truth but must not fabricate hot unread from historical log lines.
+Prefer the causally newer current `session.phase`; use previous phase only when the current evidence is absent or older. Never use independent producer generation or persistence read time as the sole cross-lane comparator. Membership mutation must carry indexed metadata only and preserve the activity/interaction/unread/topology waterlines；state correlation runs separately。Commit phase, phase revision/time, unread-known/value and capabilities atomically through the canonical reducer, and publish only when a consumer selector changes. An exact unread snapshot must establish both `unreadKnown=true` and its boolean value；unknown/unavailable must abstain instead of clearing a trusted value。Treat confirmed-open and live completion/focus unread hints as bounded exact edges；do not let delayed LevelDB/replay undo them or let them suppress a later completion. Focus is unread-only and cannot renew phase。A fixed usage-limit error is an explicit interrupted Turn；cold replay may restore that terminal truth but must not fabricate hot unread from historical log lines.
 
 ## Detection Order
 
@@ -90,3 +92,4 @@ Prefer the causally newer current `session.phase`; use previous phase only when 
 | 2026-08-11 | RAW-160 | Claude had ended but EyPc still showed running | Previous phase/cache overrode newer current evidence | Kernel-owned causal merge and atomic projection | affected automation verified; real host pending |
 | 2026-08-13 | RAW-165 | Completion/focus was observable before Claude persisted unread，so EyPc waited or later regressed | Treated LevelDB snapshot timing as the only unread authority and did not wake unread-only subscribers from App events；a coincidentally matching value from the previous completion could be mistaken for catch-up | Add exact live completion/focus hot overlay，monotonic hint revision，opposite-edge-plus-post-event persisted acknowledgement and shared watcher wake | affected `364/364` matrix passed；real current-host acceptance pending |
 | 2026-08-13 | RAW-166 | Exact empty unread snapshot could update the value while leaving Host incremental/new-member evidence semantically unknown；log rotation cold replay could also mint a false hot edge | Treated unread boolean/authority as incidental fields and allowed any same-version rebuild to create hints | Admit `unreadKnown/value` together；unavailable abstains；only verified append creates hot unread | affected `457/457` matrix and production build pass；real current-host acceptance pending |
+| 2026-08-26 | V7 Claude state/read correction | 已完成/额度耗尽任务仍显示进行中；快捷打开后的已读消退不稳定 | inventory delivery 污染 state/read waterline；新 App 版本门滞后；usage-limit warn 未进入固定语法；focus 误写 phase time | 独立 mutation/state/unread lanes；加入 `1.37937.0` 与固定 usage-limit interrupted 语法；focus 仅 hot unread；导航诊断显式回执边界 | focused automation + sanitized current-log replay verified；host reload pending |

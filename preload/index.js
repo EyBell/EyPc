@@ -11231,17 +11231,42 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
   const key = `claude:${sessionId}`
   const family = key
   const persisted = input.persisted || companionPersistedTaskState()
-  const observation = claudeSessionObservationV7(session, unread === true)
-  const revisionAt = companionEvidenceSequenceV7(
-    session.stateGeneration,
-    session.phaseUpdatedAt,
-    session.turnStartedAt,
-    session.lastStopAt,
-    session.lastActivityAt,
-    session.metadataUpdatedAt,
-    input.acceptedAt,
-    1
-  )
+  const unreadKnown = input.unreadKnown === true && typeof unread === 'boolean'
+  const metadataOnly = input.metadataOnly === true
+  const observation = metadataOnly
+    ? companionUnknownObservationV7({
+        unreadKnown,
+        unread: unread === true,
+        unreadSequence: input.unreadSequence
+      })
+    : claudeSessionObservationV7(session, unread === true)
+  // Claude phase snapshots and inventory mutations may reuse the last exact
+  // unread set, but they do not own its clock. Keep the boolean unknown until
+  // that set exists and bind its per-node revision to the unread lane rather
+  // than to an unrelated phase/metadata timestamp.
+  observation.unreadKnown = unreadKnown
+  observation.unread = unreadKnown && unread === true
+  observation.unreadSequence = unreadKnown
+    ? companionEvidenceSequenceV7(input.unreadSequence)
+    : 0
+  const revisionAt = metadataOnly
+    ? companionEvidenceSequenceV7(
+        session.lastActivityAt,
+        session.lastFocusedAt,
+        session.metadataUpdatedAt,
+        input.acceptedAt,
+        1
+      )
+    : companionEvidenceSequenceV7(
+        session.stateGeneration,
+        session.phaseUpdatedAt,
+        session.turnStartedAt,
+        session.lastStopAt,
+        session.lastActivityAt,
+        session.metadataUpdatedAt,
+        input.acceptedAt,
+        1
+      )
   const localPin = persisted.pins.has(key)
   const originalTitle = typeof session.title === 'string' && session.title.trim()
     ? session.title.trim().slice(0, 240)
@@ -11249,6 +11274,9 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
   const alias = persisted.aliases.get(key) || ''
   const terminal = ['turn-completed', 'turn-interrupted', 'turn-failed'].includes(observation.kind)
   const compatible = session.stateCompatibility === 'compatible' || session.compatibility === 'compatible'
+  const capabilities = Array.isArray(input.capabilities)
+    ? input.capabilities.filter((value) => typeof value === 'string')
+    : ['open', ...(terminal && compatible ? ['archive'] : [])]
   const root = createCompanionEvidenceNodeV7({
     provider: 'claude',
     key,
@@ -11264,7 +11292,7 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
       membershipRevision: companionEvidenceSequenceV7(session.lastActivityAt, session.metadataUpdatedAt, input.acceptedAt, revisionAt),
       visibilityRevision: companionEvidenceSequenceV7(session.metadataUpdatedAt, input.acceptedAt, revisionAt),
       metadataRevision: companionEvidenceSequenceV7(session.metadataUpdatedAt, input.acceptedAt, revisionAt),
-      lastQuestionAt: session.turnStartedAt,
+      lastQuestionAt: metadataOnly ? session.lastActivityAt : session.turnStartedAt,
       createdAt: session.createdAt,
       displayOrder: input.order,
       cycleOrder: input.order,
@@ -11277,13 +11305,13 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
       originalTitle,
       alias
     }),
-    capabilities: ['open', ...(terminal && compatible ? ['archive'] : [])],
+    capabilities,
     standaloneEligible: true
   })
   const nodes = root ? [root] : []
   const relations = []
   let childOrder = Number(input.order) || 0
-  for (const childValue of Array.isArray(session.subagents) ? session.subagents : []) {
+  for (const childValue of metadataOnly ? [] : Array.isArray(session.subagents) ? session.subagents : []) {
     const child = codexRecord(childValue)
     const agentId = typeof child.agentId === 'string' ? child.agentId : ''
     const childRevision = companionEvidenceSequenceV7(child.startedAt, child.stoppedAt)
@@ -11342,18 +11370,20 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
       generation: companionEvidenceSequenceV7(input.topologyGeneration, childRevision)
     })
   }
-  const interactionBundle = companionSyntheticInteractionBundleV7({
-    provider: 'claude',
-    taskKey: key,
-    branchRef: 'root',
-    kind: observation.interactionKind,
-    sequence: observation.interactionSequence || observation.sequence,
-    turnEpoch: observation.turnStartedAt,
-    requestSetRevision: observation.interactionSequence || observation.sequence,
-    authority: input.authority || 'provider-snapshot',
-    exact: observation.exact === true,
-    complete: true
-  })
+  const interactionBundle = metadataOnly
+    ? { interactions: [], interactionSets: [] }
+    : companionSyntheticInteractionBundleV7({
+        provider: 'claude',
+        taskKey: key,
+        branchRef: 'root',
+        kind: observation.interactionKind,
+        sequence: observation.interactionSequence || observation.sequence,
+        turnEpoch: observation.turnStartedAt,
+        requestSetRevision: observation.interactionSequence || observation.sequence,
+        authority: input.authority || 'provider-snapshot',
+        exact: observation.exact === true,
+        complete: true
+      })
   return {
     nodes,
     interactions: interactionBundle.interactions,
@@ -11666,6 +11696,8 @@ async function preflightCompanionTaskPackageV7(input = {}) {
           order,
           acceptedAt: readAt,
           topologyGeneration,
+          unreadKnown: Boolean(result.unread),
+          unreadSequence: unreadGeneration,
           authority: 'provider-snapshot'
         })
         nodes.push(...evidence.nodes)
@@ -12332,16 +12364,26 @@ function applyClaudeStateToCompanionKernel() {
   const interactions = []
   const interactionSets = []
   const relations = []
+  const topologyGeneration = Math.max(
+    companionEvidenceSequenceV7(currentLanes.topology) + 1,
+    generation
+  )
   let order = 0
   for (const session of source.sessions) {
     const sessionId = typeof session?.sessionId === 'string' ? session.sessionId : ''
-    const unread = companionClaudeUnreadSnapshot.available && companionClaudeUnreadSnapshot.ids.has(sessionId)
+    const unreadKnown = companionClaudeUnreadSnapshot.available === true
+    const unread = unreadKnown && companionClaudeUnreadSnapshot.ids.has(sessionId)
     const evidence = companionClaudeEvidenceV7(session, unread, {
       persisted,
       dynamicCutoff,
       order,
       acceptedAt: source.readAt,
-      topologyGeneration: generation,
+      topologyGeneration,
+      unreadKnown,
+      unreadSequence: companionEvidenceSequenceV7(
+        companionClaudeUnreadSnapshot.generation,
+        companionClaudeUnreadSnapshot.readAt
+      ),
       authority: 'provider-live'
     })
     nodes.push(...evidence.nodes)
@@ -12357,7 +12399,7 @@ function applyClaudeStateToCompanionKernel() {
     unread: companionEvidenceSequenceV7(currentLanes.unread),
     planArtifact: companionEvidenceSequenceV7(currentLanes.planArtifact),
     metadata: companionEvidenceSequenceV7(currentLanes.metadata),
-    topology: generation
+    topology: topologyGeneration
   }
   const batch = createCompanionEvidenceBatchV7({
     provider: 'claude',
@@ -12385,7 +12427,12 @@ function applyClaudeStateToCompanionKernel() {
     slowMs: 50,
     count: nodes.length,
     cache: 'provider-direct',
-    details: { generation, sessionCount: source.sessions.length, packageRevision: canonical?.packageRevision || beforeRevision }
+    details: {
+      generation,
+      topologyGeneration,
+      sessionCount: source.sessions.length,
+      packageRevision: canonical?.packageRevision || beforeRevision
+    }
   })
   return changed
 }
@@ -12509,10 +12556,7 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
     companionEvidenceSequenceV7(currentLanes.membership) + 1,
     companionEvidenceSequenceV7(source.acceptedAt, Date.now())
   )
-  const providerGeneration = Math.max(
-    companionEvidenceSequenceV7(currentLanes.activity) + 1,
-    companionEvidenceSequenceV7(source.generation)
-  )
+  const topologyGeneration = companionEvidenceSequenceV7(currentLanes.topology)
   const persisted = companionPersistedTaskState()
   const dynamicCutoff = Date.now() - companionTaskConfiguration().dynamicTaskWindowHours * 60 * 60 * 1_000
   const nodes = []
@@ -12532,13 +12576,28 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
     }
     if (mutation.mutation !== 'upsert' || !mutation.session) { exact = false; continue }
     const sessionId = typeof mutation.session.sessionId === 'string' ? mutation.session.sessionId : key.slice('claude:'.length)
-    const unread = companionClaudeUnreadSnapshot.available && companionClaudeUnreadSnapshot.ids.has(sessionId)
+    const unreadKnown = companionClaudeUnreadSnapshot.available === true
+    const unread = unreadKnown && companionClaudeUnreadSnapshot.ids.has(sessionId)
+    const existingTask = (Array.isArray(current.tasks) ? current.tasks : [])
+      .find((task) => task?.key === key && task?.provider === 'claude')
     const evidence = companionClaudeEvidenceV7(mutation.session, unread, {
       persisted,
       dynamicCutoff,
       order,
       acceptedAt: membershipGeneration,
-      topologyGeneration: providerGeneration,
+      topologyGeneration,
+      unreadKnown,
+      unreadSequence: companionEvidenceSequenceV7(
+        companionClaudeUnreadSnapshot.generation,
+        companionClaudeUnreadSnapshot.readAt
+      ),
+      metadataOnly: true,
+      capabilities: [
+        'open',
+        ...(existingTask?.providerCapabilities?.archive === true || existingTask?.capabilities?.archive === true
+          ? ['archive']
+          : [])
+      ],
       authority: 'provider-live'
     })
     nodes.push(...evidence.nodes)
@@ -12553,12 +12612,16 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
   }
   const laneGenerations = {
     membership: membershipGeneration,
-    activity: nodes.length ? providerGeneration : companionEvidenceSequenceV7(currentLanes.activity),
-    interaction: nodes.length ? providerGeneration : companionEvidenceSequenceV7(currentLanes.interaction),
-    unread: nodes.length ? Math.max(companionEvidenceSequenceV7(currentLanes.unread) + 1, providerGeneration) : companionEvidenceSequenceV7(currentLanes.unread),
+    // Older senders may still attach state-shaped fields to a metadata callback,
+    // but this adapter treats the row as metadata-only. Its mutation generation
+    // must never move activity/interaction/unread/topology waterlines: doing so
+    // can make the next real state generation permanently stale.
+    activity: companionEvidenceSequenceV7(currentLanes.activity),
+    interaction: companionEvidenceSequenceV7(currentLanes.interaction),
+    unread: companionEvidenceSequenceV7(currentLanes.unread),
     planArtifact: companionEvidenceSequenceV7(currentLanes.planArtifact),
     metadata: membershipGeneration,
-    topology: nodes.length || removedKeys.length ? providerGeneration : companionEvidenceSequenceV7(currentLanes.topology)
+    topology: companionEvidenceSequenceV7(currentLanes.topology)
   }
   const batch = createCompanionEvidenceBatchV7({
     provider: 'claude',
@@ -12587,7 +12650,16 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
     slowMs: 50,
     count: source.mutations.length,
     cache: 'provider-direct',
-    details: { providerGeneration, removedCount: removedKeys.length, packageRevision: canonical?.packageRevision || beforeRevision }
+    details: {
+      mutationGeneration: companionEvidenceSequenceV7(source.generation),
+      membershipGeneration,
+      topologyGeneration: laneGenerations.topology,
+      activityGeneration: laneGenerations.activity,
+      interactionGeneration: laneGenerations.interaction,
+      unreadGeneration: laneGenerations.unread,
+      removedCount: removedKeys.length,
+      packageRevision: canonical?.packageRevision || beforeRevision
+    }
   })
   return changed
 }
@@ -12709,7 +12781,15 @@ function queueCompanionHostReconciliation(provider = '') {
 if (companionTaskKernel) {
   codexActivityListeners.add(applyCodexActivityToCompanionKernel)
   try { companionClaudeStateDispose = claudeBridge?.watchCodeState?.(() => applyClaudeStateToCompanionKernel()) || null } catch {}
-  try { companionClaudeInventoryDispose = claudeBridge?.watchCodeSessions?.((delta) => applyClaudeInventoryDeltaToCompanionKernel(delta)) || null } catch {}
+  try {
+    companionClaudeInventoryDispose = claudeBridge?.watchCodeSessions?.((delta) => {
+      applyClaudeInventoryDeltaToCompanionKernel(delta)
+      // Membership publishes synchronously above. A separate microtask lets
+      // the state lane correlate the newly indexed member without coupling the
+      // mutation result or its generation to phase/interaction/topology.
+      queueMicrotask(() => applyClaudeStateToCompanionKernel())
+    }) || null
+  } catch {}
   try { companionClaudeUnreadDispose = claudeBridge?.watchCodeUnread?.(() => { void applyClaudeUnreadToCompanionKernel() }) || null } catch {}
   try { companionCursorEventDispose = cursorBridge?.watchEvents?.(() => queueCompanionHostReconciliation('cursor')) || null } catch {}
   try { companionCursorInventoryDispose = cursorBridge?.watchInventory?.(() => queueCompanionHostReconciliation('cursor')) || null } catch {}

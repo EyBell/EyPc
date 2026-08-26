@@ -1,7 +1,7 @@
 # EyPc V7 Global Refactor — Verification Record
 
 status: `automated-verified / artifact-ready / integrated / real-host-unverified`
-updated: `2026-08-25`
+updated: `2026-08-26`
 
 ## Verified Evidence
 
@@ -27,3 +27,11 @@ updated: `2026-08-25`
 ## Documentation Impact
 
 Classification: `requirement-canonical + project-current + task-only`, synchronized across PRODUCT_REQUIREMENTS, requirement registry/conflicts, PROJECT_STATUS, architecture, technical details, help, source anchors and project error memory. Personal Codex memory was not written.
+
+## 2026-08-26 Claude State/Read Corrective Increment
+
+- Claude metadata membership delta now carries indexed metadata only and preserves activity/interaction/unread/topology generations；a separate state microtask correlates the admitted member。The regression proves many inventory deliveries cannot starve the next real completed state, and inventory without unread authority cannot manufacture a read。
+- Claude App `1.37937.0` is admitted only after privacy-bounded grammar verification。Its fixed CycleHealth usage-limit error is an explicit interrupted Turn and folds to `stopped/exact-terminal`；focus remains hot-unread-only and cannot renew phase evidence。
+- Card click and global-shortcut sources converge at the same Navigation/Action/Provider receipt boundary。Both current Claude Deep Link outcomes remain `dispatched / confirmsRead=false`；diagnostics now expose only bounded `confirmsRead / handoffStage / nativeVisible` fields。
+- Verification: affected `8` files `356/356` tests passed；contracts、typecheck、`74` committed preload mirror pairs、requirements、error-memory、production build and uTools validator passed。Current read-only log replay of the user-identified task resolves to stopped。Artifact identity is `host-328ae8b2f2ff25baf18f / renderer-34ee7434ee28243c10e7`。
+- Boundary: no uTools reload/install or live shortcut/card/focus canary was run；artifact readiness does not prove the running Host loaded this identity。

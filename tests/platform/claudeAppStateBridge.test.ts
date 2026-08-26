@@ -17,12 +17,17 @@ function line(time: string, message: string) {
   return `${time} [info] ${message}`
 }
 
+function warningLine(time: string, message: string) {
+  return `${time} [warn] ${message}`
+}
+
 describe('Claude App version-gated state log', () => {
   it('admits the currently validated Claude App grammar without widening unknown versions', () => {
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.28929.0')).toBe(true)
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.30096.5')).toBe(true)
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.34493.1')).toBe(true)
-    expect(appState.SUPPORTED_APP_VERSIONS.has('1.30097.0')).toBe(false)
+    expect(appState.SUPPORTED_APP_VERSIONS.has('1.37937.0')).toBe(true)
+    expect(appState.SUPPORTED_APP_VERSIONS.has('1.37938.0')).toBe(false)
   })
 
   it('accepts only the fixed privacy-safe lifecycle grammar', () => {
@@ -36,6 +41,14 @@ describe('Claude App version-gated state log', () => {
       .toMatchObject({ kind: 'focus-changed', sessionId: LOCAL_A })
     expect(appState.parseAppStateLine(line('2026-08-07 10:00:02', '[CCD] LocalSessions.setFocusedSession: sessionId=null')))
       .toMatchObject({ kind: 'focus-changed', sessionId: '' })
+    expect(appState.parseAppStateLine(warningLine(
+      '2026-08-07 10:00:03',
+      `[CCD CycleHealth] ${LOCAL_A} api_error (success): You've reached your Fable 5 limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.`
+    ))).toMatchObject({ kind: 'stopped', sessionId: LOCAL_A })
+    expect(appState.parseAppStateLine(warningLine(
+      '2026-08-07 10:00:03',
+      `[CCD CycleHealth] ${LOCAL_A} api_error (success): private error text`
+    ))).toBeNull()
     expect(appState.parseAppStateLine(line('2026-08-07 10:00:03', `Sending message to session ${LOCAL_A} secret prompt`))).toBeNull()
     expect(appState.parseAppStateLine(line('2026-08-07 10:00:03', `[CCD] LocalSessions.setFocusedSession: sessionId=${LOCAL_A} extra`))).toBeNull()
     expect(appState.parseAppStateLine('private conversation text')).toBeNull()
@@ -66,6 +79,35 @@ describe('Claude App version-gated state log', () => {
       teardown
     ].filter(Boolean))
     expect(open.state.get(LOCAL_A)).toMatchObject({ phase: 'stopped', lastSessionEndAt: expect.any(Number) })
+  })
+
+  it('lets a later exact usage-limit interruption outrank an earlier successful query hook', () => {
+    const result = appState.foldAppStateEvents([
+      appState.parseAppStateLine(line('2026-08-07 10:00:00', `[Stop hook] Query completed for session ${LOCAL_A}`)),
+      appState.parseAppStateLine(warningLine(
+        '2026-08-07 10:00:01',
+        `[CCD CycleHealth] ${LOCAL_A} api_error (success): You've reached your Fable 5 limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.`
+      ))
+    ].filter(Boolean))
+
+    expect(result.state.get(LOCAL_A)).toMatchObject({
+      phase: 'stopped',
+      evidenceProvenance: 'exact-terminal'
+    })
+  })
+
+  it('keeps focus changes out of the phase revision lane', () => {
+    const completedAt = Date.parse('2026-08-07T10:00:00')
+    const result = appState.foldAppStateEvents([
+      appState.parseAppStateLine(line('2026-08-07 10:00:00', `[Result] Turn succeeded for session ${LOCAL_A}`)),
+      appState.parseAppStateLine(line('2026-08-07 10:00:01', `[CCD] LocalSessions.setFocusedSession: sessionId=${LOCAL_A}`))
+    ].filter(Boolean))
+
+    expect(result.state.get(LOCAL_A)).toMatchObject({
+      phase: 'completed',
+      phaseUpdatedAt: completedAt,
+      evidenceProvenance: 'exact-terminal'
+    })
   })
 
   it('fails closed on an unvalidated App version and emits no raw log text', () => {

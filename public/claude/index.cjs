@@ -156,7 +156,19 @@ function createClaudeBridge(dependencies) {
       waitingApprovalAt: session.waitingApprovalAt,
       waitingInputAt: session.waitingInputAt,
       lastStopAt: session.lastStopAt,
-      lastSessionEndAt: session.lastSessionEndAt
+      lastSessionEndAt: session.lastSessionEndAt,
+      // Topology belongs to the state lane, not metadata delivery. Keep the
+      // fingerprint private but make a child-only transition advance the state
+      // generation so it cannot wait for an unrelated metadata write.
+      subagents: (Array.isArray(session.subagents) ? session.subagents : [])
+        .map((child) => ({
+          agentId: String(child?.agentId || ''),
+          active: child?.active === true,
+          startedAt: Number(child?.startedAt) || 0,
+          stoppedAt: Number(child?.stoppedAt) || 0,
+          lastActivityAt: Number(child?.lastActivityAt) || 0
+        }))
+        .sort((left, right) => left.agentId.localeCompare(right.agentId))
     }))
     const fingerprint = JSON.stringify(stateRows)
     if (fingerprint !== lastCodeStateFingerprint) {
@@ -454,7 +466,10 @@ function createClaudeBridge(dependencies) {
             ? mutation.key.slice(prefix.length).toLowerCase()
             : ''
           if (!LOCAL_SESSION_PATTERN.test(sessionId)) return mutation
-          const current = readCurrentSessionObservation(sessionId)
+          // A membership callback owns only exact indexed metadata. State,
+          // interaction and topology are read and published by their separate
+          // Host lane after this delta has already been delivered.
+          const current = codeSessions.readIndexedSession(sessionId)
           return current.status === 'found' ? { ...mutation, session: current.session } : mutation
         })
         if (lastCodeInventory) {

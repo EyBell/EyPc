@@ -80,7 +80,12 @@ describe('process-lifetime companion navigation', () => {
       event: 'codex-open',
       outcome: 'opened',
       operationId,
-      source: 'manual-quick-jump'
+      source: 'manual-quick-jump',
+      details: {
+        confirmsRead: false,
+        handoffStage: 'native-confirmed',
+        nativeVisible: true
+      }
     }))
 
     await expect(navigation.open({
@@ -100,6 +105,26 @@ describe('process-lifetime companion navigation', () => {
       operationId: 'manual-row-open-failed-0002',
       source: 'manual-row-open'
     }))
+  })
+
+  it('keeps card and shortcut opens on the same native-read authority boundary', async () => {
+    const records: Array<Record<string, any>> = []
+    const { navigation } = readyNavigation({
+      record: (entry: Record<string, unknown>) => records.push(entry),
+      openTarget: async () => ({ outcome: 'dispatched', confirmsRead: false })
+    })
+
+    await expect(navigation.open({ key: 'claude:local_a', source: 'card-click' }))
+      .resolves.toMatchObject({ outcome: 'dispatched', confirmsRead: false })
+    await expect(navigation.open({ key: 'claude:local_a', source: 'global-shortcut' }))
+      .resolves.toMatchObject({ outcome: 'dispatched', confirmsRead: false })
+
+    const opens = records.filter((entry) => entry.event === 'claude-open')
+    expect(opens.map((entry) => entry.source)).toEqual(['card-click', 'global-shortcut'])
+    expect(opens.map((entry) => entry.details)).toEqual([
+      { confirmsRead: false, handoffStage: 'none', nativeVisible: false },
+      { confirmsRead: false, handoffStage: 'none', nativeVisible: false }
+    ])
   })
 
   it('dispatches the leading shortcut immediately without advancing past an unconfirmed target', async () => {
