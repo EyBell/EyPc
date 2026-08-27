@@ -1,0 +1,24 @@
+{
+  "target": "darwin-arm64",
+  "platform": "darwin",
+  "arch": "arm64",
+  "protocolRevision": "eypc-diagnostic-worker-v1",
+  "schemaRevision": 1,
+  "sqliteVersion": "3.53.4",
+  "compileDefinitions": [
+    "SQLITE_THREADSAFE=1",
+    "SQLITE_ENABLE_FTS5",
+    "SQLITE_ENABLE_DBSTAT_VTAB",
+    "SQLITE_DQS=0",
+    "SQLITE_OMIT_LOAD_EXTENSION",
+    "SQLITE_OMIT_DEPRECATED",
+    "SQLITE_DEFAULT_FOREIGN_KEYS=1",
+    "SQLITE_DEFAULT_WAL_SYNCHRONOUS=1"
+  ],
+  "executable": "eypc-diagnostic-worker",
+  "sha256": "4d09cbba40ab6fc4b5b831c3cb0c373a1bf3898a42fce0e3856a299e146702e1",
+  "workerSourceSha256": "f9e9cc0f118d0564547dc1541e1ae5c907bc50a929a63e24fb7afd9ea7b12c7b",
+  "sqliteSourceSha256": "b1dd5d74ec7f29055a6684fa06fb3c2f6821c87dd38f9a458dfd2e8a1db28189",
+  "signed": false,
+  "signing": "required-for-release"
+}
