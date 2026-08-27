@@ -14,7 +14,7 @@ module.exports = Object.freeze({
   "subscribeRevision": "companion-task-subscribe-v1",
   "ackRevision": "companion-task-ack-v2",
   "artifactState": "artifact-ready",
-  "builtAt": "2026-08-26T01:55:18.301Z",
-  "builtAtLocal": "2026/08/26 09:55:18",
+  "builtAt": "2026-08-27T00:57:47.079Z",
+  "builtAtLocal": "2026/08/27 08:57:47",
   "packageVersion": "0.1.0"
 })

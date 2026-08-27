@@ -315,6 +315,8 @@ for (const feature of pluginJson.features) {
   assert(!codes.has(feature.code), `duplicate feature.code: ${feature.code}`)
   codes.add(feature.code)
   assert(Array.isArray(feature.cmds) && feature.cmds.length > 0, `feature ${feature.code} cmds must be non-empty`)
+  // uTools 打包校验拒绝超过五个「功能指令」的 feature，超限只在打包对话框才暴露。
+  assert(feature.cmds.length <= 5, `feature ${feature.code} must not exceed 5 cmds (uTools packaging limit), found ${feature.cmds.length}`)
 }
 for (const code of requiredCodes) {
   assert(codes.has(code), `missing feature code: ${code}`)
