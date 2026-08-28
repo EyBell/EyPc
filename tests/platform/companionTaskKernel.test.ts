@@ -1009,10 +1009,99 @@ describe('CompanionTaskKernel', () => {
     // pin's own group takes it — one task, one place.
     expect(current.views.groups.pinned).toEqual(['claude-pin-unknown'])
     expect(current.views.groups.stopped).toEqual([])
-    expect(current.views.cycleKeys).toEqual(['claude-pin-unknown'])
+    // ...and the pin group is served by the 已完成未读 entry, not the ordinary
+    // ring. Sitting in 置顶 while every shortcut skipped it was the second half
+    // of the same defect; being in both rings would be a third.
+    expect(current.views.attentionKeys.completedUnread).toEqual(['claude-pin-unknown'])
+    expect(current.views.cycleKeys).toEqual([])
     // An unpinned unknown task earns neither a group nor a ring slot.
     expect(current.views.groups.pinned).not.toContain('claude-plain-unknown')
     expect(current.views.cycleKeys).not.toContain('claude-plain-unknown')
+    expect(current.views.attentionKeys.completedUnread).not.toContain('claude-plain-unknown')
+  })
+
+  it('serves every pin from exactly one ring across all phases', () => {
+    const kernel = createCompanionTaskKernel({
+      now: () => 1_000_000_000,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const phases = ['running', 'stopped', 'completed', 'unknown', 'waiting-input', 'waiting-approval']
+    const tasks = phases.flatMap((phase, index) => [false, true].map((unread) => task({
+      key: `codex-${phase}-${unread ? 'unread' : 'read'}`,
+      phase,
+      unread,
+      localPin: true,
+      kind: 'local-pin',
+      dynamicEligible: false,
+      lastQuestionAt: 100 - index
+    })))
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft(tasks, 1, { providers: { codex: true, claude: false } })
+    })
+
+    const ring = new Set<string>(current.views.cycleKeys)
+    const entry = new Set<string>(current.views.attentionKeys.completedUnread)
+    for (const value of current.tasks as Array<Record<string, any>>) {
+      if (value.dynamicGroup === 'pinned') {
+        // Nothing but the pin puts it in the list, so the 已完成未读 entry is its
+        // only shortcut — and its only one: a second slot in the ordinary ring
+        // would list the same task twice.
+        expect(entry.has(value.key)).toBe(true)
+        expect(ring.has(value.key)).toBe(false)
+      } else {
+        // Its own state places it. Pinning must neither add a ring slot nor take
+        // one away.
+        expect(ring.has(value.key)).toBe(true)
+      }
+    }
+    // The unread backlog is deliberately reachable both ways: the entry is the
+    // fast path to it, the ring still walks it as a tier.
+    expect(current.views.groups.pinned.every((key: string) => entry.has(key) && !ring.has(key))).toBe(true)
+    expect([...current.views.groups.pinned].sort()).toEqual(['codex-completed-read', 'codex-unknown-read', 'codex-unknown-unread'])
+  })
+
+  it('derives every badge and entry from the display group rather than a restated phase test', () => {
+    const kernel = createCompanionTaskKernel({
+      now: () => 1_000_000_000,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const phases = ['running', 'stopped', 'completed', 'unknown', 'waiting-input', 'waiting-approval']
+    const tasks = phases.flatMap((phase, index) => [false, true].flatMap((localPin) => [false, true].flatMap((unread) => [false, true].map((open) => task({
+      key: `codex-${phase}-${localPin ? 'pin' : 'plain'}-${unread ? 'unread' : 'read'}-${open ? 'open' : 'shut'}`,
+      phase,
+      localPin,
+      unread,
+      dynamicEligible: false,
+      lastQuestionAt: 100 - index,
+      capabilities: { open, archive: false, pause: false, resume: false, executePlan: false }
+    })))))
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft(tasks, 1, { providers: { codex: true, claude: false } })
+    })
+
+    const byKey = new Map<string, any>(current.tasks.map((value: any) => [value.key, value]))
+    const openable = (keys: string[]) => keys.filter((key) => byKey.get(key)?.capabilities.open)
+    // `derivedDynamicGroup` is the sole owner of "which set is this task in".
+    // Each badge is its group minus what cannot be opened, and each entry is the
+    // same list in the same order — a consumer that restated the predicate
+    // instead would drift the moment the set widened, which is exactly how an
+    // `unknown` pin ended up counted nowhere and reachable by nothing.
+    expect(current.views.counts.input).toBe(openable(current.views.groups.input).length)
+    expect(current.views.counts.active).toBe(openable(current.views.groups.active).length)
+    expect(current.views.counts.unread).toBe(openable(current.views.groups.unread).length)
+    expect(current.views.attentionKeys.input).toEqual(openable(current.views.groups.input))
+    expect(current.views.attentionKeys.completedUnread).toEqual([
+      ...openable(current.views.groups.unread),
+      ...openable(current.views.groups.pinned)
+    ])
+    // A guard on the fixture itself: an all-open or all-empty matrix would let
+    // every assertion above hold vacuously.
+    expect(current.views.groups.pinned.length).toBeGreaterThan(0)
+    expect(current.views.counts.unread).toBeLessThan(current.views.groups.unread.length)
   })
 
   it('never puts a task in the ring that no dynamic group shows', () => {
@@ -1389,6 +1478,42 @@ describe('CompanionTaskKernel', () => {
     await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
 
     expect(opened).toEqual(['codex-a', 'codex-b', 'codex-c'])
+  })
+
+  it('fixes the progress identity of an unknown pin too, not only a read completion', async () => {
+    const opened: string[] = []
+    const kernel = createCompanionTaskKernel({
+      adapters: { codex: { open: async (target: Record<string, unknown>) => { opened.push(String(target.key)); return nativeOpened() } } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const pin = (key: string, lastQuestionAt: number, statusEnteredAt: number) => task({
+      key,
+      actionAlias: `ct_${key.replace(/[^a-z0-9]/g, '')}_1234567890`,
+      phase: 'unknown',
+      localPin: true,
+      kind: 'local-pin',
+      dynamicEligible: false,
+      lastQuestionAt,
+      statusEnteredAt
+    })
+    const publish = (headStatusEnteredAt: number, generation: number) => kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([pin('codex-a', 300, headStatusEnteredAt), pin('codex-b', 200, 100)],
+        generation, { providers: { codex: true, claude: false } })
+    })
+
+    expect(publish(100, 1).views.attentionKeys.completedUnread).toEqual(['codex-a', 'codex-b'])
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+    // An `unknown` pin is parked for the same reason a read completion is: no
+    // evidence, so no new instance to revisit. The identity test used to name
+    // `completed && !unread` instead of the pin group, so once the queue grew to
+    // serve `unknown` pins their visit was invalidated by max-over-members churn
+    // and the walk jumped back to the head, never reaching the tail.
+    publish(999, 2)
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+
+    expect(opened).toEqual(['codex-a', 'codex-b'])
   })
 
   it('keeps a pinned live task in every shortcut its own state earns it', async () => {
@@ -3164,3 +3289,146 @@ describe('source lane units', () => {
     expect(publications.slice(baselinePublicationCount)).toEqual([baseline.packageRevision + 1])
     stop()
   })
+
+describe('hand-set phase for an unknown task', () => {
+  function harness() {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 })
+    const sync = (value: Record<string, unknown>, revision: number) => kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task(value)], revision, { providers: { codex: true, claude: false } })
+    })
+    return { kernel, sync }
+  }
+
+  it('stands in for unknown so the row and its group read one phase', () => {
+    const { sync } = harness()
+    const published = sync({
+      phase: 'unknown',
+      statusEnteredAt: 100,
+      manualPhase: 'running',
+      manualPhaseSetAt: 150
+    }, 1)
+    // The applied phase — not just the icon — is what grouping reads, so the
+    // row cannot show one state while sitting in another's group.
+    expect(published.tasks[0]).toMatchObject({ phase: 'running', manualPhase: 'running' })
+  })
+
+  it('never overrides a phase that real evidence already decided', () => {
+    const { sync } = harness()
+    expect(sync({
+      phase: 'completed',
+      statusEnteredAt: 100,
+      manualPhase: 'running',
+      manualPhaseSetAt: 150
+    }, 1).tasks[0]).toMatchObject({ phase: 'completed' })
+  })
+
+  it('stops applying once a later unknown episode begins', () => {
+    const { sync } = harness()
+    expect(sync({
+      phase: 'unknown',
+      statusEnteredAt: 100,
+      manualPhase: 'running',
+      manualPhaseSetAt: 150
+    }, 1).tasks[0]).toMatchObject({ phase: 'running' })
+    // The task left `unknown` and came back: this stretch started after the
+    // user chose, so the stale answer must not be resurrected. The phase lane
+    // has to advance for the new episode to be accepted at all.
+    expect(sync({
+      phase: 'unknown',
+      statusEnteredAt: 900,
+      phaseRevision: 900,
+      revisionAt: 900,
+      manualPhase: 'running',
+      manualPhaseSetAt: 150
+    }, 2).tasks[0]).toMatchObject({ phase: 'unknown' })
+  })
+
+  it('rejects unknown as a hand-set target', () => {
+    const { sync } = harness()
+    expect(sync({
+      phase: 'unknown',
+      statusEnteredAt: 100,
+      manualPhase: 'unknown',
+      manualPhaseSetAt: 150
+    }, 1).tasks[0]).toMatchObject({ phase: 'unknown', manualPhase: '' })
+  })
+
+  it('moves a hand-set pin between the two rings without ever leaving it in both', () => {
+    const kernel = createCompanionTaskKernel({
+      now: () => 1_000_000_000,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const phases = ['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped']
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft(phases.map((phase, index) => task({
+        key: `codex-manual-${phase}`,
+        phase: 'unknown',
+        statusEnteredAt: 100,
+        manualPhase: phase,
+        manualPhaseSetAt: 150,
+        localPin: true,
+        kind: 'local-pin',
+        dynamicEligible: false,
+        lastQuestionAt: 100 - index
+      })), 1, { providers: { codex: true, claude: false } })
+    })
+
+    const ring = new Set<string>(current.views.cycleKeys)
+    const entry = new Set<string>(current.views.attentionKeys.completedUnread)
+    // Hand-setting a phase is what hands the pin back to its own status group,
+    // so it leaves the fast-access entry and rejoins the ordinary ring in the
+    // same commit. Both derivations read the applied phase, so there is no
+    // moment where the two disagree and the pin is served twice.
+    for (const phase of phases) {
+      const key = `codex-manual-${phase}`
+      expect([...ring, ...entry].filter((value) => value === key)).toHaveLength(1)
+    }
+    // `completed` is the one hand-set phase with no status group of its own, so
+    // it stays with the pins; every other answer earns the ring back.
+    expect([...entry]).toEqual(['codex-manual-completed'])
+    expect([...ring].sort()).toEqual([
+      'codex-manual-running',
+      'codex-manual-stopped',
+      'codex-manual-waiting-approval',
+      'codex-manual-waiting-input'
+    ])
+  })
+
+  it('sends a hand-set completion that is unread to the unread backlog, not the pin group', () => {
+    const kernel = createCompanionTaskKernel({
+      now: () => 1_000_000_000,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        phase: 'unknown',
+        statusEnteredAt: 100,
+        manualPhase: 'completed',
+        manualPhaseSetAt: 150,
+        unread: true,
+        unreadKnown: true,
+        localPin: true,
+        kind: 'local-pin',
+        dynamicEligible: false
+      })], 1, { providers: { codex: true, claude: false } })
+    })
+
+    // The deliberate exception, and it is not the pin's: an unread completion is
+    // reachable from the entry AND the ring's `unread` tier because the badge
+    // promises exactly that set. Pinning changes nothing here — an unpinned
+    // unread completion is served by both in the same way.
+    expect(current.views.groups.unread).toEqual(['codex-a'])
+    expect(current.views.groups.pinned).toEqual([])
+    expect(current.views.counts.unread).toBe(1)
+    expect(current.views.attentionKeys.completedUnread).toEqual(['codex-a'])
+    expect(current.views.cycleKeys).toEqual(['codex-a'])
+  })
+})

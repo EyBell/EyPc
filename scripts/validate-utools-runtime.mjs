@@ -121,6 +121,7 @@ const claudeModule = distRequire('./claude/index.cjs')
 const claudeScriptsModule = distRequire('./claude/scripts.cjs')
 const cursorModule = distRequire('./cursor/index.cjs')
 const companionKernelModule = distRequire('./companion/task-kernel.cjs')
+const companionPersistedSideStateModule = distRequire('./companion/persisted-side-state.cjs')
 const diagnosticsModule = distRequire('./diagnostics.cjs')
 assert(typeof companionKernelModule.createCompanionTaskKernel === 'function', 'companion Kernel module must expose its factory')
 assert(typeof diagnosticsModule.createRuntimeDiagnostics === 'function', 'runtime diagnostics module must expose its factory')
@@ -360,6 +361,7 @@ const sandbox = {
     if (name === './claude/index.cjs') return claudeModule
     if (name === './cursor/index.cjs') return cursorModule
     if (name === './companion/task-kernel.cjs' || String(name).endsWith('/companion/task-kernel.cjs')) return companionKernelModule
+    if (name === './companion/persisted-side-state.cjs' || String(name).endsWith('/companion/persisted-side-state.cjs')) return companionPersistedSideStateModule
     if (name === './runtime-identity.cjs') return actualRuntimeIdentity
     if (name === 'node:buffer') return { Buffer }
     if (name === 'node:child_process') return { execFile() {}, spawn() { throw new Error('spawn unavailable in validation') } }

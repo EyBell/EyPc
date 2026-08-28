@@ -35,6 +35,7 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Local preference inert in one consumer view](../local-preference-inert-in-one-consumer-view.md#L1)
 - [Ring reachability outlives list visibility](../ring-reachability-outlives-list-visibility.md#L1)
 - [Parked item inherits fresh-item invalidation](../parked-item-inherits-fresh-item-invalidation.md#L1)
+- [Membership predicate restated at every consumer](../membership-predicate-restated-at-every-consumer.md#L1)
 
 ## Related Error Records
 

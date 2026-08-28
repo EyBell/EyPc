@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 323 leaves / 6 modules / 296 active / 22 superseded / 5 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 80 scoped |
-| 原始来源 | 39 documents / 226 ordered / 121 RAW-parent / 105 source-only |
+| 需求登记 | 324 leaves / 6 modules / 297 active / 22 superseded / 5 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 81 scoped |
+| 原始来源 | 40 documents / 230 ordered / 125 RAW-parent / 105 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-955fcad76c1e47f47039 / renderer-ba50c54f744e6e379bbb` · `artifact-ready` |
-| 当前构建时间 | `2026/08/28 17:06:08`（`2026-08-28T09:06:08.179Z`） |
+| 当前构建产物 | `host-7624bf0f302ca3b7aa7b / renderer-4b34ff0257b547fc15a0` · `artifact-ready` |
+| 当前构建时间 | `2026/08/28 20:22:15`（`2026-08-28T12:22:15.093Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,20 +34,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 323,
+    "leaves": 324,
     "modules": 6,
     "proposed": 5,
-    "active": 296,
+    "active": 297,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 80
+    "scoped_relations": 81
   },
   "source_anchor_catalog": {
-    "documents": 39,
-    "ordered_anchors": 226,
-    "raw_parent_ordered": 121,
+    "documents": 40,
+    "ordered_anchors": 230,
+    "raw_parent_ordered": 125,
     "registered_requirements": 105,
     "source_only": 105
   },
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-955fcad76c1e47f47039",
-    "renderer_asset": "renderer-ba50c54f744e6e379bbb",
+    "host_asset": "host-7624bf0f302ca3b7aa7b",
+    "renderer_asset": "renderer-4b34ff0257b547fc15a0",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-08-28T09:06:08.179Z",
-    "built_at_local": "2026/08/28 17:06:08",
+    "built_at": "2026-08-28T12:22:15.093Z",
+    "built_at_local": "2026/08/28 20:22:15",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "4d18f7a679ec2cbc7168adb8571cdf0ad9d6ce49c643713e8c3235546f03c78e",
-    "raw_sources": "9d7bd9b93a47b6931665e3aa9c4170bf90d9fe5e1e9ce86270aaff1888517e45",
-    "source_anchor_catalog": "a249847b75bd1ce48dd479da2988f1bd8abbf80fc1244d783f339a7565fc830b",
-    "product_body": "20f219069df0aec5a1dcf790e1b59c4c0ab487a1f4127ea9914d6412a66a371c",
+    "requirement_registry": "1ce8fea4a86851f99c5ed66efc15cd2537a2627618edf4f7cac646a160a7626c",
+    "raw_sources": "6892d99cfb5f9dd757d8f4139900a226c2d0c5c49ba897fe0e4b51934688bbec",
+    "source_anchor_catalog": "ab8e7eaa3040acb0c008804c908cc783170da269d4e5f41e7d513c5438b3c20b",
+    "product_body": "1573322c4b1d5857f3d8535d9800974265a0fe8f2e4808fc4ecfcec985b7d53b",
     "architecture": "cf5b490615f2bcc19669dffd54a98b5062ec1cac2267abdf0430beac941cb21b",
-    "runtime_contract": "111738ed7a49cdaddcb99b1628a211a19d78365b0278719ec482b9c1a4d111dd"
+    "runtime_contract": "44eabf4e282e2693c326b63516413663e1684e61f0ded057173ee7d2dcb1b09e"
   }
 }
 ```
@@ -264,7 +264,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 明确 waiting/active/completed/interrupted 不得被 debounce、quota、环境、完整库存或非任务 unread 阻塞；同 tick 只做 microtask 合并并在下一帧原子展示。Provider observation → Kernel canonical P95 ≤50ms、最大 ≤200ms，Kernel → Main accepted ≤50ms，Kernel → Float applied ACK P95 ≤250ms，回复/取消/执行 → Float 最终状态 P95 ≤300ms。unknown 保持中立并只做有界核验；无法确认的 interrupted/failed 不猜测 waiting。Codex 冷启动/重连冲突只对该任务 single-flight 精读一次 latest Turn。phase 与 unread 独立；同一 completion epoch 的 unread 保留到明确 read receipt 或新 Turn。Main 与 Float 必须应用同一 package revision。
 - 任务库存与所有消费者不得使用产品级固定条数上限：Claude inventory、Kernel、操作、导航、mutation、批量归档均处理完整已接纳集合；Codex `thread/list limit=100` 仅为协议页大小，必须遍历至 cursor 结束并拒绝 cursor loop。数量增长只能影响分页和性能，不得改变卡片、Tab、角标或动作资格。
 - 每次生产/uTools 构建生成确定性 `hostAssetId / rendererAssetId`，并同时验证 Registry、Topology、Snapshot、Command、Subscribe 与 ACK 能力/版本。Main UI、Main Preload、Float UI、Float Preload 任一身份缺失或不一致时必须显示 `reload-required` 并停止任务动作，不得表现为无响应或继续运行旧逻辑。构建只表示 `artifact-ready`；只有真实 uTools 重新接入/安装产物并完成全链握手才表示 `host-loaded`。产品不调用私有 uTools API，也不自动结束插件后台进程。
-- EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶、隐藏、折叠偏好与 alias 是唯一可持久化的任务侧本地配置；live phase、unread 与 cycle 位置只在进程内，topology 仅 RAW-181 的有界 Side→parent 恢复提示（ID+observedAt）可持久化且不携带任何状态。
+- EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶、隐藏、折叠偏好、alias 与**状态未知任务的手动指定相位**是唯一可持久化的任务侧本地配置；手动相位仅对 `unknown` 行开放（已有真实证据的行拒绝指定，不允许伪造状态），且只在设定时所处的那一段未知内有效——任务离开 `unknown` 再回来即自动失效，不复活旧答案。覆盖落在 Kernel 单点，使相位、分组、cycle 层级与计数读同一个值；`canonicalPhase` 保存证据原值，一切关于证据的判断（首推 unknown 宽限窗）读它而非被用户偏好回答。其余的 live phase、unread 与 cycle 位置只在进程内，topology 仅 RAW-181 的有界 Side→parent 恢复提示（ID+observedAt）可持久化且不携带任何状态。
 - 水球额度映射随启用组合变化：仅 Codex 时与旧版完全一致；仅 Claude 时 Claude 独占整个水球；两者同时启用时外圈进度表示 Codex、球心百分比表示 Claude 并标注来源，Claude 未连接或无读数时百分比回退为 Codex 原样。球心那个 Claude 读数以**无 scope 的普通周限额**（`weekly_all`）为基准：它是真正约束一周节奏的那条线，5 小时窗口摆动过快，不适合当常驻状态数字。账号同时上报按模型的 scoped 周限额时，球心并列读作 `{scoped}/{plain}`（scoped 优先取 Fable，在前）且**不带百分号**——两个百分号在球体里放不下；scoped 侧仍不得冒充普通周限额，也不得在没有普通周窗口时单独占据球心。并列字号取用户设定 `percentSize` 的 `.7` 与球体尺寸 `.165` 的较小值，使 32px 设置下最宽的 `100/100` 仍在圈内、12px 设置仍被尊重；球心读数使用 `tabular-nums lining-nums`，避免就地刷新时中心左右跳动。账号只有普通周窗口时球心是单值 `{plain}%`；确实没有普通周窗口时才依次回退到 5 小时窗口、其它已上报窗口，只为不让球心空着。展开卡额度区仍逐窗口显示全部窗口，不受球心选择影响。
 - 展开卡额度区按来源分区展示；Claude 分区在授权关闭、凭据不可用、Retry-After 或其它失败时显示对应安全原因，已有值保留但标为可能过期。
 - 新设置 `claudeAppQuotaAccess` 默认关闭，旧已授权 quota fallback 配置迁移为开启。授权后 macOS 只读 Claude App `oauth:tokenCacheV2` 并以内存方式使用 Claude 专属 Safe Storage Keychain 项；账号/组织无法唯一仲裁时失败关闭，密钥、令牌和缓存明文不进入诊断/Renderer/持久化。
