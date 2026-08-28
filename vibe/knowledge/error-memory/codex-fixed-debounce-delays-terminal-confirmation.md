@@ -4,8 +4,8 @@ status: candidate
 scope: project
 fingerprint: codex-live-status-lag__fixed-activity-debounce-and-full-inventory-scan-delayed-completion__push-immediate-ongoing-and-confirm-one-latest-turn
 first_seen: 2026-07-26
-last_verified: 2026-08-08
-review_after: 2026-08-26
+last_verified: 2026-08-28
+review_after: 2026-11-28
 evidence:
   - preload/index.js
   - public/preload.js
@@ -102,3 +102,5 @@ For waiting-input, do not fall back to the complete inventory at all: use one bi
 | 2026-07-30 | RAW-121 terminal epoch closure | An accepted completion could later return to ongoing after a full snapshot | Kept the active-exit baseline after terminal acceptance, so the next identical inventory row reused a guard that belonged to the closed epoch | Clear the baseline when terminal evidence survives the guard; add targeted-completed → identical-full-snapshot regression coverage | automated status chain passed; real uTools acceptance pending |
 | 2026-07-31 | RAW-135 payload-less exact completion | User observed completed synchronization still lagging 1–2 seconds after presentation holds were removed | Routed an exact completed notification without Turn data through stale-active verification; the exact-positive waterline rejected it, forcing urgent all-thread inventory | Add a completion-event single-flight with immediate + 25/75/150/300/600/1000ms entity reads, positive-epoch cancellation and full-scan fallback only on exhaustion | Four related files `165/165`, typecheck, production build and uTools runtime validation passed; real uTools latency acceptance pending |
 | 2026-08-08 | RAW-151 bidirectional waiting watchdog | Input request creation and resolution could each lag or disappear behind missed callback/full reconciliation | Treated full inventory as a practical fallback and lacked a symmetric removal/new-Turn lane | Add one reducer, target-only bounded resubscribe and 1-second phase-only candidate watchdog independent of inventory frequency | focused automated P95/recovery contracts pass; real v7 uTools acceptance pending |
+
+| 2026-08-28 | 逾期 candidate 复核 | validate:error-memory 报告复核窗口过期 | 无——本轮为复核而非再尝试 | 未改动实现 | candidate；2026-08-28 复核：读取真机运行诊断日志（2026-08-27T13:42Z→2026-08-28T03:25Z，21387 事件，运行构建 host-8a1420a1a591c710f6fa 即当前 HEAD，零 error 零 warn）。**不能据此结案**：该窗口内 Codex Provider 几乎未被使用（带 provider 字段的事件 claude 42 / cursor 18 / codex 1，末次 cold-preflight 显示 codex 源未启用），且本记录关注的失败路径没有专门日志埋点，事件缺失属无效证据而非无复发证明。状态维持 candidate。待验收项：完成后状态跟进无可见滞后。 |

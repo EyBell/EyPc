@@ -4,8 +4,8 @@ status: candidate
 scope: project
 fingerprint: codex-action-source-feedback__row-tail-label-duplicates-state__source-split-across-row-and-control__state-control-hover-focus-source
 first_seen: 2026-07-22
-last_verified: 2026-07-22
-review_after: 2026-08-22
+last_verified: 2026-08-28
+review_after: 2026-11-28
 evidence:
   - src/FloatApp.vue
   - src/styles/float.css
@@ -65,3 +65,5 @@ Express an operation's source and availability on its stateful control and acces
 | Date | Task | Trigger | Failed Route | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-22 | RAW-058 selection/pin/counter fusion | User required removal of row-tail “本地置顶” and source disclosure on hover | Source split between row-tail text and pressed button; native/Chats were disabled and could not explain themselves | Moved source to the fixed `顶` control, kept read-only states focusable and added a shared activation guard | candidate; static contract updated, user acceptance pending |
+
+| 2026-08-28 | 逾期 candidate 复核 | validate:error-memory 报告复核窗口过期 | 无——本轮为复核而非再尝试 | 未改动实现 | candidate；2026-08-28 复核：源码与样式实现仍在位，无回归；本轮无法取得验收证据——视觉结论只能由用户给出，运行诊断日志不记录观感。状态维持 candidate，复核窗口顺延。待验收项：置顶来源仅由「顶」控件表达、行尾无重复标签。 |

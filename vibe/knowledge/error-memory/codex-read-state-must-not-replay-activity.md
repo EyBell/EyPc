@@ -4,8 +4,8 @@ status: candidate
 scope: project
 fingerprint: codex-native-read-marks-completed-task-ongoing__read-state-event-replayed-full-live-shadow__emit-unread-only-v2-entry-and-ignore-activity-at-controller
 first_seen: 2026-07-27
-last_verified: 2026-07-27
-review_after: 2026-08-27
+last_verified: 2026-08-28
+review_after: 2026-11-28
 evidence:
   - preload/index.js
   - public/preload.js
@@ -72,3 +72,5 @@ Applicability boundary: this rule applies to native read/unread state, not to ru
 ## Occurrence History
 
 - 2026-07-27 / RAW-097: user reported that manually reading in Codex made a completed task appear ongoing; source trace found full live-shadow replay. The source now isolates read-state, while runtime acceptance remains user-owned.
+
+- 2026-08-28 复核：读取真机运行诊断日志（2026-08-27T13:42Z→2026-08-28T03:25Z，21387 事件，运行构建 host-8a1420a1a591c710f6fa 即当前 HEAD，零 error 零 warn）。**不能据此结案**：该窗口内 Codex Provider 几乎未被使用（带 provider 字段的事件 claude 42 / cursor 18 / codex 1，末次 cold-preflight 显示 codex 源未启用），且本记录关注的失败路径没有专门日志埋点，事件缺失属无效证据而非无复发证明。状态维持 candidate。待验收项：Desktop 手动已读后不回放为进行中。
