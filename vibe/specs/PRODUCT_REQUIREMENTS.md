@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 320 leaves / 6 modules / 293 active / 22 superseded / 5 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 75 scoped |
-| 原始来源 | 36 documents / 218 ordered / 113 RAW-parent / 105 source-only |
+| 需求登记 | 323 leaves / 6 modules / 296 active / 22 superseded / 5 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 80 scoped |
+| 原始来源 | 39 documents / 226 ordered / 121 RAW-parent / 105 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-a6d9051811ebbbacaf4e / renderer-4f6ebb2d7daaccedb9ad` · `artifact-ready` |
-| 当前构建时间 | `2026/08/28 13:30:31`（`2026-08-28T05:30:31.808Z`） |
+| 当前构建产物 | `host-955fcad76c1e47f47039 / renderer-ba50c54f744e6e379bbb` · `artifact-ready` |
+| 当前构建时间 | `2026/08/28 16:55:26`（`2026-08-28T08:55:26.219Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,20 +34,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 320,
+    "leaves": 323,
     "modules": 6,
     "proposed": 5,
-    "active": 293,
+    "active": 296,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 75
+    "scoped_relations": 80
   },
   "source_anchor_catalog": {
-    "documents": 36,
-    "ordered_anchors": 218,
-    "raw_parent_ordered": 113,
+    "documents": 39,
+    "ordered_anchors": 226,
+    "raw_parent_ordered": 121,
     "registered_requirements": 105,
     "source_only": 105
   },
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-a6d9051811ebbbacaf4e",
-    "renderer_asset": "renderer-4f6ebb2d7daaccedb9ad",
+    "host_asset": "host-955fcad76c1e47f47039",
+    "renderer_asset": "renderer-ba50c54f744e6e379bbb",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-08-28T05:30:31.808Z",
-    "built_at_local": "2026/08/28 13:30:31",
+    "built_at": "2026-08-28T08:55:26.219Z",
+    "built_at_local": "2026/08/28 16:55:26",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "e097cdf2d61faa0f731a16875002822bc903061bd60d01f22a0f0b98e2acb0a9",
-    "raw_sources": "1bfe26cc1c7ca674b240bb50ad09b1ed84ccbfd62d61b3b2c2a1b5645b03e8f1",
-    "source_anchor_catalog": "e930509f1f2aabdf7d60123320ae4a7a46b9f04cb9249a471bc8911b1e36d6aa",
-    "product_body": "c0e962eee1045a84e680a3c2e7979fd6285248ecf9f500ba6d82c61eb1dfd416",
+    "requirement_registry": "4d18f7a679ec2cbc7168adb8571cdf0ad9d6ce49c643713e8c3235546f03c78e",
+    "raw_sources": "9d7bd9b93a47b6931665e3aa9c4170bf90d9fe5e1e9ce86270aaff1888517e45",
+    "source_anchor_catalog": "a249847b75bd1ce48dd479da2988f1bd8abbf80fc1244d783f339a7565fc830b",
+    "product_body": "20f219069df0aec5a1dcf790e1b59c4c0ab487a1f4127ea9914d6412a66a371c",
     "architecture": "cf5b490615f2bcc19669dffd54a98b5062ec1cac2267abdf0430beac941cb21b",
-    "runtime_contract": "f8c0887ff5b0d9366e3570b314ec5f9c290d1655265fcd2f5c42b62b9366db00"
+    "runtime_contract": "36385a37b6b572d1b4c78fd86174cc486c1903f9d93d33eadb43b8e085fb3c56"
   }
 }
 ```
@@ -247,7 +247,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - Claude 功能启用期间由进程生命周期 Host 维护 `inventory / phase / unread / quota / appPresence` 物化视图；切页、Main/Float 显隐和快捷键复用同一缓存，重启后从真实来源冷启动且不持久化 live phase。五条 authority 独立增量更新；Hook/App state、已登记任务成员文件和 unread LevelDB 的首个完整文件事件在 Node 原生回调中立即 drain/read，不进入可被 `background-hidden` 节流的 JavaScript timer；部分任务元数据 JSON 保留最后可信成员关系，目录 `fs.watch` 为快路，已登记文件的 1 秒 `fs.watchFile` StatWatcher 只作漏通知恢复，Renderer Controller 不另设 phase 轮询。等价 reduced-state/package 指纹完整 no-op，不增加 revision 或推送；source generation、Kernel revision、Float applied revision 全链拒绝倒退。额度网络不得阻塞任务状态，watcher callback 延迟不得冒充最终 Float applied 延迟。
 - RAW-160 requires the current Claude `session.phase` evidence to outrank `previous.phase` whenever its causal event is newer；a delayed older inventory generation cannot regress a newer watcher/open-refresh event，and a membership mutation must not advance activity/interaction/unread lane generations。App state 固定语法当前仅门禁已核验的 Claude App `1.26832.0 / 1.28929.0 / 1.30096.5 / 1.34493.1 / 1.37937.0`，相邻未知版本 fail closed；日志冷重放的普通 running/waiting 不得推导 live activity。phase、phaseRevision、statusEnteredAt、unread and capabilities are accepted atomically through the same State Store。D′ archive success text is exactly split into EyPc convergence and native-sidebar capability：EyPc 已归档并移除；Claude 原生侧栏同步未确认，当前不受支持。Occasional native sidebar refresh is observation only，never a supported postcondition。
 - Claude 与其它 Provider 的任务状态由 Host evidence 自动进入同一 Kernel；产品不提供来源专用“同步任务状态”动作，成功打开也不触发 Renderer 侧第二次状态归约。来源专用入口只可读取 quota、environment 或展示 metadata，不能拥有 phase、unread、Plan、count 或 jump 语义。
-- 本地置顶的语义是「移出当前工作流、暂存待查」：动态列表最顶部有专门的置顶分组，收录**本地置顶且已完成已读**的根任务并豁免活动时间窗（否则置顶留不住一条过窗任务，等于无效）；置顶但处于其他相位的任务仍留在各自状态组。置顶**不改变**任务在其自身状态所应得的任何入口：置顶的待输入、进行中、待继续、已完成未读任务照旧参与「上一个/下一个」循环与「待输入」专用入口。唯一的例外是**已完成且已读**的置顶任务——它本就没有任何快捷键可达，因此不进入通用循环，改由「已完成未读」专用入口承载：该入口队列为「已完成未读 + 已完成已读的置顶项」按序拼接，先清未读积压再走置顶，未读为空时按键即直接循环置顶项。队列顺序与列表展示共用同一比较器，因此是确定的；置顶项的**访问进度身份也必须固定**，不得挂在 `statusEnteredAt / terminalAt / turnStartedAt / revisionAt` 这类在聚合根上按 `max(成员)` 重算的字段上——否则子任务活动会让已访问过的置顶项重新入列，遍历跳回队首而队尾永远不达。静止对象的进度只由整轮走完后的重置或它离开队列结束。置顶分组是位置而非角标，不新增计数。
+- 本地置顶的语义是「移出当前工作流、暂存待查」：动态列表最顶部有专门的置顶分组，收录**本地置顶且没有属于自己状态组**的根任务——即已完成已读的，以及 `unknown` 相位的；置顶但处于其他相位的任务仍留在各自状态组。**活动时间窗对任何相位的本地置顶任务一律不适用**——窗口只淘汰未置顶的工作，否则置顶留不住一条过窗任务，等于无效。`unknown` 相位本身不挣得任何分组，因此置顶的 `unknown` 任务没有可留守的状态组，直接归入置顶分组——它是该任务在动态页的**唯一**落点。由此确立两条对称不变式：**凡进入 `cycleKeys` 的任务，必须在某个动态分组里看得见**（「角标里有＝循环能到」的反面同样成立，循环能到的任务不得在列表中无处可寻）；且**每个任务恰好出现在一个动态分组里**——同一条置顶任务出现两次就是重复行，与置顶要解决的问题正相反。置顶**不改变**任务在其自身状态所应得的任何入口：置顶的待输入、进行中、待继续、已完成未读任务照旧参与「上一个/下一个」循环与「待输入」专用入口。唯一的例外是**已完成且已读**的置顶任务——它本就没有任何快捷键可达，因此不进入通用循环，改由「已完成未读」专用入口承载：该入口队列为「已完成未读 + 已完成已读的置顶项」按序拼接，先清未读积压再走置顶，未读为空时按键即直接循环置顶项。队列顺序与列表展示共用同一比较器，因此是确定的；置顶项的**访问进度身份也必须固定**，不得挂在 `statusEnteredAt / terminalAt / turnStartedAt / revisionAt` 这类在聚合根上按 `max(成员)` 重算的字段上——否则子任务活动会让已访问过的置顶项重新入列，遍历跳回队首而队尾永远不达。静止对象的进度只由整轮走完后的重置或它离开队列结束。置顶分组是位置而非角标，不新增计数。
 - 「上一个/下一个」通用任务循环按 current interaction attention → artifact-only Plan → active → completed-unread → local pin 的层序拼接成一个环：层序表达优先级但**不排他**，各层按序全部进入 `cycleKeys`，层内跨来源按最近提问时间倒序，创建时间与匿名 key 只用于稳定并列；Provider 与置顶不改变顺序。冷游标下第一次按键仍落在最紧急的一条，其余任务不因某一层非空而不可达。已完成未读根任务是可循环层。本地置顶只在**已完成且已读**时退出全部层级；其余相位的置顶任务仍按自身状态入层，`local pin` 层继续兜住那些本就不属于前四层的置顶任务。一次连续 walk 持有它开始时的环 `CYCLE_WALK_HOLD_MS`（按键续期），期间的发布重排不改变正在遍历的环；walk 失效后下一次按键采纳最新环，代价是 walk 进行中新到达的任务要等下一次 walk 才入环。候选只来自进程 V7 Snapshot 的根任务 `cycleKeys`，子任务不参与；热且可信时直接派发，只有冷启动、重连或明确成员缺口才等待所需 Provider 的 tasks-only 盘点，不得从部分集合跳转。第一下立即派发；打开仍在执行时，后续每一次按键都在**逻辑游标**上继续推进，只有最后一个目标真正派发——N 次连按前进 N 格并落在最终尾随目标，而不是重复选中正在打开的那一条；若推进后回到正在打开的目标（例如环只有一条），则不再重复调用 Provider。逻辑游标只在本次 walk 的请求全部落定前有效，之后回到已确认游标。进程游标由任意一次确认打开的 `cycleKeys` 成员提交，不再为循环按键独占：卡片点击、快速跳转与 attention 入口都让下一次循环从用户当前所见任务继续；落在 `cycleKeys` 之外的打开不提交游标，以免造出不可达位置。游标所指任务仍在 `targets`、却因层变化离开 `cycleKeys` 时，按旧 `cycleKeys` 次序就近改锚到幸存邻居并记录改锚侧，使前后两个方向仍分别解析为它原来的后继与前驱，而不是回落集合首尾。待输入与已完成未读专用入口的独立未打开进度（`attentionSeen`）不受游标提交影响。
 - 每个任务行和项目行固定显示一个明显的文本化来源标记；即使只启用单一来源也不得省略，且图标与可访问名称必须同步表达来源。
 - 所有打开由 `CompanionTaskCommandV1` 进入同一个 Command Gateway：Kernel 在命令所见 Snapshot 上解析原根任务，再由 Provider Adapter 执行 Codex 深链、Claude Epitaxy deep link 或 Cursor deeplink。手动点击、Enter、角标、attention、快捷键和循环之间没有第二条效果通路；选择/打开不刷新或改写 phase，失败不清 unread。第一下循环立即派发；仅当打开仍在执行时，后续按键合并成一个最终 trailing 目标；全部 Provider 最大打开并发为 1。打开回执统一携带 `companion-open-handoff-v1`：当前外部链接最多证明 `requested/dispatched`，只有未来真实原生回执才能进入 `native-confirmed/applied`。
@@ -265,7 +265,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 任务库存与所有消费者不得使用产品级固定条数上限：Claude inventory、Kernel、操作、导航、mutation、批量归档均处理完整已接纳集合；Codex `thread/list limit=100` 仅为协议页大小，必须遍历至 cursor 结束并拒绝 cursor loop。数量增长只能影响分页和性能，不得改变卡片、Tab、角标或动作资格。
 - 每次生产/uTools 构建生成确定性 `hostAssetId / rendererAssetId`，并同时验证 Registry、Topology、Snapshot、Command、Subscribe 与 ACK 能力/版本。Main UI、Main Preload、Float UI、Float Preload 任一身份缺失或不一致时必须显示 `reload-required` 并停止任务动作，不得表现为无响应或继续运行旧逻辑。构建只表示 `artifact-ready`；只有真实 uTools 重新接入/安装产物并完成全链握手才表示 `host-loaded`。产品不调用私有 uTools API，也不自动结束插件后台进程。
 - EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶、隐藏、折叠偏好与 alias 是唯一可持久化的任务侧本地配置；live phase、unread 与 cycle 位置只在进程内，topology 仅 RAW-181 的有界 Side→parent 恢复提示（ID+observedAt）可持久化且不携带任何状态。
-- 水球额度映射随启用组合变化：仅 Codex 时与旧版完全一致；仅 Claude 时 Claude 独占整个水球；两者同时启用时外圈进度表示 Codex、球心百分比表示 Claude 并标注来源，Claude 未连接或无读数时百分比回退为 Codex 原样。
+- 水球额度映射随启用组合变化：仅 Codex 时与旧版完全一致；仅 Claude 时 Claude 独占整个水球；两者同时启用时外圈进度表示 Codex、球心百分比表示 Claude 并标注来源，Claude 未连接或无读数时百分比回退为 Codex 原样。球心那个 Claude 读数以**无 scope 的普通周限额**（`weekly_all`）为基准：它是真正约束一周节奏的那条线，5 小时窗口摆动过快，不适合当常驻状态数字。账号同时上报按模型的 scoped 周限额时，球心并列读作 `{scoped}/{plain}`（scoped 优先取 Fable，在前）且**不带百分号**——两个百分号在球体里放不下；scoped 侧仍不得冒充普通周限额，也不得在没有普通周窗口时单独占据球心。并列字号取用户设定 `percentSize` 的 `.7` 与球体尺寸 `.165` 的较小值，使 32px 设置下最宽的 `100/100` 仍在圈内、12px 设置仍被尊重；球心读数使用 `tabular-nums lining-nums`，避免就地刷新时中心左右跳动。账号只有普通周窗口时球心是单值 `{plain}%`；确实没有普通周窗口时才依次回退到 5 小时窗口、其它已上报窗口，只为不让球心空着。展开卡额度区仍逐窗口显示全部窗口，不受球心选择影响。
 - 展开卡额度区按来源分区展示；Claude 分区在授权关闭、凭据不可用、Retry-After 或其它失败时显示对应安全原因，已有值保留但标为可能过期。
 - 新设置 `claudeAppQuotaAccess` 默认关闭，旧已授权 quota fallback 配置迁移为开启。授权后 macOS 只读 Claude App `oauth:tokenCacheV2` 并以内存方式使用 Claude 专属 Safe Storage Keychain 项；账号/组织无法唯一仲裁时失败关闭，密钥、令牌和缓存明文不进入诊断/Renderer/持久化。
 - 额度窗口由实际动态 limits 声明：`session`、`weekly_all`、`weekly_scoped` 映射为 5h、总周与稳定 scoped key，名称来自上游 Fable/Fable 5，`spend` 等非额度元数据不得显示。Node 16 通过显式 HTTPS 读取主权威，App history/statusline 只逐窗补充，不能抹掉 scoped 窗口、source、freshness 或 reset。启动/启用/恢复/网络、普通 cadence 与最早 reset+1s 唤醒；401/403 等凭据变化，429 遵循 Retry-After，其它失败按 1m/5m/15m/每小时退避。每个周限额显示剩余百分比，200ms 提示包含绝对/相对 reset 与 freshness，20%/10% 为警告/危险。

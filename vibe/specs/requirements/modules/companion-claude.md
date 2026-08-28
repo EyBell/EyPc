@@ -46,6 +46,8 @@ Claude Code 库存、App 相位、原生未读、打开与归档权威，以及 
 - [RAW-032](../claude-raw-032.md#L1) — `active`
 - [RAW-174](../claude-raw-174.md#L1) — `active`
 - [RAW-181](../claude-raw-181.md#L1) — `active`
+- [RAW-184](../claude-raw-184.md#L1) — `active`
+- [RAW-186](../claude-raw-186.md#L1) — `active`
 
 ### 编号条款
 

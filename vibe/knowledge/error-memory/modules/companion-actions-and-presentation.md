@@ -33,6 +33,7 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Selector readiness must not treat verifying phase as stale](../selector-readiness-must-not-treat-verifying-phase-as-stale.md#L1)
 - [Settings telemetry must inspect on start](../settings-telemetry-must-inspect-on-start.md#L1)
 - [Local preference inert in one consumer view](../local-preference-inert-in-one-consumer-view.md#L1)
+- [Ring reachability outlives list visibility](../ring-reachability-outlives-list-visibility.md#L1)
 - [Parked item inherits fresh-item invalidation](../parked-item-inherits-fresh-item-invalidation.md#L1)
 
 ## Related Error Records
