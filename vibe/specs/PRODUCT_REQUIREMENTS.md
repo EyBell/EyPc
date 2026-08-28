@@ -22,7 +22,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
 | 当前构建产物 | `host-955fcad76c1e47f47039 / renderer-ba50c54f744e6e379bbb` · `artifact-ready` |
-| 当前构建时间 | `2026/08/28 16:55:26`（`2026-08-28T08:55:26.219Z`） |
+| 当前构建时间 | `2026/08/28 17:06:08`（`2026-08-28T09:06:08.179Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -65,8 +65,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "host_asset": "host-955fcad76c1e47f47039",
     "renderer_asset": "renderer-ba50c54f744e6e379bbb",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-08-28T08:55:26.219Z",
-    "built_at_local": "2026/08/28 16:55:26",
+    "built_at": "2026-08-28T09:06:08.179Z",
+    "built_at_local": "2026/08/28 17:06:08",
     "package_version": "0.1.0"
   },
   "content_digests": {
@@ -75,7 +75,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "source_anchor_catalog": "a249847b75bd1ce48dd479da2988f1bd8abbf80fc1244d783f339a7565fc830b",
     "product_body": "20f219069df0aec5a1dcf790e1b59c4c0ab487a1f4127ea9914d6412a66a371c",
     "architecture": "cf5b490615f2bcc19669dffd54a98b5062ec1cac2267abdf0430beac941cb21b",
-    "runtime_contract": "36385a37b6b572d1b4c78fd86174cc486c1903f9d93d33eadb43b8e085fb3c56"
+    "runtime_contract": "111738ed7a49cdaddcb99b1628a211a19d78365b0278719ec482b9c1a4d111dd"
   }
 }
 ```
