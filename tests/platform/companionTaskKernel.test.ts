@@ -1274,6 +1274,45 @@ describe('CompanionTaskKernel', () => {
     expect(opened).toEqual(['codex-new', 'codex-new', 'codex-old', 'codex-new'])
   })
 
+  it('keeps a parked pin visited once its lifecycle fields move underneath it', async () => {
+    const opened: string[] = []
+    const kernel = createCompanionTaskKernel({
+      adapters: { codex: { open: async (target: Record<string, unknown>) => { opened.push(String(target.key)); return nativeOpened() } } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const pin = (key: string, lastQuestionAt: number, statusEnteredAt: number) => task({
+      key,
+      actionAlias: `ct_${key.replace(/[^a-z0-9]/g, '')}_1234567890`,
+      phase: 'completed',
+      unread: false,
+      localPin: true,
+      kind: 'local-pin',
+      dynamicEligible: false,
+      lastQuestionAt,
+      statusEnteredAt
+    })
+    const publish = (headStatusEnteredAt: number, generation: number) => kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([pin('codex-a', 300, headStatusEnteredAt), pin('codex-b', 200, 100), pin('codex-c', 100, 100)],
+        generation, { providers: { codex: true, claude: false } })
+    })
+
+    const first = publish(100, 1)
+    expect(first.views.attentionKeys.completedUnread).toEqual(['codex-a', 'codex-b', 'codex-c'])
+
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+    // A parked pin is finished and already read, so nothing about it is a new
+    // instance to revisit. Its lifecycle timestamps are recomputed as
+    // max-over-members on an aggregate root, so they can move without the task
+    // itself changing — visit progress must not be reset by that.
+    publish(999, 2)
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+
+    expect(opened).toEqual(['codex-a', 'codex-b', 'codex-c'])
+  })
+
   it('keeps a pinned live task in every shortcut its own state earns it', async () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }

@@ -1080,15 +1080,31 @@ function createCompanionTaskKernel(dependencies = {}) {
     nextVisibilityTransitionAt = 0
   }
 
+  /**
+   * Identity of "the thing the user has already visited" for one attention queue.
+   *
+   * An aggregate root recomputes `revisionAt`, `statusEnteredAt`, `turnStartedAt`
+   * and `terminalAt` as max-over-members, so ordinary subtask churn moved all
+   * four on a task that had not itself changed. That invalidated its recorded
+   * visit, the walk jumped back to it, and the tail of the queue was never
+   * reached — read by the user as the pinned order being scrambled.
+   *
+   * A parked pin is the extreme case: finished and already read, it has no new
+   * instance to revisit at all, so its identity is fixed until it leaves the
+   * queue. Everything else keeps a lifecycle anchor, but `revisionAt` — a pure
+   * "something changed" counter carrying no instance meaning — drops to a last
+   * resort so the key can never be empty.
+   */
   function attentionInstance(kind, task) {
     if (!task) return ''
-    const enteredAt = Math.max(
+    if (task.localPin && task.phase === 'completed' && task.unread !== true) return `${kind}:${task.key}:pinned`
+    const lifecycleAt = Math.max(
       finiteInteger(task.statusEnteredAt),
       finiteInteger(task.terminalAt),
-      finiteInteger(task.turnStartedAt),
-      finiteInteger(task.revisionAt)
+      finiteInteger(task.turnStartedAt)
     )
-    return enteredAt > 0 ? `${kind}:${task.key}:${enteredAt}` : ''
+    const anchor = lifecycleAt > 0 ? lifecycleAt : finiteInteger(task.revisionAt)
+    return anchor > 0 ? `${kind}:${task.key}:${anchor}` : ''
   }
 
   function pruneAttentionProgress(packageValue = currentPackage) {
