@@ -966,6 +966,84 @@ describe('CompanionTaskKernel', () => {
     expect(current.views.counts).toEqual({ input: 0, active: 0, unread: 0 })
   })
 
+  it('exempts a pin from the activity window in every phase, not only the finished one', () => {
+    const kernel = createCompanionTaskKernel({
+      now: () => 1_000_000_000,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task({ key: 'codex-pin-running', phase: 'running', localPin: true, dynamicEligible: false, lastQuestionAt: 9 }),
+        task({ key: 'codex-pin-stopped', phase: 'stopped', localPin: true, dynamicEligible: false, lastQuestionAt: 8 }),
+        task({ key: 'codex-plain-running', phase: 'running', dynamicEligible: false, lastQuestionAt: 7 })
+      ], 1, { providers: { codex: true, claude: false } })
+    })
+
+    // A pin in another phase keeps its own status group — it just stops being
+    // retired by the window, which is what "keep this where I can find it" means.
+    expect(current.views.groups.active).toEqual(['codex-pin-running'])
+    expect(current.views.groups.stopped).toEqual(['codex-pin-stopped'])
+    // The window still retires unpinned work.
+    expect(current.views.counts).toEqual({ input: 0, active: 1, unread: 0 })
+  })
+
+  it('gives a pinned unknown-phase task a group so the ring cannot outrun the list', () => {
+    const kernel = createCompanionTaskKernel({
+      now: () => 1_000_000_000,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task({ key: 'claude-pin-unknown', provider: 'claude', kind: 'claude-session', phase: 'unknown', localPin: true, dynamicEligible: false, lastQuestionAt: 9 }),
+        task({ key: 'claude-plain-unknown', provider: 'claude', kind: 'claude-session', phase: 'unknown', dynamicEligible: false, lastQuestionAt: 8 })
+      ], 1, { providers: { codex: false, claude: true } })
+    })
+
+    // The reported defect: the pin held a ring slot through the `fallback` tier
+    // while `unknown` earned it no group at all, so 上一个/下一个 kept landing on
+    // a task no tab could show. `unknown` has no status group to stay in, so the
+    // pin's own group takes it — one task, one place.
+    expect(current.views.groups.pinned).toEqual(['claude-pin-unknown'])
+    expect(current.views.groups.stopped).toEqual([])
+    expect(current.views.cycleKeys).toEqual(['claude-pin-unknown'])
+    // An unpinned unknown task earns neither a group nor a ring slot.
+    expect(current.views.groups.pinned).not.toContain('claude-plain-unknown')
+    expect(current.views.cycleKeys).not.toContain('claude-plain-unknown')
+  })
+
+  it('never puts a task in the ring that no dynamic group shows', () => {
+    const kernel = createCompanionTaskKernel({
+      now: () => 1_000_000_000,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const phases = ['running', 'stopped', 'completed', 'unknown', 'waiting-input']
+    const tasks = phases.flatMap((phase, index) => [false, true].flatMap((localPin) => [false, true].map((unread) => task({
+      key: `codex-${phase}-${localPin ? 'pin' : 'plain'}-${unread ? 'unread' : 'read'}`,
+      phase,
+      localPin,
+      unread,
+      dynamicEligible: false,
+      lastQuestionAt: 100 - index
+    }))))
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft(tasks, 1, { providers: { codex: true, claude: false } })
+    })
+
+    const placements = Object.values(current.views.groups as Record<string, string[]>).flat()
+    const grouped = new Set(placements)
+    // A badge promises reachability (RAW-182); a ring slot promises visibility.
+    // Every cycle key must therefore be somewhere the user can actually look.
+    expect(current.views.cycleKeys.filter((key: string) => !grouped.has(key))).toEqual([])
+    // ...and in exactly one place: a task listed twice reads as a duplicate row.
+    expect(placements.length).toBe(grouped.size)
+  })
+
   it('keeps the complete admitted inventory without a product task-count cap', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }

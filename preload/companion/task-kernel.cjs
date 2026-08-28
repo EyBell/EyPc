@@ -624,9 +624,18 @@ function derivedDynamicGroup(task) {
   // task from the dynamic list entirely — which made the pin do nothing at all.
   // Pins in any other phase stay in their own status group.
   if (task.localPin && task.phase === 'completed' && !task.unread) return 'pinned'
-  if (!task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
+  // The same "keep this where I can find it" reading applies to a pin in every
+  // other phase, so the window retires only unpinned work. `derivedCycleTier`
+  // never consulted the window for a pin, so a retired pin used to keep its
+  // ring slot while disappearing from the list: the shortcut cycled through a
+  // task the user could not see anywhere.
+  if (!task.localPin && !task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
   if (task.phase === 'running') return 'active'
-  if (task.phase === 'unknown') return 'none'
+  // `unknown` earns no group on its own, so a pinned one has no status group to
+  // stay in and goes to the pin's own group. Every task therefore appears in
+  // exactly one place: a second home for the same pin reads as a duplicate,
+  // which is the whole complaint pinning was meant to answer.
+  if (task.phase === 'unknown') return task.localPin ? 'pinned' : 'none'
   if (task.phase === 'stopped') return 'stopped'
   if (task.phase === 'completed') return 'completed'
   return 'none'
@@ -1165,7 +1174,9 @@ function createCompanionTaskKernel(dependencies = {}) {
     const currentTime = now()
     let dueAt = 0
     for (const task of currentPackage.tasks) {
-      if (!task.dynamicEligible || task.hidden || task.paused || (task.phase === 'stopped' && task.planReady)) continue
+      // A pin is exempt from the window, so the moment it would have expired is
+      // no longer a visibility transition worth waking up for.
+      if (!task.dynamicEligible || task.hidden || task.paused || task.localPin || (task.phase === 'stopped' && task.planReady)) continue
       const candidate = visibilityAnchor(task) + dynamicWindowMs
       if (candidate <= currentTime || (dueAt && candidate >= dueAt)) continue
       dueAt = candidate
