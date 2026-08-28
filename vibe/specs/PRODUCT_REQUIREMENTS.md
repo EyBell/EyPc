@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 36 documents / 218 ordered / 113 RAW-parent / 105 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-9a1e763ae6e6c20a97f3 / renderer-401b44b89323fd366a40` · `artifact-ready` |
-| 当前构建时间 | `2026/08/28 11:38:35`（`2026-08-28T03:38:35.292Z`） |
+| 当前构建产物 | `host-a6d9051811ebbbacaf4e / renderer-4f6ebb2d7daaccedb9ad` · `artifact-ready` |
+| 当前构建时间 | `2026/08/28 13:30:31`（`2026-08-28T05:30:31.808Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-9a1e763ae6e6c20a97f3",
-    "renderer_asset": "renderer-401b44b89323fd366a40",
+    "host_asset": "host-a6d9051811ebbbacaf4e",
+    "renderer_asset": "renderer-4f6ebb2d7daaccedb9ad",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-08-28T03:38:35.292Z",
-    "built_at_local": "2026/08/28 11:38:35",
+    "built_at": "2026-08-28T05:30:31.808Z",
+    "built_at_local": "2026/08/28 13:30:31",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "e98a51169ced9e77c84b96ccae222c707dedd73a1675f8d17fb8757bfdc4425a",
+    "requirement_registry": "e097cdf2d61faa0f731a16875002822bc903061bd60d01f22a0f0b98e2acb0a9",
     "raw_sources": "1bfe26cc1c7ca674b240bb50ad09b1ed84ccbfd62d61b3b2c2a1b5645b03e8f1",
     "source_anchor_catalog": "e930509f1f2aabdf7d60123320ae4a7a46b9f04cb9249a471bc8911b1e36d6aa",
-    "product_body": "238a8a116198b144833035c8a9b005d0b6893c275bf12bee5c61d5e832c5c200",
+    "product_body": "c0e962eee1045a84e680a3c2e7979fd6285248ecf9f500ba6d82c61eb1dfd416",
     "architecture": "cf5b490615f2bcc19669dffd54a98b5062ec1cac2267abdf0430beac941cb21b",
-    "runtime_contract": "86ebc6cd0d0772fd122f4eab9b05807e8577e67d906934077132146886825fb6"
+    "runtime_contract": "f8c0887ff5b0d9366e3570b314ec5f9c290d1655265fcd2f5c42b62b9366db00"
   }
 }
 ```
@@ -247,7 +247,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - Claude 功能启用期间由进程生命周期 Host 维护 `inventory / phase / unread / quota / appPresence` 物化视图；切页、Main/Float 显隐和快捷键复用同一缓存，重启后从真实来源冷启动且不持久化 live phase。五条 authority 独立增量更新；Hook/App state、已登记任务成员文件和 unread LevelDB 的首个完整文件事件在 Node 原生回调中立即 drain/read，不进入可被 `background-hidden` 节流的 JavaScript timer；部分任务元数据 JSON 保留最后可信成员关系，目录 `fs.watch` 为快路，已登记文件的 1 秒 `fs.watchFile` StatWatcher 只作漏通知恢复，Renderer Controller 不另设 phase 轮询。等价 reduced-state/package 指纹完整 no-op，不增加 revision 或推送；source generation、Kernel revision、Float applied revision 全链拒绝倒退。额度网络不得阻塞任务状态，watcher callback 延迟不得冒充最终 Float applied 延迟。
 - RAW-160 requires the current Claude `session.phase` evidence to outrank `previous.phase` whenever its causal event is newer；a delayed older inventory generation cannot regress a newer watcher/open-refresh event，and a membership mutation must not advance activity/interaction/unread lane generations。App state 固定语法当前仅门禁已核验的 Claude App `1.26832.0 / 1.28929.0 / 1.30096.5 / 1.34493.1 / 1.37937.0`，相邻未知版本 fail closed；日志冷重放的普通 running/waiting 不得推导 live activity。phase、phaseRevision、statusEnteredAt、unread and capabilities are accepted atomically through the same State Store。D′ archive success text is exactly split into EyPc convergence and native-sidebar capability：EyPc 已归档并移除；Claude 原生侧栏同步未确认，当前不受支持。Occasional native sidebar refresh is observation only，never a supported postcondition。
 - Claude 与其它 Provider 的任务状态由 Host evidence 自动进入同一 Kernel；产品不提供来源专用“同步任务状态”动作，成功打开也不触发 Renderer 侧第二次状态归约。来源专用入口只可读取 quota、environment 或展示 metadata，不能拥有 phase、unread、Plan、count 或 jump 语义。
-- 本地置顶的语义是「移出当前工作流、暂存待查」：动态列表最顶部有专门的置顶分组，收录**本地置顶且已完成已读**的根任务并豁免活动时间窗（否则置顶留不住一条过窗任务，等于无效）；置顶但处于其他相位的任务仍留在各自状态组。置顶**不改变**任务在其自身状态所应得的任何入口：置顶的待输入、进行中、待继续、已完成未读任务照旧参与「上一个/下一个」循环与「待输入」专用入口。唯一的例外是**已完成且已读**的置顶任务——它本就没有任何快捷键可达，因此不进入通用循环，改由「已完成未读」专用入口承载：该入口队列为「已完成未读 + 已完成已读的置顶项」按序拼接，先清未读积压再走置顶，未读为空时按键即直接循环置顶项。置顶分组是位置而非角标，不新增计数。
+- 本地置顶的语义是「移出当前工作流、暂存待查」：动态列表最顶部有专门的置顶分组，收录**本地置顶且已完成已读**的根任务并豁免活动时间窗（否则置顶留不住一条过窗任务，等于无效）；置顶但处于其他相位的任务仍留在各自状态组。置顶**不改变**任务在其自身状态所应得的任何入口：置顶的待输入、进行中、待继续、已完成未读任务照旧参与「上一个/下一个」循环与「待输入」专用入口。唯一的例外是**已完成且已读**的置顶任务——它本就没有任何快捷键可达，因此不进入通用循环，改由「已完成未读」专用入口承载：该入口队列为「已完成未读 + 已完成已读的置顶项」按序拼接，先清未读积压再走置顶，未读为空时按键即直接循环置顶项。队列顺序与列表展示共用同一比较器，因此是确定的；置顶项的**访问进度身份也必须固定**，不得挂在 `statusEnteredAt / terminalAt / turnStartedAt / revisionAt` 这类在聚合根上按 `max(成员)` 重算的字段上——否则子任务活动会让已访问过的置顶项重新入列，遍历跳回队首而队尾永远不达。静止对象的进度只由整轮走完后的重置或它离开队列结束。置顶分组是位置而非角标，不新增计数。
 - 「上一个/下一个」通用任务循环按 current interaction attention → artifact-only Plan → active → completed-unread → local pin 的层序拼接成一个环：层序表达优先级但**不排他**，各层按序全部进入 `cycleKeys`，层内跨来源按最近提问时间倒序，创建时间与匿名 key 只用于稳定并列；Provider 与置顶不改变顺序。冷游标下第一次按键仍落在最紧急的一条，其余任务不因某一层非空而不可达。已完成未读根任务是可循环层。本地置顶只在**已完成且已读**时退出全部层级；其余相位的置顶任务仍按自身状态入层，`local pin` 层继续兜住那些本就不属于前四层的置顶任务。一次连续 walk 持有它开始时的环 `CYCLE_WALK_HOLD_MS`（按键续期），期间的发布重排不改变正在遍历的环；walk 失效后下一次按键采纳最新环，代价是 walk 进行中新到达的任务要等下一次 walk 才入环。候选只来自进程 V7 Snapshot 的根任务 `cycleKeys`，子任务不参与；热且可信时直接派发，只有冷启动、重连或明确成员缺口才等待所需 Provider 的 tasks-only 盘点，不得从部分集合跳转。第一下立即派发；打开仍在执行时，后续每一次按键都在**逻辑游标**上继续推进，只有最后一个目标真正派发——N 次连按前进 N 格并落在最终尾随目标，而不是重复选中正在打开的那一条；若推进后回到正在打开的目标（例如环只有一条），则不再重复调用 Provider。逻辑游标只在本次 walk 的请求全部落定前有效，之后回到已确认游标。进程游标由任意一次确认打开的 `cycleKeys` 成员提交，不再为循环按键独占：卡片点击、快速跳转与 attention 入口都让下一次循环从用户当前所见任务继续；落在 `cycleKeys` 之外的打开不提交游标，以免造出不可达位置。游标所指任务仍在 `targets`、却因层变化离开 `cycleKeys` 时，按旧 `cycleKeys` 次序就近改锚到幸存邻居并记录改锚侧，使前后两个方向仍分别解析为它原来的后继与前驱，而不是回落集合首尾。待输入与已完成未读专用入口的独立未打开进度（`attentionSeen`）不受游标提交影响。
 - 每个任务行和项目行固定显示一个明显的文本化来源标记；即使只启用单一来源也不得省略，且图标与可访问名称必须同步表达来源。
 - 所有打开由 `CompanionTaskCommandV1` 进入同一个 Command Gateway：Kernel 在命令所见 Snapshot 上解析原根任务，再由 Provider Adapter 执行 Codex 深链、Claude Epitaxy deep link 或 Cursor deeplink。手动点击、Enter、角标、attention、快捷键和循环之间没有第二条效果通路；选择/打开不刷新或改写 phase，失败不清 unread。第一下循环立即派发；仅当打开仍在执行时，后续按键合并成一个最终 trailing 目标；全部 Provider 最大打开并发为 1。打开回执统一携带 `companion-open-handoff-v1`：当前外部链接最多证明 `requested/dispatched`，只有未来真实原生回执才能进入 `native-confirmed/applied`。
