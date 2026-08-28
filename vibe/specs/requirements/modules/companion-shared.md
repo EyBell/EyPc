@@ -26,6 +26,8 @@
 - [RAW-177#3](../shared-raw-177-clause-003.md#L1) — `active` · 原生交接与 ACK 边界
 - [RAW-179#1](../shared-raw-179-clause-001.md#L1) — `active` · interaction 与 Plan artifact 独立生命周期
 - [RAW-179#2](../shared-raw-179-clause-002.md#L1) — `active` · 七条 evidence lane、生成合同与唯一 V7 Kernel
+- [RAW-182](../shared-raw-182.md#L1) — `active` · 循环层序并集、环冻结、游标归属与角标可达性同源
+- [RAW-183](../shared-raw-183.md#L1) — `active` · 本地置顶作为暂存待查通道：置顶分组、退出循环环、已完成未读入口承载
 
 
 ### 编号条款

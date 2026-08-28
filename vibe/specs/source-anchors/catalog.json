@@ -4,12 +4,12 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 33,
-    "ordered_anchors": 207,
-    "raw_parent_ordered": 105,
+    "source_documents": 35,
+    "ordered_anchors": 215,
+    "raw_parent_ordered": 113,
     "unparented_ordered": 102,
     "registered_requirements": 105,
-    "registry_review_required": 0,
+    "registry_review_required": 8,
     "source_addressable_not_registered": 102
   },
   "documents": [
@@ -341,6 +341,26 @@
       "raw_identity_count": 1,
       "ordered_anchor_count": 0,
       "raw_parent_ordered_count": 0,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260827/companion-cycle-ring-order",
+      "source_path": "vibe/specs/260827/companion-cycle-ring-order/raw-requirement.md",
+      "spec_id": "SPEC-260827-COMPANION-CYCLE-RING-ORDER",
+      "content_sha256": "e693fdebbc9041f4cc52cb3646311e96ba89abc8a502552a67ca8f3131497031",
+      "raw_identity_count": 3,
+      "ordered_anchor_count": 4,
+      "raw_parent_ordered_count": 4,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260827/companion-pinned-parking",
+      "source_path": "vibe/specs/260827/companion-pinned-parking/raw-requirement.md",
+      "spec_id": "SPEC-260827-COMPANION-PINNED-PARKING",
+      "content_sha256": "c3574600bdea000621302f601ddc740ebca0865dd4ee0f183e3e7be72274ee56",
+      "raw_identity_count": 3,
+      "ordered_anchor_count": 4,
+      "raw_parent_ordered_count": 4,
       "unparented_ordered_count": 0
     }
   ],
@@ -4887,6 +4907,182 @@
       "disposition": "registered-requirement",
       "semantic_module": "engineering-invariants",
       "linked_current_requirement": "eypc-req-invariants-raw-179-clause-007",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-F4BB91C329D9205D434C",
+      "source_task": "260827/companion-cycle-ring-order",
+      "source_path": "vibe/specs/260827/companion-cycle-ring-order/raw-requirement.md",
+      "line": 21,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-182：快捷键任务循环的顺序稳定性与角标可达性",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "1",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-182",
+      "qualified_source": "SPEC-260827-COMPANION-CYCLE-RING-ORDER::RAW-182#1",
+      "clause_sha256": "c29cfb1d283c3dc2bf38996efbf974c3cea59e0fba052d41f20171ff8e1b072a",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-E5718D2DAEA29922E098",
+      "source_task": "260827/companion-cycle-ring-order",
+      "source_path": "vibe/specs/260827/companion-cycle-ring-order/raw-requirement.md",
+      "line": 22,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-182：快捷键任务循环的顺序稳定性与角标可达性",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "2",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-182",
+      "qualified_source": "SPEC-260827-COMPANION-CYCLE-RING-ORDER::RAW-182#2",
+      "clause_sha256": "aa737e0b0c25eca35ad37d54a38fb1755917eb470813eb00252a5ccfa9dd7261",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-47D8110FB0EE7C129C17",
+      "source_task": "260827/companion-cycle-ring-order",
+      "source_path": "vibe/specs/260827/companion-cycle-ring-order/raw-requirement.md",
+      "line": 23,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-182：快捷键任务循环的顺序稳定性与角标可达性",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "3",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-182",
+      "qualified_source": "SPEC-260827-COMPANION-CYCLE-RING-ORDER::RAW-182#3",
+      "clause_sha256": "f3556999b00b2f1a729584033c5cfdd960ae44cbb7b14eeacb6d9fcfc2d0d1fa",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-4F990F3198C98ED62F2A",
+      "source_task": "260827/companion-cycle-ring-order",
+      "source_path": "vibe/specs/260827/companion-cycle-ring-order/raw-requirement.md",
+      "line": 24,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-182：快捷键任务循环的顺序稳定性与角标可达性",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "4",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-182",
+      "qualified_source": "SPEC-260827-COMPANION-CYCLE-RING-ORDER::RAW-182#4",
+      "clause_sha256": "bfdc0c3cd50be58899c54efdba9ae5837866b29d4a84a9359b703608b27f8912",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-E197FAE02B7470C17A2F",
+      "source_task": "260827/companion-pinned-parking",
+      "source_path": "vibe/specs/260827/companion-pinned-parking/raw-requirement.md",
+      "line": 23,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-183：本地置顶作为「暂存待查」通道",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "1",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-183",
+      "qualified_source": "SPEC-260827-COMPANION-PINNED-PARKING::RAW-183#1",
+      "clause_sha256": "e22d4fbe52d56cd72fcbe34fc9e20cb61eb82c6c95ca54ec67d31d467ed950a9",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-F45B06DB6ABB6D5F7678",
+      "source_task": "260827/companion-pinned-parking",
+      "source_path": "vibe/specs/260827/companion-pinned-parking/raw-requirement.md",
+      "line": 24,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-183：本地置顶作为「暂存待查」通道",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "2",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-183",
+      "qualified_source": "SPEC-260827-COMPANION-PINNED-PARKING::RAW-183#2",
+      "clause_sha256": "aa9da1e3e0f6b20773ef6f50063ed5a9e1bf36601b935c591c601c264cd62593",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-A6184856B5DB8E9CB762",
+      "source_task": "260827/companion-pinned-parking",
+      "source_path": "vibe/specs/260827/companion-pinned-parking/raw-requirement.md",
+      "line": 25,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-183：本地置顶作为「暂存待查」通道",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "3",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-183",
+      "qualified_source": "SPEC-260827-COMPANION-PINNED-PARKING::RAW-183#3",
+      "clause_sha256": "c515312afd1b1e4807bc9a663d5589bc7701d601a56fe26d9632f7f8af23e4a1",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-F48A4DAF61D55A640764",
+      "source_task": "260827/companion-pinned-parking",
+      "source_path": "vibe/specs/260827/companion-pinned-parking/raw-requirement.md",
+      "line": 26,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-183：本地置顶作为「暂存待查」通道",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "4",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-183",
+      "qualified_source": "SPEC-260827-COMPANION-PINNED-PARKING::RAW-183#4",
+      "clause_sha256": "90bd0a060ef39786b1922e1cd36abb38ecfcda1a13e0780cdf27d80d6da7200c",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
       "selection_basis": "ordered-list-item-under-single-raw-heading"
     }
   ]

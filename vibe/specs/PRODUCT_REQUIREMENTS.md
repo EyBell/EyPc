@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 318 leaves / 6 modules / 291 active / 22 superseded / 5 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 71 scoped |
-| 原始来源 | 33 documents / 207 ordered / 105 RAW-parent / 102 source-only |
+| 需求登记 | 320 leaves / 6 modules / 293 active / 22 superseded / 5 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 75 scoped |
+| 原始来源 | 35 documents / 215 ordered / 113 RAW-parent / 102 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-328ae8b2f2ff25baf18f / renderer-34ee7434ee28243c10e7` · `artifact-ready` |
-| 当前构建时间 | `2026/08/27 08:57:47`（`2026-08-27T00:57:47.079Z`） |
+| 当前构建产物 | `host-8a1420a1a591c710f6fa / renderer-ca7fa083bffd781e5e09` · `artifact-ready` |
+| 当前构建时间 | `2026/08/27 21:38:34`（`2026-08-27T13:38:34.304Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,20 +34,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 318,
+    "leaves": 320,
     "modules": 6,
     "proposed": 5,
-    "active": 291,
+    "active": 293,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 71
+    "scoped_relations": 75
   },
   "source_anchor_catalog": {
-    "documents": 33,
-    "ordered_anchors": 207,
-    "raw_parent_ordered": 105,
+    "documents": 35,
+    "ordered_anchors": 215,
+    "raw_parent_ordered": 113,
     "registered_requirements": 105,
     "source_only": 102
   },
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-328ae8b2f2ff25baf18f",
-    "renderer_asset": "renderer-34ee7434ee28243c10e7",
+    "host_asset": "host-8a1420a1a591c710f6fa",
+    "renderer_asset": "renderer-ca7fa083bffd781e5e09",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-08-27T00:57:47.079Z",
-    "built_at_local": "2026/08/27 08:57:47",
+    "built_at": "2026-08-27T13:38:34.304Z",
+    "built_at_local": "2026/08/27 21:38:34",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "0b2ded92b869f9cddb72eb48dc6765b7923ca976964b6d7fb3965c44333082b7",
-    "raw_sources": "198c783a84b284a84e0791f7418e97c3fd089ef7aafc4e44fd3bea1c268a9c9a",
-    "source_anchor_catalog": "c15bd752692da765c3f51dda7ee9706655fc2a20423868262c41204efeb4cf87",
-    "product_body": "bd5f104cb3a46dd7226d0b3499534cbdd4417af35dc28456bc2e6f41ca0e68e7",
+    "requirement_registry": "e98a51169ced9e77c84b96ccae222c707dedd73a1675f8d17fb8757bfdc4425a",
+    "raw_sources": "03df5bfc7fe629fde65296149b2e32eb84d9b51d8986480404deacda692a46c7",
+    "source_anchor_catalog": "788be1e1916e7bad88f2f952f905d78930691915a42c16a1e72a36c2dab84d4a",
+    "product_body": "238a8a116198b144833035c8a9b005d0b6893c275bf12bee5c61d5e832c5c200",
     "architecture": "cf5b490615f2bcc19669dffd54a98b5062ec1cac2267abdf0430beac941cb21b",
-    "runtime_contract": "0f44e55713c872324262be5f0c960363199bdf2f114edb668369e1001527cb52"
+    "runtime_contract": "4e882777adce55a7a4cf27afd38bad6d76ef7918baef47fe3dc147975963c191"
   }
 }
 ```
@@ -236,7 +236,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 当前拓扑与状态权威为 [RAW-179 / EyPc V7](260824/eypc-v7-global-refactor/spec.md#L1)，V6 [RAW-176 revision 4](260823/companion-task-topology-v5/spec.md#L1) 与原生交接 [RAW-177](260823/codex-tab-boundary-optimization/spec.md#L1) 是仍有效的历史基础：Provider adapter 只提交 membership、activity、interaction、unread、plan-artifact、metadata、topology 七条原始 evidence lane；Topology V2 只拥有精确 root/member membership；Kernel V7 是唯一可变 reducer。Main、Float、Codex 页面、全局角标、注意力入口和前后任务只消费同一不可变 Presentation Snapshot；点击、Enter、角标、菜单、全局快捷键与循环只提交 Catalog Command。Provider phase 回灌、Controller/Renderer 二次投影、task watcher/cache 与旧 facade 均只作为历史实现记录。
 
 - Codex、Claude Code 与 Cursor 是三个彼此独立的来源，可各自开关并共享同一个水球；默认只开启 Codex，此时插件不读取 Claude/Cursor 数据。数据、状态、额度、空态与角标语义保持 Codex-only 兼容；任务/项目行即使在单来源模式也保留文本化、可访问的来源标记。
-- 任务排布与角标以**根任务状态**为准而非来源：待输入、进行中、已完成未读的角标数字是启用来源根任务的合计，子任务不重复计数或进入循环。每条根任务仍必须以文字、图标和可访问名称显示来源，并使用来源背景与状态标记正交区分。
+- 任务排布与角标以**根任务状态**为准而非来源：待输入、进行中、已完成未读的角标数字是启用来源根任务的合计，子任务不重复计数或进入循环。三个角标与通用循环共用同一判据（可见、非暂停、`capabilities.open`），因此「角标里有」等价于「上一个/下一个能到」；不可打开的任务既不计数也不入环，不得出现只计数不可达的角标。每条根任务仍必须以文字、图标和可访问名称显示来源，并使用来源背景与状态标记正交区分。
 - Claude 来源细节权威为 [Claude Code Companion 权威重置](260807/claude-code-companion-authority-reset/spec.md#L1)，技术选择与严格测试门禁见其 [research](260807/claude-code-companion-authority-reset/research.md#L1)，实现/未验收边界见 [verify](260807/claude-code-companion-authority-reset/verify.md#L1)；跨来源拓扑、Snapshot、interaction/artifact 与命令形态由 RAW-179 V7 统揽。真实 Claude App quota 数据权威已通过；完整 uTools 状态/未读/项目筛选矩阵与最终渲染同屏仍待真实 Host 验收，因此不得宣称产品验收完成。
 - Claude 库存只镜像 Claude App **Code 模式**的 `claude-code-sessions/<org>/<user>/local_<uuid>.json`；CLI-only、Cowork、`local-agent-mode-sessions` 和云端索引均不进入卡片。卡片身份使用 App local id，标题使用 App `title`，空标题固定为 `General coding session`；UUID 不得成为可见标题。
 - App 已有的重复 Code 行严格保留，不由 EyPc 自动隐藏、合并、删除或修复。多个本地行共享一个 `cliSessionId` 时，Hook 状态必须经唯一映射或定向元数据脉冲关联；不能唯一归属则状态未知，不得一对多扇出。
@@ -247,7 +247,8 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - Claude 功能启用期间由进程生命周期 Host 维护 `inventory / phase / unread / quota / appPresence` 物化视图；切页、Main/Float 显隐和快捷键复用同一缓存，重启后从真实来源冷启动且不持久化 live phase。五条 authority 独立增量更新；Hook/App state、已登记任务成员文件和 unread LevelDB 的首个完整文件事件在 Node 原生回调中立即 drain/read，不进入可被 `background-hidden` 节流的 JavaScript timer；部分任务元数据 JSON 保留最后可信成员关系，目录 `fs.watch` 为快路，已登记文件的 1 秒 `fs.watchFile` StatWatcher 只作漏通知恢复，Renderer Controller 不另设 phase 轮询。等价 reduced-state/package 指纹完整 no-op，不增加 revision 或推送；source generation、Kernel revision、Float applied revision 全链拒绝倒退。额度网络不得阻塞任务状态，watcher callback 延迟不得冒充最终 Float applied 延迟。
 - RAW-160 requires the current Claude `session.phase` evidence to outrank `previous.phase` whenever its causal event is newer；a delayed older inventory generation cannot regress a newer watcher/open-refresh event，and a membership mutation must not advance activity/interaction/unread lane generations。App state 固定语法当前仅门禁已核验的 Claude App `1.26832.0 / 1.28929.0 / 1.30096.5 / 1.34493.1 / 1.37937.0`，相邻未知版本 fail closed；日志冷重放的普通 running/waiting 不得推导 live activity。phase、phaseRevision、statusEnteredAt、unread and capabilities are accepted atomically through the same State Store。D′ archive success text is exactly split into EyPc convergence and native-sidebar capability：EyPc 已归档并移除；Claude 原生侧栏同步未确认，当前不受支持。Occasional native sidebar refresh is observation only，never a supported postcondition。
 - Claude 与其它 Provider 的任务状态由 Host evidence 自动进入同一 Kernel；产品不提供来源专用“同步任务状态”动作，成功打开也不触发 Renderer 侧第二次状态归约。来源专用入口只可读取 quota、environment 或展示 metadata，不能拥有 phase、unread、Plan、count 或 jump 语义。
-- 「上一个/下一个」通用任务循环先选择 current interaction attention → artifact-only Plan → active → local pin 的首个非空层，层内跨来源按最近提问时间倒序，创建时间与匿名 key 只用于稳定并列；Provider 与置顶不改变顺序。候选只来自进程 V7 Snapshot 的根任务 `cycleKeys`，子任务不参与；热且可信时直接派发，只有冷启动、重连或明确成员缺口才等待所需 Provider 的 tasks-only 盘点，不得从部分集合跳转。待输入与已完成未读专用入口保留独立未打开进度。
+- 本地置顶的语义是「移出当前工作流、暂存待查」：动态列表最顶部有专门的置顶分组，收录**本地置顶且已完成已读**的根任务并豁免活动时间窗（否则置顶留不住一条过窗任务，等于无效）；置顶但处于其他相位的任务仍留在各自状态组。置顶**不改变**任务在其自身状态所应得的任何入口：置顶的待输入、进行中、待继续、已完成未读任务照旧参与「上一个/下一个」循环与「待输入」专用入口。唯一的例外是**已完成且已读**的置顶任务——它本就没有任何快捷键可达，因此不进入通用循环，改由「已完成未读」专用入口承载：该入口队列为「已完成未读 + 已完成已读的置顶项」按序拼接，先清未读积压再走置顶，未读为空时按键即直接循环置顶项。置顶分组是位置而非角标，不新增计数。
+- 「上一个/下一个」通用任务循环按 current interaction attention → artifact-only Plan → active → completed-unread → local pin 的层序拼接成一个环：层序表达优先级但**不排他**，各层按序全部进入 `cycleKeys`，层内跨来源按最近提问时间倒序，创建时间与匿名 key 只用于稳定并列；Provider 与置顶不改变顺序。冷游标下第一次按键仍落在最紧急的一条，其余任务不因某一层非空而不可达。已完成未读根任务是可循环层。本地置顶只在**已完成且已读**时退出全部层级；其余相位的置顶任务仍按自身状态入层，`local pin` 层继续兜住那些本就不属于前四层的置顶任务。一次连续 walk 持有它开始时的环 `CYCLE_WALK_HOLD_MS`（按键续期），期间的发布重排不改变正在遍历的环；walk 失效后下一次按键采纳最新环，代价是 walk 进行中新到达的任务要等下一次 walk 才入环。候选只来自进程 V7 Snapshot 的根任务 `cycleKeys`，子任务不参与；热且可信时直接派发，只有冷启动、重连或明确成员缺口才等待所需 Provider 的 tasks-only 盘点，不得从部分集合跳转。第一下立即派发；打开仍在执行时，后续每一次按键都在**逻辑游标**上继续推进，只有最后一个目标真正派发——N 次连按前进 N 格并落在最终尾随目标，而不是重复选中正在打开的那一条；若推进后回到正在打开的目标（例如环只有一条），则不再重复调用 Provider。逻辑游标只在本次 walk 的请求全部落定前有效，之后回到已确认游标。进程游标由任意一次确认打开的 `cycleKeys` 成员提交，不再为循环按键独占：卡片点击、快速跳转与 attention 入口都让下一次循环从用户当前所见任务继续；落在 `cycleKeys` 之外的打开不提交游标，以免造出不可达位置。游标所指任务仍在 `targets`、却因层变化离开 `cycleKeys` 时，按旧 `cycleKeys` 次序就近改锚到幸存邻居并记录改锚侧，使前后两个方向仍分别解析为它原来的后继与前驱，而不是回落集合首尾。待输入与已完成未读专用入口的独立未打开进度（`attentionSeen`）不受游标提交影响。
 - 每个任务行和项目行固定显示一个明显的文本化来源标记；即使只启用单一来源也不得省略，且图标与可访问名称必须同步表达来源。
 - 所有打开由 `CompanionTaskCommandV1` 进入同一个 Command Gateway：Kernel 在命令所见 Snapshot 上解析原根任务，再由 Provider Adapter 执行 Codex 深链、Claude Epitaxy deep link 或 Cursor deeplink。手动点击、Enter、角标、attention、快捷键和循环之间没有第二条效果通路；选择/打开不刷新或改写 phase，失败不清 unread。第一下循环立即派发；仅当打开仍在执行时，后续按键合并成一个最终 trailing 目标；全部 Provider 最大打开并发为 1。打开回执统一携带 `companion-open-handoff-v1`：当前外部链接最多证明 `requested/dispatched`，只有未来真实原生回执才能进入 `native-confirmed/applied`。
 - `operationId` 负责幂等，命令按任务串行；`expectedRevision` 或 topology revision 变化时只重校验原任务键，绝不替换成邻近任务。Provider Adapter 的异常转换为该来源 `degraded + command failed`，不能使 Kernel、其它 Provider 或插件进程崩溃。Archive 不合并、不乐观移除，活动成员存在时必须拒绝。
@@ -290,7 +291,7 @@ Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-globa
 - On macOS, Node-backed Environment Actions default to project `.nvmrc`, then `.node-version`, NVM default, another locally installed NVM version and finally a verified controlled system Node. A project may persist one Host-verified candidate override; Renderer receives only opaque candidate IDs, labels, versions and sources. An invalid or missing explicit project version fails closed unless the user selects an override. EyPc never sources `nvm.sh`, runs a login shell, accepts an arbitrary Node path, installs a runtime/package manager or treats the uTools/Electron executable as Node; npm/pnpm/yarn/vite launch through the selected absolute Node plus a verified JavaScript entry.
 - Appearance configuration is one workbench with independent water-ball, expanded-card and status-signal targets. Every labeled token persists and renders directly; EyPc does not apply format, contrast, coupled-gamut, automatic adjustment, transient Controller preview or rollback validation. Built-in and saved themes still carry the complete token set, while the floating child remains display-only and contains no color editor.
 - The compact water ball has no intermediate mini-detail or decorative surface rim. Its component root is transparent, its surface keeps only inset depth shading, and neither a same-size outer glow nor the host button's circular focus outline may draw a second full circle; keyboard focus is indicated on the center reading instead. Its upper half is a counter-safe zone and does not expand on hover; the three counters stay directly clickable and show child-owned opaque purpose help after 200ms hover/focus without expanding or switching tabs. Waiting-input includes both input and approval states; completed-unread uses its complete counted set, including hidden tasks. Ongoing strictly equals the unsearched, non-hidden `active / ongoing` cards inside the configured recent-hours filter, so approval is not double-counted. The Controller publishes one atomic task-state package containing stabilized conversations, mutually exclusive dynamic groups, all three counts, the next time boundary and compatibility diagnostics; Renderers never independently filter, count, clear or time task state. Waiting-input and completed-unread call the Controller attention action, whose hint says “最新优先，连续触发依次打开”; ongoing only expands. Accepted Deep Link dispatch advances only the local open-request sequence and leaves unread unchanged until native read evidence arrives. Zero counters hide and values above 99 display `99+`. The lower half, center quota choice, Spark mark, Weekly data ring and direct token rendering retain the existing geometry and appearance contracts.
-- RAW-083/084/087/105/106/107/108/109/128/134/136/138/139/152/155 keep the compact geometry and generic navigation contracts；their former Host-open/read acknowledgement is superseded by RAW-177#3. “上一个/下一个任务” selects the first non-empty tier—current input/approval interaction, artifact-only actionable Plan, recent non-hidden active, then non-stopped local pin—and wraps only inside the current V7 Snapshot root keys. Every tier uses latest-question descending order; Provider/pin do not override. The process-only cursor advances per root key; first dispatch is immediate and only in-flight presses collapse to the final trailing target. These commands never alter hidden/Tab/native phase or unread. A ready Host consumes a hot entry once; cold/reconnect/gap state uses tasks-only preflight and old Host revisions fail closed.
+- RAW-083/084/087/105/106/107/108/109/128/134/136/138/139/152/155 keep the compact geometry and generic navigation contracts；their former Host-open/read acknowledgement is superseded by RAW-177#3. “上一个/下一个任务” concatenates every tier in priority order—current input/approval interaction, artifact-only actionable Plan, recent non-hidden active, completed-unread, then non-stopped local pin—and wraps only inside the current V7 Snapshot root keys. A pin never removes a task from the entries its own phase earns it; only a finished, already-read pin leaves the ring, because it is the one pin no shortcut could otherwise reach, and the completed-unread entry serves it—that queue is unread completions followed by the finished, already-read pins. Tier order expresses priority without excluding lower tiers, so a cold cursor still opens the most urgent task first while nothing the badges count stays unreachable. One continuous walk holds the ring it started on for `CYCLE_WALK_HOLD_MS`; a later press adopts the published ring. Every tier uses latest-question descending order; Provider/pin do not override. The process-only cursor advances per root key and is committed by any confirmed open landing inside the ring; presses arriving during an in-flight open advance a logical cursor so N presses travel N steps and only the final trailing target is dispatched, while a burst wrapping back onto the target already opening issues no second Provider call; first dispatch is immediate and only in-flight presses collapse to the final trailing target. These commands never alter hidden/Tab/native phase or unread. A ready Host consumes a hot entry once; cold/reconnect/gap state uses tasks-only preflight and old Host revisions fail closed.
 - RAW-140/144 的 session open-read hint 已由 RAW-177#3 取代。Electron `shell.openExternal` 成功和 uTools fallback 接受都只产生 `dispatched` handoff，`confirmsRead=false`；`mainHide`、IPC reset、resubscribe、refollow 或库存复读不能把它升级为 opened/read。未来若接入 Codex 原生 ACK，必须绑定同一 opaque handoff、原生可见与精确 Turn/read 证据后，才可单调进入 `native-confirmed/applied`。
 - RAW-143 supersedes the ordinary-hide cold-cache portion without changing recovery authority: `mainHide/onPluginOut(false)` now preserves the App Server session, task/project aliases and latest-Turn cache, so a verified hot task alias opens with no inventory RPC. Cold inventory still runs after real teardown; concurrent stale aliases share one successfully published threads preflight. Action Runner/slots reuse verified project inventory and rebuild only after first use or explicit Host stale-alias rejection; every execution still revalidates target, TOML and command fingerprints.
 - RAW-144 makes the Controller materialized task view feature-lifetime and incrementally live: changing the main Tab or Float visibility does not clear inventory, aliases, Activity generation or subscriptions, while quota/config polling remains surface-owned. RAW-152 narrows replaceable Renderer disposal to local timer/subscription cleanup plus Host-lease detach; feature/inbox disable, Provider changes, kill and process exit remain the semantic reset boundaries. Action Runner keeps a per-project catalog and reloads only added or re-aliased projects; unchanged projects remain hot, while Host execution continues exact safety revalidation.
