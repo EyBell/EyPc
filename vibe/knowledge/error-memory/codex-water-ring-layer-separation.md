@@ -1,11 +1,11 @@
 ---
 id: eypc-codex-water-ring-layer-separation
-status: candidate
+status: verified
 scope: project
 fingerprint: codex-water-ring-layer__weekly-data-svg-removed-while-static-surface-rim-remained__semantic-and-decorative-circles-confused__inventory-layer-ownership-before-removal
 first_seen: 2026-07-22
 last_verified: 2026-08-28
-review_after: 2026-11-28
+review_after: 2027-02-28
 evidence:
   - src/components/CodexWaterBall.vue
   - src/styles/float.css
@@ -56,7 +56,7 @@ Before removing a visually duplicated ring, separate semantic/data layers from d
 
 ## Alternative Route
 
-- Status: `candidate`; static implementation is complete and visual acceptance is pending.
+- Status: `verified` (2026-08-28); static implementation complete and user accepted the visual result.
 - Preconditions: a component contains multiple concentric SVG/CSS/pseudo-element layers.
 - Ordered steps: inventory component and ancestor interaction layers; map each to data/controls/accessibility; retain the data-owned layer; remove decorative root/background/inset/border/shell/shadow/focus-circle layers; replace focus feedback without another circle; verify present/absent data and keyboard states.
 - Verification: compare 5-hour + Weekly, Weekly-only, Spark + Weekly and no-Weekly states in ordinary and keyboard-focus conditions; only a data-bearing progress ring may remain.
@@ -72,3 +72,4 @@ Before removing a visually duplicated ring, separate semantic/data layers from d
 | 2026-07-30 | RAW-129 residual misconception cleanup | Evidence text still claimed the data ring had active contrast validation after RAW-071 removed it | Recalled an old safety gate while describing current layer ownership | Corrected the record to direct token pass-through; semantic-vs-decorative ring rule remains unchanged | verified documentation correction |
 
 | 2026-08-28 | 逾期 candidate 复核 | validate:error-memory 报告复核窗口过期 | 无——本轮为复核而非再尝试 | 未改动实现 | candidate；2026-08-28 复核：源码与样式实现仍在位，无回归；本轮无法取得验收证据——视觉结论只能由用户给出，运行诊断日志不记录观感。状态维持 candidate，复核窗口顺延。待验收项：水球外围仅剩数据环、无装饰圈与聚焦圈。 |
+| 2026-08-28 | 逾期 candidate 复核收尾 | 用户逐项验收视觉结果 | 无 | 未改动实现 | verified；水球外围仅剩数据环，无装饰圈与聚焦圈 —— 2026-08-28 用户验收：本轮用户确认该项表现符合预期，直接结案。视觉结论由用户给出，实现侧此前已确认无回归。 |
