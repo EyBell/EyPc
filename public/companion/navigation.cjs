@@ -5,7 +5,7 @@ const { normalizeCompanionOpenReceipt } = require('./open-handoff.cjs')
 const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v5'
 // Kept as an exported compatibility marker for diagnostics/tests. Generic
 // cycling is leading-edge now: the first target is dispatched synchronously.
-const { DEFAULT_COALESCE_MS } = require('../timing-policy.cjs')
+const { DEFAULT_COALESCE_MS, CYCLE_WALK_HOLD_MS } = require('../timing-policy.cjs')
 const MAX_DIRECT_QUEUE = 200
 function providerSet(value) {
   if (Array.isArray(value)) return new Set(value.filter((provider) => PROVIDERS.includes(provider)))
@@ -53,6 +53,18 @@ function normalizeTarget(value, enabledProviders) {
   }
 }
 
+function rangeDown(from) {
+  const indices = []
+  for (let index = from; index >= 0; index -= 1) indices.push(index)
+  return indices
+}
+
+function rangeUp(from, limit) {
+  const indices = []
+  for (let index = from; index < limit; index += 1) indices.push(index)
+  return indices
+}
+
 function unavailable(message, errorCode = 'unavailable') {
   return { outcome: 'unavailable', errorCode, message }
 }
@@ -92,6 +104,34 @@ function createCompanionNavigation(dependencies = {}) {
   let snapshot = { ready: false, targets: new Map(), cycleKeys: [] }
   let snapshotFingerprint = ''
   let cursorKey = ''
+  // A cursor that leaves the ring is not a lost cursor. `cycleKeys` carries only
+  // the first non-empty tier, so an ordinary tier change drops the cursor out of
+  // it while the task itself is still perfectly alive in `targets`. Treating that
+  // as "no cursor" made every later press fall back to index 0, which pins a
+  // one-entry tier to a single task forever — the badge still counts the others,
+  // and nothing reaches them. The displaced side records which neighbour we
+  // re-anchored to, so both directions still resolve to the task the user would
+  // have reached from the position they actually lost.
+  let cursorDisplacedSide = ''
+  let cursorRecoveredCount = 0
+  // The ring one walk is traversing, held for the duration of that walk. See
+  // CYCLE_WALK_HOLD_MS: the published ring re-sorts on every publish, and the
+  // act of opening a task changes the field it sorts on, so a live ring moved
+  // under the user between two presses of one walk.
+  let walkRing = []
+  let walkExpiresAt = 0
+  let walkAdoptedCount = 0
+  // Where the next press counts from while an earlier one is still open.
+  //
+  // `cursorKey` only moves on a confirmed open, which is correct for it — but
+  // it meant every press arriving during one in-flight open recomputed from the
+  // same unmoved position and selected the same task. A burst of five presses
+  // therefore advanced one step, and the four that appeared to be swallowed
+  // were really four selections of a target already being opened. The logical
+  // cursor advances per press; only the dispatch is collapsed to the last one.
+  let pendingCursorKey = ''
+  let outstandingCycles = 0
+  let coalescedAdvanceCount = 0
   let queuedCycle = null
   let inFlightRequest = null
   const directQueue = []
@@ -118,6 +158,8 @@ function createCompanionNavigation(dependencies = {}) {
   }
 
   function resolveRequest(request, result) {
+    if (request?.cycle === true && outstandingCycles > 0) outstandingCycles -= 1
+    if (outstandingCycles === 0) pendingCursorKey = ''
     try {
       request.resolve({
         ...result,
@@ -134,6 +176,21 @@ function createCompanionNavigation(dependencies = {}) {
       resolveRequest(queuedCycle, { ...superseded(), operationId: queuedCycle.operationId })
       queuedCycle = null
     }
+    // An abandoned walk must not keep steering later presses; whatever confirms
+    // next owns the position.
+    pendingCursorKey = ''
+  }
+
+  /**
+   * The position the next press counts from.
+   *
+   * While a walk is still resolving, that is the last target this walk selected,
+   * so presses accumulate into one final trailing target. With nothing in
+   * flight it is the confirmed cursor, which is the only position a completed
+   * walk may resume from.
+   */
+  function walkOrigin() {
+    return outstandingCycles > 0 && pendingCursorKey ? pendingCursorKey : cursorKey
   }
 
   function clearQueued(reason = '导航状态已重置') {
@@ -146,6 +203,80 @@ function createCompanionNavigation(dependencies = {}) {
     snapshot = { ready: false, targets: new Map(), cycleKeys: [] }
     snapshotFingerprint = ''
     cursorKey = ''
+    cursorDisplacedSide = ''
+    walkRing = []
+    walkExpiresAt = 0
+    pendingCursorKey = ''
+  }
+
+
+  function walkHeld(now = Date.now()) {
+    return walkRing.length > 0 && now < walkExpiresAt
+  }
+
+  /**
+   * Resolves the ring this press walks, holding the one an in-progress walk
+   * started on and adopting the published ring otherwise.
+   *
+   * Adoption is also where a cursor that did not survive into the new ring is
+   * re-anchored, so a walk that resumes after the hold lapsed continues from the
+   * position it stopped at instead of from the head.
+   */
+  function ringForCycle(now) {
+    if (walkHeld(now)) {
+      const alive = walkRing.filter((key) => snapshot.targets.has(key))
+      if (alive.length) {
+        walkRing = alive
+        return alive
+      }
+    }
+    const previous = walkRing.length ? walkRing : snapshot.cycleKeys
+    walkRing = snapshot.cycleKeys
+    walkAdoptedCount += 1
+    if (cursorKey && walkRing.length && !walkRing.includes(cursorKey)) recoverCursor(previous)
+    return walkRing
+  }
+
+  /**
+   * Re-anchors a cursor that survived in `targets` but left `cycleKeys`.
+   *
+   * Scans the ring the cursor was last part of, outward from where it sat, and
+   * adopts the nearest surviving neighbour. Which side that neighbour came from
+   * is remembered rather than discarded: anchoring to the predecessor makes the
+   * next forward press land on the task that followed the lost one, but would
+   * make a backward press skip a step, so the opposite direction resolves to the
+   * anchor itself.
+   */
+  function recoverCursor(previousCycleKeys) {
+    const lostIndex = previousCycleKeys.indexOf(cursorKey)
+    const ring = walkRing.length ? walkRing : snapshot.cycleKeys
+    const lostKey = cursorKey
+    if (lostIndex >= 0 && ring.length) {
+      for (const [side, indices] of [
+        ['before', rangeDown(lostIndex - 1)],
+        ['after', rangeUp(lostIndex + 1, previousCycleKeys.length)]
+      ]) {
+        for (const index of indices) {
+          const candidate = previousCycleKeys[index]
+          if (!ring.includes(candidate)) continue
+          cursorKey = candidate
+          cursorDisplacedSide = side
+          cursorRecoveredCount += 1
+          record({
+            level: 'debug',
+            scope: 'navigation',
+            event: 'cursor-recovered',
+            outcome: 'recovered',
+            taskRef: candidate,
+            cache: 'process-package',
+            details: { lostKey, side, cycleCount: ring.length }
+          })
+          return
+        }
+      }
+    }
+    cursorKey = ''
+    cursorDisplacedSide = ''
   }
 
   function begin(input = {}) {
@@ -203,9 +334,15 @@ function createCompanionNavigation(dependencies = {}) {
       syncNoopCount += 1
       return true
     }
+    const previousCycleKeys = snapshot.cycleKeys
     snapshot = { ready: input.ready === true, targets, cycleKeys }
     snapshotFingerprint = fingerprint
-    if (cursorKey && !targets.has(cursorKey)) cursorKey = ''
+    if (cursorKey && !targets.has(cursorKey)) {
+      cursorKey = ''
+      cursorDisplacedSide = ''
+    } else if (cursorKey && !walkHeld() && !cycleKeys.includes(cursorKey)) {
+      recoverCursor(previousCycleKeys)
+    }
     return true
   }
 
@@ -223,7 +360,17 @@ function createCompanionNavigation(dependencies = {}) {
       const result = normalizeOpenResult(await openTarget(request.target, request), request.target)
       const currentOperationId = result.operationId || request.operationId
       if (result.outcome === 'opened' || result.outcome === 'dispatched') {
-        if (request.cycle === true) cursorKey = request.target.key
+        // The ring position is what the user is walking, so any confirmed open
+        // that lands inside it owns the cursor. A card click, a quick jump or an
+        // attention shortcut used to leave the cursor wherever the last cycle
+        // stopped, and the next press resumed from there instead of from the
+        // task now in front of the user. An open that lands outside the ring —
+        // a hidden row, an ephemeral target — deliberately leaves it alone
+        // rather than re-creating an unreachable cursor.
+        if ((walkHeld() ? walkRing : snapshot.cycleKeys).includes(request.target.key)) {
+          cursorKey = request.target.key
+          cursorDisplacedSide = ''
+        }
         if (request.target.provider === 'claude') dispatchedClaude += 1
         else if (request.target.provider === 'cursor') dispatchedCursor += 1
         else dispatchedCodex += 1
@@ -333,15 +480,32 @@ function createCompanionNavigation(dependencies = {}) {
     }
     if (disposed || !enabled || !snapshot.ready) return reject(unavailable('任务缓存尚未就绪', 'inventory-not-ready'))
     if (!snapshot.cycleKeys.length) return reject(unavailable('当前没有可切换的任务', 'no-task'))
+    const ring = ringForCycle(startedAt)
+    if (!ring.length) return reject(unavailable('当前没有可切换的任务', 'no-task'))
+    walkExpiresAt = startedAt + CYCLE_WALK_HOLD_MS
     const offset = direction === -1 ? -1 : 1
-    const currentIndex = snapshot.cycleKeys.indexOf(cursorKey)
+    const origin = walkOrigin()
+    const coalescing = origin !== cursorKey
+    const currentIndex = ring.indexOf(origin)
+    // A displaced anchor stands in for a ring position that no longer exists.
+    // Moving away from the side the anchor was taken from is an ordinary step;
+    // moving back toward the gap resolves to the anchor itself, which is exactly
+    // the task that sat there before the ring changed.
+    const holdsAnchor = currentIndex >= 0 && !coalescing && (cursorDisplacedSide === 'before'
+      ? offset < 0
+      : cursorDisplacedSide === 'after' && offset > 0)
     const nextIndex = currentIndex < 0
-      ? offset > 0 ? 0 : snapshot.cycleKeys.length - 1
-      : (currentIndex + offset + snapshot.cycleKeys.length) % snapshot.cycleKeys.length
-    const key = snapshot.cycleKeys[nextIndex]
+      ? offset > 0 ? 0 : ring.length - 1
+      : holdsAnchor
+        ? currentIndex
+        : (currentIndex + offset + ring.length) % ring.length
+    const key = ring[nextIndex]
     const target = snapshot.targets.get(key)
     if (!target) return reject(unavailable('任务缓存已变化，请重试', 'stale-target'))
     acceptedCycleCount += 1
+    if (coalescing) coalescedAdvanceCount += 1
+    pendingCursorKey = key
+    outstandingCycles += 1
     record({
       level: 'debug',
       scope: 'navigation',
@@ -352,7 +516,7 @@ function createCompanionNavigation(dependencies = {}) {
       taskRef: target.key,
       source,
       cache: 'process-package',
-      details: { direction: offset, currentIndex, nextIndex, cycleCount: snapshot.cycleKeys.length }
+      details: { direction: offset, currentIndex, nextIndex, cycleCount: ring.length, held: walkHeld(startedAt), coalescing, displaced: cursorDisplacedSide || 'none' }
     })
     return new Promise((resolve) => queueCycle({ target, source, operationId: currentOperationId, cycle: true, resolve }))
   }
@@ -435,6 +599,14 @@ function createCompanionNavigation(dependencies = {}) {
       enabledProviderCount: enabledProviders.size,
       targetCount: snapshot.targets.size,
       cycleCount: snapshot.cycleKeys.length,
+      cursorKey,
+      cursorDisplaced: cursorDisplacedSide || 'none',
+      cursorRecoveredCount,
+      walkHeld: walkHeld(),
+      walkRingCount: walkRing.length,
+      walkAdoptedCount,
+      coalescedAdvanceCount,
+      outstandingCycles,
       pendingCycle: Boolean(queuedCycle),
       directQueueDepth: directQueue.length,
       dispatchInFlight,
@@ -476,5 +648,6 @@ function createCompanionNavigation(dependencies = {}) {
 module.exports = {
   COMPANION_NAVIGATION_REVISION,
   DEFAULT_COALESCE_MS,
+  CYCLE_WALK_HOLD_MS,
   createCompanionNavigation
 }

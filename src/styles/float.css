@@ -1119,6 +1119,10 @@ button.float-search-glyph { cursor: pointer; }
   font-weight: 850;
 }
 .float-status-section::before { width: 7px; height: 7px; flex: none; border-radius: 50%; background: currentColor; content: ''; }
+/* Same warning family as the pin affordance itself, damped toward muted: the
+   pinned group is parked work, so it must read as quieter than 待输入, which
+   owns undamped warning. */
+.float-status-section.pinned { color: color-mix(in srgb, var(--codex-warning) 62%, var(--codex-muted)); }
 .float-status-section.input { color: var(--codex-warning); }
 .float-status-section.active { color: var(--codex-running); }
 .float-status-section.stopped { color: var(--codex-muted); }

@@ -46,8 +46,23 @@ const PREFLIGHT_PROGRESS_MS = 600
 const PREFLIGHT_TIMEOUT_MS = 5_000
 const UNKNOWN_GRACE_MS = 250
 const MAX_TIMER_DELAY_MS = 2_147_483_647
-const TIERS = ['attention', 'plan', 'active', 'fallback', 'none']
-const GROUPS = ['input', 'active', 'stopped', 'unread', 'completed', 'none']
+/**
+ * Cycle tiers in priority order.
+ *
+ * The order is what expresses priority — it is deliberately not a filter. The
+ * ring used to be the first non-empty tier alone, which meant a single task
+ * entering `waiting-input` replaced the whole ring mid-walk and made every
+ * `active` task unreachable while its badge still counted it. Ordering keeps the
+ * urgent task first without making the rest disappear.
+ */
+const CYCLE_TIER_ORDER = ['attention', 'plan', 'active', 'unread', 'fallback']
+/**
+ * Dynamic list groups in display order. `none` is not a group — it is the
+ * absence of one — so it stays out of the view shape rather than becoming a
+ * bucket nothing may read.
+ */
+const DYNAMIC_GROUPS = ['pinned', 'input', 'active', 'stopped', 'unread', 'completed']
+const GROUPS = [...DYNAMIC_GROUPS, 'none']
 const DRAFT_PRODUCERS = ['renderer', 'host-preflight', 'host-evidence']
 const SOURCE_LANES = [...COMPANION_EVIDENCE_CHANNELS_V7]
 const ACTIVITY_EVIDENCE_PHASE = Object.freeze({
@@ -523,7 +538,7 @@ function targetFromTask(task) {
 
 function emptyViews() {
   return {
-    groups: { input: [], active: [], stopped: [], unread: [], completed: [] },
+    groups: Object.fromEntries(DYNAMIC_GROUPS.map((group) => [group, []])),
     counts: { input: 0, active: 0, unread: 0 },
     cycleKeys: [],
     attentionKeys: { input: [], completedUnread: [], archive: [] },
@@ -586,7 +601,15 @@ function derivedCycleTier(task) {
   }
   if (task.phase === 'stopped' && task.planReady) return 'plan'
   if (task.phase === 'running' && task.dynamicEligible) return 'active'
-  if (task.localPin) return 'fallback'
+  // Deliberately not gated on `dynamicEligible`: the unread badge counts every
+  // visible completed-unread root, so the ring must reach exactly the same set
+  // or the count is advertising something the shortcut cannot deliver.
+  if (task.phase === 'completed' && task.unread) return 'unread'
+  // The one case a pin changes: a finished, already-read pin is exactly what the
+  // dedicated fast-access entry serves, so it must not also ride the ordinary
+  // ring. A pin in any other phase keeps the tier it always had — pinning must
+  // not quietly remove a task from the shortcuts its own state earns it.
+  if (task.localPin && !(task.phase === 'completed' && !task.unread)) return 'fallback'
   return 'none'
 }
 
@@ -596,6 +619,11 @@ function derivedDynamicGroup(task) {
   // unread completion must remain reachable until the user handles it.
   if (isAttentionTaskPhase(task.phase)) return 'input'
   if (task.phase === 'completed' && task.unread) return 'unread'
+  // Pinning a finished, already-read task is a "keep this where I can find it"
+  // request, so it outranks the activity window that would otherwise retire the
+  // task from the dynamic list entirely — which made the pin do nothing at all.
+  // Pins in any other phase stay in their own status group.
+  if (task.localPin && task.phase === 'completed' && !task.unread) return 'pinned'
   if (!task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
   if (task.phase === 'running') return 'active'
   if (task.phase === 'unknown') return 'none'
@@ -700,32 +728,38 @@ function buildViews(tasks) {
   for (const task of display) {
     if (task.dynamicGroup !== 'none') views.groups[task.dynamicGroup].push(task.key)
   }
-  views.counts.input = visible.filter((task) => isAttentionTaskPhase(task.phase)).length
-  views.counts.active = views.groups.active.length
-  views.counts.unread = visible.filter((task) => task.phase === 'completed' && task.unread).length
+  // A badge is a promise that something is reachable, so it counts what the
+  // ring can actually open — an unopenable task used to be counted and then
+  // silently skipped by every shortcut.
+  const countable = visible.filter((task) => task.capabilities.open)
+  views.counts.input = countable.filter((task) => isAttentionTaskPhase(task.phase)).length
+  views.counts.active = countable.filter((task) => task.dynamicGroup === 'active').length
+  views.counts.unread = countable.filter((task) => task.phase === 'completed' && task.unread).length
 
   const cycleCandidates = [...visible]
     .filter((task) => task.capabilities.open && task.cycleTier !== 'none')
     .sort(compareByLatestQuestion)
-  for (const tier of ['attention', 'plan', 'active', 'fallback']) {
-    const keys = cycleCandidates.filter((task) => task.cycleTier === tier).map((task) => task.key)
-    if (keys.length) {
-      views.cycleKeys = keys
-      break
-    }
-  }
+  views.cycleKeys = CYCLE_TIER_ORDER.flatMap((tier) => cycleCandidates
+    .filter((task) => task.cycleTier === tier)
+    .map((task) => task.key))
 
   const attention = [...visible].sort(compareByLatestQuestion)
   const inputAttention = attention
     .filter((task) => task.capabilities.open && isAttentionTaskPhase(task.phase))
     .map((task) => task.key)
   // Direct attention actions are exact: "待输入" must never fall through to
-  // an unrelated pinned/completed task. Local pins remain the final tier of the
-  // ordinary previous/next cycle only.
+  // an unrelated pinned/completed task.
   views.attentionKeys.input = inputAttention
-  views.attentionKeys.completedUnread = attention
-    .filter((task) => task.capabilities.open && task.phase === 'completed' && task.unread)
-    .map((task) => task.key)
+  // "已完成未读" is also the fast-access entry for pinned finished work, which
+  // has no other shortcut: unread completions first, then the finished,
+  // already-read pins. Concatenated rather than interleaved so the unread
+  // backlog always clears before the pins, and an empty backlog makes the very
+  // first press start cycling the pins. Pins in other phases are deliberately
+  // absent — their own state already earns them an entry.
+  views.attentionKeys.completedUnread = [
+    ...attention.filter((task) => task.capabilities.open && task.phase === 'completed' && task.unread),
+    ...attention.filter((task) => task.capabilities.open && task.localPin && task.phase === 'completed' && !task.unread)
+  ].map((task) => task.key)
   views.attentionKeys.archive = attention
     .filter((task) => task.capabilities.archive)
     .map((task) => task.key)

@@ -63,8 +63,8 @@ export interface CanonicalTaskStateV4 {
   membershipRevision: number
   capabilities: CompanionCanonicalTaskV4['capabilities']
 }
-export type CompanionTaskCycleTier = 'attention' | 'plan' | 'active' | 'fallback' | 'none'
-export type CompanionTaskDynamicGroup = 'input' | 'active' | 'stopped' | 'unread' | 'completed' | 'none'
+export type CompanionTaskCycleTier = 'attention' | 'plan' | 'active' | 'unread' | 'fallback' | 'none'
+export type CompanionTaskDynamicGroup = 'pinned' | 'input' | 'active' | 'stopped' | 'unread' | 'completed' | 'none'
 
 export interface CompanionTaskArchiveRequestV3 {
   expectedUpdatedAt: number
@@ -176,6 +176,8 @@ export type CompanionProviderHealthV1 = Record<CompanionProviderId, {
 
 export interface CompanionTaskPackageViewsV4 {
   groups: {
+    /** Locally pinned, finished and already-read roots; exempt from the activity window. */
+    pinned: string[]
     input: string[]
     active: string[]
     stopped: string[]
@@ -297,7 +299,7 @@ export function emptyCompanionTaskPackage(
     },
     tasks: [],
     views: {
-      groups: { input: [], active: [], stopped: [], unread: [], completed: [] },
+      groups: { pinned: [], input: [], active: [], stopped: [], unread: [], completed: [] },
       counts: { input: 0, active: 0, unread: 0 },
       cycleKeys: [],
       attentionKeys: { input: [], completedUnread: [], archive: [] },
@@ -594,6 +596,7 @@ export function applyCompanionTaskPackageViews(
   const byKey = new Map(cards.map((task) => [task.key, task]))
   const project = (keys: readonly string[]) => keys.map((key) => byKey.get(key)).filter((task): task is CodexTaskCard => Boolean(task))
   const groups = {
+    pinned: project(taskPackage.views.groups.pinned),
     input: project(taskPackage.views.groups.input),
     active: project(taskPackage.views.groups.active),
     stopped: project(taskPackage.views.groups.stopped),
@@ -606,7 +609,7 @@ export function applyCompanionTaskPackageViews(
     dynamic: {
       ...taskState.dynamic,
       groups,
-      tasks: [groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat(),
+      tasks: [groups.pinned, groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat(),
       compactCounts: { ...taskPackage.views.counts }
     },
     generatedAt: Math.max(taskState.generatedAt, taskPackage.publishedAt)

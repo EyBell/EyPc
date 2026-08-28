@@ -58,6 +58,8 @@ export interface CodexCompactTaskCounts {
 }
 
 export interface CodexDynamicStatusGroups {
+  /** Locally pinned, finished and already-read roots, kept regardless of the activity window. */
+  pinned: CodexTaskCard[]
   input: CodexTaskCard[]
   active: CodexTaskCard[]
   stopped: CodexTaskCard[]
@@ -109,7 +111,7 @@ function isDynamicActiveTask(task: CodexTaskCard): boolean {
 }
 
 function emptyDynamicStatusProjection(): CodexDynamicStatusProjection {
-  const groups: CodexDynamicStatusGroups = { input: [], active: [], stopped: [], unread: [], completed: [] }
+  const groups: CodexDynamicStatusGroups = { pinned: [], input: [], active: [], stopped: [], unread: [], completed: [] }
   return { tasks: [], groups, compactCounts: { input: 0, active: 0, unread: 0 }, nextTransitionAt: null }
 }
 
@@ -138,13 +140,19 @@ export function projectCodexDynamicStatus(
     .filter((task) => !task.isHidden)
   const visibleUnread = conversations.completedUnread
     .filter((task) => !task.isHidden)
+  // Window-exempt like attention: a pin on a finished, already-read task is a
+  // request to keep it findable, which the activity window would otherwise undo.
+  const visiblePinned = conversations.completed
+    .filter((task) => !task.isHidden && task.pinSource === 'local')
+  const pinnedKeys = new Set(visiblePinned.map((task) => task.key))
   const recent = [
     ...conversations.ongoing,
     ...(conversations.stopped || []),
     ...conversations.completed
-  ].filter((task) => !task.isHidden && taskActivityAt(task) >= windowStart)
+  ].filter((task) => !task.isHidden && taskActivityAt(task) >= windowStart && !pinnedKeys.has(task.key))
   const recentOngoing = recent.filter((task) => task.bucket === 'ongoing')
   const groups: CodexDynamicStatusGroups = {
+    pinned: orderCodexTasksForDisplay(visiblePinned),
     // Attention is an all-visible inventory concern. It must not disappear just
     // because the underlying Turn is older than the ordinary activity window.
     input: orderCodexAttentionTasks(visibleInput),
@@ -153,7 +161,7 @@ export function projectCodexDynamicStatus(
     unread: orderCodexAttentionTasks(visibleUnread),
     completed: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'completed'))
   }
-  const tasks = [groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
+  const tasks = [groups.pinned, groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
   const timeBounded = [groups.active, groups.stopped, groups.completed].flat()
   const nextTransitionAt = timeBounded.length
     ? Math.min(...timeBounded.map((task) => taskActivityAt(task) + windowMs + 1))
