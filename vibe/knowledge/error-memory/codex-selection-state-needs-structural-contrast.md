@@ -4,8 +4,8 @@ status: candidate
 scope: project
 fingerprint: codex-multiselect-feedback__small-hit-area-state-replacement-or-flow-positioned-mode-bar-disrupts-dense-list__decorative-selection-cue-or-top-flow-mode-bar__full-height-selector-bottom-overlay-mode-gradient-state-icon
 first_seen: 2026-07-22
-last_verified: 2026-07-22
-review_after: 2026-08-22
+last_verified: 2026-08-28
+review_after: 2026-11-28
 evidence:
   - src/FloatApp.vue
   - src/styles/float.css
@@ -69,3 +69,5 @@ Do not encode a major interaction mode only through subtle same-hue effects or a
 | 2026-07-22 | RAW-057 selection contrast | User reported the reinforced multi-select effect was still not obvious | Same-hue gradient, glow and narrow leading accent | Added mode bar/count, nonmember de-emphasis, thick selected boundary and solid check badge | candidate; user acceptance pending |
 | 2026-07-22 | RAW-058 selection/pin/counter fusion | User reported selection was often impossible to trigger and the checked result remained unsatisfactory | Narrow selector plus status-icon replacement; child key events could reach row commands | Expanded the selector to 38px full height, restored the status icon, added theme tri-gradient and isolated row/button key ownership | candidate; focused multi-select tests `3 / 3` pass, visual acceptance pending |
 | 2026-07-22 | RAW-064 selection layout correction | User reported that the temporary top mode bar added a row and changed the dense-list layout | Conditional normal-flow top status bar | Moved the cue to a bottom list-stage overlay, reserved scroll space and lifted the bottom batch toolbar | candidate; user visual acceptance pending |
+
+| 2026-08-28 | 逾期 candidate 复核 | validate:error-memory 报告复核窗口过期 | 无——本轮为复核而非再尝试 | 未改动实现 | candidate；2026-08-28 复核：源码与样式实现仍在位，无回归；本轮无法取得验收证据——视觉结论只能由用户给出，运行诊断日志不记录观感。状态维持 candidate，复核窗口顺延。待验收项：多选模式识别度、38px 全高选择区、进出多选时列表几何稳定。 |

@@ -4,8 +4,8 @@ status: candidate
 scope: project
 fingerprint: codex-desktop-live-unread__optional-live-field-was-treated-as-false-and-overwrote-confirmed-persisted-fallback__preserve-persisted-unread-until-explicit-live-read-state
 first_seen: 2026-07-24
-last_verified: 2026-07-27
-review_after: 2026-08-24
+last_verified: 2026-08-28
+review_after: 2026-11-28
 evidence:
   - user-observed-state-mismatch
   - preload-source-inspection
@@ -67,3 +67,5 @@ Optional live fields are not negative values. Preserve the last confirmed fallba
 | Date | Task | Trigger | Failed Route | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-24 | RAW-081 live state fallback | User reported inaccurate waiting-input and completed-unread states | Missing live unread was written as unavailable, and request spelling required exact separators | Retained persisted unread authority, kept explicit live read-state priority, and normalized separators for existing known request names | candidate; static source/mirror checks pass, user Desktop acceptance pending |
+
+| 2026-08-28 | 逾期 candidate 复核 | validate:error-memory 报告复核窗口过期 | 无——本轮为复核而非再尝试 | 未改动实现 | candidate；2026-08-28 复核：读取真机运行诊断日志（2026-08-27T13:42Z→2026-08-28T03:25Z，21387 事件，运行构建 host-8a1420a1a591c710f6fa 即当前 HEAD，零 error 零 warn）。**不能据此结案**：该窗口内 Codex Provider 几乎未被使用（带 provider 字段的事件 claude 42 / cursor 18 / codex 1，末次 cold-preflight 显示 codex 源未启用），且本记录关注的失败路径没有专门日志埋点，事件缺失属无效证据而非无复发证明。状态维持 candidate。待验收项：已完成未读不掉状态、待输入不漏判。 |

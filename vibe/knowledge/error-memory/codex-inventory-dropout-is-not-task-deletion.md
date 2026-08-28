@@ -4,8 +4,8 @@ status: candidate
 scope: project
 fingerprint: codex-task-count-flicker__single-complete-snapshot-omitted-existing-keys-and-replaced-lastthreads__transport-completeness-confused-with-temporal-deletion-proof__hold-stable-inventory-until-same-missing-set-survives-reconciliation
 first_seen: 2026-07-26
-last_verified: 2026-07-30
-review_after: 2026-08-26
+last_verified: 2026-08-28
+review_after: 2026-11-28
 evidence:
   - preload/index.js
   - public/preload.js
@@ -80,3 +80,5 @@ Do not equate one successful inventory response with deletion authority, and do 
 | 2026-07-26 | RAW-090 inventory stability | User clarified that abnormal status/count transfer can omit tasks without real deletion | Immediately replace `lastThreads` after every structurally complete response | User correction plus Controller source trace | Missing-key quarantine, immediate recheck, interval-spanning confirmation and monotonic evidence | candidate; source/link closeout passed, runtime acceptance pending |
 | 2026-07-27 | RAW-092 asymmetric status timing | User required new/waiting tasks to appear quickly while abnormal count jitter remained hidden | Applying one generic delay policy to both additions and disappearance would either lag positive feedback or reintroduce count flicker | Existing missing-key rule plus a separate 50ms dirty-task event path for additions; no weakening of deletion proof | Positive additions are immediate after verification, negative disappearance remains interval-confirmed | candidate; contracts updated, real jitter/latency acceptance pending |
 | 2026-07-30 | RAW-128 row-scoped quarantine | A lower snapshot omitted one task while another present task completed/unread | Retained the entire previous projection until disappearance confirmation | Controller regression plus global status-chain audit | Merge present rows immediately and retain only missing rows through the existing hold | automated Controller contract verified; real host dropout acceptance pending |
+
+| 2026-08-28 | 逾期 candidate 复核 | validate:error-memory 报告复核窗口过期 | 无——本轮为复核而非再尝试 | 见备注 | 未改动实现 | candidate；2026-08-28 复核：读取真机运行诊断日志（2026-08-27T13:42Z→2026-08-28T03:25Z，21387 事件，运行构建 host-8a1420a1a591c710f6fa 即当前 HEAD，零 error 零 warn）。**不能据此结案**：该窗口内 Codex Provider 几乎未被使用（带 provider 字段的事件 claude 42 / cursor 18 / codex 1，末次 cold-preflight 显示 codex 源未启用），且本记录关注的失败路径没有专门日志埋点，事件缺失属无效证据而非无复发证明。状态维持 candidate。待验收项：任务数量/分组不因传输波动而增删。 |

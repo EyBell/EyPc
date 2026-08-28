@@ -4,8 +4,8 @@ status: candidate
 scope: project
 fingerprint: codex-water-ring-layer__weekly-data-svg-removed-while-static-surface-rim-remained__semantic-and-decorative-circles-confused__inventory-layer-ownership-before-removal
 first_seen: 2026-07-22
-last_verified: 2026-07-30
-review_after: 2026-08-22
+last_verified: 2026-08-28
+review_after: 2026-11-28
 evidence:
   - src/components/CodexWaterBall.vue
   - src/styles/float.css
@@ -70,3 +70,5 @@ Before removing a visually duplicated ring, separate semantic/data layers from d
 | 2026-07-22 | RAW-065 Weekly ring correction | User reported that the wrong circle was removed | Removed Weekly SVG/controls but retained the static surface rim | Restored the Weekly data ring and controls; removed inset, border, inset outline and shell | candidate; user visual acceptance pending |
 | 2026-07-22 | RAW-065 outermost-circle follow-up | User screenshot showed a complete outer circle still present after the first correction | Inspected only component-local rim layers and missed root glow/background plus the host button focus outline | Removed the remaining decorative sources and replaced the circular focus outline with a center-reading underline | candidate; refreshed static checks passed, user visual acceptance pending |
 | 2026-07-30 | RAW-129 residual misconception cleanup | Evidence text still claimed the data ring had active contrast validation after RAW-071 removed it | Recalled an old safety gate while describing current layer ownership | Corrected the record to direct token pass-through; semantic-vs-decorative ring rule remains unchanged | verified documentation correction |
+
+| 2026-08-28 | 逾期 candidate 复核 | validate:error-memory 报告复核窗口过期 | 无——本轮为复核而非再尝试 | 未改动实现 | candidate；2026-08-28 复核：源码与样式实现仍在位，无回归；本轮无法取得验收证据——视觉结论只能由用户给出，运行诊断日志不记录观感。状态维持 candidate，复核窗口顺延。待验收项：水球外围仅剩数据环、无装饰圈与聚焦圈。 |
