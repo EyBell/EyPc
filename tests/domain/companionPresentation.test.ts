@@ -62,9 +62,10 @@ describe('water ball presentation', () => {
   it('puts the claude percentage in the centre while both providers are live', () => {
     const result = resolveCompanionWaterBallPresentation(slice())
     expect(result.mapping).toMatchObject({ liquid: 'codex', ring: 'codex', percent: 'claude' })
-    expect(result.percentOverride).toBe(70)
+    // The centre reads the plain weekly window (55% used), not the 5-hour one.
+    expect(result.percentOverride).toBe(45)
     expect(result.percentProviderLabel).toBe('Claude')
-    expect(result.ariaSuffix).toBe('，Claude 剩余 70%')
+    expect(result.ariaSuffix).toBe('，Claude 剩余 45%')
   })
 
   it('falls back to the legacy rendering while claude is not installed', () => {
@@ -79,7 +80,7 @@ describe('water ball presentation', () => {
     const result = resolveCompanionWaterBallPresentation(slice({
       claudeEnvironment: { ...READY_ENVIRONMENT, hooks: 'missing' }
     }))
-    expect(result.percentOverride).toBe(70)
+    expect(result.percentOverride).toBe(45)
   })
 
   it('falls back to the legacy rendering while claude has no quota reading yet', () => {
@@ -91,21 +92,96 @@ describe('water ball presentation', () => {
   it('lets claude own the whole ball when it is the only enabled provider', () => {
     const result = resolveCompanionWaterBallPresentation(slice({ providers: { codex: false, claude: true, cursor: false } }))
     expect(result.mapping).toMatchObject({ liquid: 'claude', ring: 'claude', percent: 'claude' })
-    expect(result.percentOverride).toBe(70)
+    expect(result.percentOverride).toBe(45)
   })
 
   it('rounds and clamps the displayed percentage', () => {
     const result = resolveCompanionWaterBallPresentation(slice({
-      claudeQuota: normalizeClaudeQuota({ five_hour: { used_percentage: 33.33 } })
+      claudeQuota: normalizeClaudeQuota({ seven_day: { used_percentage: 33.33 } })
     }))
     expect(result.percentOverride).toBe(67)
   })
 
-  it('uses the weekly window when the 5-hour window is absent', () => {
+  it('reads the plain weekly window rather than a scoped one', () => {
     const result = resolveCompanionWaterBallPresentation(slice({
-      claudeQuota: normalizeClaudeQuota({ seven_day: { used_percentage: 10 } })
+      claudeQuota: normalizeClaudeQuota({
+        five_hour: { used_percentage: 30 },
+        seven_day: { used_percentage: 10 },
+        seven_day_opus: { used_percentage: 80 }
+      })
     }))
     expect(result.percentOverride).toBe(90)
+  })
+
+  it('falls back to the 5-hour window when the weekly window is absent', () => {
+    const result = resolveCompanionWaterBallPresentation(slice({
+      claudeQuota: normalizeClaudeQuota({ five_hour: { used_percentage: 30 } })
+    }))
+    expect(result.percentOverride).toBe(70)
+  })
+
+  it('pairs the Fable weekly with the plain one when the account reports both', () => {
+    const result = resolveCompanionWaterBallPresentation(slice({
+      claudeQuota: normalizeClaudeQuota({
+        five_hour: { used_percentage: 30 },
+        seven_day: { used_percentage: 55 },
+        seven_day_fable: { used_percentage: 21 }
+      })
+    }))
+    // Centre reads `79/45`: Fable first, plain weekly second, no unit.
+    expect(result.scopedPercent).toBe(79)
+    expect(result.percentOverride).toBe(45)
+    expect(result.scopedLabel).toBe('Fable')
+    expect(result.ariaSuffix).toBe('，Claude Fable周限额剩余 79%，普通周限额剩余 45%')
+  })
+
+  it('prefers the Fable weekly over another scoped weekly in the leading position', () => {
+    const result = resolveCompanionWaterBallPresentation(slice({
+      claudeQuota: normalizeClaudeQuota({
+        seven_day: { used_percentage: 55 },
+        seven_day_opus: { used_percentage: 90 },
+        seven_day_fable_5: { used_percentage: 21, display_name: 'Fable 5' }
+      })
+    }))
+    expect(result.scopedPercent).toBe(79)
+    expect(result.scopedLabel).toBe('Fable 5')
+  })
+
+  it('stays a single percentage while the account reports no scoped weekly', () => {
+    const result = resolveCompanionWaterBallPresentation(slice())
+    expect(result.scopedPercent).toBeNull()
+    expect(result.scopedLabel).toBe('')
+    expect(result.ariaSuffix).toBe('，Claude 剩余 45%')
+  })
+
+  it('never pairs a scoped weekly with the 5-hour fallback', () => {
+    // Two different window lengths behind one slash would read as one comparison.
+    const result = resolveCompanionWaterBallPresentation(slice({
+      claudeQuota: normalizeClaudeQuota({
+        five_hour: { used_percentage: 30 },
+        seven_day_fable: { used_percentage: 21 }
+      })
+    }))
+    expect(result.percentOverride).toBe(70)
+    expect(result.scopedPercent).toBeNull()
+  })
+
+  it('keeps the pair out of every compatibility path', () => {
+    expect(resolveCompanionWaterBallPresentation(null).scopedPercent).toBeNull()
+    expect(resolveCompanionWaterBallPresentation(slice({
+      providers: { codex: true, claude: false, cursor: false },
+      claudeQuota: normalizeClaudeQuota({
+        seven_day: { used_percentage: 55 },
+        seven_day_fable: { used_percentage: 21 }
+      })
+    })).scopedPercent).toBeNull()
+    expect(resolveCompanionWaterBallPresentation(slice({
+      claudeEnvironment: emptyClaudeEnvironment(),
+      claudeQuota: normalizeClaudeQuota({
+        seven_day: { used_percentage: 55 },
+        seven_day_fable: { used_percentage: 21 }
+      })
+    })).scopedPercent).toBeNull()
   })
 })
 
@@ -186,7 +262,7 @@ describe('claude quota section', () => {
       claudeQuota: normalizeClaudeQuota({ five_hour: { used_percentage: 30 }, seven_day: { used_percentage: 55 } }, { source: 'usage-api' })
     })
     expect(buildClaudeQuotaSection(input)?.rows).toHaveLength(2)
-    expect(resolveCompanionWaterBallPresentation(input).percentOverride).toBe(70)
+    expect(resolveCompanionWaterBallPresentation(input).percentOverride).toBe(45)
   })
 
   it('explains a connected provider that has no reading yet', () => {

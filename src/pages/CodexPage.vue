@@ -879,6 +879,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 :state-label="waterPreview.stateLabel"
                 :label="`${waterPreview.ariaLabel}${companionPreview.ariaSuffix}`"
                 :percent-override="companionPreview.percentOverride"
+                :scoped-percent="companionPreview.scopedPercent"
                 :percent-provider-label="companionPreview.percentProviderLabel"
                 :appearance="waterDraft"
                 :colors="snapshot.settings.colors"

@@ -3181,6 +3181,7 @@ onUnmounted(() => {
           :appearance="settings?.waterAppearance || fallbackWaterAppearance"
           :colors="settings?.colors || fallbackColors"
           :percent-override="companionWaterBall.percentOverride"
+          :scoped-percent="companionWaterBall.scopedPercent"
           :percent-provider-label="companionWaterBall.percentProviderLabel"
           decorative
         />
