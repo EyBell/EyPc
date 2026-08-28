@@ -22,6 +22,7 @@ Link-only route for GUI launch environments、preload/runtime identity、packagi
 - [Content-derived path segment unvalidated](../content-derived-path-segment-unvalidated.md#L1)
 - [Facade port omitted below passing module validator](../facade-port-omitted-below-passing-module-validator.md#L1)
 - [New preload module missing from packaging manifest](../new-preload-module-missing-from-packaging-manifest.md#L1)
+- [Persistent float window outlives plugin reload](../persistent-float-window-outlives-plugin-reload.md#L1)
 - [Port scan snapshot misses new listeners](../port-scan-snapshot-misses-new-listeners.md#L1)
 - [Preload module `instanceof` crosses vm sandbox realm](../preload-module-instanceof-crosses-vm-sandbox-realm.md#L1)
 - [Preload module forgets injection at call site](../preload-module-forgets-injection-at-call-site.md#L1)
