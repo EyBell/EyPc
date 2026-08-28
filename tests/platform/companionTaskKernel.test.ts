@@ -803,7 +803,7 @@ describe('CompanionTaskKernel', () => {
     expect(pinned.tasks.find((value: { key: string }) => value.key === 'codex-a')).toMatchObject({
       localPin: true,
       kind: 'local-pin',
-      cycleTier: 'fallback'
+      cycleTier: 'none'
     })
 
     // A completed Plan owns the pause lane for hiding, but stays pinnable.
@@ -939,7 +939,31 @@ describe('CompanionTaskKernel', () => {
     expect(current.views.groups.active).toEqual([])
     expect(current.views.counts).toEqual({ input: 1, active: 0, unread: 1 })
     expect(current.views.attentionKeys).toMatchObject({ input: ['old-input'], completedUnread: ['old-unread'] })
-    expect(current.views.cycleKeys).toEqual(['old-input'])
+    // Both badges count these, so both must be reachable: tier order puts the
+    // input task first without excluding the unread one from the ring.
+    expect(current.views.cycleKeys).toEqual(['old-input', 'old-unread'])
+  })
+
+  it('keeps a pinned finished task in the dynamic list after the activity window retires it', () => {
+    const kernel = createCompanionTaskKernel({
+      now: () => 1_000_000_000,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task({ key: 'codex-pin-old', phase: 'completed', unread: false, localPin: true, dynamicEligible: false, lastQuestionAt: 9 }),
+        task({ key: 'codex-plain-old', phase: 'completed', unread: false, dynamicEligible: false, lastQuestionAt: 8 })
+      ], 1, { providers: { codex: true, claude: false } })
+    })
+
+    // Both are past the window. Only the pinned one survives in the list, which
+    // is the entire point of pinning a finished task.
+    expect(current.views.groups.pinned).toEqual(['codex-pin-old'])
+    expect(current.views.groups.completed).toEqual([])
+    // The pinned group is a placement, not a badge: counts stay untouched.
+    expect(current.views.counts).toEqual({ input: 0, active: 0, unread: 0 })
   })
 
   it('keeps the complete admitted inventory without a product task-count cap', () => {
@@ -1151,7 +1175,9 @@ describe('CompanionTaskKernel', () => {
       topology: { mode: 'aggregate', memberCount: 2, liveCount: 0, attentionCount: 0 }
     })
     expect(current.views.counts).toMatchObject({ input: 0, active: 0, unread: 1 })
-    expect(current.views.cycleKeys).toEqual([])
+    // The child stays out of the ring; the aggregate root the unread badge
+    // counts is exactly what the ring reaches.
+    expect(current.views.cycleKeys).toEqual(['root'])
     expect(JSON.stringify(current)).not.toContain('test-exact-identity')
   })
 
@@ -1248,7 +1274,33 @@ describe('CompanionTaskKernel', () => {
     expect(opened).toEqual(['codex-new', 'codex-new', 'codex-old', 'codex-new'])
   })
 
-  it('keeps local pins in ordinary cycling and never uses them as an input shortcut fallback', async () => {
+  it('keeps a pinned live task in every shortcut its own state earns it', async () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task({ key: 'codex-pin-input', phase: 'waiting-input', localPin: true, lastQuestionAt: 300 }),
+        task({ key: 'codex-pin-running', phase: 'running', localPin: true, lastQuestionAt: 200 }),
+        task({ key: 'codex-pin-unread', phase: 'completed', unread: true, localPin: true, lastQuestionAt: 100 })
+      ], 1, { providers: { codex: true, claude: false } })
+    })
+
+    // Pinning must never quietly remove a task from the entries its own phase
+    // earns it; only a finished, already-read pin leaves the ordinary ring.
+    expect(current.views.cycleKeys).toEqual(['codex-pin-input', 'codex-pin-running', 'codex-pin-unread'])
+    expect(current.views.attentionKeys.input).toEqual(['codex-pin-input'])
+    expect(current.views.groups.input).toEqual(['codex-pin-input'])
+    expect(current.views.groups.active).toEqual(['codex-pin-running'])
+    expect(current.views.groups.unread).toEqual(['codex-pin-unread'])
+    // None of them is finished-and-read, so the pinned group stays empty.
+    expect(current.views.groups.pinned).toEqual([])
+    expect(current.views.counts).toEqual({ input: 1, active: 1, unread: 1 })
+  })
+
+  it('gives a finished, already-read pin its own fast-access entry instead of the ring', async () => {
     const opened: string[] = []
     const kernel = createCompanionTaskKernel({
       adapters: {
@@ -1271,9 +1323,17 @@ describe('CompanionTaskKernel', () => {
 
     expect(packageValue.views.counts.input).toBe(0)
     expect(packageValue.views.attentionKeys.input).toEqual([])
-    expect(packageValue.views.cycleKeys).toEqual(['codex-pin'])
+    // The one pin that leaves the ring: it has a dedicated entry instead.
+    expect(packageValue.views.cycleKeys).toEqual([])
+    // A finished, already-read pin is what the dedicated pinned group collects.
+    expect(packageValue.views.groups.pinned).toEqual(['codex-pin'])
+    expect(packageValue.views.attentionKeys.completedUnread).toEqual(['codex-pin'])
     await expect(kernel.dispatch({ action: 'open-attention', kind: 'input' })).resolves.toMatchObject({ outcome: 'unavailable' })
     expect(opened).toEqual([])
+
+    await expect(kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' }))
+      .resolves.toMatchObject({ outcome: 'opened' })
+    expect(opened).toEqual(['codex-pin'])
   })
 
   it('keeps a Claude native open-read receipt for the same completion and releases it for the next completion', async () => {
@@ -1515,6 +1575,8 @@ describe('CompanionTaskKernel', () => {
       ], 1)
     })
 
+    // A pin on a live task changes nothing: it keeps the ring position its own
+    // running state earns it.
     expect(current.views.groups.active).toEqual(['claude-new', 'codex-pinned-middle', 'codex-old'])
     expect(current.views.cycleKeys).toEqual(['claude-new', 'codex-pinned-middle', 'codex-old'])
   })
@@ -1536,6 +1598,11 @@ describe('CompanionTaskKernel', () => {
     })
     expect(current.tasks[0].cycleTier).toBe('fallback')
     expect(current.views.cycleKeys).toEqual(['codex-a'])
+    // Not finished-and-read, so it is neither collected by the pinned group nor
+    // served by the fast-access entry: its own stopped state already places it.
+    expect(current.views.groups.pinned).toEqual([])
+    expect(current.views.groups.stopped).toEqual(['codex-a'])
+    expect(current.views.attentionKeys.completedUnread).toEqual([])
   })
 
   it('ignores duplicate and lower producer drafts without deleting newer tasks', () => {

@@ -5,6 +5,7 @@ const require = createRequire(import.meta.url)
 const navigationModule = require('../../preload/companion/navigation.cjs') as {
   COMPANION_NAVIGATION_REVISION: string
   DEFAULT_COALESCE_MS: number
+  CYCLE_WALK_HOLD_MS: number
   createCompanionNavigation(options?: Record<string, unknown>): any
 }
 
@@ -127,7 +128,7 @@ describe('process-lifetime companion navigation', () => {
     ])
   })
 
-  it('dispatches the leading shortcut immediately without advancing past an unconfirmed target', async () => {
+  it('collapses an in-flight burst onto the final trailing target', async () => {
     let releaseFirst!: () => void
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
     const opened: string[] = []
@@ -142,6 +143,9 @@ describe('process-lifetime companion navigation', () => {
     await Promise.resolve()
     expect(opened).toEqual(['codex-a'])
 
+    // Each press advances the logical cursor even though only the last of them
+    // is dispatched: three presses land three steps along the ring rather than
+    // re-selecting the target already being opened.
     const second = navigation.cycle(1)
     const third = navigation.cycle(1)
     expect(opened).toEqual(['codex-a'])
@@ -149,9 +153,47 @@ describe('process-lifetime companion navigation', () => {
 
     await expect(first).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
     await expect(second).resolves.toMatchObject({ errorCode: 'superseded' })
-    await expect(third).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    await expect(third).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    expect(opened).toEqual(['codex-a', 'codex-b'])
+    expect(navigation.diagnostics()).toMatchObject({
+      maxConcurrent: 1,
+      acceptedCycleCount: 3,
+      coalescedAdvanceCount: 2,
+      outstandingCycles: 0,
+      cursorKey: 'codex-b'
+    })
+  })
+
+  it('does not call Provider twice when a burst wraps back to the target already opening', async () => {
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const opened: string[] = []
+    const { navigation, receipt } = readyNavigation({
+      openTarget: async (target: { key: string }) => {
+        opened.push(target.key)
+        if (opened.length === 1) await firstGate
+        return nativeOpened()
+      }
+    })
+    // A single-entry ring makes every press resolve to the same root, which is
+    // where advancing the logical cursor must NOT produce a second open.
+    expect(navigation.sync({
+      lease: receipt.lease,
+      enabled: true,
+      providers: { codex: true, claude: true },
+      ready: true,
+      targets,
+      cycleKeys: ['codex-a']
+    })).toBe(true)
+
+    const first = navigation.cycle(1)
+    await Promise.resolve()
+    const second = navigation.cycle(1)
+    releaseFirst()
+
+    await expect(first).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    await expect(second).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
     expect(opened).toEqual(['codex-a'])
-    expect(navigation.diagnostics()).toMatchObject({ maxConcurrent: 1, acceptedCycleCount: 3 })
   })
 
   it('commits the cycle cursor only after Host confirms the exact target opened', async () => {
@@ -351,6 +393,167 @@ describe('process-lifetime companion navigation', () => {
       expect.objectContaining({ id: 1, provider: 'codex', key: 'codex-a', outcome: 'opened' })
     ])
     expect(navigation.takeResults({ lease: remount.lease })).toEqual([])
+  })
+
+  it('keeps the cursor at the position it lost when the tier drops it out of the ring', async () => {
+    vi.useFakeTimers()
+    const opened: string[] = []
+    const { navigation, receipt } = readyNavigation({
+      openTarget: async (target: { key: string; provider: string }) => {
+        opened.push(target.key)
+        return target.provider === 'claude' ? { outcome: 'dispatched' } : nativeOpened()
+      }
+    })
+
+    await navigation.cycle(1)
+    await navigation.cycle(1)
+    expect(navigation.diagnostics().cursorKey).toBe('claude:local_a')
+    vi.advanceTimersByTime(navigationModule.CYCLE_WALK_HOLD_MS + 1)
+
+    // The cursor's task is still a perfectly live target; it only left the ring
+    // the published tiers now expose.
+    expect(navigation.sync({
+      lease: receipt.lease,
+      enabled: true,
+      providers: { codex: true, claude: true },
+      ready: true,
+      targets,
+      cycleKeys: ['codex-a', 'codex-b']
+    })).toBe(true)
+    expect(navigation.diagnostics()).toMatchObject({
+      cursorKey: 'codex-a',
+      cursorDisplaced: 'before',
+      cursorRecoveredCount: 1
+    })
+
+    // Forward from the lost position is the task that followed it, not the head
+    // of the ring the cursor happened to be re-anchored into.
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    expect(opened).toEqual(['codex-a', 'claude:local_a', 'codex-b'])
+    expect(navigation.diagnostics()).toMatchObject({ cursorKey: 'codex-b', cursorDisplaced: 'none' })
+  })
+
+  it('resolves a displaced cursor to the anchor itself when moving back toward the gap', async () => {
+    vi.useFakeTimers()
+    const { navigation, receipt } = readyNavigation({
+      openTarget: async (target: { provider: string }) => target.provider === 'claude'
+        ? { outcome: 'dispatched' }
+        : nativeOpened()
+    })
+
+    await navigation.cycle(1)
+    await navigation.cycle(1)
+    vi.advanceTimersByTime(navigationModule.CYCLE_WALK_HOLD_MS + 1)
+    expect(navigation.sync({
+      lease: receipt.lease,
+      enabled: true,
+      providers: { codex: true, claude: true },
+      ready: true,
+      targets,
+      cycleKeys: ['codex-a', 'codex-b']
+    })).toBe(true)
+
+    await expect(navigation.cycle(-1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    expect(navigation.diagnostics()).toMatchObject({ cursorKey: 'codex-a', cursorDisplaced: 'none' })
+  })
+
+  it('holds the ring one walk started on across a mid-walk republish', async () => {
+    vi.useFakeTimers()
+    const opened: string[] = []
+    const { navigation, receipt } = readyNavigation({
+      openTarget: async (target: { key: string; provider: string }) => {
+        opened.push(target.key)
+        return target.provider === 'claude' ? { outcome: 'dispatched' } : nativeOpened()
+      }
+    })
+
+    await navigation.cycle(1)
+    expect(navigation.diagnostics()).toMatchObject({ walkHeld: true, walkRingCount: 3 })
+
+    // A republish mid-walk reorders the ring and drops a member. The walk in
+    // progress must not be re-pointed underneath the user.
+    expect(navigation.sync({
+      lease: receipt.lease,
+      enabled: true,
+      providers: { codex: true, claude: true },
+      ready: true,
+      targets,
+      cycleKeys: ['codex-b']
+    })).toBe(true)
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'claude:local_a' })
+    expect(navigation.diagnostics()).toMatchObject({ walkHeld: true, walkAdoptedCount: 1 })
+
+    // Once the walk lapses, the next press adopts the published ring.
+    vi.advanceTimersByTime(navigationModule.CYCLE_WALK_HOLD_MS + 1)
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'codex-b' })
+    expect(navigation.diagnostics()).toMatchObject({ walkRingCount: 1, walkAdoptedCount: 2 })
+    expect(opened).toEqual(['codex-a', 'claude:local_a', 'codex-b'])
+  })
+
+  it('drops the cursor only when its task leaves the target set entirely', async () => {
+    const { navigation, receipt } = readyNavigation({
+      openTarget: async (target: { provider: string }) => target.provider === 'claude'
+        ? { outcome: 'dispatched' }
+        : nativeOpened()
+    })
+
+    await navigation.cycle(1)
+    expect(navigation.diagnostics().cursorKey).toBe('codex-a')
+    expect(navigation.sync({
+      lease: receipt.lease,
+      enabled: true,
+      providers: { codex: true, claude: true },
+      ready: true,
+      targets: targets.filter((target) => target.key !== 'codex-a'),
+      cycleKeys: ['claude:local_a', 'codex-b']
+    })).toBe(true)
+    expect(navigation.diagnostics()).toMatchObject({
+      cursorKey: '',
+      cursorDisplaced: 'none',
+      cursorRecoveredCount: 0
+    })
+  })
+
+  it('lets any confirmed open inside the ring own the cycle cursor', async () => {
+    const opened: string[] = []
+    const { navigation } = readyNavigation({
+      openTarget: async (target: { key: string; provider: string }) => {
+        opened.push(target.key)
+        return target.provider === 'claude' ? { outcome: 'dispatched' } : nativeOpened()
+      }
+    })
+
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    await expect(navigation.open({ key: 'codex-b', source: 'card-click' }))
+      .resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    expect(navigation.diagnostics().cursorKey).toBe('codex-b')
+
+    // Continues from the task the user is actually looking at, not from wherever
+    // the last cycle press happened to stop.
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    expect(opened).toEqual(['codex-a', 'codex-b', 'codex-a'])
+  })
+
+  it('leaves the cycle cursor alone when an open lands outside the ring', async () => {
+    const { navigation, receipt } = readyNavigation({
+      openTarget: async (target: { provider: string }) => target.provider === 'claude'
+        ? { outcome: 'dispatched' }
+        : nativeOpened()
+    })
+    expect(navigation.sync({
+      lease: receipt.lease,
+      enabled: true,
+      providers: { codex: true, claude: true },
+      ready: true,
+      targets,
+      cycleKeys: ['codex-a', 'claude:local_a']
+    })).toBe(true)
+
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    await expect(navigation.open({ key: 'codex-b', source: 'manual-row-open' }))
+      .resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    expect(navigation.diagnostics().cursorKey).toBe('codex-a')
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'dispatched', key: 'claude:local_a' })
   })
 
   it('downgrades an unverified opened result to dispatched without granting read authority', async () => {

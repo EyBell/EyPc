@@ -81,7 +81,7 @@ import type { RuntimeIdentityHandshakeV1 } from './platform/eypcPlatform'
 type RenderRow =
   | { kind: 'section'; key: string; section: CodexProjectSection }
   | { kind: 'hidden-project-section'; key: string; title: string }
-  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'unknown' | 'stopped' | 'unread' | 'completed' }
+  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'pinned' | 'input' | 'active' | 'unknown' | 'stopped' | 'unread' | 'completed' }
   | { kind: 'project'; key: string; project: CodexProjectCard; marker: CompanionProjectMarker; sectionId: string; hiddenProject?: boolean }
   | { kind: 'task'; key: string; task: CodexTaskCard; marker: CompanionRowMarker; sectionId?: string; parentProjectKey?: string; nested?: boolean }
   | { kind: 'empty-project'; key: string; projectKey: string }
@@ -464,6 +464,10 @@ const renderRows = computed<RenderRow[]>(() => {
     const unknownTasks = statusGroups.stopped.filter((task) => task.companionPhase === 'unknown')
     const stoppedTasks = statusGroups.stopped.filter((task) => task.companionPhase !== 'unknown')
     const groups = [
+      // Parked work sits above live work: it is there to be found again, not to
+      // compete for attention, and it is the one group the activity window
+      // cannot retire.
+      { key: 'pinned', title: '置顶', tone: 'pinned' as const, tasks: statusGroups.pinned },
       { key: 'input', title: '待输入', tone: 'input' as const, tasks: statusGroups.input },
       { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: statusGroups.active },
       { key: 'unknown', title: '状态未知', tone: 'unknown' as const, tasks: unknownTasks },

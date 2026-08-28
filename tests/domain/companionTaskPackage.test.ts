@@ -102,7 +102,9 @@ function publicTask(task: CompanionCanonicalTaskV4): CompanionTaskViewV6 {
 function packageFor(task: CompanionCanonicalTaskV4 | null, revision: number): CompanionTaskSnapshotV6 {
   const tasks = task ? [publicTask(task)] : []
   const phase = task?.phase
-  const group = phase === 'running' ? 'active' : phase === 'stopped' ? 'stopped' : phase === 'completed' ? task?.unread ? 'unread' : 'completed' : null
+  // Mirrors the Kernel rule: a pinned, finished, already-read root is placed in
+  // the dedicated pinned group rather than the window-bounded completed one.
+  const group = phase === 'running' ? 'active' : phase === 'stopped' ? 'stopped' : phase === 'completed' ? task?.unread ? 'unread' : task?.localPin ? 'pinned' : 'completed' : null
   return {
     schema: COMPANION_TASK_PACKAGE_REVISION,
     kernelRevision: COMPANION_TASK_KERNEL_REVISION,
@@ -132,6 +134,7 @@ function packageFor(task: CompanionCanonicalTaskV4 | null, revision: number): Co
     tasks,
     views: {
       groups: {
+        pinned: group === 'pinned' ? [key] : [],
         input: [],
         active: group === 'active' ? [key] : [],
         stopped: group === 'stopped' ? [key] : [],

@@ -76,7 +76,7 @@ function canonicalTask(card: CodexTaskCard, index: number): CompanionCanonicalTa
     provider,
     kind: provider === 'codex' ? 'codex-thread' : provider === 'cursor' ? 'cursor-session' : 'claude-session',
     phase,
-    cycleTier: phase === 'waiting-input' || phase === 'waiting-approval' ? 'attention' : phase === 'running' ? 'active' : 'fallback',
+    cycleTier: phase === 'waiting-input' || phase === 'waiting-approval' ? 'attention' : phase === 'running' ? 'active' : 'none',
     dynamicGroup,
     actionAlias: card.actionAlias || '',
     revisionAt: card.revisionAt,
@@ -146,7 +146,7 @@ function canonicalSnapshot(taskState: CodexTaskStatePackageV1): CompanionTaskSna
     },
     tasks,
     views: {
-      groups: { input: keys('input'), active: keys('active'), stopped: keys('stopped'), unread: keys('unread'), completed: keys('completed') },
+      groups: { pinned: keys('pinned'), input: keys('input'), active: keys('active'), stopped: keys('stopped'), unread: keys('unread'), completed: keys('completed') },
       counts: { input: keys('input').length, active: keys('active').length, unread: keys('unread').length },
       cycleKeys: tasks.filter((task) => !task.hidden).map((task) => task.key),
       attentionKeys: {
