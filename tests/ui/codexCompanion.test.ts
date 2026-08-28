@@ -560,6 +560,56 @@ describe('Codex Companion V4 UI contract', () => {
     expect(dualBall.get('.codex-water-ball__value').text()).toBe('78%')
   })
 
+  it('reads the Claude pair as `{fable}/{plain}` on a denser type scale with no percent sign', () => {
+    const compact = buildCodexCompactPresentation({
+      quota: quota(true, true),
+      compactFields: [],
+      conversationInboxEnabled: true,
+      taskCounts: { input: 0, active: 0, unread: 0 }
+    })
+    const wrapper = mount(CodexWaterBall, {
+      props: {
+        primary: compact.primary,
+        secondary: compact.secondary,
+        stateLabel: '',
+        label: compact.ariaLabel,
+        appearance: defaults.waterAppearance,
+        colors: defaults.colors,
+        percentOverride: 45,
+        scopedPercent: 79,
+        percentProviderLabel: 'Claude'
+      }
+    })
+    mounted.push(wrapper)
+    expect(wrapper.get('.codex-water-ball__pair').text()).toBe('79/45')
+    expect(wrapper.get('.codex-water-ball__value').text()).not.toContain('%')
+    expect(wrapper.get('.codex-water-ball__percent-source').text()).toBe('Claude')
+    // `percentSize` reaches 32px, where an uncapped pair would push `100/100`
+    // through the ring, so the pair is bounded by the ball as well.
+    const source = readFileSync(resolve(process.cwd(), 'src/components/CodexWaterBall.vue'), 'utf8')
+    // The pair rule must outrank `.codex-water-ball__value strong`, or the cap
+    // silently loses the cascade and `100/100` renders at full size again.
+    expect(source).toContain('.codex-water-ball__value strong.codex-water-ball__pair {')
+    expect(source).toContain("font-size: min(calc(var(--water-percent-size, 22px) * .7), calc(var(--water-size, 94px) * .165));")
+    expect(source).toContain('font-variant-numeric: tabular-nums lining-nums;')
+
+    const single = mount(CodexWaterBall, {
+      props: {
+        primary: compact.primary,
+        secondary: compact.secondary,
+        stateLabel: '',
+        label: compact.ariaLabel,
+        appearance: defaults.waterAppearance,
+        colors: defaults.colors,
+        percentOverride: 45,
+        percentProviderLabel: 'Claude'
+      }
+    })
+    mounted.push(single)
+    expect(single.find('.codex-water-ball__pair').exists()).toBe(false)
+    expect(single.get('.codex-water-ball__value strong').text()).toBe('45%')
+  })
+
   it('marks Spark quota with S and switches the outer ring to Spark weekly quota', () => {
     const presentation = buildCodexCompactPresentation({
       quota: sparkQuota(),

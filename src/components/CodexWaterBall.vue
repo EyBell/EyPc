@@ -20,6 +20,12 @@ const props = withDefaults(defineProps<{
    * are unaffected either way, only the number in the middle changes.
    */
   percentOverride?: number | null
+  /**
+   * Leading per-model reading of an overridden centre. Set means the centre
+   * reads `{scoped}/{primary}` with no unit and on a denser type scale, because
+   * two percentages plus two `%` signs do not fit inside the ball.
+   */
+  scopedPercent?: number | null
   /** Short provider label shown beside an overridden percentage. */
   percentProviderLabel?: string
 }>(), {
@@ -27,6 +33,7 @@ const props = withDefaults(defineProps<{
   signal: 'quiet',
   decorative: false,
   percentOverride: null,
+  scopedPercent: null,
   percentProviderLabel: ''
 })
 
@@ -35,6 +42,13 @@ const props = withDefaults(defineProps<{
 const percent = computed(() => props.primary?.bucket.remainingPercent ?? 0)
 const hasPercentOverride = computed(() => typeof props.percentOverride === 'number' && Number.isFinite(props.percentOverride))
 const displayPercent = computed(() => hasPercentOverride.value ? props.percentOverride as number : props.primary?.bucket.remainingPercent ?? null)
+// A pair only renders when both halves are real readings; a lone scoped value
+// would be an unlabelled number over an unrelated liquid level.
+const dualReading = computed(() => hasPercentOverride.value
+  && typeof props.scopedPercent === 'number'
+  && Number.isFinite(props.scopedPercent)
+  ? { scoped: props.scopedPercent as number, primary: props.percentOverride as number }
+  : null)
 const weekly = computed(() => props.primary?.kind === 'weekly' ? props.primary : props.secondary?.kind === 'weekly' ? props.secondary : null)
 const weeklyPercent = computed(() => weekly.value?.bucket.remainingPercent ?? 0)
 const activeWeeklySegments = computed(() => Math.ceil(weeklyPercent.value / 5))
@@ -95,7 +109,10 @@ const style = computed(() => ({
 
     <div v-if="!primary || appearance.inner.showPercent" class="codex-water-ball__value" :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary && !hasPercentOverride }]">
       <span v-if="primary?.family === 'spark'" class="codex-water-ball__spark" aria-hidden="true">S</span>
-      <strong>{{ displayPercent === null ? stateLabel : `${displayPercent}%` }}</strong>
+      <strong v-if="dualReading" class="codex-water-ball__pair">
+        <span>{{ dualReading.scoped }}</span><i aria-hidden="true">/</i><span>{{ dualReading.primary }}</span>
+      </strong>
+      <strong v-else>{{ displayPercent === null ? stateLabel : `${displayPercent}%` }}</strong>
       <em v-if="hasPercentOverride && percentProviderLabel" class="codex-water-ball__percent-source">{{ percentProviderLabel }}</em>
     </div>
   </div>
@@ -269,7 +286,42 @@ const style = computed(() => ({
   text-shadow: 0 1px 3px rgba(0,0,0,.9);
   transform: translate(-50%, -50%);
 }
-.codex-water-ball__value strong { font-size: var(--water-percent-size, 22px); font-style: var(--water-percent-font-style, normal); font-weight: var(--water-percent-font-weight, 700); line-height: 1; letter-spacing: -.04em; white-space: nowrap; }
+.codex-water-ball__value strong {
+  font-size: var(--water-percent-size, 22px);
+  font-style: var(--water-percent-font-style, normal);
+  font-weight: var(--water-percent-font-weight, 700);
+  line-height: 1;
+  letter-spacing: -.04em;
+  white-space: nowrap;
+  /* Lining tabular figures: the reading refreshes in place, and proportional
+     digits would shift the whole centre sideways on every new sample. */
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+.codex-water-ball__value strong.codex-water-ball__pair {
+  display: flex;
+  align-items: baseline;
+  /*
+   * Two readings share the space one used to have, so the pair spends a
+   * fraction of the configured size — and is additionally capped against the
+   * ball itself. `percentSize` goes up to 32px, where an unbounded pair would
+   * push `100/100` straight through the ring; the cap keeps the worst case
+   * inside the glass while a user who shrank the reading still gets the
+   * smaller one they asked for.
+   */
+  font-size: min(calc(var(--water-percent-size, 22px) * .7), calc(var(--water-size, 94px) * .165));
+  /* Tabular figures already carry their own sidebearings; the display tracking
+     that suits a lone `77%` closes a pair up into one long number. */
+  letter-spacing: -.01em;
+}
+.codex-water-ball__value strong.codex-water-ball__pair i {
+  margin: 0 .1em;
+  font-size: .68em;
+  font-style: normal;
+  font-weight: 500;
+  opacity: .5;
+  transform: translateY(-.04em);
+}
 .codex-water-ball__value.percent-center,
 .codex-water-ball__value.percent-auto { top: 50%; right: auto; bottom: auto; left: 50%; transform: translate(-50%, -50%); }
 .codex-water-ball__value.percent-bottom-left { top: auto; right: auto; bottom: 20%; left: 20%; transform: none; }

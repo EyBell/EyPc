@@ -4,6 +4,7 @@ import {
   CLAUDE_WEEKLY_WINDOW_MINUTES,
   claudePrimaryQuotaWindow,
   claudeReadinessReason,
+  claudeScopedWeeklyQuotaWindow,
   claudeResetAtToMs,
   emptyClaudeEnvironment,
   emptyClaudeQuota,
@@ -42,6 +43,34 @@ describe('Claude dynamic quota windows', () => {
     })
     expect(quota.weekly?.remainingPercent).toBe(90)
     expect(quota.windows.map((entry) => entry.scope)).toEqual(['', 'Opus'])
+  })
+
+  it('picks the Fable weekly among several scoped weeklies for the ball centre', () => {
+    const quota = normalizeClaudeQuota({
+      five_hour: { used_percentage: 35 },
+      seven_day: { used_percentage: 29 },
+      seven_day_opus: { used_percentage: 90 },
+      seven_day_fable_5: { used_percentage: 44, display_name: 'Fable 5' }
+    })
+    expect(claudeScopedWeeklyQuotaWindow(quota)).toMatchObject({ key: 'seven_day_fable_5', remainingPercent: 56 })
+  })
+
+  it('keeps a differently named scoped weekly rather than treating model names as an allowlist', () => {
+    const quota = normalizeClaudeQuota({
+      seven_day: { used_percentage: 29 },
+      seven_day_opus: { used_percentage: 90 }
+    })
+    expect(claudeScopedWeeklyQuotaWindow(quota)).toMatchObject({ scope: 'Opus', remainingPercent: 10 })
+  })
+
+  it('reports no scoped weekly for plain-only, short-only and empty readings', () => {
+    expect(claudeScopedWeeklyQuotaWindow(normalizeClaudeQuota({
+      five_hour: { used_percentage: 35 },
+      seven_day: { used_percentage: 29 }
+    }))).toBeNull()
+    expect(claudeScopedWeeklyQuotaWindow(normalizeClaudeQuota({ five_hour_fable: { used_percentage: 35 } }))).toBeNull()
+    expect(claudeScopedWeeklyQuotaWindow(emptyClaudeQuota())).toBeNull()
+    expect(claudeScopedWeeklyQuotaWindow(null)).toBeNull()
   })
 
   it('uses the upstream scoped model display name instead of reconstructing it from the key', () => {
@@ -164,7 +193,8 @@ describe('Claude dynamic quota windows', () => {
     expect(seeded.windows.map((entry) => entry.key)).toEqual(['five_hour', 'seven_day'])
     expect(seeded.short).toMatchObject({ remainingPercent: 65, resetAt: null })
     expect(staleClaudeQuota(seeded)).toMatchObject({ status: 'stale' })
-    expect(claudePrimaryQuotaWindow(seeded)?.remainingPercent).toBe(65)
+    // The centre reading is the plain weekly window (29% used), not the 5-hour one.
+    expect(claudePrimaryQuotaWindow(seeded)?.remainingPercent).toBe(71)
   })
 })
 

@@ -1,5 +1,6 @@
 import {
   claudePrimaryQuotaWindow,
+  claudeScopedWeeklyQuotaWindow,
   isClaudeAvailable,
   type ClaudeEnvironmentSnapshot,
   type ClaudeQuotaAccessSnapshot,
@@ -44,6 +45,15 @@ export interface CompanionWaterBallPresentation {
    * companion is Codex-only or Claude has no usable reading.
    */
   percentOverride: number | null
+  /**
+   * Leading per-model weekly reading, or null when the account reports only the
+   * plain weekly window. Present means the centre reads `{scoped}/{plain}` with
+   * no unit: two percentages plus two `%` signs do not fit inside the ball, and
+   * a single unit on a pair would read as one number anyway.
+   */
+  scopedPercent: number | null
+  /** Scope caption of the leading reading, e.g. `Fable`; empty when absent. */
+  scopedLabel: string
   /** Short provider label for the overridden channel; empty when not overridden. */
   percentProviderLabel: string
   /** Accessible suffix describing the override; empty when not overridden. */
@@ -53,8 +63,14 @@ export interface CompanionWaterBallPresentation {
 const EMPTY_PRESENTATION: CompanionWaterBallPresentation = {
   mapping: { liquid: 'codex', ring: 'codex', percent: 'codex', compatibility: true },
   percentOverride: null,
+  scopedPercent: null,
+  scopedLabel: '',
   percentProviderLabel: '',
   ariaSuffix: ''
+}
+
+function clampQuotaPercent(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)))
 }
 
 /**
@@ -76,12 +92,28 @@ export function resolveCompanionWaterBallPresentation(
   if (mapping.percent !== 'claude') return { ...EMPTY_PRESENTATION, mapping }
   const window = claudePrimaryQuotaWindow(slice.claudeQuota)
   if (!window) return { ...EMPTY_PRESENTATION, mapping }
-  const percent = Math.max(0, Math.min(100, Math.round(window.remainingPercent)))
+  const percent = clampQuotaPercent(window.remainingPercent)
+  // The scoped reading joins the centre only when the trailing number really is
+  // the plain weekly window. Pairing it with the 5-hour fallback would put two
+  // different window lengths behind one slash and read as one comparison.
+  const scoped = slice.claudeQuota.weekly ? claudeScopedWeeklyQuotaWindow(slice.claudeQuota) : null
+  if (!scoped) {
+    return {
+      ...EMPTY_PRESENTATION,
+      mapping,
+      percentOverride: percent,
+      percentProviderLabel: COMPANION_PROVIDER_LABELS.claude,
+      ariaSuffix: `，Claude 剩余 ${percent}%`
+    }
+  }
+  const scopedPercent = clampQuotaPercent(scoped.remainingPercent)
   return {
     mapping,
     percentOverride: percent,
+    scopedPercent,
+    scopedLabel: scoped.scope,
     percentProviderLabel: COMPANION_PROVIDER_LABELS.claude,
-    ariaSuffix: `，Claude 剩余 ${percent}%`
+    ariaSuffix: `，Claude ${scoped.scope}周限额剩余 ${scopedPercent}%，普通周限额剩余 ${percent}%`
   }
 }
 

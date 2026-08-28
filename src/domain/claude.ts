@@ -342,8 +342,34 @@ export function staleClaudeQuota(
   }
 }
 
+/**
+ * The single reading that stands for Claude as a whole (water ball centre).
+ *
+ * The plain weekly window owns it: it is the limit that actually paces a week
+ * of work, while the 5-hour window swings too fast to read as a status number.
+ * Both fallbacks exist only so an account that never reports a plain weekly
+ * window still gets a reading instead of an empty ball; `windows[0]` keeps the
+ * scoped-only account covered.
+ */
 export function claudePrimaryQuotaWindow(quota: ClaudeQuotaSnapshot | null | undefined): ClaudeQuotaWindow | null {
-  return quota?.short || quota?.weekly || quota?.windows[0] || null
+  return quota?.weekly || quota?.short || quota?.windows[0] || null
+}
+
+/**
+ * The scoped weekly window that reads beside the plain one (water ball centre).
+ *
+ * A per-model weekly limit is what actually stops the work first, so it earns
+ * the leading position in the centre while the plain weekly keeps the trailing
+ * one. Model names stay data rather than an allowlist: a Fable window only wins
+ * *among* the scoped weeklies, and an account whose scope is named something
+ * else still contributes its reading instead of falling back to one number.
+ */
+export function claudeScopedWeeklyQuotaWindow(
+  quota: ClaudeQuotaSnapshot | null | undefined
+): ClaudeQuotaWindowEntry | null {
+  const scoped = (quota?.windows || []).filter((entry) => entry.kind === 'weekly' && Boolean(entry.scope))
+  if (!scoped.length) return null
+  return scoped.find((entry) => /fable/i.test(`${entry.scope} ${entry.key}`)) || scoped[0]
 }
 
 export interface ClaudeEnvironmentSnapshot {
