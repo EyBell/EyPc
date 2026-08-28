@@ -30,7 +30,7 @@ const BUDGET = Object.freeze({
   // for the persisted side-relation recovery hints (storage wiring, restore
   // and the C2 inventory live candidate). Shape logic lives in
   // preload/codex/side-relation-hints.cjs; the entry keeps only wiring.
-  lines: 13935,
+  lines: 13916,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
@@ -40,7 +40,7 @@ const BUDGET = Object.freeze({
   // bindings holding a fresh `Map`/`Set`. These are the bindings a closure
   // rewrite has to either move or inject, so they measure coupling rather than
   // volume.
-  mutableBindings: 151
+  mutableBindings: 149
 })
 
 const root = resolve(import.meta.dirname, '..')

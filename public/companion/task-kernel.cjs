@@ -21,7 +21,8 @@ const {
   isLiveTaskPhase,
   isTerminalTaskPhase,
   isAttentionTaskPhase,
-  isSettledTaskPhase
+  isSettledTaskPhase,
+  isManualTaskPhase
 } = require('../task-phase.cjs')
 const {
   COMPANION_V7_REVISIONS,
@@ -272,6 +273,8 @@ function normalizeTask(value, enabledProviders) {
     turnMode: value.turnMode === 'plan' || value.turnMode === 'default' ? value.turnMode : 'unknown',
     idleConfirmed: value.idleConfirmed === true,
     localPin: value.localPin === true,
+    manualPhase: isManualTaskPhase(value.manualPhase) ? value.manualPhase : '',
+    manualPhaseSetAt: finiteInteger(value.manualPhaseSetAt),
     dynamicEligible: value.dynamicEligible === true,
     capabilities: {
       // The anonymous key is the durable identity. Alias expiry must not make
@@ -596,20 +599,30 @@ function visibilityAnchor(task) {
 
 function derivedCycleTier(task) {
   if (task.hidden || task.paused) return 'none'
-  if (isAttentionTaskPhase(task.phase)) {
+  // Every set this function names is resolved through `derivedDynamicGroup`
+  // rather than restated as a phase test. A set whose membership is spelled out
+  // at each consumer has no owner, so widening it silently misses copies — the
+  // failure that put an `unknown` pin in the list with no shortcut able to
+  // reach it, and then left its visit progress on a drifting anchor.
+  if (task.dynamicGroup === 'input') {
     return task.planImplementation ? 'plan' : 'attention'
   }
   if (task.phase === 'stopped' && task.planReady) return 'plan'
   if (task.phase === 'running' && task.dynamicEligible) return 'active'
   // Deliberately not gated on `dynamicEligible`: the unread badge counts every
   // visible completed-unread root, so the ring must reach exactly the same set
-  // or the count is advertising something the shortcut cannot deliver.
-  if (task.phase === 'completed' && task.unread) return 'unread'
-  // The one case a pin changes: a finished, already-read pin is exactly what the
-  // dedicated fast-access entry serves, so it must not also ride the ordinary
-  // ring. A pin in any other phase keeps the tier it always had — pinning must
-  // not quietly remove a task from the shortcuts its own state earns it.
-  if (task.localPin && !(task.phase === 'completed' && !task.unread)) return 'fallback'
+  // or the count is advertising something the shortcut cannot deliver. Reading
+  // the group is how that set stays one set — the badge, this tier and the
+  // fast-access entry all resolve it through `derivedDynamicGroup`.
+  if (task.dynamicGroup === 'unread') return 'unread'
+  // The one case a pin changes: a pin the list shows under the pin group has no
+  // status group of its own, and that is exactly the set the dedicated
+  // fast-access entry serves, so it must not also ride the ordinary ring. A pin
+  // that kept its own status group is already placed by that state and keeps the
+  // tier it always had — pinning must not quietly remove a task from the
+  // shortcuts its own state earns it. Reading the group rather than repeating
+  // its phase list is what keeps the two rings from ever overlapping.
+  if (task.localPin && task.dynamicGroup !== 'pinned') return 'fallback'
   return 'none'
 }
 
@@ -644,6 +657,31 @@ function derivedDynamicGroup(task) {
 function finalizeTask(task) {
   const revisionAt = finiteInteger(task.revisionAt)
   const next = { ...task, revisionAt }
+  // The hand-set phase stands in only while the canonical phase is `unknown`,
+  // and it is applied here — the one point every task passes through — so
+  // groups, cycle tier, counts and capabilities all read a single phase rather
+  // than an icon that disagrees with the group it sits in.
+  //
+  // Retirement is the episode test rather than a comparison against `phase`.
+  // This function re-runs on every local commit, and by then `phase` already
+  // carries the applied override; reading that back as genuine evidence would
+  // drop the entry on the next pin toggle.
+  //
+  // `statusEnteredAt <= manualPhaseSetAt` instead asks whether this is still the
+  // one `unknown` stretch that was already running when the user chose. Leaving
+  // `unknown` starts a later stretch, so the entry stops applying by itself and
+  // a task that drifts back to `unknown` never resurrects a stale answer — with
+  // no write on the hot path and nothing to prune.
+  //
+  // `canonicalPhase` keeps what the evidence actually said. Every judgement
+  // ABOUT evidence — the unknown grace window above all — must read it, because
+  // `phase` may now be a user's answer, and letting a preference decide whether
+  // the task "was previously unknown" would put evidence reasoning in the hands
+  // of the UI.
+  next.canonicalPhase = next.phase
+  if (next.manualPhase && next.phase === 'unknown' && finiteInteger(next.statusEnteredAt) <= next.manualPhaseSetAt) {
+    next.phase = next.manualPhase
+  }
   if (next.planReady && !next.planLifecycleRevision) {
     next.planLifecycleRevision = Math.max(1, next.statusEnteredAt, next.turnStartedAt, next.revisionAt)
   }
@@ -673,8 +711,10 @@ function finalizeTask(task) {
     resume: planActionable && next.paused,
     executePlan: planActionable && providerCapabilities.executePlan === true
   }
-  next.cycleTier = derivedCycleTier(next)
+  // Order matters: a pin's ring tier is decided by the group the list will show
+  // it in, so the group has to exist first.
   next.dynamicGroup = derivedDynamicGroup(next)
+  next.cycleTier = derivedCycleTier(next)
   return next
 }
 
@@ -709,6 +749,8 @@ function semanticTask(task) {
     turnMode: task.turnMode,
     idleConfirmed: task.idleConfirmed,
     localPin: task.localPin,
+    manualPhase: task.manualPhase,
+    manualPhaseSetAt: task.manualPhaseSetAt,
     dynamicEligible: task.dynamicEligible,
     capabilities: task.capabilities,
     displayName: task.displayName,
@@ -741,9 +783,9 @@ function buildViews(tasks) {
   // ring can actually open — an unopenable task used to be counted and then
   // silently skipped by every shortcut.
   const countable = visible.filter((task) => task.capabilities.open)
-  views.counts.input = countable.filter((task) => isAttentionTaskPhase(task.phase)).length
+  views.counts.input = countable.filter((task) => task.dynamicGroup === 'input').length
   views.counts.active = countable.filter((task) => task.dynamicGroup === 'active').length
-  views.counts.unread = countable.filter((task) => task.phase === 'completed' && task.unread).length
+  views.counts.unread = countable.filter((task) => task.dynamicGroup === 'unread').length
 
   const cycleCandidates = [...visible]
     .filter((task) => task.capabilities.open && task.cycleTier !== 'none')
@@ -754,20 +796,28 @@ function buildViews(tasks) {
 
   const attention = [...visible].sort(compareByLatestQuestion)
   const inputAttention = attention
-    .filter((task) => task.capabilities.open && isAttentionTaskPhase(task.phase))
+    .filter((task) => task.capabilities.open && task.dynamicGroup === 'input')
     .map((task) => task.key)
   // Direct attention actions are exact: "待输入" must never fall through to
   // an unrelated pinned/completed task.
   views.attentionKeys.input = inputAttention
-  // "已完成未读" is also the fast-access entry for pinned finished work, which
-  // has no other shortcut: unread completions first, then the finished,
-  // already-read pins. Concatenated rather than interleaved so the unread
-  // backlog always clears before the pins, and an empty backlog makes the very
-  // first press start cycling the pins. Pins in other phases are deliberately
-  // absent — their own state already earns them an entry.
+  // "已完成未读" is also the fast-access entry for the pins that have no other
+  // shortcut: unread completions first, then every pin the list shows under the
+  // pin group. Concatenated rather than interleaved so the unread backlog always
+  // clears before the pins, and an empty backlog makes the very first press
+  // start cycling the pins.
+  //
+  // Both halves are display groups, not a second phase list. The list already
+  // answers "is this unread" and "does this pin have a status group of its own",
+  // and every consumer resolving membership through `derivedDynamicGroup` is
+  // what keeps one concept from drifting into several: an `unknown` pin sat in
+  // 置顶 while matching neither the old `completed && !unread` test here nor any
+  // other entry, so it was visible and unreachable. Reading the groups instead
+  // means a pin is served by exactly one ring — the pin group here, its own
+  // status tier in the ordinary ring.
   views.attentionKeys.completedUnread = [
-    ...attention.filter((task) => task.capabilities.open && task.phase === 'completed' && task.unread),
-    ...attention.filter((task) => task.capabilities.open && task.localPin && task.phase === 'completed' && !task.unread)
+    ...attention.filter((task) => task.capabilities.open && task.dynamicGroup === 'unread'),
+    ...attention.filter((task) => task.capabilities.open && task.dynamicGroup === 'pinned')
   ].map((task) => task.key)
   views.attentionKeys.archive = attention
     .filter((task) => task.capabilities.archive)
@@ -1098,15 +1148,19 @@ function createCompanionTaskKernel(dependencies = {}) {
    * visit, the walk jumped back to it, and the tail of the queue was never
    * reached — read by the user as the pinned order being scrambled.
    *
-   * A parked pin is the extreme case: finished and already read, it has no new
-   * instance to revisit at all, so its identity is fixed until it leaves the
-   * queue. Everything else keeps a lifecycle anchor, but `revisionAt` — a pure
+   * A parked pin is the extreme case: it is exactly the pin group — finished and
+   * already read, or `unknown` — and it has no new instance to revisit at all,
+   * so its identity is fixed until it leaves the queue. Reading the group rather
+   * than restating its phases is what keeps that true: this test used to spell
+   * out `completed && !unread`, so when the queue grew to serve `unknown` pins
+   * they fell through to the lifecycle anchor and subtask churn revived them.
+   * Everything else keeps a lifecycle anchor, but `revisionAt` — a pure
    * "something changed" counter carrying no instance meaning — drops to a last
    * resort so the key can never be empty.
    */
   function attentionInstance(kind, task) {
     if (!task) return ''
-    if (task.localPin && task.phase === 'completed' && task.unread !== true) return `${kind}:${task.key}:pinned`
+    if (task.dynamicGroup === 'pinned') return `${kind}:${task.key}:pinned`
     const lifecycleAt = Math.max(
       finiteInteger(task.statusEnteredAt),
       finiteInteger(task.terminalAt),
@@ -1669,7 +1723,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     let verifying = false
     if (acceptPhase && incoming.phase !== 'unknown') {
       unknownEvidence.delete(incoming.key)
-    } else if (acceptPhase && previous.phase !== 'unknown') {
+    } else if (acceptPhase && (previous.canonicalPhase || previous.phase) !== 'unknown') {
       const observation = unknownEvidence.get(incoming.key)
       const next = observation
         ? { firstSeenAt: observation.firstSeenAt, count: observation.count + 1 }
@@ -1706,6 +1760,8 @@ function createCompanionTaskKernel(dependencies = {}) {
         createdAt: incoming.createdAt,
         hidden: incoming.hidden,
         localPin: incoming.localPin,
+        manualPhase: incoming.manualPhase,
+        manualPhaseSetAt: incoming.manualPhaseSetAt,
         dynamicEligible: incoming.dynamicEligible,
         capabilities: incoming.capabilities,
         providerCapabilities: incoming.providerCapabilities,
@@ -2673,6 +2729,38 @@ function createCompanionTaskKernel(dependencies = {}) {
       commitLocalTaskState(task, patch, command.command)
       return { outcome: 'updated', key }
     }
+    /**
+     * The hand-set phase is a local preference that also participates in
+     * derivation, so it persists first and only then patches the live task: a
+     * rejected write must not leave a stand-in the next restart cannot restore.
+     */
+    if (command.command === 'set-manual-phase') {
+      const task = taskForKey(key)
+      if (!task) return { outcome: 'failed', errorCode: 'stale-target', message: '任务身份已失效' }
+      if (!applyPreference) return { outcome: 'failed', errorCode: 'preference-unavailable', message: '本地偏好能力不可用' }
+      // Only an `unknown` row has a gap to fill; anything else already has real
+      // evidence, and letting the user overwrite that would forge a status.
+      if (task.phase !== 'unknown') {
+        return { outcome: 'failed', errorCode: 'phase-known', message: '该任务已有真实状态，无需手动指定' }
+      }
+      const manualPhase = isManualTaskPhase(command.payload?.phase) ? command.payload.phase : ''
+      try {
+        const accepted = await applyPreference({
+          command: command.command,
+          key,
+          payload: { phase: manualPhase },
+          operationId: command.operationId
+        })
+        if (accepted === false) return { outcome: 'failed', errorCode: 'preference-rejected', message: '本地偏好未保存' }
+        commitLocalTaskState(task, {
+          manualPhase,
+          manualPhaseSetAt: manualPhase ? now() : 0
+        }, command.command)
+        return { outcome: 'updated', key }
+      } catch {
+        return { outcome: 'failed', errorCode: 'preference-failed', message: '本地偏好保存失败' }
+      }
+    }
     if (command.command === 'set-alias' || command.command === 'set-collapse') {
       const task = taskForKey(key)
       if (!task) return { outcome: 'failed', errorCode: 'stale-target', message: '任务身份已失效' }
@@ -2941,6 +3029,7 @@ module.exports = {
   COMPANION_TASK_KERNEL_REVISION,
   TASK_PHASES,
   isKnownTaskPhase,
+  isManualTaskPhase,
   isSettledTaskPhase,
   COMPANION_TASK_PACKAGE_REVISION,
   COMPANION_TASK_COMMAND_REVISION,

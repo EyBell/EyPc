@@ -120,6 +120,7 @@ export interface CompanionCanonicalTaskV4 {
   turnMode: 'plan' | 'default' | 'unknown'
   idleConfirmed: boolean
   localPin: boolean
+  manualPhase?: string
   dynamicEligible: boolean
   capabilities: {
     open: boolean
@@ -387,6 +388,9 @@ function projectCanonicalCard(
     unreadState: completed && task.unreadKnown ? (task.unread ? 'unread' : 'read') : 'unknown',
     canonicalFreshness: task.freshness,
     companionPhase: task.phase,
+    // Carried so the row can offer to clear it; the phase itself already
+    // reads as the stand-in, which is what every other projection uses.
+    manualPhase: (task.manualPhase || '') as CodexTaskCard['manualPhase'],
     state: projectedLegacyState(task.phase, task.unread),
     updatedAt: sourceUpdatedAt,
     lastQuestionAt: task.lastQuestionAt || card.lastQuestionAt,

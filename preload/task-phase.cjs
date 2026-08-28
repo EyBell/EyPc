@@ -25,8 +25,22 @@
  */
 const TASK_PHASES = Object.freeze(['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown'])
 
+/**
+ * The phases a user may hand-set on a task whose phase is `unknown`.
+ *
+ * Derived from the vocabulary instead of restated, so a phase added to
+ * `TASK_PHASES` becomes selectable without a second edit. `unknown` is the one
+ * exclusion: the override exists to answer it, so offering it as a target would
+ * only write back the very state being resolved.
+ */
+const MANUAL_TASK_PHASES = Object.freeze(TASK_PHASES.filter((phase) => phase !== 'unknown'))
+
 function isKnownTaskPhase(phase) {
   return TASK_PHASES.includes(phase)
+}
+
+function isManualTaskPhase(phase) {
+  return MANUAL_TASK_PHASES.includes(phase)
 }
 
 /** The task is still going — something may yet change without new input. */
@@ -61,7 +75,9 @@ function isSettledTaskPhase(phase) {
 
 module.exports = {
   TASK_PHASES,
+  MANUAL_TASK_PHASES,
   isKnownTaskPhase,
+  isManualTaskPhase,
   isLiveTaskPhase,
   isTerminalTaskPhase,
   isAttentionTaskPhase,

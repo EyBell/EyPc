@@ -30,7 +30,8 @@ import {
   type WindowRow
 } from '../domain/windowTree'
 import { createWindowRebindState, transitionWindowRebind, windowInteractionAllowed, windowRebindView, type WindowInteractionPolicy, type WindowRebindEvent, type WindowRebindState, type WindowRebindView } from '../domain/windowRebind'
-import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
+import type { CodexFloatPosition, CodexManualPhaseValue, CodexSettings } from '../domain/codex'
+import { CODEX_MANUAL_PHASE_VALUES } from '../domain/codex'
 import type { AppState, AppTabId, FavoriteNode, FavoritePlatform, FavoriteRunnerConfig, FavoriteRunRecord, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, RuntimeDiagnosticsLevel, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
 import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFavoriteRunResult, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FavoriteRunResult, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type RuntimeDiagnosticsSnapshotV3, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
@@ -9529,6 +9530,15 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         ? args.revisionAt
         : typeof args?.updatedAt === 'number' && Number.isFinite(args.updatedAt) ? args.updatedAt : undefined
       return key && revisionAt !== undefined ? codexController.hide(key, revisionAt) : false
+    } })
+    actions.register({ id: 'codex.task.manualPhase', title: '手动指定状态未知的 Companion 任务状态', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      // An empty phase is the documented clear signal, so it is a valid value
+      // rather than a missing one; only an unrecognized string is rejected.
+      const phase = args?.phase === '' || CODEX_MANUAL_PHASE_VALUES.includes(args?.phase as CodexManualPhaseValue)
+        ? args?.phase as CodexManualPhaseValue | ''
+        : undefined
+      return key && phase !== undefined ? codexController.setManualPhase(key, phase) : false
     } })
     actions.register({ id: 'codex.task.dismiss', title: '隐藏 Codex 任务到 Companion 已隐藏区', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''

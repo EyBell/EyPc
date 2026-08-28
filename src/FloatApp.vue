@@ -69,11 +69,13 @@ import type {
   CodexProjectCard,
   CodexProjectSection,
   CodexQuotaBucket,
+  CodexManualPhaseValue,
   CodexResolvedNewThreadModel,
   CodexTaskCard
 } from './domain/codex'
 import { normalizeCodexQuota, orderCodexAttentionTasks, orderCodexTasksForDisplay } from './domain/codex'
 import { companionTaskProvider, type CompanionProviderId } from './domain/companionProvider'
+import { COMMAND_MODIFIER_LABEL, hasCommandModifier } from './ui/commandModifier'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 import type { RuntimeIdentityHandshakeV1 } from './platform/eypcPlatform'
@@ -1287,6 +1289,19 @@ const drawerActions = computed<DrawerAction[]>(() => {
           }
         ]
       : [{ id: 'task-hide', label: item.task.isHidden ? '恢复显示' : '移到已隐藏', disabled: item.task.isHidden && !item.task.hiddenKind, run: () => item.task.isHidden ? restoreTask(item.task) : hideTask(item.task) }]
+    // The stand-in only exists to answer an `unknown` phase, so the options
+    // appear on exactly the rows that have a gap to fill. Putting them in the
+    // shared drawer rather than a second overlay keeps one menu, one keyboard
+    // model, and makes them reachable by right-click as well as the shortcut.
+    const manualPhaseActions: DrawerAction[] = item.task.companionPhase === 'unknown'
+      ? MANUAL_PHASE_OPTIONS.map((option) => ({
+          id: `task-manual-phase-${option.phase}`,
+          label: `标记为「${option.label}」`,
+          run: () => setManualPhase(item.task, option.phase)
+        }))
+      : item.task.manualPhase
+        ? [{ id: 'task-manual-phase-clear', label: '取消手动指定的状态', run: () => setManualPhase(item.task, '') }]
+        : []
     return [
       { id: 'task-open', label: '打开', disabled: item.task.companionCapabilities?.open === false, disabledReason: '任务打开能力不可用', run: () => openTask(item.task) },
       { id: 'task-new-thread', label: '在当前项目新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project) },
@@ -1294,6 +1309,7 @@ const drawerActions = computed<DrawerAction[]>(() => {
       { id: 'task-detail', label: '查看详情', run: () => openDetailPanel(item) },
       { id: 'task-alias', label: '编辑别名', run: () => editAlias(item) },
       { id: 'task-pin', label: item.task.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.task.pinSource === 'native', disabledReason: '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
+      ...manualPhaseActions,
       ...planActions,
       { id: 'task-archive', label: '真实归档', danger: true, disabled: !item.task.canArchive, disabledReason: taskArchiveBlockedReason(item.task), run: requestTaskArchive }
     ]
@@ -1397,6 +1413,43 @@ function openTask(task: CodexTaskCard, source: 'card-click' | 'manual-quick-jump
 
 function taskProject(task: CodexTaskCard) {
   return conversations.value?.projects.find((project) => project.key === task.projectKey)
+}
+
+/**
+ * Selectable stand-in phases, in the order the status vocabulary reads them.
+ * Labels match `taskStateLabel` so the menu and the icon never name the same
+ * state two different ways.
+ */
+const MANUAL_PHASE_OPTIONS: readonly { phase: CodexManualPhaseValue; label: string }[] = [
+  { phase: 'running', label: '进行中' },
+  { phase: 'waiting-input', label: '等待输入' },
+  { phase: 'waiting-approval', label: '等待审批' },
+  { phase: 'completed', label: '已完成' },
+  { phase: 'stopped', label: '待继续' }
+]
+
+/**
+ * The status icon keeps its selection gesture; the command modifier is what adds
+ * the state menu, and only on a row that actually has an `unknown` gap. Every
+ * other row and every unmodified click behave exactly as before, so the
+ * additive-selection habit the rest of the row uses is not redefined here.
+ */
+function onTaskStateClick(row: FocusItem, event: MouseEvent) {
+  focusedKey.value = row.key
+  if (row.kind === 'task' && hasCommandModifier(event) && row.task.companionPhase === 'unknown') {
+    openContextDrawer(row, event)
+    return
+  }
+  if (row.kind === 'task') activateTaskSelection(row.task, event)
+}
+
+function taskStateHint(task: CodexTaskCard) {
+  const base = `${taskStateLabel(task)}；点击切换选择`
+  return task.companionPhase === 'unknown' ? `${base}，${COMMAND_MODIFIER_LABEL}+点击手动指定状态` : base
+}
+
+function setManualPhase(task: CodexTaskCard, phase: CodexManualPhaseValue | '') {
+  action('codex.task.manualPhase', { key: task.key, phase, revisionAt: task.revisionAt })
 }
 
 function hideTask(task: CodexTaskCard) {
@@ -3404,11 +3457,11 @@ onUnmounted(() => {
                 :class="{ clickable: taskCanRestore(row.task) }"
                 :aria-pressed="selectedKeys.has(row.task.key)"
                 :aria-label="`左侧区域：${selectedKeys.has(row.task.key) ? '移出选择' : '加入选择'} ${taskDisplayLabel(row.task)}`"
-                @pointerenter="queueActionHint($event, `${taskStateLabel(row.task)}；点击切换选择`)"
+                @pointerenter="queueActionHint($event, taskStateHint(row.task))"
                 @pointerleave="clearActionHint"
-                @focus="queueActionHint($event, `${taskStateLabel(row.task)}；点击切换选择`)"
+                @focus="queueActionHint($event, taskStateHint(row.task))"
                 @blur="clearActionHint"
-                @click.stop="focusedKey = row.key; activateTaskSelection(row.task, $event)"
+                @click.stop="onTaskStateClick(row, $event)"
                 data-quick-jump-target
                 :data-quick-jump-label="`切换选择 ${taskDisplayLabel(row.task)}`"
               >

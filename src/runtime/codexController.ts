@@ -26,6 +26,7 @@ import {
   type CodexHostSnapshot,
   type CodexHostThread,
   type CodexLocalPin,
+  type CodexManualPhaseValue,
   type CodexModelCatalogSnapshotV1,
   type CodexProjectCard,
   type CodexQuotaSnapshotV1,
@@ -2316,6 +2317,33 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
+  /**
+   * Hand-set the phase of a task whose canonical phase is `unknown`.
+   *
+   * An empty phase clears it. The Kernel owns both the eligibility check and the
+   * persistence order, so this only resolves the row and reports the outcome —
+   * duplicating the `unknown` guard here would let the two drift apart.
+   */
+  function setManualPhase(key: string, phase: CodexManualPhaseValue | '') {
+    const task = allTasks().find((item) => item.key === key)
+    if (!task) return false
+    if (!companionKernel || !companionKernelLease || !kernelOwnsTask(task.key)) return false
+    void dispatchCompanionCommand('set-manual-phase', { key: task.key }, 'task-manual-phase', {
+      phase,
+      revisionAt: task.revisionAt
+    }).then((result) => {
+      if (disposed) return
+      if (result.outcome !== 'updated') {
+        options.setMessage(result.message || '任务状态手动指定失败')
+        options.notify()
+        return
+      }
+      options.setMessage(phase ? '已手动指定该任务状态' : '已恢复为自动判定状态')
+      options.notify()
+    })
+    return true
+  }
+
   function toggleLocalPin(kind: CodexLocalPin['kind'], key: string) {
     // Task rows are projected from the Kernel package, so their pin flag must be
     // committed there as well; project pins stay a Renderer-owned projection.
@@ -3394,6 +3422,7 @@ export function createCodexController(options: CodexControllerOptions) {
     setProjectCollapsed,
     setAlias,
     toggleLocalPin,
+    setManualPhase,
     moveLocalPin,
     hideProject,
     showProject,

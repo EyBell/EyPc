@@ -6,6 +6,7 @@ import {
   hideCodexThread,
   normalizeCodexQuota,
   normalizeCodexSettings,
+  normalizeCodexManualPhases,
   normalizeCodexState,
   projectConversations,
   restoreCodexThread,
@@ -981,5 +982,28 @@ describe('Codex domain', () => {
       lastQuestionAt: 180_000
     })
     expect(result.snapshot.ongoing[0]).not.toHaveProperty('lastTurnCompletedAt')
+  })
+})
+
+describe('manual phase local configuration', () => {
+  const KEY = 'a'.repeat(32)
+
+  it('keeps only recognizable entries and drops unknown as a target', () => {
+    expect(normalizeCodexManualPhases([
+      { key: KEY, phase: 'running', setAt: 10 },
+      // `unknown` is what the override answers; accepting it would write the
+      // unresolved state straight back.
+      { key: 'b'.repeat(32), phase: 'unknown', setAt: 10 },
+      { key: 'c'.repeat(32), phase: 'running' },
+      { key: 'not-a-key', phase: 'running', setAt: 10 },
+      { key: KEY, phase: 'stopped', setAt: 20 }
+    ])).toEqual([{ key: KEY, phase: 'running', setAt: 10 }])
+  })
+
+  it('round-trips through the state container and defaults to empty', () => {
+    expect(normalizeCodexState({}).manualPhases).toEqual([])
+    expect(normalizeCodexState({
+      manualPhases: [{ key: KEY, phase: 'waiting-input', setAt: 7 }]
+    }).manualPhases).toEqual([{ key: KEY, phase: 'waiting-input', setAt: 7 }])
   })
 })

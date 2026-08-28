@@ -4,12 +4,12 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 39,
-    "ordered_anchors": 226,
-    "raw_parent_ordered": 121,
+    "source_documents": 40,
+    "ordered_anchors": 230,
+    "raw_parent_ordered": 125,
     "unparented_ordered": 105,
     "registered_requirements": 105,
-    "registry_review_required": 16,
+    "registry_review_required": 20,
     "source_addressable_not_registered": 105
   },
   "documents": [
@@ -379,6 +379,16 @@
       "spec_id": "SPEC-260828-CLAUDE-BALL-CENTRE-WEEKLY",
       "content_sha256": "d6df464c31144de1e3890f076c9c8393b9d4b31dfa15c90f0874fd7669eb16c9",
       "raw_identity_count": 3,
+      "ordered_anchor_count": 4,
+      "raw_parent_ordered_count": 4,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260828/companion-manual-phase",
+      "source_path": "vibe/specs/260828/companion-manual-phase/raw-requirement.md",
+      "spec_id": "SPEC-260828-COMPANION-MANUAL-PHASE",
+      "content_sha256": "7f46a851f0f995f10d287a1ec11cfadde0fa4875f2f10a2f071877e9c4924f81",
+      "raw_identity_count": 1,
       "ordered_anchor_count": 4,
       "raw_parent_ordered_count": 4,
       "unparented_ordered_count": 0
@@ -5295,6 +5305,94 @@
       "parent_raw_id": "RAW-184",
       "qualified_source": "SPEC-260828-CLAUDE-BALL-CENTRE-WEEKLY::RAW-184#4",
       "clause_sha256": "fd28fab502ff17183893b31c826e5c5162ad157c08912e577c15177e6d568159",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-16054B456850258D07C1",
+      "source_task": "260828/companion-manual-phase",
+      "source_path": "vibe/specs/260828/companion-manual-phase/raw-requirement.md",
+      "line": 24,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-187：状态未知任务允许手动指定状态",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "1",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-187",
+      "qualified_source": "SPEC-260828-COMPANION-MANUAL-PHASE::RAW-187#1",
+      "clause_sha256": "19c0b6bd15e4b75394bd0031451c135cca198be0fb004ca09bd48bd8ca7384d0",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-83CC0BA8641A4B14F85B",
+      "source_task": "260828/companion-manual-phase",
+      "source_path": "vibe/specs/260828/companion-manual-phase/raw-requirement.md",
+      "line": 25,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-187：状态未知任务允许手动指定状态",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "2",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-187",
+      "qualified_source": "SPEC-260828-COMPANION-MANUAL-PHASE::RAW-187#2",
+      "clause_sha256": "9691214314f799a9854c1722c0796610ad63b0e87282c1b40236779ba2d240ff",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-F703D812D5A3D7D1ABBA",
+      "source_task": "260828/companion-manual-phase",
+      "source_path": "vibe/specs/260828/companion-manual-phase/raw-requirement.md",
+      "line": 26,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-187：状态未知任务允许手动指定状态",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "3",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-187",
+      "qualified_source": "SPEC-260828-COMPANION-MANUAL-PHASE::RAW-187#3",
+      "clause_sha256": "ad1e6bdc864662ee553c640420ac3d226e01ed6cc7d19175d6bb60d4108bf282",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-8CA1ADD9B7B902EA8A1E",
+      "source_task": "260828/companion-manual-phase",
+      "source_path": "vibe/specs/260828/companion-manual-phase/raw-requirement.md",
+      "line": 27,
+      "exact_heading_text": "核验证据（只读，来源为本仓源码）",
+      "heading_path": [
+        "RAW-187：状态未知任务允许手动指定状态",
+        "核验证据（只读，来源为本仓源码）"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "4",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-187",
+      "qualified_source": "SPEC-260828-COMPANION-MANUAL-PHASE::RAW-187#4",
+      "clause_sha256": "3a6dafceb4480689522a16d72aa94cdface96b02f68f665a05d8fbc39df970b9",
       "classification": "raw-child-requirement",
       "disposition": "registry-review-required",
       "semantic_module": null,

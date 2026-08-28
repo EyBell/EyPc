@@ -710,6 +710,37 @@ export interface CodexLocalPin {
   key: string
 }
 
+/**
+ * The phases a user may pin by hand. `unknown` is deliberately absent: the
+ * override exists to answer an unknown phase, so offering it as a target would
+ * only let the user write back the very state they are trying to resolve.
+ */
+export type CodexManualPhaseValue = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped'
+
+export const CODEX_MANUAL_PHASE_VALUES: readonly CodexManualPhaseValue[] = [
+  'running', 'waiting-input', 'waiting-approval', 'completed', 'stopped'
+]
+
+/**
+ * A hand-set phase for one task whose canonical phase is `unknown`.
+ *
+ * It is authoritative only while the canonical phase stays `unknown`; the first
+ * genuine phase retires the entry rather than shadowing it, so a task that
+ * flickers back to `unknown` later does not resurrect a stale hand-set answer.
+ */
+export interface CodexManualPhase {
+  key: string
+  phase: CodexManualPhaseValue
+  /**
+   * When the user set it. The entry is authoritative only for the `unknown`
+   * episode that was already running at this moment: once the task leaves
+   * `unknown`, the next episode starts later than `setAt` and the stand-in
+   * stops applying, so a task that returns to `unknown` never resurrects a
+   * stale hand-set answer.
+   */
+  setAt: number
+}
+
 export type CodexAttentionKind = 'input' | 'completed-unread'
 
 export interface CodexAttentionOpenEntry {
@@ -735,6 +766,8 @@ export interface CodexState {
   taskAliases: CodexAliasEntry[]
   projectAliases: CodexAliasEntry[]
   localPins: CodexLocalPin[]
+  /** Hand-set phases that stand in only while the canonical phase is `unknown`. */
+  manualPhases: CodexManualPhase[]
   /** Bounded anonymous progress for the two attention shortcuts. */
   attentionOpenHistory: CodexAttentionOpenEntry[]
   /** Local presentation state: hides only the Projects-tab group. */
@@ -765,6 +798,8 @@ export interface CodexTaskCard {
   canonicalFreshness?: 'fresh' | 'verifying'
   /** Sole semantic state projected from the process-owned task Kernel. */
   companionPhase?: 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
+  /** Set while a hand-set phase is standing in for an `unknown` one. */
+  manualPhase?: CodexManualPhaseValue | ''
   /** Latest Turn.startedAt; this is the only field used as “last question time”. */
   lastQuestionAt?: number
   /** Deprecated presentation state retained while old persisted renderers migrate. */
@@ -1179,6 +1214,23 @@ export function normalizeCodexAliases(value: unknown, projectKeys = false): Code
   return [...byKey.values()].slice(-500)
 }
 
+export function normalizeCodexManualPhases(value: unknown): CodexManualPhase[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const entries: CodexManualPhase[] = []
+  for (const item of value) {
+    const source = record(item)
+    const key = typeof source.key === 'string' ? source.key.toLowerCase() : ''
+    const phase = CODEX_MANUAL_PHASE_VALUES.find((candidate) => candidate === source.phase)
+    const setAt = numberValue(source.setAt, 0)
+    if (!phase || !setAt || !RECEIPT_KEY.test(key) || seen.has(key)) continue
+    seen.add(key)
+    entries.push({ key, phase, setAt })
+    if (entries.length >= 500) break
+  }
+  return entries
+}
+
 export function normalizeCodexLocalPins(value: unknown): CodexLocalPin[] {
   if (!Array.isArray(value)) return []
   const seen = new Set<string>()
@@ -1537,6 +1589,7 @@ export function createDefaultCodexState(): CodexState {
     taskAliases: [],
     projectAliases: [],
     localPins: [],
+    manualPhases: [],
     attentionOpenHistory: [],
     hiddenProjectKeys: []
   }
@@ -1557,6 +1610,7 @@ export function normalizeCodexState(value: unknown): CodexState {
     taskAliases: normalizeCodexAliases(source.taskAliases),
     projectAliases: normalizeCodexAliases(source.projectAliases, true),
     localPins: normalizeCodexLocalPins(source.localPins),
+    manualPhases: normalizeCodexManualPhases(source.manualPhases),
     attentionOpenHistory: normalizeCodexAttentionOpenHistory(source.attentionOpenHistory),
     hiddenProjectKeys: normalizeAnonymousKeys(source.hiddenProjectKeys, 200, true).filter((key) => key !== 'chats')
   }

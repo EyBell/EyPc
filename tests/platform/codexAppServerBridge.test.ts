@@ -918,6 +918,7 @@ function loadCodexBridge(
         return { createClaudeBridge: () => claudeBridgeOverride }
       }
       if (name === './companion/task-kernel.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'))
+      if (name === './companion/persisted-side-state.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/persisted-side-state.cjs'))
       if (String(name).endsWith('/diagnostics.cjs')) return {
         createRuntimeDiagnostics: () => ({
           revision: 'eypc-runtime-diagnostics-v3',
@@ -8603,6 +8604,7 @@ draft: v7EvidenceDraft({
       require(name: string) {
         if (name === './runtime-identity.cjs') return TEST_RUNTIME_IDENTITY
         if (name === './companion/task-kernel.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'))
+        if (name === './companion/persisted-side-state.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/persisted-side-state.cjs'))
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto
@@ -9100,6 +9102,7 @@ draft: v7EvidenceDraft({
       require(name: string) {
         if (name === './runtime-identity.cjs') return TEST_RUNTIME_IDENTITY
         if (name === './companion/task-kernel.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'))
+        if (name === './companion/persisted-side-state.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/persisted-side-state.cjs'))
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto

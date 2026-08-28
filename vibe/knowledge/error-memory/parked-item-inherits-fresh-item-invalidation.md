@@ -62,4 +62,17 @@ tags:
 
 ## Latest Applicable Implementation
 
-`attentionInstance` 对「置顶 + 已完成 + 已读」返回固定身份 `${kind}:${key}:pinned`；其余保持生命周期锚点，并把 `revisionAt`（纯变更计数、无实例含义）降为三个锚点全为 0 时的兜底，以保证键不为空。
+`attentionInstance` 对**置顶分组**（`dynamicGroup === 'pinned'`，即已完成已读与 `unknown` 两类）返回固定身份 `${kind}:${key}:pinned`；其余保持生命周期锚点，并把 `revisionAt`（纯变更计数、无实例含义）降为三个锚点全为 0 时的兜底，以保证键不为空。
+
+判据读**分组**而非复述相位，是 2026-08-28 复发后的收紧：原实现把成员条件写成 `localPin && completed && !unread`，队列扩大时这份拷贝没跟着扩，泊位规则对新成员静默失效。
+
+## Occurrence History
+
+| Date | Task | Trigger | Failed Route | Recovery | Outcome |
+| --- | --- | --- | --- | --- | --- |
+| 2026-08-28 | RAW-183 置顶项遍历进度身份 | 用户复核置顶跳转顺序错乱，队尾永远轮不到 | `attentionInstance` 让「已完成已读的置顶项」继承为「已完成未读」设计的生命周期锚点，而聚合根四字段皆为 `max(成员)` | 对该类项返回固定身份 `${kind}:${key}:pinned` | verified；聚焦测试修复前红、修复后绿 |
+| 2026-08-28 | 置顶单环修复（同日复发） | 入口队列扩到 `unknown` 置顶后，同一症状在新成员上重演 | 固定身份的判据写死为 `localPin && completed && !unread`，队列扩大时没跟着扩；`unknown` 置顶落回生命周期锚点 | 判据改读 `dynamicGroup === 'pinned'`，由分组 owner 决定谁是泊位项 | verified；反向红测确认修复前第二次按键重开队首（`['codex-a','codex-a']`），修复后为 `['codex-a','codex-b']` |
+
+## Related
+
+复发的直接原因不是本记录的进度语义，而是成员判据没有 owner——见 [membership-predicate-restated-at-every-consumer](membership-predicate-restated-at-every-consumer.md#L1)。

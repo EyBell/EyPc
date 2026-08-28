@@ -134,6 +134,7 @@ export type CompanionTaskCommandNameV1 =
   | 'set-visibility'
   | 'set-pin'
   | 'set-collapse'
+  | 'set-manual-phase'
 
 export interface CompanionTaskCommandV1 {
   revision: typeof COMPANION_TASK_COMMAND_REVISION

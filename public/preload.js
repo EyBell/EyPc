@@ -20,6 +20,34 @@ try {
 }
 let childEnvelopeContractsV7 = null
 try { childEnvelopeContractsV7 = require('./companion/contracts-v7.cjs') } catch {}
+// Companion dbStorage side-state lives in its own module. The require is
+// tolerant because this entry is also loaded inside VM sandboxes that provide
+// only a minimal `require`; when the module is absent the fallback reports
+// storage as not ready, which the existing Kernel activation gate already
+// refuses to run on, rather than pretending the writes landed.
+let createCompanionPersistedSideState = null
+try { ({ createCompanionPersistedSideState } = require('./companion/persisted-side-state.cjs')) } catch {}
+const companionPersistedSideState = typeof createCompanionPersistedSideState === 'function'
+  ? createCompanionPersistedSideState({
+      record: (value) => codexRecord(value),
+      revisions: () => companionV7Revisions,
+      storage: () => globalThis.utools?.dbStorage
+    })
+  : {
+      planPauseStorageReady: () => false,
+      readCompanionPlanPauseReceipts: () => [],
+      persistCompanionPlanPause: () => false,
+      readCompanionInteractionIdentitySalt: () => null,
+      readCompanionInteractionTombstones: () => [],
+      persistCompanionInteractionTombstones: () => false
+    }
+const {
+  readCompanionPlanPauseReceipts,
+  persistCompanionPlanPause,
+  readCompanionInteractionIdentitySalt,
+  readCompanionInteractionTombstones,
+  persistCompanionInteractionTombstones
+} = companionPersistedSideState
 
 function createHostChildEnvelopeV7(surfaceId, channel, payload, metadata = {}) {
   return childEnvelopeContractsV7?.createChildEnvelopeV7?.({
@@ -85,11 +113,6 @@ const CODEX_INVENTORY_MEMBERSHIP_RECOVERY_INTERVAL_MS = 1_000
 // Keep synchronized with src/domain/codex.ts. This value crosses the context
 // boundary so a newer renderer can mark long-lived preload evidence degraded.
 const CODEX_TASK_STATE_REVISION = 'task-state-v12'
-const COMPANION_PLAN_PAUSE_STORAGE_KEY = 'eypc/companion/v7/plan-pause'
-const COMPANION_PLAN_PAUSE_LEGACY_STORAGE_KEY = 'eypc/companion/plan-pause/v1'
-const COMPANION_PLAN_PAUSE_STORAGE_VERSION = 7
-const COMPANION_INTERACTION_IDENTITY_STORAGE_KEY = 'eypc/companion/v7/interaction-identity'
-const COMPANION_INTERACTION_TOMBSTONE_STORAGE_KEY = 'eypc/companion/v7/interaction-tombstones'
 const EXECUTE_PLAN_PROMPT_V1 = '请按已完成的 Plan 开始执行。'
 const CODEX_DESKTOP_IPC_VERSIONS = {
   'client-status-changed': 0,
@@ -10550,6 +10573,13 @@ function companionPersistedTaskState() {
       .filter((pin) => pin.kind === 'task' && typeof pin.key === 'string')
       .map((pin) => pin.key)
   )
+  const manualPhases = new Map(
+    (Array.isArray(codex.manualPhases) ? codex.manualPhases : [])
+      .map(codexRecord)
+      .filter((entry) => typeof entry.key === 'string' && isManualTaskPhase(entry.phase)
+        && Number.isFinite(entry.setAt) && entry.setAt > 0)
+      .map((entry) => [entry.key, { phase: entry.phase, setAt: entry.setAt }])
+  )
   const receipts = new Map(
     (Array.isArray(codex.receipts) ? codex.receipts : [])
       .map(codexRecord)
@@ -10563,10 +10593,15 @@ function companionPersistedTaskState() {
   return { aliases, pins, receipts, collapsed }
 }
 
+/** Derived from the bound vocabulary so the entry adds no second phase list. */
+function isManualTaskPhase(phase) {
+  return phase !== 'unknown' && typeof isKnownTaskPhase === 'function' && isKnownTaskPhase(phase)
+}
+
 function persistCompanionPreference(input = {}) {
   const command = typeof input.command === 'string' ? input.command : ''
   const key = typeof input.key === 'string' && input.key.length <= 256 ? input.key : ''
-  if (!key || (command !== 'set-alias' && command !== 'set-collapse')) return false
+  if (!key || (command !== 'set-alias' && command !== 'set-collapse' && command !== 'set-manual-phase')) return false
   const state = readState()
   if (!state || typeof state !== 'object') return false
   const codex = codexRecord(state.codex)
@@ -10579,6 +10614,16 @@ function persistCompanionPreference(input = {}) {
         && typeof entry.alias === 'string' && entry.alias.trim())
       .map((entry) => ({ key: entry.key, alias: entry.alias.trim().slice(0, 120) }))
     nextCodex.taskAliases = [...entries, ...(alias ? [{ key, alias }] : [])].slice(-500)
+  } else if (command === 'set-manual-phase') {
+    // An empty/invalid phase is the retire signal, so one command covers both
+    // setting the stand-in and clearing it once real evidence arrives.
+    const phase = isManualTaskPhase(input.payload?.phase) ? input.payload.phase : ''
+    const entries = (Array.isArray(codex.manualPhases) ? codex.manualPhases : [])
+      .map(codexRecord)
+      .filter((entry) => typeof entry.key === 'string' && entry.key !== key && isManualTaskPhase(entry.phase)
+        && Number.isFinite(entry.setAt) && entry.setAt > 0)
+      .map((entry) => ({ key: entry.key, phase: entry.phase, setAt: entry.setAt }))
+    nextCodex.manualPhases = [...entries, ...(phase ? [{ key, phase, setAt: Date.now() }] : [])].slice(-500)
   } else {
     const collapsed = new Set((Array.isArray(codex.collapsedTaskKeys) ? codex.collapsedTaskKeys : [])
       .filter((value) => typeof value === 'string' && value))
@@ -10587,181 +10632,6 @@ function persistCompanionPreference(input = {}) {
     nextCodex.collapsedTaskKeys = [...collapsed].slice(-500)
   }
   return writeState({ ...state, codex: nextCodex, updatedAt: Date.now() })
-}
-
-let companionPlanPauseStorageReady = true
-
-function sanitizeCompanionPlanPauseReceipts(stored) {
-  const rows = Array.isArray(stored?.receipts) ? stored.receipts : []
-  return rows.flatMap((value) => {
-    const source = codexRecord(value)
-    const key = typeof source.key === 'string' && /^[a-f0-9]{16,64}$/i.test(source.key) ? source.key : ''
-    const planLifecycleRevision = Number.isFinite(source.planLifecycleRevision)
-      ? Math.max(0, Math.trunc(source.planLifecycleRevision))
-      : 0
-    if (!key || !planLifecycleRevision || source.paused !== true) return []
-    return [{
-      key,
-      planLifecycleRevision,
-      paused: true,
-      updatedAt: Number.isFinite(source.updatedAt) ? Math.max(0, Math.trunc(source.updatedAt)) : 0
-    }]
-  }).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 2_000)
-}
-
-function writeCompanionPlanPauseReceipts(rows) {
-  try {
-    return globalThis.utools?.dbStorage?.setItem?.(COMPANION_PLAN_PAUSE_STORAGE_KEY, {
-      version: COMPANION_PLAN_PAUSE_STORAGE_VERSION,
-      receipts: sanitizeCompanionPlanPauseReceipts({ receipts: rows })
-    }) !== false
-  } catch {
-    return false
-  }
-}
-
-function readCompanionPlanPauseReceipts() {
-  const storage = globalThis.utools?.dbStorage
-  if (typeof storage?.getItem !== 'function') return []
-  try {
-    const current = storage.getItem(COMPANION_PLAN_PAUSE_STORAGE_KEY)
-    if (current != null) {
-      if (current?.version !== COMPANION_PLAN_PAUSE_STORAGE_VERSION) {
-        companionPlanPauseStorageReady = false
-        return []
-      }
-      return sanitizeCompanionPlanPauseReceipts(current)
-    }
-    const legacy = storage.getItem(COMPANION_PLAN_PAUSE_LEGACY_STORAGE_KEY)
-    if (legacy == null) return []
-    const receipts = sanitizeCompanionPlanPauseReceipts(legacy)
-    // Copy-on-read is intentionally one-way. The V6 key remains untouched so a
-    // package rollback can still consume the exact pre-migration data.
-    companionPlanPauseStorageReady = writeCompanionPlanPauseReceipts(receipts)
-    return companionPlanPauseStorageReady ? receipts : []
-  } catch {
-    companionPlanPauseStorageReady = false
-    return []
-  }
-}
-
-function readCompanionInteractionIdentitySalt() {
-  try {
-    const stored = globalThis.utools?.dbStorage?.getItem?.(COMPANION_INTERACTION_IDENTITY_STORAGE_KEY)
-    const value = typeof stored?.salt === 'string' && /^[a-f0-9]{64}$/i.test(stored.salt)
-      ? stored.salt.toLowerCase()
-      : ''
-    if (value) return Buffer.from(value, 'hex')
-  } catch {}
-  const salt = crypto.randomBytes(32)
-  try {
-    globalThis.utools?.dbStorage?.setItem?.(COMPANION_INTERACTION_IDENTITY_STORAGE_KEY, {
-      version: 1,
-      salt: salt.toString('hex')
-    })
-  } catch {}
-  return salt
-}
-
-function sanitizeCompanionInteractionTombstone(value) {
-  const source = codexRecord(value)
-  const provider = source.provider === 'codex' || source.provider === 'claude' || source.provider === 'cursor'
-    ? source.provider
-    : ''
-  const state = source.state === 'resolved' || source.state === 'cancelled' || source.state === 'execution-started'
-    ? source.state
-    : ''
-  const kind = ['user-input', 'approval', 'plan-choice', 'plan-implementation'].includes(source.kind)
-    ? source.kind
-    : ''
-  const authority = ['provider-live', 'provider-snapshot', 'host-command', 'rollout'].includes(source.authority)
-    ? source.authority
-    : ''
-  const taskKey = typeof source.taskKey === 'string' && /^[a-f0-9]{16,64}$/i.test(source.taskKey) ? source.taskKey : ''
-  const branchRef = typeof source.branchRef === 'string' && source.branchRef.length > 0 && source.branchRef.length <= 128
-    ? source.branchRef
-    : ''
-  const interactionRef = typeof source.interactionRef === 'string' && /^[a-f0-9]{16,64}$/i.test(source.interactionRef)
-    ? source.interactionRef.toLowerCase()
-    : ''
-  const sequence = Number.isSafeInteger(source.sequence) && source.sequence > 0 ? source.sequence : 0
-  const requestSetRevision = Number.isSafeInteger(source.requestSetRevision) && source.requestSetRevision > 0
-    ? source.requestSetRevision
-    : 0
-  if (source.revision !== companionV7Revisions?.interaction || !provider || !state || !kind || !authority
-    || !taskKey || !branchRef || !interactionRef || !sequence || !requestSetRevision) return null
-  return {
-    revision: companionV7Revisions.interaction,
-    provider,
-    taskKey,
-    branchRef,
-    interactionRef,
-    kind,
-    state,
-    sequence,
-    turnEpoch: Number.isSafeInteger(source.turnEpoch) && source.turnEpoch >= 0 ? source.turnEpoch : 0,
-    requestSetRevision,
-    authority,
-    exact: source.exact === true
-  }
-}
-
-function readCompanionInteractionTombstones() {
-  try {
-    const stored = globalThis.utools?.dbStorage?.getItem?.(COMPANION_INTERACTION_TOMBSTONE_STORAGE_KEY)
-    if (stored?.revision !== companionV7Revisions?.interactionStore) return []
-    return (Array.isArray(stored.tombstones) ? stored.tombstones : [])
-      .map(sanitizeCompanionInteractionTombstone)
-      .filter(Boolean)
-      .slice(-2_000)
-  } catch {
-    return []
-  }
-}
-
-let companionInteractionTombstonePersistTimer = null
-let companionInteractionTombstonePendingRows = []
-
-function flushCompanionInteractionTombstones() {
-  if (companionInteractionTombstonePersistTimer) clearTimeout(companionInteractionTombstonePersistTimer)
-  companionInteractionTombstonePersistTimer = null
-  const tombstones = companionInteractionTombstonePendingRows
-    .map(sanitizeCompanionInteractionTombstone)
-    .filter(Boolean)
-    .slice(-2_000)
-  companionInteractionTombstonePendingRows = []
-  try {
-    return globalThis.utools?.dbStorage?.setItem?.(COMPANION_INTERACTION_TOMBSTONE_STORAGE_KEY, {
-      revision: companionV7Revisions.interactionStore,
-      tombstones,
-      updatedAt: Date.now()
-    }) !== false
-  } catch {
-    return false
-  }
-}
-
-function persistCompanionInteractionTombstones(rows, options = {}) {
-  companionInteractionTombstonePendingRows = Array.isArray(rows) ? rows.slice(-2_000) : []
-  if (options.flush === true) return flushCompanionInteractionTombstones()
-  if (!companionInteractionTombstonePersistTimer) {
-    companionInteractionTombstonePersistTimer = setTimeout(flushCompanionInteractionTombstones, 50)
-    companionInteractionTombstonePersistTimer.unref?.()
-  }
-  return true
-}
-
-function persistCompanionPlanPause(receipt) {
-  const source = codexRecord(receipt)
-  const key = typeof source.key === 'string' && /^[a-f0-9]{16,64}$/i.test(source.key) ? source.key : ''
-  const planLifecycleRevision = Number.isFinite(source.planLifecycleRevision)
-    ? Math.max(0, Math.trunc(source.planLifecycleRevision))
-    : 0
-  if (!key || !planLifecycleRevision) return false
-  const rows = readCompanionPlanPauseReceipts().filter((value) => value.key !== key)
-  if (!companionPlanPauseStorageReady) return false
-  if (source.paused === true) rows.unshift({ key, planLifecycleRevision, paused: true, updatedAt: Date.now() })
-  return writeCompanionPlanPauseReceipts(rows.slice(0, 2_000))
 }
 
 function migrateHiddenCompanionPlan(input = {}) {
@@ -10945,6 +10815,8 @@ function companionProviderMetadataV7(input = {}) {
     turnMode: source.turnMode === 'plan' || source.turnMode === 'default' ? source.turnMode : 'unknown',
     idleConfirmed: source.idleConfirmed === true,
     localPin: source.localPin === true,
+    manualPhase: isManualTaskPhase(source.manualPhase) ? source.manualPhase : '',
+    manualPhaseSetAt: companionEvidenceSequenceV7(source.manualPhaseSetAt),
     dynamicEligible: source.dynamicEligible === true,
     ...(typeof source.displayName === 'string' ? { displayName: source.displayName.slice(0, 240) } : {}),
     ...(typeof source.originalTitle === 'string' ? { originalTitle: source.originalTitle.slice(0, 240) } : {}),
@@ -11112,6 +10984,7 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       1
     )
     const localPin = isRoot && persisted.pins.has(key)
+    const manualPhaseEntry = persisted.manualPhases?.get(key)
     const hidden = isRoot && Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt
     const terminalCandidate = (observation.candidates || []).some((candidate) => (
       candidate.exact === true && ['turn-completed', 'turn-interrupted', 'turn-failed'].includes(candidate.kind)
@@ -11153,6 +11026,10 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       turnMode: isRoot ? rootSource.turnMode : 'unknown',
       idleConfirmed: !(observation.candidates || []).some((candidate) => candidate.kind === 'turn-running'),
       localPin,
+      // Only a root row carries a hand-set phase: a topology child has its own
+      // evidence and must not inherit the parent's stand-in.
+      manualPhase: isRoot ? manualPhaseEntry?.phase || '' : '',
+      manualPhaseSetAt: isRoot ? manualPhaseEntry?.setAt || 0 : 0,
       dynamicEligible: !isRoot || dynamicCutoff === 0 || companionEvidenceSequenceV7(
         rootSource.lastQuestionAt,
         rootSource.lastTurnStartedAt,
@@ -11289,6 +11166,7 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
         1
       )
   const localPin = persisted.pins.has(key)
+  const manualPhaseEntry = persisted.manualPhases?.get(key)
   const originalTitle = typeof session.title === 'string' && session.title.trim()
     ? session.title.trim().slice(0, 240)
     : 'Claude 任务'
@@ -11321,6 +11199,8 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
       hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
       idleConfirmed: terminal,
       localPin,
+      manualPhase: manualPhaseEntry?.phase || '',
+      manualPhaseSetAt: manualPhaseEntry?.setAt || 0,
       dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.turnStartedAt, session.lastActivityAt) >= input.dynamicCutoff,
       displayName: alias || originalTitle,
       originalTitle,
@@ -11857,7 +11737,7 @@ const companionHostRegistry = createCompanionHostRegistry?.({
 
 const companionInitialPlanPauseReceipts = readCompanionPlanPauseReceipts()
 
-companionTaskKernel = typeof createCompanionTaskKernel === 'function' && companionHostRegistry && companionPlanPauseStorageReady
+companionTaskKernel = typeof createCompanionTaskKernel === 'function' && companionHostRegistry && companionPersistedSideState.planPauseStorageReady()
   ? createCompanionTaskKernel({
       initialConfiguration: companionTaskConfiguration(),
       initialPauseReceipts: companionInitialPlanPauseReceipts,
@@ -11875,7 +11755,7 @@ companionTaskKernel = typeof createCompanionTaskKernel === 'function' && compani
     })
   : null
 
-if (!companionPlanPauseStorageReady) {
+if (!companionPersistedSideState.planPauseStorageReady()) {
   runtimeDiagnostics.record({
     level: 'error',
     scope: 'companion-storage',
