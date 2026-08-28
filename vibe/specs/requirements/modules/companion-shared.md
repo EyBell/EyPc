@@ -28,6 +28,7 @@
 - [RAW-179#2](../shared-raw-179-clause-002.md#L1) — `active` · 七条 evidence lane、生成合同与唯一 V7 Kernel
 - [RAW-182](../shared-raw-182.md#L1) — `active` · 循环层序并集、环冻结、游标归属与角标可达性同源
 - [RAW-183](../shared-raw-183.md#L1) — `active` · 本地置顶作为暂存待查通道：置顶分组、退出循环环、已完成未读入口承载
+- [RAW-185](../shared-raw-185.md#L1) — `active` · 置顶豁免活动时间窗（任何相位）与「循环可达必然列表可见」不变式
 
 
 ### 编号条款
