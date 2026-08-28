@@ -536,6 +536,23 @@ export function createCodexController(options: CodexControllerOptions) {
       ? Math.max(1, hold - elapsed)
       : 0
     if (accept) resetInventoryDisappearanceCandidate()
+    // Instrumented because the error memory guarding this path asks whether a
+    // dropout was held or accepted, and that question was previously
+    // unanswerable from the log: only the outcome was visible, never the hold.
+    options.platform.diagnostics?.record?.({
+      level: 'info',
+      scope: 'task-recovery',
+      event: 'inventory-dropout',
+      outcome: accept ? 'accepted-as-deletion' : 'held-as-transport',
+      provider: 'codex',
+      details: {
+        missingCount: missingKeys.length,
+        confirmations: candidate.confirmations,
+        firstObservation,
+        elapsedMs: elapsed,
+        holdMs: hold
+      }
+    })
     return { accept, firstObservation, missingCount: missingKeys.length, retryAfterMs }
   }
 

@@ -5678,6 +5678,15 @@ class CodexDesktopCompanionBridge {
         // the same live owner. A real owner disconnect is handled separately
         // by client-status-changed and still drops all of its live authority.
         if (ownsShadow && stillInventoried && this.followAny(threadId, true, [ownerClientId])) {
+          runtimeDiagnostics.record({
+            level: 'info',
+            scope: 'task-recovery',
+            event: 'desktop-replacement-snapshot',
+            outcome: 'refollowed',
+            provider: 'codex',
+            taskRef: threadId,
+            details: { shadowRetained: true }
+          })
           const parentThreadId = sideParentThreadId || threadId
           const known = codexActivityInventory.get(parentThreadId)
           const activity = codexDesktopShadowActivity(shadow)
@@ -6431,6 +6440,18 @@ class CodexDesktopCompanionBridge {
   }
 
   resubscribe(threadId) {
+    // Instrumented because the error memory guarding this path counts
+    // resubscribe activity to tell stream-continuity failure apart from real
+    // task deletion — and an unlogged path makes "no events" prove nothing.
+    runtimeDiagnostics.record({
+      level: 'info',
+      scope: 'task-recovery',
+      event: 'desktop-resubscribe',
+      outcome: 'shadow-rebuilt',
+      provider: 'codex',
+      taskRef: threadId,
+      details: { inventorySize: this.inventory.size }
+    })
     const mainShadow = this.shadows.get(threadId)
     const sideShadow = this.sideShadows.get(threadId)
     const stickyShadow = mainShadow || sideShadow
