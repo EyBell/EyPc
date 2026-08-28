@@ -1,11 +1,11 @@
 ---
 id: eypc-codex-control-owned-source-feedback
-status: candidate
+status: verified
 scope: project
 fingerprint: codex-action-source-feedback__row-tail-label-duplicates-state__source-split-across-row-and-control__state-control-hover-focus-source
 first_seen: 2026-07-22
 last_verified: 2026-08-28
-review_after: 2026-11-28
+review_after: 2027-02-28
 evidence:
   - src/FloatApp.vue
   - src/styles/float.css
@@ -53,7 +53,7 @@ Express an operation's source and availability on its stateful control and acces
 
 ## Alternative Route
 
-- Status: `candidate`; awaiting user visual and keyboard acceptance.
+- Status: `verified` (2026-08-28); user accepted the visual and keyboard result.
 - Preconditions: a fixed row control represents state originating from local, native or unavailable authority.
 - Ordered steps: normalize source to one enum; derive label/style/ARIA from it; keep read-only controls focusable; gate every activation route; remove duplicate row labels.
 - Verification: check all source variants by hover, focus, click, Enter, Quick Jump and configured shortcuts; confirm sorting/persistence is unchanged.
@@ -67,3 +67,4 @@ Express an operation's source and availability on its stateful control and acces
 | 2026-07-22 | RAW-058 selection/pin/counter fusion | User required removal of row-tail “本地置顶” and source disclosure on hover | Source split between row-tail text and pressed button; native/Chats were disabled and could not explain themselves | Moved source to the fixed `顶` control, kept read-only states focusable and added a shared activation guard | candidate; static contract updated, user acceptance pending |
 
 | 2026-08-28 | 逾期 candidate 复核 | validate:error-memory 报告复核窗口过期 | 无——本轮为复核而非再尝试 | 未改动实现 | candidate；2026-08-28 复核：源码与样式实现仍在位，无回归；本轮无法取得验收证据——视觉结论只能由用户给出，运行诊断日志不记录观感。状态维持 candidate，复核窗口顺延。待验收项：置顶来源仅由「顶」控件表达、行尾无重复标签。 |
+| 2026-08-28 | 逾期 candidate 复核收尾 | 用户逐项验收视觉结果 | 无 | 未改动实现 | verified；置顶来源仅由「顶」控件表达，行尾无重复标签 —— 2026-08-28 用户验收：本轮用户确认该项表现符合预期，直接结案。视觉结论由用户给出，实现侧此前已确认无回归。 |
