@@ -3882,17 +3882,11 @@ function codexWaitingEvidenceVisible(waitingState, flag, observedSequence) {
 }
 
 function codexDesktopRuntimeHasWaitingFlags(runtime) {
-  return (Array.isArray(runtime?.activeFlags) ? runtime.activeFlags : [])
-    .some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
-}
-
-function codexDesktopRuntimeIsPlainActive(runtime) {
-  return runtime?.type === 'active' && !codexDesktopRuntimeHasWaitingFlags(runtime)
+  return codexDesktopRequestProjection?.codexDesktopRuntimeHasWaitingFlags(runtime) === true
 }
 
 function codexDesktopRuntimeBecamePlainActive(previousRuntime, currentRuntime) {
-  if (!codexDesktopRuntimeIsPlainActive(currentRuntime) || !previousRuntime?.type) return false
-  return !codexDesktopRuntimeIsPlainActive(previousRuntime)
+  return codexDesktopRequestProjection?.codexDesktopRuntimeBecamePlainActive(previousRuntime, currentRuntime) === true
 }
 
 // A failed load returns no sequences rather than guessing at a watermark:
@@ -4749,12 +4743,19 @@ class CodexDesktopCompanionBridge {
   }
 
   recordRemovedWaitingRequests(threadId, previousRequests, currentRequests, shadow = null, sequence = 0) {
-    const currentSequences = new Set((Array.isArray(currentRequests) ? currentRequests : [])
-      .map((request) => request?.observedSequence)
-      .filter(Number.isInteger))
-    const removed = (Array.isArray(previousRequests) ? previousRequests : [])
-      .filter((request) => !currentSequences.has(request?.observedSequence))
+    const removed = codexDesktopRequestProjection
+      ? codexDesktopRequestProjection.codexDesktopRemovedWaitingRequests(previousRequests, currentRequests)
+      : []
     return this.resolveWaitingRequestObservations(threadId, removed, sequence, shadow)
+  }
+
+  retainCausallyOpenWaitingRequests(threadId, previousState, shadow) {
+    const knownThreadId = shadow.sideConversation && validCodexThreadId(shadow.parentThreadId)
+      ? shadow.parentThreadId
+      : threadId
+    const known = validCodexThreadId(knownThreadId) ? codexActivityInventory.get(knownThreadId) : null
+    return codexDesktopRequestProjection?.codexDesktopRetainCausallyOpenRequests(
+      shadow, previousState, known?.planReady === true && known.lastTurnStatus === 'completed') === true
   }
 
   recordRemovedRuntimeWaitingFlags(threadId, previousFlags, currentFlags, currentRequests, sequence = 0, shadow = null) {
@@ -4786,17 +4787,9 @@ class CodexDesktopCompanionBridge {
     shadow = null,
     previousRequests = []
   ) {
-    if (!codexDesktopRuntimeBecamePlainActive(previousRuntime, currentRuntime)) return false
-    const previouslyWaiting = new Set((Array.isArray(previousRequests) ? previousRequests : [])
-      .map(codexDesktopRequestFlag)
-      .filter(Boolean))
-    if (codexDesktopRuntimeHasWaitingFlags(previousRuntime)) {
-      for (const flag of previousRuntime.activeFlags) previouslyWaiting.add(flag)
-    }
-    const flags = [...new Set((Array.isArray(currentRequests) ? currentRequests : [])
-      .map(codexDesktopRequestFlag)
-      .filter(Boolean))]
-      .filter((flag) => previouslyWaiting.has(flag))
+    const flags = codexDesktopRequestProjection?.codexDesktopResumedWaitingFlags(
+      previousRuntime, currentRuntime, currentRequests, previousRequests
+    ) || []
     if (!flags.length) return false
     const sequence = this.clearWaitingEvidence(threadId, flags)
     if (shadow) {
@@ -5821,6 +5814,7 @@ class CodexDesktopCompanionBridge {
         this.scheduleWaitingEdgeRefresh(params.conversationId)
         return
       }
+      this.retainCausallyOpenWaitingRequests(params.conversationId, previousShadow, shadow)
       const requestClearSequence = this.recordRemovedWaitingRequests(
         params.conversationId,
         previousShadow?.requests,
@@ -5936,7 +5930,13 @@ class CodexDesktopCompanionBridge {
       ? { type: shadow.runtime.type, activeFlags: [...(shadow.runtime.activeFlags || [])] }
       : null
     const previousRuntimeFlags = [...(shadow.runtime?.activeFlags || [])]
-    const previousRequests = [...(shadow.requests || [])]
+    const previousRequestState = {
+      requests: [...(shadow.requests || [])],
+      runtime: previousRuntime,
+      requestSetRevision: shadow.requestSetRevision,
+      requestSetComplete: shadow.requestSetComplete,
+      requestSetAuthority: shadow.requestSetAuthority
+    }
     let containsReadStatePatch = false
     let containsActivityPatch = false
     let containsRequestSetPatch = false
@@ -5956,9 +5956,10 @@ class CodexDesktopCompanionBridge {
         return
       }
     }
+    const retainedOpenRequest = this.retainCausallyOpenWaitingRequests(params.conversationId, previousRequestState, shadow)
     this.cancelWaitingEdgeRefresh(params.conversationId)
     shadow.revision = revision
-    if (containsRequestSetPatch) {
+    if (containsRequestSetPatch && !retainedOpenRequest) {
       shadow.requestSetRevision = codexNextLiveEvidenceSequence()
       shadow.requestSetComplete = true
       shadow.requestSetAuthority = 'provider-live'
@@ -5979,7 +5980,7 @@ class CodexDesktopCompanionBridge {
     }
     const requestClearSequence = this.recordRemovedWaitingRequests(
       params.conversationId,
-      previousRequests,
+      previousRequestState.requests,
       shadow.requests,
       shadow,
       shadow.activityEventSequence
@@ -5998,7 +5999,7 @@ class CodexDesktopCompanionBridge {
       shadow.runtime,
       shadow.requests,
       shadow,
-      previousRequests
+      previousRequestState.requests
     )
     const waitingState = this.attachWaitingState(params.conversationId, shadow)
     codexRememberDesktopRequestObservations(waitingState, shadow.requests)
@@ -6233,8 +6234,7 @@ class CodexDesktopCompanionBridge {
     const desktopActivityEvent = evidenceShadows.some((shadow) => shadow.activityEvidence === 'activity-event')
     let projection = codexResolveParentActivity(own, childActivities, {
       appServerActive: codexAppServerActiveDominates(known, evidenceShadows),
-      connectorActiveFlags: known.connectorActiveFlags,
-      connectorWaitingSince: known.connectorWaitingSince
+      connectorActivity: known
     })
     const desktopInactiveSupersedes = desktopActivityEvent
       && !projection.hasActive
@@ -6245,8 +6245,7 @@ class CodexDesktopCompanionBridge {
       codexClearAppServerLiveActive(known)
       projection = codexResolveParentActivity(own, childActivities, {
         appServerActive: false,
-        connectorActiveFlags: known.connectorActiveFlags,
-        connectorWaitingSince: known.connectorWaitingSince
+        connectorActivity: known
       })
     }
     const { status, activeFlags, waitingSince, desktopActiveSince } = projection
@@ -8513,30 +8512,14 @@ function codexThreadPersistedPlanLifecycle(thread, lastTurn) {
   const mtimeMs = codexTimestampMs(stat.mtimeMs)
   const cached = codexThreadPendingPlanCache.get(candidate)
   if (cached && cached.size === stat.size && cached.mtimeMs === mtimeMs) {
-    return {
-      known: cached.known === true,
-      planReady: cached.planReady === true || cached.pending === true,
-      planLifecycleState: cached.planReady === true || cached.pending === true ? 'ready' : 'unknown',
-      planLifecycleRevision: Number(cached.planLifecycleRevision) || (cached.pending === true ? Number(lastTurn.startedAt) || 0 : 0),
-      planClearReason: '',
-      turnMode: cached.turnMode === 'plan' || cached.turnMode === 'default' ? cached.turnMode : 'unknown'
-    }
+    return codexRolloutEvidence?.codexRolloutNormalizedPlanLifecycle(cached, lastTurn) || empty
   }
   let state = empty
   for (const maximumBytes of CODEX_ROLLOUT_PENDING_PLAN_TAIL_BYTES) {
     state = codexRolloutPendingPlanStateText(codexReadRolloutTail(candidate, stat, maximumBytes))
     if (state.known || maximumBytes >= stat.size) break
   }
-  const normalized = {
-    known: state.known === true,
-    planReady: state.planReady === true,
-    planLifecycleState: state.planReady === true ? 'ready' : 'unknown',
-    planLifecycleRevision: state.planReady
-      ? Number(state.planLifecycleRevision) || (lastTurn.status === 'completed' ? Number(lastTurn.startedAt) || 0 : 0)
-      : 0,
-    planClearReason: '',
-    turnMode: state.turnMode === 'plan' || state.turnMode === 'default' ? state.turnMode : 'unknown'
-  }
+  const normalized = codexRolloutEvidence?.codexRolloutNormalizedPlanLifecycle(state, lastTurn) || empty
   codexThreadPendingPlanCache.set(candidate, {
     size: stat.size,
     mtimeMs,
@@ -8582,14 +8565,12 @@ function codexRolloutDecisionState(candidate, stat, initialCorrelations) {
     pending: input.pending,
     correlations: input.correlations
   })
+  const normalizedPlan = codexRolloutEvidence?.codexRolloutNormalizedPlanLifecycle(plan, {}) || plan
   codexThreadPendingPlanCache.set(candidate, {
     size: stat.size,
     mtimeMs,
-    pending: plan.planReady === true,
-    known: plan.known === true,
-    planReady: plan.planReady === true,
-    planLifecycleRevision: Number(plan.planLifecycleRevision) || 0,
-    turnMode: plan.turnMode
+    pending: normalizedPlan.planReady === true,
+    ...normalizedPlan
   })
   return { input, plan, runtime }
 }
@@ -8711,6 +8692,8 @@ function codexApplyRolloutDecisionState(tracker, state, emit = true, options = {
     completedRuntime = state.runtime.phase === 'completed'
     codexApplyRolloutTerminal(tracker, known, state.runtime)
   }
+  const planClearPatch = codexRolloutEvidence?.codexRolloutPlanClearPatch(known, state.plan)
+  if (planClearPatch) Object.assign(known, planClearPatch)
   const lastTurnStatus = known.lastTurnStatus || known.connectorLastTurnStatus || tracker.lastTurnStatus
   const pendingInput = ['interrupted', 'failed', 'inProgress'].includes(lastTurnStatus)
     && state.input.pending === true
@@ -9398,10 +9381,11 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       ...(activeFlags.length
         ? { waitingSince: codexTimestampMs(lastTurn.completedAt) || codexTimestampMs(lastTurn.startedAt) || now }
         : {}),
-      ...(planLifecycle.planReady ? {
-        planReady: true,
-        planLifecycleState: 'ready',
-        planLifecycleRevision: planLifecycle.planLifecycleRevision || lastTurn.startedAt
+      ...(['ready', 'cleared'].includes(planLifecycle.planLifecycleState) ? {
+        planReady: planLifecycle.planReady,
+        planLifecycleState: planLifecycle.planLifecycleState,
+        planLifecycleRevision: planLifecycle.planLifecycleRevision || lastTurn.startedAt,
+        ...(planLifecycle.planClearReason ? { planClearReason: planLifecycle.planClearReason } : {})
       } : {}),
       turnMode: planLifecycle.turnMode,
       statusAuthority: persistedDecision ? 'persisted-decision' : 'connector',
@@ -9586,16 +9570,11 @@ async function scanVerifiedCodexInventory() {
           }
         })
       }
-      const projectionPlanRevision = Number(projection?.planLifecycleRevision) || 0
-      const previousPlanRevision = Number(previousActivity?.planLifecycleRevision) || 0
-      const retainPreviousPlanClear = previousActivity?.planLifecycleState === 'cleared'
-        && previousPlanRevision >= projectionPlanRevision
-      const planLifecycleState = retainPreviousPlanClear
-        ? 'cleared'
-        : projection?.planReady === true || previousActivity?.planReady === true ? 'ready' : 'unknown'
-      const planLifecycleRevision = retainPreviousPlanClear
-        ? previousPlanRevision
-        : projectionPlanRevision || previousPlanRevision
+      const planLifecycle = codexRolloutEvidence?.codexMergeProjectedPlanLifecycle(projection, previousActivity)
+        || { planReady: projection?.planReady === true || previousActivity?.planReady === true,
+          planLifecycleState: projection?.planReady === true || previousActivity?.planReady === true ? 'ready' : 'unknown',
+          planLifecycleRevision: Number(projection?.planLifecycleRevision) || Number(previousActivity?.planLifecycleRevision) || 0,
+          planClearReason: '' }
       activityInventory.set(thread.id, {
         key,
         ...(typeof projection?.actionAlias === 'string' ? { actionAlias: projection.actionAlias } : {}),
@@ -9624,10 +9603,10 @@ async function scanVerifiedCodexInventory() {
         activityEvidence: preserveAppServerActive ? 'activity-event' : 'connector',
         activityRevision: 0,
         planImplementationOnly: projection?.planImplementationOnly === true,
-        planReady: planLifecycleState === 'ready',
-        planLifecycleState,
-        planLifecycleRevision,
-        ...(retainPreviousPlanClear ? { planClearReason: previousActivity.planClearReason || 'cancel' } : {}),
+        planReady: planLifecycle.planReady,
+        planLifecycleState: planLifecycle.planLifecycleState,
+        planLifecycleRevision: planLifecycle.planLifecycleRevision,
+        ...(planLifecycle.planClearReason ? { planClearReason: planLifecycle.planClearReason } : {}),
         turnMode: projection?.turnMode === 'plan' || projection?.turnMode === 'default'
           ? projection.turnMode
           : previousActivity?.turnMode || 'unknown',

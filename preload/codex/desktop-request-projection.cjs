@@ -173,6 +173,62 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     return ''
   }
 
+  function codexDesktopRuntimeHasWaitingFlags(runtime) {
+    return (Array.isArray(runtime?.activeFlags) ? runtime.activeFlags : [])
+      .some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+  }
+
+  function codexDesktopRuntimeIsPlainActive(runtime) {
+    return runtime?.type === 'active' && !codexDesktopRuntimeHasWaitingFlags(runtime)
+  }
+
+  function codexDesktopRuntimeBecamePlainActive(previousRuntime, currentRuntime) {
+    return Boolean(previousRuntime?.type)
+      && codexDesktopRuntimeIsPlainActive(currentRuntime)
+      && !codexDesktopRuntimeIsPlainActive(previousRuntime)
+  }
+
+  function codexDesktopRemovedWaitingRequests(previousRequests, currentRequests) {
+    const currentSequences = new Set((Array.isArray(currentRequests) ? currentRequests : [])
+      .map((request) => request?.observedSequence)
+      .filter(Number.isInteger))
+    return (Array.isArray(previousRequests) ? previousRequests : [])
+      .filter((request) => !currentSequences.has(request?.observedSequence))
+  }
+
+  function codexDesktopRetainCausallyOpenRequests(shadow, previousState, completedPlanContext = false) {
+    if (!shadow || !previousState
+      || codexDesktopRuntimeBecamePlainActive(previousState.runtime, shadow.runtime)) return false
+    const retained = codexDesktopRemovedWaitingRequests(previousState.requests, shadow.requests)
+      .filter((request) => {
+        if (['resolved', 'cancelled', 'execution-started'].includes(request?.interactionState)
+          || !codexDesktopRequestFlag(request)) return false
+        const kind = codexDesktopRequestKind(request)
+        return kind === 'plan-choice' || kind === 'plan-implementation'
+          || request.identityExact === true && completedPlanContext
+      })
+    if (!retained.length) return false
+    shadow.requests = [...(Array.isArray(shadow.requests) ? shadow.requests : []), ...retained]
+    shadow.requestSetRevision = previousState.requestSetRevision
+    shadow.requestSetComplete = previousState.requestSetComplete
+    shadow.requestSetAuthority = previousState.requestSetAuthority
+    return true
+  }
+
+  function codexDesktopResumedWaitingFlags(previousRuntime, currentRuntime, currentRequests, previousRequests) {
+    if (!codexDesktopRuntimeBecamePlainActive(previousRuntime, currentRuntime)) return []
+    const previouslyWaiting = new Set((Array.isArray(previousRequests) ? previousRequests : [])
+      .map(codexDesktopRequestFlag)
+      .filter(Boolean))
+    if (codexDesktopRuntimeHasWaitingFlags(previousRuntime)) {
+      for (const flag of previousRuntime.activeFlags) previouslyWaiting.add(flag)
+    }
+    return [...new Set((Array.isArray(currentRequests) ? currentRequests : [])
+      .map(codexDesktopRequestFlag)
+      .filter(Boolean))]
+      .filter((flag) => previouslyWaiting.has(flag))
+  }
+
   return {
     revision: CODEX_DESKTOP_REQUEST_PROJECTION_REVISION,
     codexDesktopRequestTimestamp,
@@ -181,7 +237,12 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     codexDesktopProjectedRequests,
     codexDesktopIsPlanImplementationRequest,
     codexDesktopRequestKind,
-    codexDesktopRequestFlag
+    codexDesktopRequestFlag,
+    codexDesktopRuntimeHasWaitingFlags,
+    codexDesktopRuntimeBecamePlainActive,
+    codexDesktopRemovedWaitingRequests,
+    codexDesktopRetainCausallyOpenRequests,
+    codexDesktopResumedWaitingFlags
   }
 }
 

@@ -3004,11 +3004,13 @@ draft: v7EvidenceDraft({
 
   it('retains a completed Plan across supplementary/default and interrupted Turns', () => {
     const { bridge, native } = loadCodexBridge(new FakeCodexProcess())
-    const started = (mode: string) => JSON.stringify({
+    const started = (mode: string, timestamp = '') => JSON.stringify({
+      ...(timestamp ? { timestamp } : {}),
       type: 'event_msg',
       payload: { type: 'task_started', collaboration_mode_kind: mode }
     })
-    const item = (type: string) => JSON.stringify({
+    const item = (type: string, timestamp = '') => JSON.stringify({
+      ...(timestamp ? { timestamp } : {}),
       type: 'event_msg',
       payload: { type: 'item_completed', item: { type, text: 'private body' } }
     })
@@ -3024,6 +3026,11 @@ draft: v7EvidenceDraft({
       planReady: true,
       planLifecycleState: 'ready',
       turnMode: 'default'
+    })
+    expect(native.codexRolloutPendingPlanStateText([started('plan'), item('Plan'), started('default'), item('CommandExecution')].join('\n'))).toMatchObject({
+      known: true,
+      planReady: true,
+      planLifecycleState: 'ready'
     })
     expect(native.codexRolloutPendingPlanStateText([
       started('plan'),
@@ -3044,7 +3051,60 @@ draft: v7EvidenceDraft({
       known: false,
       pending: false
     })
+    expect(native.codexRolloutPendingPlanStateText([
+      started('plan', '2030-03-17T17:48:20.000Z'),
+      item('Plan', '2030-03-17T17:48:21.000Z'),
+      started('default', '2030-03-17T17:49:20.000Z'),
+      item('FileChange', '2030-03-17T17:49:21.000Z')
+    ].join('\n'))).toMatchObject({
+      known: true,
+      pending: false,
+      planReady: false,
+      planLifecycleState: 'cleared',
+      planClearReason: 'execution-start',
+      planLifecycleRevision: Date.parse('2030-03-17T17:49:21.000Z'),
+      turnMode: 'default'
+    })
+    expect(native.codexRolloutPendingPlanStateText([
+      started('plan', '2030-03-17T17:48:20.000Z'),
+      item('Plan', '2030-03-17T17:48:21.000Z'),
+      started('default', '2030-03-17T17:49:20.000Z'),
+      JSON.stringify({ timestamp: '2030-03-17T17:49:20.500Z', type: 'event_msg', payload: { type: 'patch_apply_begin' } })
+    ].join('\n'))).toMatchObject({
+      planReady: false,
+      planLifecycleState: 'cleared',
+      planClearReason: 'execution-start',
+      planLifecycleRevision: Date.parse('2030-03-17T17:49:20.500Z')
+    })
     bridge.close()
+  })
+
+  it('projects a completed default Turn with structural file work as consumed instead of reviving its older Plan', async () => {
+    const child = new FakeCodexProcess()
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
+      JSON.stringify({ timestamp: '2030-03-17T17:48:20.000Z', type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ timestamp: '2030-03-17T17:48:21.000Z', type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan body' } } }),
+      JSON.stringify({ timestamp: '2030-03-17T17:49:20.000Z', type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'default' } }),
+      JSON.stringify({ timestamp: '2030-03-17T17:49:21.000Z', type: 'event_msg', payload: { type: 'item_completed', item: { type: 'FileChange', changes: [{ path: '/private/changed' }] } } })
+    ].join('\n'))
+    const context = loadCodexBridge(child)
+    const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const task = snapshot.value.threads.find((entry: Record<string, any>) => entry.name === '跨端未知')
+
+    expect(task).toMatchObject({
+      planReady: false,
+      planLifecycleState: 'cleared',
+      planClearReason: 'execution-start',
+      turnMode: 'default',
+      lastTurnStatus: 'completed'
+    })
+    expect(JSON.stringify(task)).not.toContain('/private/changed')
+
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((entry: Record<string, any>) => entry.key === task.key))
+      .toMatchObject({ phase: 'completed', planReady: false, planLifecycleState: 'cleared' }))
+    context.bridge.close()
   })
 
   it('closes the matching Plan interaction atomically while retaining its artifact across request removal', async () => {
@@ -3175,6 +3235,79 @@ draft: v7EvidenceDraft({
     await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
       .toMatchObject({ phase: 'waiting-input', planReady: true, planImplementation: true }))
     expect(JSON.stringify(kernel.getLatest())).not.toContain('plan-card-instance')
+    context.triggerPluginOut(true)
+  })
+
+  it('keeps an exact completed-Plan request open across a bare request-array disappearance', async () => {
+    const child = new FakeCodexProcess()
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan body' } } })
+    ].join('\n'))
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.waitingInputSnapshotThreadIds.clear()
+    desktopSocket.unreadSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([FIXED_THREAD_IDS[3]]), desktopSocket)
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const taskKey = baseline.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知').key
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+    const planRequest = {
+      type: 'plan',
+      method: 'item/plan/requestImplementation',
+      requestId: 'still-visible-plan-card'
+    }
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[3],
+        change: {
+          type: 'snapshot',
+          revision: 2,
+          conversationState: {
+            threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+            resumeState: '',
+            hasUnreadTurn: true,
+            requests: [planRequest]
+          }
+        }
+      }
+    })
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+      .toMatchObject({ phase: 'waiting-input', unread: true, planImplementation: true, dynamicGroup: 'input' }))
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[3],
+        change: {
+          type: 'patches',
+          baseRevision: 2,
+          revision: 3,
+          patches: [{ op: 'replace', path: ['requests'], value: [] }]
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+      .toMatchObject({ phase: 'waiting-input', unread: true, planImplementation: true, dynamicGroup: 'input' })
+
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'serverRequest/resolved',
+      params: { threadId: FIXED_THREAD_IDS[3], requestId: 'still-visible-plan-card' }
+    })}\n`)
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+      .toMatchObject({ phase: 'completed', unread: true, planImplementation: false, dynamicGroup: 'unread' }))
+    expect(JSON.stringify(kernel.getLatest())).not.toContain('still-visible-plan-card')
     context.triggerPluginOut(true)
   })
 
@@ -3666,11 +3799,11 @@ draft: v7EvidenceDraft({
         expected: { status: 'active', planImplementationOnly: false, hasInput: true, hasApproval: true, appServerActive: false }
       },
       {
-        name: 'latest active branch interval',
+        name: 'causally newer App Server running ignores a refollowed child waiting epoch',
         own: { status: 'active', activeFlags: [], desktopActiveSince: 1_900_000_012_000 },
         children: [{ status: 'active', activeFlags: ['waitingOnApproval'], desktopActiveSince: 1_900_000_020_000 }],
         options: { appServerActive: true },
-        expected: { status: 'active', activeFlags: ['waitingOnApproval'], hasApproval: true, appServerActive: false, desktopActiveSince: 1_900_000_020_000 }
+        expected: { status: 'active', activeFlags: [], hasApproval: false, appServerActive: true, desktopActiveSince: 0 }
       },
       {
         name: 'child system error',
@@ -3685,6 +3818,24 @@ draft: v7EvidenceDraft({
         children: [{ status: 'systemError', activeFlags: [] }],
         options: { appServerActive: true, connectorActiveFlags: ['waitingOnApproval'] },
         expected: { status: 'active', activeFlags: ['waitingOnApproval'], hasSystemError: true, appServerActive: true, desktopActiveSince: 0 }
+      },
+      {
+        name: 'App Server winner keeps only its authoritative Plan waiting subtype',
+        own: { status: 'active', activeFlags: [] },
+        children: [{ status: 'active', activeFlags: ['waitingOnApproval'] }],
+        options: {
+          appServerActive: true,
+          connectorActiveFlags: ['waitingOnUserInput'],
+          connectorPlanImplementationOnly: true
+        },
+        expected: {
+          status: 'active',
+          activeFlags: ['waitingOnUserInput'],
+          planImplementationOnly: true,
+          hasInput: true,
+          hasApproval: false,
+          appServerActive: true
+        }
       }
     ]
 
@@ -5643,7 +5794,7 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
-  it('lets an active-to-active Plan request open a waiting epoch over confirmed completion', async () => {
+  it('keeps an active-to-active Plan request waiting until a causal newer Turn starts', async () => {
     const child = new FakeCodexProcess()
     const desktopSocket = new FakeCodexDesktopSocket()
     desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[1])
@@ -5715,7 +5866,6 @@ draft: v7EvidenceDraft({
     expect(statusReadsAfter).toBe(statusReadsBefore)
     expect(JSON.stringify(deltas)).not.toContain('private plan body')
 
-    const deltaCountBeforeRemoval = deltas.length
     desktopSocket.push({
       type: 'broadcast',
       method: 'thread-stream-state-changed',
@@ -5733,22 +5883,71 @@ draft: v7EvidenceDraft({
       }
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
-    const removalDelta = deltas.slice(deltaCountBeforeRemoval).find((delta) => delta.entries?.some((entry: Record<string, any>) => entry.key === task.key))
-    expect(removalDelta).toMatchObject({
-      entries: [{
-        key: task.key,
-        activeFlags: [],
-        planImplementationOnly: false,
-        statusAuthority: 'desktop-live',
-        activityRevision: 3
-      }]
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      activeFlags: ['waitingOnUserInput'],
+      planImplementationOnly: true,
+      statusAuthority: 'desktop-live',
+      activityRevision: 3
+    })
+
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/started',
+      params: {
+        threadId: FIXED_THREAD_IDS[1],
+        turn: { status: 'inProgress', startedAt: 1_900_000_100 }
+      }
+    })}\n`)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      activeFlags: [],
+      planImplementationOnly: false,
+      statusAuthority: 'app-server-live',
+      lastTurnStatus: 'inProgress'
+    })
+
+    // The Desktop owner can refollow by replaying the previous waiting epoch
+    // after the causal turn/started edge. That replacement snapshot must not
+    // bounce the task back to waiting (or expose its stale unread bit) while
+    // the newer App Server Turn is running.
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[1],
+        change: {
+          type: 'snapshot',
+          revision: 4,
+          conversationState: {
+            threadRuntimeStatus: { type: 'active', activeFlags: ['waitingOnUserInput'] },
+            resumeState: 'needs_resume',
+            hasUnreadTurn: true,
+            requests: [{
+              type: 'serverRequest',
+              method: 'item/plan/requestImplementation',
+              planContent: 'private stale plan body'
+            }]
+          }
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'active',
+      activeFlags: [],
+      planImplementationOnly: false,
+      statusAuthority: 'app-server-live',
+      lastTurnStatus: 'inProgress'
     })
     expect(JSON.stringify(deltas)).not.toContain('item/plan/requestImplementation')
+    expect(JSON.stringify(deltas)).not.toContain('private stale plan body')
     stop()
     bridge.close()
   })
 
-  it('timestamps exact approval and elicitation requests, falls back to first observation, and clears on removal', async () => {
+  it('timestamps exact requests, falls back to first observation, and retains Plan input until runtime resumes', async () => {
     const child = new FakeCodexProcess()
     const desktopSocket = new FakeCodexDesktopSocket()
     const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
@@ -5864,9 +6063,29 @@ draft: v7EvidenceDraft({
       }
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
-    const resolved = (await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)
-    expect(resolved).toMatchObject({ status: 'idle', activeFlags: [] })
-    expect(resolved).not.toHaveProperty('waitingSince')
+    const retainedPlan = (await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)
+    expect(retainedPlan).toMatchObject({ status: 'active', activeFlags: ['waitingOnUserInput'], waitingSince: explicitTimes[4] })
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[1],
+        change: {
+          type: 'patches',
+          baseRevision: 4,
+          revision: 5,
+          patches: [{ op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active', activeFlags: [] } }]
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const resumed = (await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)
+    expect(resumed).toMatchObject({ status: 'active', activeFlags: [] })
+    expect(resumed).not.toHaveProperty('waitingSince')
     const publicPayload = JSON.stringify((await bridge.readActivitySnapshot()).value)
     expect(publicPayload).not.toContain('raw-request-id')
     expect(publicPayload).not.toContain('private command')

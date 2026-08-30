@@ -38,33 +38,47 @@ function createCodexDesktopActivityAggregation(dependencies = {}) {
 
   function codexResolveParentActivity(own, childActivities, options = {}) {
     const activities = [own, ...childActivities].filter(Boolean)
-    const activeFlags = [...new Set(activities.flatMap((activity) => activity.activeFlags || []))]
+    const connectorActivity = options.connectorActivity || options
+    // The caller has already compared App Server and Desktop causal sequences.
+    // Once App Server wins, a refollowed Desktop snapshot belongs to the older
+    // waiting epoch and must not donate its flags to the new running Turn.
+    const appServerActive = options.appServerActive === true
+    const activeFlags = [...new Set((appServerActive
+      ? connectorActivity.connectorActiveFlags || []
+      : activities.flatMap((activity) => activity.activeFlags || [])))]
     const hasInput = activeFlags.includes('waitingOnUserInput')
     const hasApproval = activeFlags.includes('waitingOnApproval')
     const hasActive = activities.some((activity) => activity.status === 'active')
     const hasSystemError = activities.some((activity) => activity.status === 'systemError')
-    const appServerActive = options.appServerActive === true && !hasInput && !hasApproval
     const status = hasInput || hasApproval || hasActive || appServerActive
       ? 'active'
       : hasSystemError ? 'systemError' : own.status
-    const waitingActivities = activities.filter((activity) => (activity.activeFlags || [])
-      .some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval'))
+    const waitingActivities = appServerActive
+      ? (hasInput || hasApproval
+          ? [{
+              activeFlags,
+              waitingSince: connectorActivity.connectorWaitingSince,
+              planImplementationOnly: connectorActivity.connectorPlanImplementationOnly === true
+            }]
+          : [])
+      : activities.filter((activity) => (activity.activeFlags || [])
+        .some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval'))
     const planImplementationOnly = status === 'active'
       && waitingActivities.length > 0
       && waitingActivities.every((activity) => activity.planImplementationOnly === true)
-    const desktopActiveSince = status === 'active'
+    const desktopActiveSince = status === 'active' && !appServerActive
       ? Math.max(0, ...activities
         .filter((activity) => activity.status === 'active')
         .map((activity) => timestampMs(activity.desktopActiveSince)))
       : 0
     const waitingSince = status === 'active' && (hasInput || hasApproval)
       ? Math.max(0, ...waitingActivities.map((activity) => timestampMs(activity.waitingSince)))
-        || timestampMs(options.connectorWaitingSince)
+        || timestampMs(connectorActivity.connectorWaitingSince)
       : 0
     return {
       status,
       activeFlags: status === 'active'
-        ? (appServerActive ? [...(options.connectorActiveFlags || [])] : activeFlags)
+        ? (appServerActive ? [...(connectorActivity.connectorActiveFlags || [])] : activeFlags)
         : [],
       planImplementationOnly,
       hasInput,
