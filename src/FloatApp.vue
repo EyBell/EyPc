@@ -83,7 +83,7 @@ import type { RuntimeIdentityHandshakeV1 } from './platform/eypcPlatform'
 type RenderRow =
   | { kind: 'section'; key: string; section: CodexProjectSection }
   | { kind: 'hidden-project-section'; key: string; title: string }
-  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'pinned' | 'input' | 'active' | 'unknown' | 'stopped' | 'unread' | 'completed' }
+  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'pinned' | 'input' | 'active' | 'unknown' | 'stopped' | 'unread' | 'completed'; collapsible?: boolean; collapsed?: boolean }
   | { kind: 'project'; key: string; project: CodexProjectCard; marker: CompanionProjectMarker; sectionId: string; hiddenProject?: boolean }
   | { kind: 'task'; key: string; task: CodexTaskCard; marker: CompanionRowMarker; sectionId?: string; parentProjectKey?: string; nested?: boolean }
   | { kind: 'empty-project'; key: string; projectKey: string }
@@ -156,6 +156,7 @@ const taskScroll = ref<HTMLElement | null>(null)
 const selectedKeys = ref<Set<string>>(new Set())
 const focusedKey = ref('')
 const rangeAnchorKey = ref('')
+const pinnedGroupCollapsed = ref(false)
 /** 快速筛选模式：动态列表编号可见，`Ctrl+1…0` 直接打开对应任务。 */
 const quickMode = ref(false)
 const batchPlacement = ref<'top' | 'bottom'>('bottom')
@@ -429,6 +430,20 @@ function displayOrderedTasks(tasks: CodexTaskCard[]) {
   return orderCodexTasksForDisplay(tasks, pinnedTaskKeys)
 }
 
+function displayPinnedTasks(tasks: CodexTaskCard[]) {
+  const pinnedSection = conversations.value?.projectSections.find((section) => section.id === 'pinned')
+  const ranks = new Map((pinnedSection?.entries || [])
+    .filter((entry) => entry.kind === 'task')
+    .map((entry, index) => [entry.task.key, index]))
+  return displayOrderedTasks(tasks).sort((left, right) => (
+    (ranks.get(left.key) ?? Number.MAX_SAFE_INTEGER) - (ranks.get(right.key) ?? Number.MAX_SAFE_INTEGER)
+  ))
+}
+
+function togglePinnedGroup() {
+  pinnedGroupCollapsed.value = !pinnedGroupCollapsed.value
+}
+
 const renderRows = computed<RenderRow[]>(() => {
   const value = conversations.value
   if (!value) return []
@@ -479,13 +494,17 @@ const renderRows = computed<RenderRow[]>(() => {
     ]
     return groups.flatMap((group): RenderRow[] => {
       const matched = group.tasks.filter((task) => taskMatched(task))
-      const tasks = group.key === 'input' || group.key === 'unread'
+      const tasks = group.key === 'pinned'
+        ? displayPinnedTasks(matched)
+        : group.key === 'input' || group.key === 'unread'
         ? orderCodexAttentionTasks(matched)
         : displayOrderedTasks(matched)
       if (!tasks.length) return []
+      const collapsible = group.key === 'pinned'
+      const collapsed = collapsible && pinnedGroupCollapsed.value
       return [
-        { kind: 'status-section', key: `status:${group.key}`, title: group.title, count: tasks.length, tone: group.tone },
-        ...tasks.map((task) => addTaskRow(task))
+        { kind: 'status-section', key: `status:${group.key}`, title: group.title, count: tasks.length, tone: group.tone, collapsible, collapsed },
+        ...(collapsed ? [] : tasks.map((task) => addTaskRow(task)))
       ]
     })
   }
@@ -567,15 +586,17 @@ const focusItems = computed<FocusItem[]>(() => renderRows.value.filter((row): ro
 const focusedItem = computed(() => focusItems.value.find((item) => item.key === focusedKey.value) || null)
 
 const QUICK_INDEX_LIMIT = 10
-/** 编号只落在任务行上，并且跟着搜索结果实时重排——所见即所开。 */
-const quickTaskRows = computed(() => renderRows.value
-  .filter((row): row is Extract<RenderRow, { kind: 'task' }> => row.kind === 'task')
+/** 编号落在可执行的可见项上；折叠置顶只占一个“展开”编号。 */
+const quickIndexRows = computed(() => renderRows.value
+  .filter((row): row is Extract<RenderRow, { kind: 'task' | 'status-section' }> => (
+    row.kind === 'task' || row.kind === 'status-section' && row.collapsible === true && row.collapsed === true
+  ))
   .slice(0, QUICK_INDEX_LIMIT))
 // 编号常驻：`Alt+数字` 在展开卡片里始终可用，所以徽标不能只在筛选模式出现，
 // 否则就成了隐藏快捷键。筛选模式额外让 `Ctrl+数字` 也走同一编号。
 const quickIndexByRowKey = computed(() => {
   const map = new Map<string, number>()
-  quickTaskRows.value.forEach((row, index) => map.set(row.key, index + 1))
+  quickIndexRows.value.forEach((row, index) => map.set(row.key, index + 1))
   return map
 })
 
@@ -587,10 +608,10 @@ function quickIndexDigit(rowKey: string) {
 }
 
 /** 编号的可达路径必须对读屏可见，不能只靠徽标这一个视觉线索。 */
-function quickIndexHint(rowKey: string) {
+function quickIndexHint(rowKey: string, action = '打开') {
   const digit = quickIndexDigit(rowKey)
   if (!digit) return ''
-  return quickMode.value ? `，快捷键 Ctrl+${digit} 或 Alt+${digit} 打开` : `，快捷键 Alt+${digit} 打开`
+  return quickMode.value ? `，快捷键 Ctrl+${digit} 或 Alt+${digit} ${action}` : `，快捷键 Alt+${digit} ${action}`
 }
 
 const visibleTaskKeys = computed(() => new Set(renderRows.value.filter((row): row is Extract<RenderRow, { kind: 'task' }> => row.kind === 'task').map((row) => row.task.key)))
@@ -2007,8 +2028,12 @@ function exitQuickMode() {
 }
 
 function openQuickIndex(index: number) {
-  const row = quickTaskRows.value[index - 1]
+  const row = quickIndexRows.value[index - 1]
   if (!row) return
+  if (row.kind === 'status-section') {
+    pinnedGroupCollapsed.value = false
+    return
+  }
   focusedKey.value = row.key
   openTask(row.task, 'local-shortcut')
   exitQuickMode()
@@ -3399,7 +3424,25 @@ onUnmounted(() => {
           <template v-for="row in renderRows" :key="row.key">
             <h2 v-if="row.kind === 'section'" class="float-project-section">{{ row.section.title }}</h2>
             <h2 v-else-if="row.kind === 'hidden-project-section'" class="float-project-section hidden-project-section">{{ row.title }}</h2>
-            <h2 v-else-if="row.kind === 'status-section'" class="float-status-section" :class="row.tone"><span>{{ row.title }}</span><em>{{ row.count }}</em></h2>
+            <h2 v-else-if="row.kind === 'status-section'" class="float-status-section" :class="[row.tone, { collapsible: row.collapsible, collapsed: row.collapsed }]">
+              <button
+                v-if="row.collapsible"
+                type="button"
+                class="status-section-toggle"
+                :aria-expanded="!row.collapsed"
+                :aria-label="`${row.collapsed ? '展开' : '折叠'}${row.title}，${row.count} 项${quickIndexHint(row.key, '展开')}`"
+                data-quick-jump-target
+                :data-quick-jump-label="`${row.collapsed ? '展开' : '折叠'}${row.title}`"
+                @click="togglePinnedGroup"
+              >
+                <ChevronRight v-if="row.collapsed" :size="13" aria-hidden="true" />
+                <ChevronDown v-else :size="13" aria-hidden="true" />
+                <span v-if="quickIndexDigit(row.key)" class="status-quick-index" aria-hidden="true">{{ quickIndexDigit(row.key) }}</span>
+                <span>{{ row.title }}</span>
+                <em>{{ row.count }}</em>
+              </button>
+              <template v-else><span>{{ row.title }}</span><em>{{ row.count }}</em></template>
+            </h2>
 
             <div
               v-else-if="row.kind === 'project'"

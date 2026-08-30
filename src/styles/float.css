@@ -1130,6 +1130,24 @@ button.float-search-glyph { cursor: pointer; }
 .float-status-section.unread { color: var(--codex-pending); }
 .float-status-section.completed { color: var(--codex-accent); }
 .float-status-section em { display: grid; min-width: 16px; height: 16px; margin-left: auto; padding: 0 4px; place-items: center; border-radius: 999px; background: color-mix(in srgb, currentColor 15%, var(--codex-surface)); font-size: 9px; font-style: normal; }
+.float-status-section.collapsible { gap: 2px; }
+.status-section-toggle {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 2px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.status-section-toggle:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
+.status-section-toggle:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 1px; }
 
 .task-state-button {
   display: grid;
@@ -1164,11 +1182,9 @@ button.float-search-glyph { cursor: pointer; }
   outline-offset: 1px;
 }
 
-/* 快速筛选编号是瞬时提示层：绝对定位、不接管指针，因此不改变行高、列表顶边或行坐标。 */
-.task-quick-index {
-  position: absolute;
-  top: 2px;
-  left: 2px;
+/* 快速编号不接管指针；任务编号是覆盖层，折叠分组编号是唯一的可执行入口。 */
+.task-quick-index,
+.status-quick-index {
   z-index: 3;
   display: grid;
   min-width: 14px;
@@ -1184,8 +1200,14 @@ button.float-search-glyph { cursor: pointer; }
   line-height: 1;
   pointer-events: none;
 }
+.task-quick-index {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+}
 @media (forced-colors: active) {
-  .task-quick-index {
+  .task-quick-index,
+  .status-quick-index {
     border-color: CanvasText;
     background: Canvas;
     color: CanvasText;
