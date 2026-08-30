@@ -148,3 +148,45 @@ Environment Action 的 39 条有序来源条款继续由其来源/spec/PRD 承�
 - RAW-179#3–#7 新增 FeatureModule/RuntimeSlice、统一交互 owner、有界增量性能、项目级 UI token/无障碍和完整 V7 一次性切换合同，不反向扩大发布、安装或真实 Host 操作权限。
 
 本轮没有 whole supersession；whole/scoped 关系为 `22 / 68`，`conflicted=0`、`semantic-fork=0`、`agent-vs-user=0`。若后续真实 Host 证据与 artifact-ready 产物不一致，应回到同一 V7 任务修正，不能恢复被精化的历史等待规则。
+
+## 2026-08-29：DEC-20260829-01 已完成未读与置顶互斥选择
+
+当前明确需求修订了 [RAW-183](shared-raw-183.md#L1) 的局部拼接语义：真实已完成未读非空时，置顶项不得进入同一 attention 序列，也不得在未读轮次结束后继续跳转；只有零真实未读时才启用置顶兜底。`decision_status=explicit-current-request`。
+
+[RAW-188](shared-raw-188.md#L1) 以两条 scoped `refines` 边登记精确范围。RAW-183 的置顶暂存、稳定顺序与固定访问身份，以及 RAW-185 的分组、时间窗豁免和列表可见性条款继续有效；没有整条 supersession，也没有未决 semantic fork。
+
+## 2026-08-29：DEC-20260829-02 attention 稳定轮次
+
+当前明确需求补足 [RAW-188](shared-raw-188.md#L1) 的顺序语义：`input/completedUnread` 公开候选仍随最新提问时间排序，但一轮跳转中的旧实例不得被 metadata-only 发布重新排列；新生命周期实例按最新顺序插队，整轮成功派发结束后才采纳最新公开顺序开始下一轮。`decision_status=explicit-current-request`。
+
+这项裁决不新增 Registry relation：它实现 RAW-183 已保留的稳定顺序与 RAW-188 的固定实例身份，不改变未读/置顶互斥、通用 previous/next walk、公开 Snapshot 或命令合同；没有 semantic fork。
+
+## 2026-08-29：DEC-20260829-03 置顶显式顺序与折叠编号
+
+当前明确需求修订 [RAW-183](shared-raw-183.md#L1)、[RAW-188](shared-raw-188.md#L1) 与 Codex Quick View [RAW-167](codex-quick-task-view-raw-167.md#L1) 的局部展示语义。`decision_status=explicit-current-request`。
+
+[RAW-189](shared-raw-189.md#L1) 要求置顶公开分组及零未读兜底使用持久化本地置顶顺序，`lastQuestionAt` 等 metadata 不得再使已完成已读置顶项跳位；置顶分组折叠时标题只占一个「展开」编号，展开后编号回到真正可见任务行并立即重算，`Alt+F` 保持 task-only。RAW-188 的 attention 轮次稳定与其它状态候选最近优先继续有效；没有 whole supersession 或未决 semantic fork。
+
+## 2026-08-29：DEC-20260829-04 当前 Plan 请求先于未读展示
+
+当前明确需求修订 [RAW-179#1](shared-raw-179-clause-001.md#L1) 的局部优先级与清除证据。`decision_status=explicit-current-request`。
+
+[RAW-189](shared-raw-189.md#L1) 当时保留「只有当前 interaction 产生 waiting、artifact-only 为待继续」，并让精确当前 Plan 选择/实施 interaction 在 terminal task 上先于 unread 显示为待输入；unread 仍作为潜在 lane 保留，interaction 关闭后可重新显露。bare request-array disappearance 不再算关闭；匹配 interaction 终态、新 Turn、execution-start 或 plain-active runtime 才算。此处“普通 interaction 仍受 unread 屏障”的 Plan-only 范围已由同日 DEC-20260829-06 精化；其它部分没有 whole supersession 或未决 semantic fork。
+
+## 2026-08-29：DEC-20260829-05 更新 default 文件变更消费旧 Plan
+
+用户用一个已完成执行却显示「待继续」的任务纠正 [RAW-179#1](shared-raw-179-clause-001.md#L1) 的 artifact 保留边界。匿名结构核验确认：较早完成 Turn 产出 Plan，更新完成 Turn 含结构化 `fileChange`，但旧 artifact 仍被保留。`decision_status=explicit-current-request`。
+
+[RAW-189](shared-raw-189.md#L1) 现以高置信结构边区分「补充」与「实施」：更新 default Turn 的 `fileChange/patch_apply` 写单调 `execution-start` clear，使该 Turn 完成后按真实 unread 进入完成组；只有 `task_started`、AgentMessage、reasoning 或普通补充问答仍保留旧 Plan。此裁决不恢复“任意新 Turn 清 Plan”的旧规则，不改变当前 Plan interaction、running、unread 或公开合同；没有 whole supersession 或未决 semantic fork。
+
+## 2026-08-29：DEC-20260829-06 精确当前 interaction 与更新 running 直接切换
+
+用户以同一任务的实际状态切换再次纠正 [RAW-179#1](shared-raw-179-clause-001.md#L1)、RAW-130 与 RAW-132 的局部解释：不是只有 Plan interaction 可以先于 terminal unread，任何精确当前普通输入、审批、Plan 选择/实施 interaction 都必须直接进入待输入/待确认；反向出现因果更新的 running 时也必须直接恢复进行中，不得发布「已完成未读」中间帧。`decision_status=explicit-current-request`。
+
+[RAW-189](shared-raw-189.md#L1) 据此精化 DEC-20260829-04 的 Plan-only 范围，并补足 parent resolver 对 RAW-130/132 的实现约束：调用方已判定 App Server running 的 live-evidence sequence 胜出时，较旧 Desktop refollow/sticky-shadow waiting flags 不得再捐赠并否决该 running；更新的精确 Desktop interaction 仍按更高 sequence 正常进入等待。未读证据继续私有保留，interaction 关闭后才可重新显露；Plan artifact 生命周期、公开合同与其它 causal clear 不变，没有 whole supersession 或未决 semantic fork。
+
+## 2026-08-29：DEC-20260829-07 当前宿主构建身份可见性
+
+用户要求每次 `pnpm run build` 后能确认用于打包的 `dist` 是否最新，并在 Codex 功能页展示最新打包日期。该要求精化 [RAW-178#3](invariants-raw-178-clause-003.md#L1) 的证据分层，`decision_status=explicit-current-request`。
+
+[RAW-189](shared-raw-189.md#L1) 将显示口径限定为「当前宿主产物」：Main/Float Preload 从自己实际加载的 `runtime-identity.cjs` 投影 `artifactState/builtAt/builtAtLocal/packageVersion`，Codex 运行页同时显示身份匹配或需重载。磁盘 `dist/runtime-identity.cjs` 仍是打包侧最新凭据；production build 只形成 `artifact-ready`，不会自动替换已加载 ASAR 或证明 `host-loaded`。这是 Runtime Identity 的非私密 additive field refinement，不改变 Task Snapshot、Command、状态 reducer 或真实宿主验收门禁。

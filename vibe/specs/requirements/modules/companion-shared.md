@@ -30,6 +30,8 @@
 - [RAW-183](../shared-raw-183.md#L1) — `active` · 本地置顶作为暂存待查通道：置顶分组、退出循环环、已完成未读入口承载
 - [RAW-185](../shared-raw-185.md#L1) — `active` · 置顶豁免活动时间窗（任何相位）与「循环可达必然列表可见」不变式
 - [RAW-187](../shared-raw-187.md#L1) — `active` · 状态未知任务可手动指定正常状态：episode 退休、canonicalPhase 保值、Cmd/Ctrl 手势
+- [RAW-188](../shared-raw-188.md#L1) — `active` · 已完成未读与置顶互斥，并为 input/completedUnread 保持一轮稳定的实例顺序
+- [RAW-189](../shared-raw-189.md#L1) — `active` · 置顶显式稳定顺序与折叠编号；所有精确当前 interaction 的直接切换、App Server running 因果优先、旧 Plan 结构化消费及当前宿主构建身份可见性
 
 
 ### 编号条款
