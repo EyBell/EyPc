@@ -151,6 +151,10 @@ describe('uTools runtime identity', () => {
           status: 'host-loaded',
           expected: expectation,
           actual: expectation,
+          artifactState: 'artifact-ready',
+          builtAt: '2026-08-29T14:00:19.973Z',
+          builtAtLocal: '2026/08/29 22:00:19',
+          packageVersion: '0.1.0',
           kernelRevision: expectation.kernelRevision,
           taskPackageRevision: expectation.taskPackageRevision,
           message: 'loaded'
@@ -159,7 +163,13 @@ describe('uTools runtime identity', () => {
       companionKernel: kernel
     }) }
     const platform = getPlatform()
-    expect(platform.runtimeIdentityStatus?.status).toBe('host-loaded')
+    expect(platform.runtimeIdentityStatus).toMatchObject({
+      status: 'host-loaded',
+      artifactState: 'artifact-ready',
+      builtAt: '2026-08-29T14:00:19.973Z',
+      builtAtLocal: '2026/08/29 22:00:19',
+      packageVersion: '0.1.0'
+    })
     expect(platform.companionKernel).toBe(kernel)
   })
 
@@ -167,12 +177,21 @@ describe('uTools runtime identity', () => {
     const currentArtifact = {
       revision: 'runtime-identity-v2',
       artifactState: 'artifact-ready',
+      builtAt: '2026-08-29T14:00:19.973Z',
+      builtAtLocal: '2026/08/29 22:00:19',
+      packageVersion: '0.1.0',
       ...expectation
     }
     const current = runFloatPreload(currentArtifact)
     expect(current.bridge.action('codex.task.open', {})).toBe(false)
     await expect(current.bridge.reopenThread('alias')).resolves.toMatchObject({ errorCode: 'reload-required' })
-    expect(current.bridge.runtimeIdentity.handshake(expectation)).toMatchObject({ status: 'host-loaded' })
+    expect(current.bridge.runtimeIdentity.handshake(expectation)).toMatchObject({
+      status: 'host-loaded',
+      artifactState: 'artifact-ready',
+      builtAt: '2026-08-29T14:00:19.973Z',
+      builtAtLocal: '2026/08/29 22:00:19',
+      packageVersion: '0.1.0'
+    })
     expect(current.bridge.action('codex.task.open', {})).toBe(true)
     expect(current.sent).toHaveLength(1)
 

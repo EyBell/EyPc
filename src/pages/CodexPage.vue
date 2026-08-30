@@ -226,6 +226,19 @@ const runtimeDiagnosticHighlights = computed(() => (props.snapshot.runtimeDiagno
   .slice(-6)
   .reverse())
 
+const runtimeBuildPresentation = computed(() => {
+  const identity = props.snapshot.runtimeIdentity
+  const builtAtLocal = identity?.builtAtLocal?.trim() || '等待构建信息'
+  const packageVersion = identity?.packageVersion?.trim()
+  const loaded = identity?.status === 'host-loaded'
+  return {
+    builtAt: identity?.builtAt || '',
+    builtAtLocal,
+    summary: `${packageVersion ? `v${packageVersion} · ` : ''}${loaded ? '宿主已加载此构建' : '运行身份不一致，需要重载'}`,
+    detail: '时间直接来自当前宿主产物的 runtime-identity.cjs。每次打包前执行 pnpm run build，并以 dist/runtime-identity.cjs 的 builtAt、builtAtLocal 与 Host/Renderer 指纹作为最新产物凭据。'
+  }
+})
+
 function formatDiagnosticBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '0 KB'
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`
@@ -1155,6 +1168,15 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           >
             <RotateCcw :size="14" />恢复自适应尺寸
           </button>
+        </div>
+        <div class="codex-size-summary codex-runtime-build" role="status" aria-label="当前宿主产物构建时间">
+          <span>
+            <span>
+              <strong>当前宿主产物：<time :datetime="runtimeBuildPresentation.builtAt || undefined">{{ runtimeBuildPresentation.builtAtLocal }}</time></strong>
+              <small>{{ runtimeBuildPresentation.summary }}</small>
+            </span>
+            <button type="button" class="codex-tip" aria-label="构建时间凭据说明" data-operation-tooltip="构建时间凭据说明" :data-operation-description="runtimeBuildPresentation.detail" :data-tip="runtimeBuildPresentation.detail">i</button>
+          </span>
         </div>
         <div class="codex-size-summary codex-workspace-diagnostic">
           <span>

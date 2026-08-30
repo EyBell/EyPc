@@ -379,6 +379,11 @@ export interface RuntimeIdentityHandshakeV1 {
   status: 'host-loaded' | 'reload-required'
   expected: RuntimeIdentityExpectationV1
   actual: RuntimeIdentityExpectationV1
+  /** Metadata read from the Host artifact itself, not inferred from source mtime. */
+  artifactState?: 'artifact-ready' | 'missing'
+  builtAt?: string
+  builtAtLocal?: string
+  packageVersion?: string
   kernelRevision: string
   taskPackageRevision: string
   message: string
@@ -1209,6 +1214,10 @@ export function getPlatform(): EypcPlatformApi {
               hostAssetId: '', rendererAssetId: '', kernelRevision: '', registryRevision: '',
               topologyRevision: '', taskPackageRevision: '', commandRevision: '', subscribeRevision: '', ackRevision: ''
             },
+            artifactState: 'missing',
+            builtAt: '',
+            builtAtLocal: '',
+            packageVersion: '',
             kernelRevision: '',
             taskPackageRevision: '',
             message: `Preload ${hostCodex?.taskStateRevision || 'unknown'} / UI ${CODEX_TASK_STATE_REVISION}，需要重新接入或重载`,
@@ -1223,6 +1232,10 @@ export function getPlatform(): EypcPlatformApi {
           hostAssetId: '', rendererAssetId: '', kernelRevision: '', registryRevision: '',
           topologyRevision: '', taskPackageRevision: '', commandRevision: '', subscribeRevision: '', ackRevision: ''
         },
+        artifactState: 'missing',
+        builtAt: '',
+        builtAtLocal: '',
+        packageVersion: '',
         kernelRevision: '',
         taskPackageRevision: '',
         message: '运行身份握手失败，需要重新接入或重载',
@@ -1403,6 +1416,10 @@ export function getPlatform(): EypcPlatformApi {
         hostAssetId: '', rendererAssetId: '', kernelRevision: '', registryRevision: '',
         topologyRevision: '', taskPackageRevision: '', commandRevision: '', subscribeRevision: '', ackRevision: ''
       },
+      artifactState: 'missing',
+      builtAt: '',
+      builtAtLocal: '',
+      packageVersion: '',
       kernelRevision: '',
       taskPackageRevision: '',
       message: '浏览器模式未连接 uTools Preload',
