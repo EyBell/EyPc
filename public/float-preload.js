@@ -37,6 +37,10 @@ function runtimeIdentityHandshake(input = {}) {
     status: runtimeIdentityCompatible ? 'host-loaded' : 'reload-required',
     expected: expectation,
     actual,
+    artifactState: runtimeIdentityArtifact?.artifactState === 'artifact-ready' ? 'artifact-ready' : 'missing',
+    builtAt: typeof runtimeIdentityArtifact?.builtAt === 'string' ? runtimeIdentityArtifact.builtAt : '',
+    builtAtLocal: typeof runtimeIdentityArtifact?.builtAtLocal === 'string' ? runtimeIdentityArtifact.builtAtLocal : '',
+    packageVersion: typeof runtimeIdentityArtifact?.packageVersion === 'string' ? runtimeIdentityArtifact.packageVersion : '',
     kernelRevision: actual.kernelRevision,
     taskPackageRevision: actual.taskPackageRevision,
     message: runtimeIdentityCompatible

@@ -432,6 +432,10 @@ const mainIdentityHandshake = sandbox.window.eypcPlatform.runtimeIdentity.handsh
   ackRevision: actualRuntimeIdentity.ackRevision
 })
 assert(mainIdentityHandshake.status === 'host-loaded', 'Main/Preload exact identity handshake must prove host-loaded')
+assert(mainIdentityHandshake.artifactState === 'artifact-ready', 'Main identity handshake must expose artifact-ready state')
+assert(mainIdentityHandshake.builtAt === actualRuntimeIdentity.builtAt, 'Main identity handshake must expose the loaded artifact builtAt')
+assert(mainIdentityHandshake.builtAtLocal === actualRuntimeIdentity.builtAtLocal, 'Main identity handshake must expose the loaded artifact local build time')
+assert(mainIdentityHandshake.packageVersion === actualRuntimeIdentity.packageVersion, 'Main identity handshake must expose the loaded package version')
 assert(typeof sandbox.window.eypcPlatform.claude.inspect === 'function', 'preload must expose claude.inspect')
 assert(typeof sandbox.window.eypcPlatform.claude.readSnapshot === 'function', 'preload must expose claude.readSnapshot')
 // The Controller feature-detects this one. Asserting it on the module alone

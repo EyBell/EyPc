@@ -12708,7 +12708,7 @@ function runtimeIdentityHandshake(input = {}) {
     revision: RUNTIME_IDENTITY_REVISION,
     status: runtimeIdentityCompatible ? 'host-loaded' : 'reload-required',
     expected: expectation,
-    actual,
+    actual, artifactState: runtimeIdentityArtifact?.artifactState === 'artifact-ready' ? 'artifact-ready' : 'missing', builtAt: typeof runtimeIdentityArtifact?.builtAt === 'string' ? runtimeIdentityArtifact.builtAt : '', builtAtLocal: typeof runtimeIdentityArtifact?.builtAtLocal === 'string' ? runtimeIdentityArtifact.builtAtLocal : '', packageVersion: typeof runtimeIdentityArtifact?.packageVersion === 'string' ? runtimeIdentityArtifact.packageVersion : '',
     kernelRevision: actual.kernelRevision,
     taskPackageRevision: actual.taskPackageRevision,
     message: runtimeIdentityCompatible
@@ -13585,7 +13585,7 @@ window.eypcPlatform = {
       revision: RUNTIME_IDENTITY_REVISION,
       status: 'artifact-ready',
       hostAssetId: runtimeIdentityArtifact?.hostAssetId || '',
-      rendererAssetId: runtimeIdentityArtifact?.rendererAssetId || '',
+      rendererAssetId: runtimeIdentityArtifact?.rendererAssetId || '', artifactState: runtimeIdentityArtifact?.artifactState === 'artifact-ready' ? 'artifact-ready' : 'missing', builtAt: typeof runtimeIdentityArtifact?.builtAt === 'string' ? runtimeIdentityArtifact.builtAt : '', builtAtLocal: typeof runtimeIdentityArtifact?.builtAtLocal === 'string' ? runtimeIdentityArtifact.builtAtLocal : '', packageVersion: typeof runtimeIdentityArtifact?.packageVersion === 'string' ? runtimeIdentityArtifact.packageVersion : '',
       kernelRevision: companionTaskKernel?.revision || '',
       registryRevision: companionTaskKernel?.registryRevision || '',
       topologyRevision: companionTaskKernel?.topologyRevision || '',
