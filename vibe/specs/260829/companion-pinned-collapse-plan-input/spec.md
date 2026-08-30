@@ -172,6 +172,10 @@ Runtime Identity 仍由 production build 生成且只把已受管产物元数据
 - 集成完成条件：目标 `main` 包含完整源分支，主目录重新生成生产产物、回写当前真值，并核对六项构建身份；真实 Host 仍需另行授权加载和验收。
 - 文档收尾：需求登记与 Source Anchor、`75` 对 preload 镜像、入口预算 `13894 / 273 / 149`、项目错误记录及代码链接均通过；需求登记仍有 `5` 条历史 proposed，本轮未替用户确认。
 - 同步范围为任务、PRD、项目状态、架构、技术事实、用户帮助及既有防错记录；未新增全局规则、Skill、DB 记录或个人记忆。工作树保留，清理需要另外决定。
+- 集成结果：五批源提交已在干净集成预览通过后，快进合入原主目录 `main`，源 HEAD 为 `129b5f68bb64e2cfc56bb45dea8016fc07fb0752`，目标完整包含源分支。主目录原有生成身份在合并前后内容哈希不变；随后由生产构建正常再生，未使用 stash、reset 或覆盖其他工作树。
+- 最终主目录构建通过：`EyPc V7 / V7 / 0.1.0 / artifact-ready`，`builtAt=2026-08-30T10:57:06.496Z`，北京时间 `2026/08/30 18:57:06`，`host-48db44ec89d5ec2cb1ad / renderer-e0e87654e3915fd64b38`。受管 [Runtime Identity](../../../../public/runtime-identity.cjs#L1) 与主目录构建目录中的身份逐字段一致，当前真值已由生成器回写；最终日期不能反证原生宿主已加载。
+- 跨树核对：所有受管 Renderer 输入与源分支相同；主目录既有、被 Git 忽略的 `src/.DS_Store` 参与当前生成器的全目录哈希，因此 Renderer ID 与任务树不同。未删除该文件或扩大修改生成器；主目录最终产物以本条实测身份为准。
+- 收尾保留：源工作树只剩自身生成的 Runtime Identity 未提交；干净集成预览工作树保留。主目录索引已关闭本次源分支集成；推送、原生宿主安装/重载/验收、工作树清理均未执行，须用户另选下一步。
 
 ```json worktree-task-v1
 {
@@ -185,15 +189,15 @@ Runtime Identity 仍由 production build 生成且只把已受管产物元数据
       "base_sha": "332ad79122a995d368145ab88e6277873efb1789",
       "worktree_branch": "codex/260829-completed-unread-pin-sequence",
       "task_owner": "vibe/specs/260829/companion-pinned-collapse-plan-input/spec.md",
-      "head": "332ad79122a995d368145ab88e6277873efb1789",
+      "head": "129b5f68bb64e2cfc56bb45dea8016fc07fb0752",
       "upstream": null
     }
   ],
   "commit_mode": "verified-milestone",
   "push_mode": "current-message-only",
-  "verification_state": "planned",
+  "verification_state": "verified-commit",
   "push_state": "not-authorized",
-  "integration_state": "not-started",
-  "next_action": "complete scoped local batches and verify main integration"
+  "integration_state": "integrated",
+  "next_action": "retain worktrees; await host acceptance, push or exact cleanup authorization"
 }
 ```

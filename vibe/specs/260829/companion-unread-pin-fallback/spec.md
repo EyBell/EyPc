@@ -83,6 +83,6 @@ Kernel 以现有 `attentionInstance` 为身份维护两个进程内 `attentionWa
 
 ## Integration Evidence
 
-- 2026-08-30：与 [RAW-189 集成 owner](../companion-pinned-collapse-plan-input/spec.md#L1) 共同进入本地分批提交；两组复用同一 Kernel、构建与文档验证，不另起实现分支。
+- 2026-08-30：与 [RAW-189 集成 owner](../companion-pinned-collapse-plan-input/spec.md#L1) 共同完成本地分批提交并快进合入主目录 `main`，源 HEAD 为 `129b5f68bb64`；两组复用同一 Kernel、构建与文档验证，不另起实现分支。
 - 文件归属见 [changes.md](changes.md#L1)，最终批次回执由集成 owner 保存。
 - Kernel / Desktop Bridge / Float / Runtime Identity 四个聚焦文件 `316/316` 通过。该结果不含真实宿主验收，也不构成推送或清理工作树授权。
