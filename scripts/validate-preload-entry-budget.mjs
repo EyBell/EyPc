@@ -30,12 +30,14 @@ const BUDGET = Object.freeze({
   // for the persisted side-relation recovery hints (storage wiring, restore
   // and the C2 inventory live candidate). Shape logic lives in
   // preload/codex/side-relation-hints.cjs; the entry keeps only wiring.
-  lines: 13916,
+  // 2026-08-29 RAW-189: Plan lifecycle normalization/merge moved into the
+  // bounded rollout-evidence owner while adding structural execution clear.
+  lines: 13894,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
   // silently undercounts them by more than half.
-  codexFunctions: 274,
+  codexFunctions: 273,
   // Module-level mutable state: top-level `let`/`var` plus top-level `const`
   // bindings holding a fresh `Map`/`Set`. These are the bindings a closure
   // rewrite has to either move or inject, so they measure coupling rather than

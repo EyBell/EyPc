@@ -28,6 +28,10 @@ const CODEX_ROLLOUT_EVIDENCE_REVISION = COMPANION_V7_REVISIONS.rolloutEvidence
 const MAX_ROLLOUT_LINE_BYTES = 1_000_000
 /** Correlation ids come from the same untrusted stream. */
 const MAX_CALL_ID_LENGTH = 200
+/** A later default Turn consumes a Plan only on structural mutation evidence. */
+const PLAN_EXECUTION_ITEM_TYPES = new Set(['filechange'])
+const PLAN_EXECUTION_EVENT_TYPES = new Set(['patch_apply_begin', 'patch_apply_end'])
+const PLAN_CLEAR_REASONS = new Set(['cancel', 'execution-start', 'archive', 'removal'])
 
 function createCodexRolloutEvidence(dependencies = {}) {
   const record = dependencies.record
@@ -125,9 +129,22 @@ function createCodexRolloutEvidence(dependencies = {}) {
     }
     let sawPlanCompletion = false
     let planReady = false
+    let planLifecycleState = 'unknown'
     let planLifecycleRevision = 0
+    let planClearReason = ''
     let turnMode = 'unknown'
     let currentTurnStartedAt = 0
+    const clearExecutedPlan = (source, payload) => {
+      if (!planReady || turnMode !== 'default') return
+      planReady = false
+      planLifecycleState = 'cleared'
+      planClearReason = 'execution-start'
+      planLifecycleRevision = Math.max(
+        planLifecycleRevision,
+        currentTurnStartedAt,
+        codexRolloutTimestampMs(source.timestamp, payload.started_at, payload.completed_at)
+      )
+    }
     for (const line of text.split(/\r?\n/)) {
       if (!line || line.length > MAX_ROLLOUT_LINE_BYTES) continue
       let parsed
@@ -148,30 +165,98 @@ function createCodexRolloutEvidence(dependencies = {}) {
         turnMode = 'unknown'
         continue
       }
+      if (PLAN_EXECUTION_EVENT_TYPES.has(payload.type)) {
+        clearExecutedPlan(source, payload)
+        continue
+      }
       if (payload.type !== 'item_completed') continue
       const item = record(payload.item)
-      if (String(item.type || '').toLowerCase() === 'plan') {
+      const itemType = String(item.type || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      if (itemType === 'plan') {
         sawPlanCompletion = true
         planReady = true
+        planLifecycleState = 'ready'
+        planClearReason = ''
         planLifecycleRevision = currentTurnStartedAt
           || codexRolloutTimestampMs(source.timestamp, payload.completed_at)
           || planLifecycleRevision
+      } else if (PLAN_EXECUTION_ITEM_TYPES.has(itemType)) {
+        clearExecutedPlan(source, payload)
       }
     }
     return {
-      // A later generic/default Turn can be a supplementary user message. It
-      // must switch activity to running without destroying the independent
-      // native Plan-card lifecycle. Rollout text has no exact cancel receipt,
-      // so only a completed Plan establishes lifecycle knowledge here.
+      // A later generic/default Turn can be a supplementary user message, so
+      // task_started or AgentMessage alone cannot destroy the independent Plan
+      // lifecycle. A structural file mutation is exact execution evidence.
       known: sawPlanCompletion,
       // A completed Plan establishes an actionable artifact. It does not
       // prove that a current input interaction is still open.
       pending: false,
       planReady,
-      planLifecycleState: planReady ? 'ready' : 'unknown',
+      planLifecycleState,
       planLifecycleRevision,
-      planClearReason: '',
+      planClearReason,
       turnMode
+    }
+  }
+
+  function codexRolloutNormalizedPlanLifecycle(value, lastTurn) {
+    const source = record(value)
+    const turn = record(lastTurn)
+    const cleared = source.planLifecycleState === 'cleared' && PLAN_CLEAR_REASONS.has(source.planClearReason)
+    const ready = !cleared && (source.planReady === true || source.pending === true)
+    const revision = Number(source.planLifecycleRevision)
+      || ((ready || cleared) && turn.status === 'completed' ? timestampMs(turn.startedAt) : 0)
+    return {
+      known: source.known === true,
+      planReady: ready,
+      planLifecycleState: cleared ? 'cleared' : ready ? 'ready' : 'unknown',
+      planLifecycleRevision: revision,
+      planClearReason: cleared ? source.planClearReason : '',
+      turnMode: source.turnMode === 'plan' || source.turnMode === 'default' ? source.turnMode : 'unknown'
+    }
+  }
+
+  function codexRolloutPlanClearPatch(current, value) {
+    const source = codexRolloutNormalizedPlanLifecycle(value, current)
+    const previousRevision = Number(record(current).planLifecycleRevision) || 0
+    if (source.planLifecycleState !== 'cleared' || source.planClearReason !== 'execution-start'
+      || source.planLifecycleRevision <= previousRevision) return null
+    return {
+      planReady: false,
+      planLifecycleState: 'cleared',
+      planLifecycleRevision: source.planLifecycleRevision,
+      planClearReason: 'execution-start',
+      planImplementationOnly: false,
+      connectorPlanReady: false,
+      connectorPlanLifecycleRevision: source.planLifecycleRevision,
+      connectorPlanImplementationOnly: false,
+      turnMode: 'default',
+      connectorTurnMode: 'default'
+    }
+  }
+
+  function codexMergeProjectedPlanLifecycle(projectionValue, previousValue) {
+    const projection = record(projectionValue)
+    const previous = record(previousValue)
+    const projectionRevision = Number(projection.planLifecycleRevision) || 0
+    const previousRevision = Number(previous.planLifecycleRevision) || 0
+    const retainedClear = previous.planLifecycleState === 'cleared'
+      && PLAN_CLEAR_REASONS.has(previous.planClearReason) && previousRevision >= projectionRevision
+    const projectedClear = projection.planLifecycleState === 'cleared'
+      && PLAN_CLEAR_REASONS.has(projection.planClearReason) && projectionRevision > previousRevision
+    const clear = retainedClear ? previous : projectedClear ? projection : null
+    if (clear) return {
+      planReady: false,
+      planLifecycleState: 'cleared',
+      planLifecycleRevision: Number(clear.planLifecycleRevision) || 0,
+      planClearReason: clear.planClearReason || 'execution-start'
+    }
+    return {
+      planReady: projection.planReady === true || previous.planReady === true,
+      planLifecycleState: projection.planReady === true || previous.planReady === true ? 'ready' : 'unknown',
+      planLifecycleRevision: projectionRevision || previousRevision,
+      planClearReason: ''
     }
   }
 
@@ -180,7 +265,10 @@ function createCodexRolloutEvidence(dependencies = {}) {
     codexRolloutTimestampMs,
     codexRolloutPendingUserInputStateText,
     codexRolloutHasPendingUserInputText,
-    codexRolloutPendingPlanStateText
+    codexRolloutPendingPlanStateText,
+    codexRolloutNormalizedPlanLifecycle,
+    codexRolloutPlanClearPatch,
+    codexMergeProjectedPlanLifecycle
   }
 }
 

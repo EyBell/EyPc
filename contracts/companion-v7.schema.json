@@ -32,7 +32,7 @@
         "interaction": { "const": "companion-interaction-evidence-v1" },
         "interactionStore": { "const": "companion-interaction-tombstones-v1" },
         "planArtifact": { "const": "companion-plan-artifact-v1" },
-        "rolloutEvidence": { "const": "codex-rollout-evidence-v2" },
+        "rolloutEvidence": { "const": "codex-rollout-evidence-v3" },
         "desktopRequestProjection": { "const": "codex-desktop-request-projection-v2" },
         "desktopShadow": { "const": "codex-desktop-shadow-v2" },
         "childEnvelope": { "const": "child-envelope-v7" }

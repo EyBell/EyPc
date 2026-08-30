@@ -10,7 +10,7 @@ const COMPANION_V7_REVISIONS = Object.freeze({
   "interaction": "companion-interaction-evidence-v1",
   "interactionStore": "companion-interaction-tombstones-v1",
   "planArtifact": "companion-plan-artifact-v1",
-  "rolloutEvidence": "codex-rollout-evidence-v2",
+  "rolloutEvidence": "codex-rollout-evidence-v3",
   "desktopRequestProjection": "codex-desktop-request-projection-v2",
   "desktopShadow": "codex-desktop-shadow-v2",
   "childEnvelope": "child-envelope-v7"
