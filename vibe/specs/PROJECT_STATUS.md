@@ -120,8 +120,13 @@ Claude 的唯一当前行是下表首行；其余 Claude 行保留为历史检�
 | Shortcut selector readiness | [spec](260821/2045-shortcut-selector-readiness/spec.md#L1) / [raw](260821/2045-shortcut-selector-readiness/raw-requirement.md#L1) | Complete-package selector dispatch plus silent-exit diagnostics; focused suites and build pass, real-host shortcut acceptance pending after plugin reload |
 | Cursor Agent Companion | [spec](260818/1335-cursor-companion-feasibility/spec.md#L1) / [raw](260818/1335-cursor-companion-feasibility/raw-requirement.md#L1) | Phase 3 jump implemented via official `agent?id` deeplink (`dispatched`, verified on 3.17.8); archive is status-gated and mirrors Cursor's own `isArchived`; navigation v4 production bridge forwarding and strict capability gate are automated-verified (`311/311`, build/mirrors pass), real-host Cursor shortcut dispatch pending after reload; dedicated Cursor ownership tone; hook opt-in; Cloud Agent excluded; not current Codex/Claude contract |
 
+### 已关闭工作树：260829-completed-unread-pin-sequence
+
+- 清理结果（2026-08-30 20:29:30 +08:00）：源工作树与临时集成工作树均已移除，两条本地分支保留；原任务远端分支仍为 `129b5f68bb64`。生成身份已独立备份，恢复边界与核验见 [任务收尾记录](260829/companion-pinned-collapse-plan-input/spec.md#L180)。
+- 下方受管表是源工作树移除前的最后一次门禁快照，其中 `clean` 和待执行清理动作仅描述该历史时点，不表示目录仍在或需要再次清理；实际清理结果以上述记录及 Git 登记为准。
+
 <!-- worktree-task-index:260829-completed-unread-pin-sequence:start -->
 | Task ID | Repository | Child Branch | Detail | Source Head | Target Head | Worktree | Milestone | Merge | Push | Marker | State At | Next Action |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `260829-completed-unread-pin-sequence` | `eypc` | `codex/260829-completed-unread-pin-sequence` | [task owner](260829/companion-pinned-collapse-plan-input/spec.md#L1) | `129b5f68bb64` | `main@129b5f68bb64` | dirty | verified-commit | integrated 5/5 | not-authorized | `f3b921f51a57` | `2026-08-30T10:58:26Z` | retain worktrees until exact cleanup authorization names the child path and branch |
+| `260829-completed-unread-pin-sequence` | `eypc` | `codex/260829-completed-unread-pin-sequence` | [task owner](260829/companion-pinned-collapse-plan-input/spec.md#L1) | `129b5f68bb64` | `main@b560cf52626b` | clean | complete | integrated 5/5 | observed-upstream-contained | `6585517e853c` | `2026-08-30T12:28:50Z` | execute only the separately authorized exact removal commands |
 <!-- worktree-task-index:260829-completed-unread-pin-sequence:end -->

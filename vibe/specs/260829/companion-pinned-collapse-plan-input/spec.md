@@ -163,7 +163,7 @@ Runtime Identity 仍由 production build 生成且只把已受管产物元数据
 
 ## Local Integration
 
-- 2026-08-30 当前授权：将既有 RAW-188/189 变更按行为分批提交，并合入主目录 `main`；没有推送、安装、重载或工作树清理授权。
+- 2026-08-30 集成阶段授权：将既有 RAW-188/189 变更按行为分批提交，并合入主目录 `main`；当时没有推送、安装、重载或工作树清理授权。
 - 源分支与目标基线相同：`332ad79122a995d368145ab88e6277873efb1789`。主目录只有生成的 Runtime Identity 时间变更；该本地产物不混入源码提交，合并前后单独检查。
 - Sidecar：主线程。只复核当前提交范围、精确祖先关系和既有影响集，不重复实现或扩大测试。
 - 当前聚焦回归：Kernel / Desktop Bridge / Float / Runtime Identity `4` 文件、`316/316`；真实宿主、全仓测试与 MQTT 不在本轮核验范围。
@@ -175,7 +175,18 @@ Runtime Identity 仍由 production build 生成且只把已受管产物元数据
 - 集成结果：五批源提交已在干净集成预览通过后，快进合入原主目录 `main`，源 HEAD 为 `129b5f68bb64e2cfc56bb45dea8016fc07fb0752`，目标完整包含源分支。主目录原有生成身份在合并前后内容哈希不变；随后由生产构建正常再生，未使用 stash、reset 或覆盖其他工作树。
 - 最终主目录构建通过：`EyPc V7 / V7 / 0.1.0 / artifact-ready`，`builtAt=2026-08-30T10:57:06.496Z`，北京时间 `2026/08/30 18:57:06`，`host-48db44ec89d5ec2cb1ad / renderer-e0e87654e3915fd64b38`。受管 [Runtime Identity](../../../../public/runtime-identity.cjs#L1) 与主目录构建目录中的身份逐字段一致，当前真值已由生成器回写；最终日期不能反证原生宿主已加载。
 - 跨树核对：所有受管 Renderer 输入与源分支相同；主目录既有、被 Git 忽略的 `src/.DS_Store` 参与当前生成器的全目录哈希，因此 Renderer ID 与任务树不同。未删除该文件或扩大修改生成器；主目录最终产物以本条实测身份为准。
-- 收尾保留：源工作树只剩自身生成的 Runtime Identity 未提交；干净集成预览工作树保留。主目录索引已关闭本次源分支集成；推送、原生宿主安装/重载/验收、工作树清理均未执行，须用户另选下一步。
+- 集成结束时快照：源工作树只剩自身生成的 Runtime Identity 未提交；干净集成预览工作树保留。主目录索引已关闭本次源分支集成；当时尚未执行推送、原生宿主安装/重载/验收或工作树清理。
+
+## Push and Worktree Cleanup
+
+- 2026-08-30 用户后续授权推送，再选择清理本任务工作树、保留分支并推送原任务分支。主分支先前已推送至 `origin/main@b560cf52626b4032212701c9ad2c93706fa0dbc8`；分支推送阶段只推送 `codex/260829-completed-unread-pin-sequence`，远端独立核对为 `129b5f68bb64e2cfc56bb45dea8016fc07fb0752`，同名 upstream 已建立，未强推或推送标签。
+- 干净的临时集成工作树 `codex/260830-companion-integration` 已正常移除；Git 工作树登记及目录不存在均已核对。本地同名分支仍指向 `129b5f68bb64e2cfc56bb45dea8016fc07fb0752`，可据此重建工作树。
+- 源工作树清理完成：用户明确确认先备份，再丢弃源工作树并保留分支。唯一未提交的 [生成身份文件](../../../../public/runtime-identity.cjs#L1) 已于 `2026-08-30 20:27:17 +08:00` 备份，归档读取内容与源文件的 Git blob SHA-1 均为 `ea1a3deb87c28a83025e36607d6018675835ee86`。仅撤销该已备份文件的改动后，干净工作树、已验证提交、主分支可达性及关闭索引门禁均通过；随后正常移除源工作树，没有强制删除或删除分支。
+- 清理后核验（`2026-08-30 20:29:30 +08:00`）：源工作树目录及 Git 登记均不存在；其依赖和构建目录随树移除。原任务本地与远端分支均保留在 `129b5f68bb64e2cfc56bb45dea8016fc07fb0752`，临时集成分支也仍在本地同一提交；其他工作树的路径、分支与 HEAD 未变。
+- 恢复入口：仓库同级工作树容器中保留本地备份 `backup-260829-completed-unread-pin-sequence-ufb6mz`，内含恢复说明和单文件归档，归档 SHA-256 为 `318b8a966d96995d36dedfc36089a81d67cb8881ef4d8f6cc3837e421bcd946f`。已提交源码可从保留分支重建；这份备份仅恢复原生成身份，不覆盖主目录当前产物。
+- 清理结束时主目录既有生成身份文件内容哈希为 `78060d2f7944c2a1faba3f77530a3b41a32dd73e`，主分支为 `b560cf52626b4032212701c9ad2c93706fa0dbc8`。该清理轮次只核验 Git、远端、备份和清理后目录，没有重建产物、执行原生宿主验收或再次推送。
+- 投影边界：清理门禁已将私有生命周期置为 `closed`，移除前由管理工具刷新了最后一次受管索引快照。当前工具依赖仍登记的子工作树，移除后保留该历史快照、不手改受管行；主目录索引另标注实际已移除状态并指向本节。
+- 文档收尾：仅本任务记录与主目录过程索引归入一个本地文档提交；生成身份、独立备份及其他工作树不纳入。核验边界为文档链接、任务状态和 Git 提交范围，不运行构建或业务测试。没有新增功能、需求、DB、规则或失败模式，不扩写架构、帮助、错误记录或个人记忆；再次推送仍需独立授权。
 
 ```json worktree-task-v1
 {
@@ -190,14 +201,14 @@ Runtime Identity 仍由 production build 生成且只把已受管产物元数据
       "worktree_branch": "codex/260829-completed-unread-pin-sequence",
       "task_owner": "vibe/specs/260829/companion-pinned-collapse-plan-input/spec.md",
       "head": "129b5f68bb64e2cfc56bb45dea8016fc07fb0752",
-      "upstream": null
+      "upstream": "origin/codex/260829-completed-unread-pin-sequence"
     }
   ],
   "commit_mode": "verified-milestone",
   "push_mode": "current-message-only",
   "verification_state": "verified-commit",
-  "push_state": "not-authorized",
-  "integration_state": "integrated",
-  "next_action": "retain worktrees; await host acceptance, push or exact cleanup authorization"
+  "push_state": "observed-upstream-contained",
+  "integration_state": "closed",
+  "next_action": "cleanup documentation locally archived; preserve branches and generated-artifact backup; any further push or host acceptance requires separate authorization"
 }
 ```
