@@ -10567,12 +10567,11 @@ function companionPersistedTaskState() {
       .filter((entry) => typeof entry.key === 'string' && typeof entry.alias === 'string' && entry.alias.trim())
       .map((entry) => [entry.key, entry.alias.trim().slice(0, 120)])
   )
-  const pins = new Set(
-    (Array.isArray(codex.localPins) ? codex.localPins : [])
+  const taskPins = (Array.isArray(codex.localPins) ? codex.localPins : [])
       .map(codexRecord)
       .filter((pin) => pin.kind === 'task' && typeof pin.key === 'string')
-      .map((pin) => pin.key)
-  )
+  const pins = new Set(taskPins.map((pin) => pin.key))
+  const pinOrder = new Map(taskPins.map((pin, index) => [pin.key, index]))
   const manualPhases = new Map(
     (Array.isArray(codex.manualPhases) ? codex.manualPhases : [])
       .map(codexRecord)
@@ -10590,7 +10589,7 @@ function companionPersistedTaskState() {
     (Array.isArray(codex.collapsedTaskKeys) ? codex.collapsedTaskKeys : [])
       .filter((key) => typeof key === 'string' && key)
   )
-  return { aliases, pins, receipts, collapsed }
+  return { aliases, pins, pinOrder, receipts, collapsed }
 }
 
 /** Derived from the bound vocabulary so the entry adds no second phase list. */
@@ -11019,7 +11018,7 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       metadataRevision: companionEvidenceSequenceV7(rootSource.updatedAt, revisionAt),
       lastQuestionAt: isRoot ? companionEvidenceSequenceV7(rootSource.lastQuestionAt, rootSource.lastTurnStartedAt) : observation.turnStartedAt,
       createdAt: isRoot ? companionEvidenceSequenceV7(rootSource.createdAt) : observation.turnStartedAt,
-      displayOrder: order,
+      displayOrder: isRoot && localPin ? persisted.pinOrder?.get(key) ?? order : order,
       cycleOrder: order,
       attentionOrder: order++,
       hidden,
@@ -11193,7 +11192,7 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
       metadataRevision: companionEvidenceSequenceV7(session.metadataUpdatedAt, input.acceptedAt, revisionAt),
       lastQuestionAt: metadataOnly ? session.lastActivityAt : session.turnStartedAt,
       createdAt: session.createdAt,
-      displayOrder: input.order,
+      displayOrder: localPin ? persisted.pinOrder?.get(key) ?? input.order : input.order,
       cycleOrder: input.order,
       attentionOrder: input.order,
       hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
@@ -11342,7 +11341,7 @@ function companionCursorEvidenceV7(sessionValue, hookValue, input = {}) {
       metadataRevision: companionEvidenceSequenceV7(session.lastUpdatedAt, input.acceptedAt, revisionAt),
       lastQuestionAt: companionEvidenceSequenceV7(session.unfinishedRunAt, hook.turnStartedAt),
       createdAt: session.createdAt,
-      displayOrder: input.order,
+      displayOrder: localPin ? persisted.pinOrder?.get(key) ?? input.order : input.order,
       cycleOrder: input.order,
       attentionOrder: input.order,
       hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,

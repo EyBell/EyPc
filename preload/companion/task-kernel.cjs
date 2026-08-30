@@ -587,6 +587,11 @@ function compareByLatestQuestion(left, right) {
     || left.key.localeCompare(right.key)
 }
 
+function compareByPinnedOrder(left, right) {
+  return finiteInteger(left.displayOrder) - finiteInteger(right.displayOrder)
+    || compareByLatestQuestion(left, right)
+}
+
 function visibilityAnchor(task) {
   return Math.max(
     finiteInteger(task.lastQuestionAt),
@@ -775,9 +780,11 @@ function buildViews(tasks) {
   const views = emptyViews()
   const visible = tasks.filter((task) => !task.hidden && !task.paused)
   views.pausedKeys = tasks.filter((task) => task.paused).sort(compareByLatestQuestion).map((task) => task.key)
-  const display = [...visible].sort(compareByLatestQuestion)
-  for (const task of display) {
-    if (task.dynamicGroup !== 'none') views.groups[task.dynamicGroup].push(task.key)
+  for (const group of Object.keys(views.groups)) {
+    views.groups[group] = visible
+      .filter((task) => task.dynamicGroup === group)
+      .sort(group === 'pinned' ? compareByPinnedOrder : compareByLatestQuestion)
+      .map((task) => task.key)
   }
   // A badge is a promise that something is reachable, so it counts what the
   // ring can actually open — an unopenable task used to be counted and then
@@ -801,11 +808,10 @@ function buildViews(tasks) {
   // Direct attention actions are exact: "待输入" must never fall through to
   // an unrelated pinned/completed task.
   views.attentionKeys.input = inputAttention
-  // "已完成未读" is also the fast-access entry for the pins that have no other
-  // shortcut: unread completions first, then every pin the list shows under the
-  // pin group. Concatenated rather than interleaved so the unread backlog always
-  // clears before the pins, and an empty backlog makes the very first press
-  // start cycling the pins.
+  // "已完成未读" is also the fallback entry for pins that have no other
+  // shortcut, but the two sets must never share one walk. While a real unread
+  // completion exists, every press stays inside that backlog; only an empty
+  // backlog lets the first press start cycling pins.
   //
   // Both halves are display groups, not a second phase list. The list already
   // answers "is this unread" and "does this pin have a status group of its own",
@@ -813,12 +819,16 @@ function buildViews(tasks) {
   // what keeps one concept from drifting into several: an `unknown` pin sat in
   // 置顶 while matching neither the old `completed && !unread` test here nor any
   // other entry, so it was visible and unreachable. Reading the groups instead
-  // means a pin is served by exactly one ring — the pin group here, its own
-  // status tier in the ordinary ring.
-  views.attentionKeys.completedUnread = [
-    ...attention.filter((task) => task.capabilities.open && task.dynamicGroup === 'unread'),
-    ...attention.filter((task) => task.capabilities.open && task.dynamicGroup === 'pinned')
-  ].map((task) => task.key)
+  // gives every task one display owner: the pin group becomes this entry's
+  // empty-unread fallback, while status-owned pins stay in the ordinary ring.
+  const unreadAttention = attention
+    .filter((task) => task.capabilities.open && task.dynamicGroup === 'unread')
+  const taskByKey = new Map(visible.map((task) => [task.key, task]))
+  const pinnedAttention = views.groups.pinned
+    .map((key) => taskByKey.get(key))
+    .filter((task) => task?.capabilities.open)
+  views.attentionKeys.completedUnread = (unreadAttention.length > 0 ? unreadAttention : pinnedAttention)
+    .map((task) => task.key)
   views.attentionKeys.archive = attention
     .filter((task) => task.capabilities.archive)
     .map((task) => task.key)
@@ -890,6 +900,13 @@ function createCompanionTaskKernel(dependencies = {}) {
   const attentionSeen = {
     input: new Set(),
     completedUnread: new Set()
+  }
+  // One attention round owns a stable instance order. Published views remain
+  // latest-first for presentation, but metadata refreshes must not move an
+  // already-known instance underneath a user who is walking that round.
+  const attentionWalks = {
+    input: [],
+    completedUnread: []
   }
   const readAcknowledgements = new Map()
   const consumerAcknowledgements = new Map()
@@ -1088,15 +1105,14 @@ function createCompanionTaskKernel(dependencies = {}) {
   function applyInteractionProjection(task) {
     const basePhase = isKnownTaskPhase(task.activityPhase) ? task.activityPhase : task.phase
     const interactions = taskOpenInteractions(task)
-    // Canonical priority is activity -> unread -> interaction -> artifact. Keep
-    // current interactions private while a real Turn is running, and never let
-    // a prompt hide an unread terminal result.
+    // A real Turn still owns the live phase. Once it is terminal, however, any
+    // exact current interaction is the action the user can take now, so it owns
+    // presentation even while the completed Turn remains unread underneath.
+    // Completed-unread is a settled backlog state, never a transition frame
+    // between running and a current input/approval request.
     if (basePhase === 'running') {
       if (task.phase === basePhase && task.planImplementation !== true) return task
       return finalizeCanonicalTask({ ...task, phase: basePhase, planImplementation: false })
-    }
-    if (isTerminalTaskPhase(basePhase) && task.unreadKnown === true && task.unread === true) {
-      return finalizeCanonicalTask({ ...task, phase: 'completed', planImplementation: false })
     }
     if (!interactions.length) {
       if (task.phase === basePhase && task.planImplementation !== true) return task
@@ -1106,15 +1122,12 @@ function createCompanionTaskKernel(dependencies = {}) {
         planImplementation: false
       })
     }
-    if (task.unreadKnown !== true || task.unread === true) {
-      return finalizeCanonicalTask({ ...task, phase: basePhase, planImplementation: false })
-    }
     const approval = interactions.some((interaction) => interaction.kind === 'approval')
+    const planImplementation = !approval
+      && interactions.every((interaction) => interaction.kind === 'plan-choice' || interaction.kind === 'plan-implementation')
     const phase = approval ? 'waiting-approval' : 'waiting-input'
     const selectedSequence = Math.max(...interactions.map((interaction) => interaction.sequence))
     const selectedTurnEpoch = Math.max(...interactions.map((interaction) => interaction.turnEpoch), 0)
-    const planImplementation = !approval
-      && interactions.every((interaction) => interaction.kind === 'plan-choice' || interaction.kind === 'plan-implementation')
     return finalizeCanonicalTask({
       ...task,
       phase,
@@ -1170,12 +1183,41 @@ function createCompanionTaskKernel(dependencies = {}) {
     return anchor > 0 ? `${kind}:${task.key}:${anchor}` : ''
   }
 
-  function pruneAttentionProgress(packageValue = currentPackage) {
+  function attentionEntries(kind, packageValue = currentPackage) {
+    const taskByKey = new Map(packageValue.tasks.map((task) => [task.key, task]))
+    const entries = []
+    const instances = new Set()
+    for (const key of packageValue.views.attentionKeys[kind] || []) {
+      const task = taskByKey.get(key)
+      const instance = attentionInstance(kind, task)
+      if (!instance || instances.has(instance)) continue
+      instances.add(instance)
+      entries.push({ key, instance })
+    }
+    return entries
+  }
+
+  function resetAttentionWalk(kind, packageValue = currentPackage) {
+    attentionWalks[kind] = attentionEntries(kind, packageValue)
+    return attentionWalks[kind]
+  }
+
+  function reconcileAttentionProgress(packageValue = currentPackage) {
     for (const kind of ['input', 'completedUnread']) {
-      const valid = new Set((packageValue.views.attentionKeys[kind] || []).map((key) => (
-        attentionInstance(kind, packageValue.tasks.find((task) => task.key === key))
-      )).filter(Boolean))
+      const current = attentionEntries(kind, packageValue)
+      const currentByInstance = new Map(current.map((entry) => [entry.instance, entry]))
+      const valid = new Set(currentByInstance.keys())
       for (const instance of attentionSeen[kind]) if (!valid.has(instance)) attentionSeen[kind].delete(instance)
+
+      // A genuinely new lifecycle instance is urgent and joins at the head in
+      // current latest-first order. Survivors keep the relative order in which
+      // this round started, even if lastQuestionAt re-sorts the public view.
+      const retained = attentionWalks[kind]
+        .filter((entry) => currentByInstance.has(entry.instance))
+        .map((entry) => currentByInstance.get(entry.instance))
+      const retainedInstances = new Set(retained.map((entry) => entry.instance))
+      const added = current.filter((entry) => !retainedInstances.has(entry.instance))
+      attentionWalks[kind] = [...added, ...retained]
     }
   }
 
@@ -1400,6 +1442,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     // previously resolved native request became current again.
     attentionSeen.input.clear()
     attentionSeen.completedUnread.clear()
+    attentionWalks.input = []
+    attentionWalks.completedUnread = []
     readAcknowledgements.clear()
     lastDraftRevisionByProducer.clear()
     lastDraft = null
@@ -1439,7 +1483,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function syncConsumers(packageValue) {
-    pruneAttentionProgress(packageValue)
+    reconcileAttentionProgress(packageValue)
     const retainedKeys = new Set(packageValue.tasks.map((task) => task.key))
     for (const key of readAcknowledgements.keys()) if (!retainedKeys.has(key)) readAcknowledgements.delete(key)
     const actionTargets = packageValue.tasks.map(actionTargetForTask)
@@ -1504,11 +1548,15 @@ function createCompanionTaskKernel(dependencies = {}) {
     const attentionCount = members.filter((node) => isAttentionTaskPhase(node.phase)).length
     const errorCount = members.filter((node) => node.error === true).length
     const planReady = root.planReady === true
+    const currentInteractionWaiting = members.some((node) => taskOpenInteractions(node).length > 0)
+    const planInteractionWaiting = members.some((node) => (
+      isAttentionTaskPhase(node.phase) && node.planImplementation === true
+    ))
     // Plan availability is an artifact lane, not an interaction. A completed
-    // unread Plan stays completed-unread; once read, an artifact-only task is
-    // stopped/ready-to-continue. Only a live member carrying a current input
-    // or approval interaction may project a waiting phase.
-    const phase = unread.known && unread.value && isAttentionTaskPhase(activityPhase)
+    // unread terminal stays completed-unread only when no exact interaction is
+    // currently open. Once read, an artifact-only task is stopped/ready-to-
+    // continue. Any current input/approval owns presentation before unread.
+    const phase = unread.known && unread.value && isAttentionTaskPhase(activityPhase) && !currentInteractionWaiting
       ? 'completed'
       : planReady && (isTerminalTaskPhase(activityPhase) || activityPhase === 'unknown')
         && !(unread.known && unread.value)
@@ -1522,6 +1570,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     return {
       ...root,
       phase,
+      planImplementation: isAttentionTaskPhase(phase) && planInteractionWaiting,
       unreadKnown: unread.known,
       unread: unread.value,
       revisionAt: Math.max(...members.map((node) => finiteInteger(node.revisionAt)), finiteInteger(root.revisionAt)),
@@ -2442,9 +2491,11 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   function dispatchAttention(kind, input) {
     const run = attentionQueues[kind].catch(() => undefined).then(async () => {
-      pruneAttentionProgress()
-      const keys = currentPackage.views.attentionKeys[kind]
-      const candidates = keys.map(taskForKey).filter(Boolean)
+      reconcileAttentionProgress()
+      let candidates = attentionWalks[kind].map((entry) => {
+        const task = taskForKey(entry.key)
+        return task && attentionInstance(kind, task) === entry.instance ? task : null
+      }).filter(Boolean)
       if (!candidates.length) {
         record({
           level: 'info',
@@ -2471,6 +2522,10 @@ function createCompanionTaskKernel(dependencies = {}) {
       })
       if (!task) {
         attentionSeen[kind].clear()
+        // A completed round adopts the latest published order exactly once;
+        // the new round is then stable until it too is exhausted.
+        resetAttentionWalk(kind)
+        candidates = attentionWalks[kind].map((entry) => taskForKey(entry.key)).filter(Boolean)
         task = candidates[0]
       }
       const result = await navigation.open({

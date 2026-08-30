@@ -555,7 +555,7 @@ describe('CompanionTaskKernel', () => {
       phaseRevision: 101,
       statusEnteredAt: 101,
       unreadKnown: true,
-      unread: false,
+      unread: true,
       planReady: true,
       planLifecycleRevision: 100,
       capabilities: { open: true, archive: false, pause: true, resume: false, executePlan: true }
@@ -568,7 +568,177 @@ describe('CompanionTaskKernel', () => {
         requestSetRevision: 101
       })]
     }))
-    expect(planChoice.tasks[0]).toMatchObject({ phase: 'waiting-input', planImplementation: true, cycleTier: 'plan' })
+    expect(planChoice.tasks[0]).toMatchObject({
+      phase: 'waiting-input',
+      unread: true,
+      planImplementation: true,
+      cycleTier: 'plan',
+      dynamicGroup: 'input'
+    })
+    expect(planChoice.views).toMatchObject({ groups: { input: ['codex-a'], unread: [] }, counts: { input: 1, unread: 0 } })
+
+    const resolved = kernel.publishEvidence(draft([task({
+      phase: 'completed',
+      phaseRevision: 102,
+      statusEnteredAt: 101,
+      unreadKnown: true,
+      unread: true,
+      planReady: true,
+      planLifecycleRevision: 100,
+      capabilities: { open: true, archive: true, pause: true, resume: false, executePlan: true }
+    })], 3, {
+      providers: { codex: true, claude: false },
+      interactions: [interaction({
+        interactionRef: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        kind: 'plan-choice',
+        state: 'resolved',
+        sequence: 102,
+        requestSetRevision: 102
+      })]
+    }))
+    expect(resolved.tasks[0]).toMatchObject({ phase: 'completed', unread: true, planImplementation: false, dynamicGroup: 'unread' })
+  })
+
+  it('moves directly between running and every exact current interaction without publishing completed-unread', () => {
+    const cases = [
+      { kind: 'user-input', expectedPhase: 'waiting-input', planImplementation: false },
+      { kind: 'approval', expectedPhase: 'waiting-approval', planImplementation: false },
+      { kind: 'plan-choice', expectedPhase: 'waiting-input', planImplementation: true }
+    ] as const
+
+    for (const [index, scenario] of cases.entries()) {
+      const kernel = createCompanionTaskKernel({
+        initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+      })
+      const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+      const publications: Array<{ phase: string; unread: boolean }> = []
+      const stop = kernel.onPackage((value: Record<string, any>) => {
+        const current = value.tasks[0]
+        if (current) publications.push({ phase: current.phase, unread: current.unread === true })
+      })
+      const sequence = 200 + index * 10
+      const planReady = scenario.kind === 'plan-choice'
+
+      kernel.syncPackage({
+        lease: receipt.lease,
+        draft: draft([task({
+          phase: 'running',
+          phaseRevision: sequence,
+          statusEnteredAt: sequence,
+          turnStartedAt: sequence,
+          unreadKnown: true,
+          unread: true,
+          planReady,
+          planLifecycleRevision: planReady ? sequence - 1 : 0
+        })], 1, { providers: { codex: true, claude: false } })
+      })
+
+      const waiting = kernel.publishEvidence(draft([task({
+        phase: 'completed',
+        phaseRevision: sequence + 1,
+        statusEnteredAt: sequence + 1,
+        terminalAt: sequence + 1,
+        unreadKnown: true,
+        unread: true,
+        planReady,
+        planLifecycleRevision: planReady ? sequence - 1 : 0
+      })], 2, {
+        providers: { codex: true, claude: false },
+        interactions: [interaction({
+          interactionRef: `${String(index + 1).repeat(32)}`,
+          kind: scenario.kind,
+          sequence: sequence + 1,
+          requestSetRevision: sequence + 1
+        })]
+      }))
+      expect(waiting.tasks[0]).toMatchObject({
+        phase: scenario.expectedPhase,
+        unread: true,
+        planImplementation: scenario.planImplementation,
+        dynamicGroup: 'input'
+      })
+
+      const resumed = kernel.publishEvidence(draft([task({
+        phase: 'running',
+        phaseRevision: sequence + 2,
+        statusEnteredAt: sequence + 2,
+        turnStartedAt: sequence + 2,
+        unreadKnown: true,
+        unread: true,
+        planReady,
+        planLifecycleRevision: planReady ? sequence - 1 : 0
+      })], 3, { providers: { codex: true, claude: false } }))
+      expect(resumed.tasks[0]).toMatchObject({ phase: 'running', unread: true, dynamicGroup: 'active' })
+      expect(publications.filter((entry) => entry.phase === 'completed' && entry.unread)).toEqual([])
+      stop()
+    }
+  })
+
+  it('projects a completed-read task with an exact current Plan implementation request as waiting-input', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const publications: Array<{ phase: string; unread: boolean }> = []
+    const stop = kernel.onPackage((value: Record<string, any>) => {
+      const current = value.tasks[0]
+      if (current) publications.push({ phase: current.phase, unread: current.unread === true })
+    })
+
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        phase: 'running',
+        phaseRevision: 300,
+        statusEnteredAt: 300,
+        turnStartedAt: 300,
+        unreadKnown: true,
+        unread: false,
+        planReady: true,
+        planLifecycleRevision: 299
+      })], 1, { providers: { codex: true, claude: false } })
+    })
+
+    const waiting = kernel.publishEvidence(draft([task({
+      phase: 'completed',
+      phaseRevision: 301,
+      statusEnteredAt: 301,
+      terminalAt: 301,
+      unreadKnown: true,
+      unread: false,
+      planReady: true,
+      planLifecycleRevision: 299
+    })], 2, {
+      providers: { codex: true, claude: false },
+      interactions: [interaction({
+        interactionRef: 'dddddddddddddddddddddddddddddddd',
+        kind: 'plan-choice',
+        sequence: 301,
+        requestSetRevision: 301
+      })]
+    }))
+
+    expect(waiting.tasks[0]).toMatchObject({
+      phase: 'waiting-input',
+      unread: false,
+      planImplementation: true,
+      dynamicGroup: 'input'
+    })
+    expect(waiting.views).toMatchObject({ groups: { input: ['codex-a'], completed: [] }, counts: { input: 1 } })
+
+    const resumed = kernel.publishEvidence(draft([task({
+      phase: 'running',
+      phaseRevision: 302,
+      statusEnteredAt: 302,
+      turnStartedAt: 302,
+      unreadKnown: true,
+      unread: false,
+      planReady: true,
+      planLifecycleRevision: 299
+    })], 3, { providers: { codex: true, claude: false } }))
+    expect(resumed.tasks[0]).toMatchObject({ phase: 'running', unread: false, dynamicGroup: 'active' })
+    expect(publications.some((entry) => entry.phase === 'completed')).toBe(false)
+    stop()
   })
 
   it('tombstones a resolved interaction, ignores its stale replay and lets only a new instance reopen waiting', () => {
@@ -1020,7 +1190,7 @@ describe('CompanionTaskKernel', () => {
     expect(current.views.attentionKeys.completedUnread).not.toContain('claude-plain-unknown')
   })
 
-  it('serves every pin from exactly one ring across all phases', () => {
+  it('keeps each pin in one display group and suppresses pin fallback while unread exists', () => {
     const kernel = createCompanionTaskKernel({
       now: () => 1_000_000_000,
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
@@ -1045,10 +1215,10 @@ describe('CompanionTaskKernel', () => {
     const entry = new Set<string>(current.views.attentionKeys.completedUnread)
     for (const value of current.tasks as Array<Record<string, any>>) {
       if (value.dynamicGroup === 'pinned') {
-        // Nothing but the pin puts it in the list, so the 已完成未读 entry is its
-        // only shortcut — and its only one: a second slot in the ordinary ring
-        // would list the same task twice.
-        expect(entry.has(value.key)).toBe(true)
+        // Pins without their own status group stay out of the ordinary ring.
+        // A real unread backlog also keeps them out of its dedicated entry, so
+        // the same shortcut can never drift from unread work into parked pins.
+        expect(entry.has(value.key)).toBe(false)
         expect(ring.has(value.key)).toBe(false)
       } else {
         // Its own state places it. Pinning must neither add a ring slot nor take
@@ -1057,8 +1227,10 @@ describe('CompanionTaskKernel', () => {
       }
     }
     // The unread backlog is deliberately reachable both ways: the entry is the
-    // fast path to it, the ring still walks it as a tier.
-    expect(current.views.groups.pinned.every((key: string) => entry.has(key) && !ring.has(key))).toBe(true)
+    // fast path to it, the ring still walks it as a tier. Parked pins become the
+    // entry's fallback only after this backlog is empty.
+    expect([...entry]).toEqual(current.views.groups.unread)
+    expect(current.views.groups.pinned.every((key: string) => !entry.has(key) && !ring.has(key))).toBe(true)
     expect([...current.views.groups.pinned].sort()).toEqual(['codex-completed-read', 'codex-unknown-read', 'codex-unknown-unread'])
   })
 
@@ -1086,18 +1258,17 @@ describe('CompanionTaskKernel', () => {
     const byKey = new Map<string, any>(current.tasks.map((value: any) => [value.key, value]))
     const openable = (keys: string[]) => keys.filter((key) => byKey.get(key)?.capabilities.open)
     // `derivedDynamicGroup` is the sole owner of "which set is this task in".
-    // Each badge is its group minus what cannot be opened, and each entry is the
-    // same list in the same order — a consumer that restated the predicate
-    // instead would drift the moment the set widened, which is exactly how an
-    // `unknown` pin ended up counted nowhere and reachable by nothing.
+    // Each badge is its group minus what cannot be opened. Each direct entry
+    // selects those same openable groups without restating phase predicates — a
+    // consumer that copied the predicate would drift the moment the set widened,
+    // which is exactly how an `unknown` pin ended up unreachable.
     expect(current.views.counts.input).toBe(openable(current.views.groups.input).length)
     expect(current.views.counts.active).toBe(openable(current.views.groups.active).length)
     expect(current.views.counts.unread).toBe(openable(current.views.groups.unread).length)
     expect(current.views.attentionKeys.input).toEqual(openable(current.views.groups.input))
-    expect(current.views.attentionKeys.completedUnread).toEqual([
-      ...openable(current.views.groups.unread),
-      ...openable(current.views.groups.pinned)
-    ])
+    const unreadEntry = openable(current.views.groups.unread)
+    const pinnedFallback = openable(current.views.groups.pinned)
+    expect(current.views.attentionKeys.completedUnread).toEqual(unreadEntry.length > 0 ? unreadEntry : pinnedFallback)
     // A guard on the fixture itself: an all-open or all-empty matrix would let
     // every assertion above hold vacuously.
     expect(current.views.groups.pinned.length).toBeGreaterThan(0)
@@ -1337,13 +1508,14 @@ describe('CompanionTaskKernel', () => {
     expect(current.tasks).toHaveLength(1)
     expect(current.tasks[0]).toMatchObject({
       key: 'root',
-      phase: 'completed',
+      phase: 'waiting-input',
       unread: true,
-      topology: { mode: 'aggregate', memberCount: 2, liveCount: 0, attentionCount: 0 }
+      topology: { mode: 'aggregate', memberCount: 2, liveCount: 1, attentionCount: 1 }
     })
-    expect(current.views.counts).toMatchObject({ input: 0, active: 0, unread: 1 })
-    // The child stays out of the ring; the aggregate root the unread badge
-    // counts is exactly what the ring reaches.
+    expect(current.views.counts).toMatchObject({ input: 1, active: 0, unread: 0 })
+    // The child stays private; its exact current interaction is represented by
+    // the aggregate root in the same input badge and ring, without an
+    // intermediate completed-unread publication.
     expect(current.views.cycleKeys).toEqual(['root'])
     expect(JSON.stringify(current)).not.toContain('test-exact-identity')
   })
@@ -1514,6 +1686,215 @@ describe('CompanionTaskKernel', () => {
     await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
 
     expect(opened).toEqual(['codex-a', 'codex-b'])
+  })
+
+  it('keeps completed-read pins in explicit local order while unrelated metadata changes', async () => {
+    const opened: string[] = []
+    const kernel = createCompanionTaskKernel({
+      adapters: { codex: { open: async (target: Record<string, unknown>) => { opened.push(String(target.key)); return nativeOpened() } } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const pin = (key: string, lastQuestionAt: number, displayOrder: number) => task({
+      key,
+      actionAlias: `ct_${key.replace(/[^a-z0-9]/g, '')}_1234567890`,
+      phase: 'completed',
+      unread: false,
+      localPin: true,
+      kind: 'local-pin',
+      dynamicEligible: false,
+      lastQuestionAt,
+      displayOrder,
+      statusEnteredAt: 100
+    })
+    const publish = (values: Array<Record<string, unknown>>, generation: number) => kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft(values, generation, { providers: { codex: true, claude: false } })
+    })
+
+    const first = publish([
+      pin('codex-a', 300, 0),
+      pin('codex-b', 200, 1),
+      pin('codex-c', 100, 2)
+    ], 1)
+    expect(first.views.groups.pinned).toEqual(['codex-a', 'codex-b', 'codex-c'])
+    expect(first.views.attentionKeys.completedUnread).toEqual(['codex-a', 'codex-b', 'codex-c'])
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+
+    const metadataRefresh = publish([
+      pin('codex-a', 300, 0),
+      pin('codex-b', 200, 1),
+      pin('codex-c', 400, 2)
+    ], 2)
+    expect(metadataRefresh.views.groups.pinned).toEqual(['codex-a', 'codex-b', 'codex-c'])
+    expect(metadataRefresh.views.attentionKeys.completedUnread).toEqual(['codex-a', 'codex-b', 'codex-c'])
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+
+    expect(opened).toEqual(['codex-a', 'codex-b', 'codex-c', 'codex-a'])
+
+    const explicitReorder = publish([
+      pin('codex-a', 300, 1),
+      pin('codex-b', 200, 2),
+      pin('codex-c', 400, 0)
+    ], 3)
+    expect(explicitReorder.views.groups.pinned).toEqual(['codex-c', 'codex-a', 'codex-b'])
+    expect(explicitReorder.views.attentionKeys.completedUnread).toEqual(['codex-c', 'codex-a', 'codex-b'])
+  })
+
+  it('holds input attention order across metadata-only re-sorts too', async () => {
+    const opened: string[] = []
+    const kernel = createCompanionTaskKernel({
+      adapters: { codex: { open: async (target: Record<string, unknown>) => { opened.push(String(target.key)); return nativeOpened() } } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const waiting = (key: string, lastQuestionAt: number) => task({
+      key,
+      actionAlias: `ct_${key.replace(/[^a-z0-9]/g, '')}_1234567890`,
+      phase: 'waiting-input',
+      lastQuestionAt,
+      statusEnteredAt: 100
+    })
+    const publish = (values: Array<Record<string, unknown>>, generation: number) => kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft(values, generation, { providers: { codex: true, claude: false } })
+    })
+
+    expect(publish([waiting('codex-a', 300), waiting('codex-b', 200), waiting('codex-c', 100)], 1)
+      .views.attentionKeys.input).toEqual(['codex-a', 'codex-b', 'codex-c'])
+    await kernel.dispatch({ action: 'open-attention', kind: 'input' })
+    expect(publish([waiting('codex-a', 300), waiting('codex-b', 200), waiting('codex-c', 400)], 2)
+      .views.attentionKeys.input).toEqual(['codex-c', 'codex-a', 'codex-b'])
+    await kernel.dispatch({ action: 'open-attention', kind: 'input' })
+    await kernel.dispatch({ action: 'open-attention', kind: 'input' })
+    await kernel.dispatch({ action: 'open-attention', kind: 'input' })
+
+    expect(opened).toEqual(['codex-a', 'codex-b', 'codex-c', 'codex-c'])
+  })
+
+  it('lets a new attention instance preempt queued opens and then resumes surviving order', async () => {
+    const opened: string[] = []
+    let releaseFirst!: () => void
+    let signalFirstStarted!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const firstStarted = new Promise<void>((resolve) => { signalFirstStarted = resolve })
+    const kernel = createCompanionTaskKernel({
+      adapters: {
+        codex: {
+          open: async (target: Record<string, unknown>) => {
+            opened.push(String(target.key))
+            if (opened.length === 1) {
+              signalFirstStarted()
+              await firstGate
+            }
+            return nativeOpened()
+          }
+        }
+      },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const waiting = (key: string, lastQuestionAt: number, statusEnteredAt: number) => task({
+      key,
+      actionAlias: `ct_${key.replace(/[^a-z0-9]/g, '')}_1234567890`,
+      phase: 'waiting-input',
+      lastQuestionAt,
+      statusEnteredAt
+    })
+    const publish = (values: Array<Record<string, unknown>>, generation: number) => kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft(values, generation, { providers: { codex: true, claude: false } })
+    })
+
+    publish([
+      waiting('codex-a', 300, 300),
+      waiting('codex-b', 200, 200),
+      waiting('codex-c', 100, 100)
+    ], 1)
+    const first = kernel.dispatch({ action: 'open-attention', kind: 'input' })
+    await firstStarted
+    const second = kernel.dispatch({ action: 'open-attention', kind: 'input' })
+    const third = kernel.dispatch({ action: 'open-attention', kind: 'input' })
+
+    expect(publish([
+      waiting('codex-new', 600, 600),
+      waiting('codex-c', 500, 100),
+      waiting('codex-a', 300, 300),
+      waiting('codex-b', 200, 200)
+    ], 2).views.attentionKeys.input).toEqual(['codex-new', 'codex-c', 'codex-a', 'codex-b'])
+    releaseFirst()
+    await Promise.all([first, second, third])
+    await kernel.dispatch({ action: 'open-attention', kind: 'input' })
+
+    expect(opened).toEqual(['codex-a', 'codex-new', 'codex-b', 'codex-c'])
+  })
+
+  it('drops pin progress while unread exists and restarts pin fallback after it clears', async () => {
+    const opened: string[] = []
+    const kernel = createCompanionTaskKernel({
+      adapters: { codex: { open: async (target: Record<string, unknown>) => { opened.push(String(target.key)); return nativeOpened() } } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const pin = (key: string, lastQuestionAt: number) => task({
+      key,
+      actionAlias: `ct_${key.replace(/[^a-z0-9]/g, '')}_1234567890`,
+      phase: 'completed',
+      unread: false,
+      localPin: true,
+      kind: 'local-pin',
+      dynamicEligible: false,
+      lastQuestionAt
+    })
+    const unread = (key: string, lastQuestionAt: number) => task({
+      key,
+      actionAlias: `ct_${key.replace(/[^a-z0-9]/g, '')}_1234567890`,
+      phase: 'completed',
+      unread: true,
+      unreadKnown: true,
+      lastQuestionAt,
+      statusEnteredAt: lastQuestionAt
+    })
+    const publish = (tasks: Array<Record<string, unknown>>, generation: number, snapshot = false) => kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft(tasks, generation, {
+        providers: { codex: true, claude: false },
+        ...(snapshot ? { producer: 'host-preflight' } : {})
+      })
+    })
+    const pins = [pin('codex-pin-a', 200), pin('codex-pin-b', 100)]
+
+    expect(publish(pins, 1).views.attentionKeys.completedUnread).toEqual(['codex-pin-a', 'codex-pin-b'])
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+
+    const mixed = publish([
+      unread('codex-unread-a', 400),
+      unread('codex-unread-b', 300),
+      ...pins
+    ], 2)
+    expect(mixed.views.attentionKeys.completedUnread).toEqual(['codex-unread-a', 'codex-unread-b'])
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+
+    expect(opened).toEqual(['codex-pin-a', 'codex-unread-a', 'codex-unread-b', 'codex-unread-a'])
+
+    expect(publish(pins, 3, true).views.attentionKeys.completedUnread).toEqual(['codex-pin-a', 'codex-pin-b'])
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' })
+
+    // The pin visit from generation 1 was pruned while unread owned the entry,
+    // so the fallback starts a fresh stable walk instead of resuming mid-list.
+    expect(opened).toEqual([
+      'codex-pin-a',
+      'codex-unread-a',
+      'codex-unread-b',
+      'codex-unread-a',
+      'codex-pin-a',
+      'codex-pin-b'
+    ])
   })
 
   it('keeps a pinned live task in every shortcut its own state earns it', async () => {
