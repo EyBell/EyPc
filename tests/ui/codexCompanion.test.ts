@@ -1218,6 +1218,63 @@ describe('Codex Companion V4 UI contract', () => {
     expect(cursorKey()).toBe(keys[1])
   })
 
+  it('keeps pinned rows in local order and lets one collapsed badge expand before renumbering visible tasks', async () => {
+    const source = floatSnapshot('ongoing')
+    const pinKeys = [TASK_DONE, TASK_FAILED]
+    const taskSnapshot = source.taskSnapshot!
+    const taskInventory = source.taskInventory!
+    for (const [index, key] of pinKeys.entries()) {
+      const task = taskSnapshot.tasks.find((candidate) => candidate.key === key)!
+      Object.assign(task, {
+        kind: 'local-pin',
+        phase: 'completed',
+        dynamicGroup: 'pinned',
+        localPin: true,
+        unreadKnown: true,
+        unread: false,
+        displayOrder: index,
+        lastQuestionAt: index === 0 ? NOW - 9_000 : NOW + 9_000
+      })
+    }
+    const groups = taskSnapshot.views.groups
+    groups.pinned = [...pinKeys]
+    groups.input = groups.input.filter((key) => !pinKeys.includes(key))
+    groups.active = groups.active.filter((key) => !pinKeys.includes(key))
+    groups.stopped = groups.stopped.filter((key) => !pinKeys.includes(key))
+    groups.unread = groups.unread.filter((key) => !pinKeys.includes(key))
+    groups.completed = groups.completed.filter((key) => !pinKeys.includes(key))
+    const cards = new Map(taskInventory.conversations.all.map((task) => [task.key, task]))
+    const pinnedSection = taskInventory.conversations.projectSections.find((section) => section.id === 'pinned')!
+    pinnedSection.entries = [
+      ...pinKeys.map((key) => ({ kind: 'task' as const, task: cards.get(key)!, pinSource: 'local' as const })),
+      ...pinnedSection.entries
+    ]
+
+    const { wrapper, action } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+    const visibleKeys = () => wrapper.findAll('.float-task-row').map((row) => row.attributes('data-focus-key'))
+    expect(visibleKeys().slice(0, 2)).toEqual([`task:${TASK_DONE}`, `task:${TASK_FAILED}`])
+
+    const pinnedHeader = wrapper.get('.float-status-section.pinned')
+    await pinnedHeader.get('.status-section-toggle').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find(`[data-focus-key="task:${TASK_DONE}"]`).exists()).toBe(false)
+    expect(wrapper.find(`[data-focus-key="task:${TASK_FAILED}"]`).exists()).toBe(false)
+    expect(wrapper.findAll('.status-quick-index').map((badge) => badge.text())).toEqual(['1'])
+    expect(wrapper.findAll('.task-quick-index')[0]?.text()).toBe('2')
+
+    const root = wrapper.get('.codex-float-root')
+    await root.trigger('keydown', { key: '1', code: 'Digit1', altKey: true })
+    await wrapper.vm.$nextTick()
+    expect(action).not.toHaveBeenCalledWith('codex.task.open', expect.anything())
+    expect(wrapper.find('.status-quick-index').exists()).toBe(false)
+    expect(wrapper.get(`[data-focus-key="task:${TASK_DONE}"] .task-quick-index`).text()).toBe('1')
+    expect(wrapper.get(`[data-focus-key="task:${TASK_FAILED}"] .task-quick-index`).text()).toBe('2')
+
+    await root.trigger('keydown', { key: '2', code: 'Digit2', altKey: true })
+    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ key: TASK_FAILED, source: 'local-shortcut' }))
+  })
+
   it('enters quick filter mode, numbers visible tasks and opens by Ctrl+number from the search box', async () => {
     const activations: Array<(payload: { requestedAt?: number; command?: 'new-thread' | 'quick' }) => void> = []
     const { wrapper, action, setExpansion } = mountFloat(true, floatSnapshot('ongoing'), {
