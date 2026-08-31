@@ -121,6 +121,7 @@ function createCompanionNavigation(dependencies = {}) {
   let walkRing = []
   let walkExpiresAt = 0
   let walkAdoptedCount = 0
+  let walkMergedCount = 0
   // Where the next press counts from while an earlier one is still open.
   //
   // `cursorKey` only moves on a confirmed open, which is correct for it — but
@@ -226,8 +227,24 @@ function createCompanionNavigation(dependencies = {}) {
     if (walkHeld(now)) {
       const alive = walkRing.filter((key) => snapshot.targets.has(key))
       if (alive.length) {
-        walkRing = alive
-        return alive
+        // The hold freezes the order the user is walking, not membership. A
+        // task published into the ring mid-walk joins at the tail: the badge
+        // already counts it, and every press renews the hold, so a steady walk
+        // would otherwise never reach it at all.
+        const fresh = snapshot.cycleKeys.filter((key) => !alive.includes(key))
+        if (fresh.length) {
+          walkMergedCount += 1
+          record({
+            level: 'debug',
+            scope: 'navigation',
+            event: 'ring-merged',
+            outcome: 'merged',
+            cache: 'process-package',
+            details: { heldCount: alive.length, mergedCount: fresh.length }
+          })
+        }
+        walkRing = fresh.length ? [...alive, ...fresh] : alive
+        return walkRing
       }
     }
     const previous = walkRing.length ? walkRing : snapshot.cycleKeys
@@ -605,6 +622,7 @@ function createCompanionNavigation(dependencies = {}) {
       walkHeld: walkHeld(),
       walkRingCount: walkRing.length,
       walkAdoptedCount,
+      walkMergedCount,
       coalescedAdvanceCount,
       outstandingCycles,
       pendingCycle: Boolean(queuedCycle),

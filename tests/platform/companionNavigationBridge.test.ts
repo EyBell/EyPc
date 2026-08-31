@@ -490,6 +490,39 @@ describe('process-lifetime companion navigation', () => {
     expect(opened).toEqual(['codex-a', 'claude:local_a', 'codex-b'])
   })
 
+  it('merges a task published mid-walk into the tail of the held ring', async () => {
+    vi.useFakeTimers()
+    const opened: string[] = []
+    const { navigation, receipt } = readyNavigation({
+      openTarget: async (target: { key: string; provider: string }) => {
+        opened.push(target.key)
+        return target.provider === 'claude' ? { outcome: 'dispatched' } : nativeOpened()
+      }
+    })
+
+    await navigation.cycle(1)
+    expect(navigation.diagnostics()).toMatchObject({ walkHeld: true, walkRingCount: 3 })
+
+    // A new task joins the published ring while the walk hold is live. The
+    // badge already counts it, and steady presses renew the hold, so the walk
+    // must adopt it now — at the tail, keeping the order already being walked.
+    const grown = [...targets, { key: 'codex-c', provider: 'codex', actionAlias: 'ct_codex_c_1234567890', revisionAt: 104, phase: 'running', canArchive: false }]
+    expect(navigation.sync({
+      lease: receipt.lease,
+      enabled: true,
+      providers: { codex: true, claude: true },
+      ready: true,
+      targets: grown,
+      cycleKeys: ['codex-c', ...targets.map((target) => target.key)]
+    })).toBe(true)
+
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'claude:local_a' })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-c' })
+    expect(navigation.diagnostics()).toMatchObject({ walkHeld: true, walkRingCount: 4, walkMergedCount: 1 })
+    expect(opened).toEqual(['codex-a', 'claude:local_a', 'codex-b', 'codex-c'])
+  })
+
   it('drops the cursor only when its task leaves the target set entirely', async () => {
     const { navigation, receipt } = readyNavigation({
       openTarget: async (target: { provider: string }) => target.provider === 'claude'
