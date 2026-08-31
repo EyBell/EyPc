@@ -38,9 +38,10 @@ const DEFAULT_COALESCE_MS = 0
  * different thing — the ring is re-sorted by latest question time on every
  * publish, and opening a task changes that very field, so a live ring shifted
  * under the user between two presses of the same walk. Holding the ring makes a
- * walk traverse the order the user saw when they started it. The cost is that a
- * task arriving mid-walk joins on the next walk rather than this one, which is
- * why the window is short enough that any deliberate pause ends it.
+ * walk traverse the order the user saw when they started it. The hold freezes
+ * order, not membership: a task published into the ring mid-walk joins at the
+ * tail of the held ring, because every press renews the hold and a steady walk
+ * would otherwise never adopt it while the badge already counts it.
  */
 const CYCLE_WALK_HOLD_MS = 4_000
 
