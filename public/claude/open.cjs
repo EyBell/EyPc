@@ -146,8 +146,16 @@ function createOpener(dependencies) {
     if (pid > 0 && processApi && typeof processApi.kill === 'function') {
       try {
         processApi.kill(pid, 0)
+        // The synchronous `ps` start-token check exists to catch pid reuse,
+        // which cannot happen inside one presence TTL. Running it on every
+        // press taxed exactly the hot path — rapid previous/next switches —
+        // so within the TTL a live pid alone is proof enough.
+        if (now() - presence.verifiedAt <= APP_PRESENCE_TTL_MS) return 'running'
         const currentToken = processStartToken(pid)
-        if (!presence.startToken || !currentToken || currentToken === presence.startToken) return 'running'
+        if (!presence.startToken || !currentToken || currentToken === presence.startToken) {
+          presence.verifiedAt = now()
+          return 'running'
+        }
       } catch { /* cache invalidated below */ }
       presence = null
       return ''
