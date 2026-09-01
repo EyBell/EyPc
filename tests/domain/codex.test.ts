@@ -41,6 +41,35 @@ function thread(
 }
 
 describe('Codex domain', () => {
+  it('carries a CodexHost extra process Harness id onto its task card', () => {
+    const external = {
+      ...thread('idle', 500, [], KEY, {
+        lastTurnStatus: 'completed',
+        lastTurnStartedAt: 300,
+        lastTurnCompletedAt: 400
+      }),
+      codexhostHarnessId: 'claude-code'
+    }
+    const native = thread('idle', 500, [], keyAt(2), {
+      lastTurnStatus: 'completed',
+      lastTurnStartedAt: 300,
+      lastTurnCompletedAt: 400
+    })
+
+    const projected = projectConversations({
+      threads: [external, native],
+      receipts: [],
+      lastTaskScanAt: 0,
+      now: 600
+    })
+    const cards = new Map(projected.snapshot.completed.map((card) => [card.key, card]))
+
+    // The Harness identity is the only thing telling a hosted Thread apart
+    // from a native Codex one; a native row must not gain the field.
+    expect(cards.get(KEY)?.codexhostHarnessId).toBe('claude-code')
+    expect(cards.get(keyAt(2))).not.toHaveProperty('codexhostHarnessId')
+  })
+
   it('normalizes configurable display, refresh and privacy-safe storage fields', () => {
     const settings = normalizeCodexSettings({
       floatEnabled: true,

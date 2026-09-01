@@ -29,6 +29,8 @@ Canonical target: `vibe/specs/PRODUCT_REQUIREMENTS.md` Codex Companion
     "vibe/specs/requirements/codex-raw-191.md",
     "vibe/specs/requirements/codex-raw-192.md",
     "vibe/specs/requirements/codex-raw-193.md",
+    "vibe/specs/requirements/codex-raw-194.md",
+    "vibe/specs/requirements/codex-raw-195.md",
     "vibe/specs/requirements/modules/companion-codex.md",
     "vibe/rules/README.md",
     "src/help/guides/codex.md",
@@ -76,7 +78,9 @@ Canonical target: `vibe/specs/PRODUCT_REQUIREMENTS.md` Codex Companion
 - Add: CodexHost 额外进程（`harnessId != codex`）在委派 CLI `thread list` 报告 `status=completed` 时，EyPc 必须离开「进行中」，并按 Host 未读进入「已完成未读」或「已完成」。
 - Add: 该 completed 是精确终态（`snapshot-corroborated`），可关闭同 id 残留的 Desktop live active（无 waiting flag）。
 - Add: Host `attention=input` 是外置智能体提问/提示的待输入；`attention=approval` 仍是待确认。Desktop follow 不得剥掉这些 Host waiting flag。RAW-191.
-- Add: 额外进程的已读/未读必须与 Codex Desktop 同一条会话的实时未读比对；相位等其余状态仍走既有 Desktop follow，不另做全量对照。官方未读原子仍无发言权。RAW-193.
+- Add: 额外进程 Host `hasUnreadTurn` 在有值时就是真实未读，不再跟 Desktop 未读-true 比对。偏差时以 Codex APP「已读」为准：Desktop unread *event* false，或快捷键/跳转打开 Codex APP。Desktop snapshot false 不是已读。RAW-193.
+- Add: 插件重启后必须能从 Host `thread list` 读到已有额外进程，包括已完成/空闲，不得只在新建或变为进行中时才出现。Host 进行中在 Desktop follow 到达前也是进行中。会合点失败不得把空列表缓存成成功快照。RAW-194.
+- Add: 额外进程从进行中变为 Host `completed` + unread 时，EyPc 必须离开进行中并进入已完成未读。Desktop follow 残留的 live inProgress 不得压住 Host 已确认终态。RAW-195.
 - Clarify: 官方 App Server `notLoaded` 仍不是完成；禁止再把 CLI completed 映射成 `notLoaded`。
 - Pending decisions: 无。Host 仍报 `running` 时不得用 Desktop 空闲外观或刷新间隔发明完成。
 
@@ -89,7 +93,9 @@ Acceptance:
 5. Host list 必须保留 `creating | running | completed | failed | interrupted`，不得再折叠成 running/completed。
 6. 映射：`creating`/`running` → 进行中；`attention=input` → 待输入；`attention=approval` → 待确认（提问优先）；`interrupted`/`failed` → 待继续；`completed` + Host unread → 已完成未读 / 已完成。
 7. Desktop follow 不得剥掉 Host waiting flag，也不得把已确认终态打回进行中。
-8. 额外进程未读与 Desktop follow 的 `hasUnreadTurn` 比对：Desktop 实时未读（event/snapshot）覆盖 Host 字段；没有 Desktop 观察时才用 Host `hasUnreadTurn`；官方未读原子仍不得宣称已读。相位不另做全量对照。RAW-193.
+8. Host 未读有值时直接用；Desktop 未读-true 不得覆盖 Host 已读。Codex APP 已读（unread event false 或跳转 dispatch）可清未读；snapshot false 不是已读。RAW-193.
+9. 重启后 Host list 里已有的额外进程必须进库存；进行中以 Host connector 为 live，不等 Desktop follow。RAW-194.
+10. Host `completed` + unread 必须盖过 Desktop 残留 live inProgress，进入已完成未读。RAW-195.
 
 ## Prior Task Overlap
 
@@ -98,7 +104,7 @@ Acceptance:
 
 ## VerificationImpactTrace
 
-- Changed surface: discovery 行/Turn 形状、sanitize 终态标签、Host 未读与 Desktop follow 的已读/未读比对、Desktop shadow 对外部 id 的 status/unread 覆盖。
+- Changed surface: discovery 行/Turn 形状、sanitize 终态标签、Host 未读权威、Codex APP 已读（follow false / 跳转 dispatch）清未读。
 - Direct consumers: `scanVerifiedCodexInventory` → `companionCodexEvidenceV7` → Kernel groups。
 - Focused tests: `tests/platform/codexhostDiscovery.test.ts`、`tests/platform/providerEvidenceAdapterV7.test.ts`。
 - Not selected: 仓库级 `pnpm test` / MQTT / 真实 uTools。
@@ -106,7 +112,7 @@ Acceptance:
 
 ## Implementation Sync
 
-Desired behavior: Host CLI 负责额外进程 membership 与终态分类。未读与 Codex Desktop follow 比对：Desktop 实时已读/未读覆盖 Host 字段，没有 Desktop 观察时才用 Host `hasUnreadTurn`。相位仍走既有 Desktop follow 与 Host waiting/终态防护，不另做全量对照。官方未读原子不得宣称已读。
+Desired behavior: Host CLI 负责额外进程 membership、终态分类，以及有值时的未读。Codex APP 已读（Desktop follow false 或跳转打开）可清未读；Desktop 未读-true 不得覆盖 Host 已读。相位仍走既有 Desktop follow 与 Host waiting/终态防护。官方未读原子不得宣称已读。
 
 ## Closeout
 

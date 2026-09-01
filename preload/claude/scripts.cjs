@@ -127,8 +127,18 @@ if [ -f "$QUEUE" ]; then
   esac
 fi
 
+# A CodexHost-managed harness child runs with CODEXHOST_THREAD_ID in its
+# environment; stamping it links this session to its Host thread so the
+# companion can defer to the Host's status instead of double-tracking.
+HOSTTHREAD=''
+case "\${CODEXHOST_THREAD_ID:-}" in
+  '' ) : ;;
+  *[!A-Za-z0-9-]* ) : ;;
+  * ) HOSTTHREAD=$(printf '%s' "\$CODEXHOST_THREAD_ID" | cut -c1-64) ;;
+esac
+
 NOW=$(date +%s)
-printf '{"s":"%s","e":"%s","r":"%s","a":"%s","g":"%s","t":%s000,"p":%s}\\n' "$SESSION" "$EVENT" "$REASON" "$AGENT" "$AGENT_KIND" "$NOW" "$PPID" >> "$QUEUE" 2>/dev/null || true
+printf '{"s":"%s","e":"%s","r":"%s","a":"%s","g":"%s","t":%s000,"p":%s,"h":"%s"}\\n' "$SESSION" "$EVENT" "$REASON" "$AGENT" "$AGENT_KIND" "$NOW" "$PPID" "$HOSTTHREAD" >> "$QUEUE" 2>/dev/null || true
 exit 0
 `
 }

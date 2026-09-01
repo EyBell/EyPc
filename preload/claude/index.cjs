@@ -488,6 +488,7 @@ function createClaudeBridge(dependencies) {
           }
           return
         }
+        const hookSessions = queue.state()
         const mutations = source.mutations.map((mutation) => {
           if (mutation?.mutation !== 'upsert') return mutation
           const prefix = 'claude:'
@@ -497,9 +498,19 @@ function createClaudeBridge(dependencies) {
           if (!LOCAL_SESSION_PATTERN.test(sessionId)) return mutation
           // A membership callback owns only exact indexed metadata. State,
           // interaction and topology are read and published by their separate
-          // Host lane after this delta has already been delivered.
+          // Host lane after this delta has already been delivered. The Host
+          // link is identity metadata and rides along so a metadata upsert can
+          // be deferred to the CodexHost lane like the state rows are.
           const current = codeSessions.readIndexedSession(sessionId)
-          return current.status === 'found' ? { ...mutation, session: current.session } : mutation
+          if (current.status !== 'found') return mutation
+          const hook = hookSessions instanceof Map
+            ? hookSessions.get(sessionId) || hookSessions.get(current.session?.cliSessionId)
+            : null
+          const hostThreadId = typeof hook?.hostThreadId === 'string' ? hook.hostThreadId : ''
+          return {
+            ...mutation,
+            session: hostThreadId ? { ...current.session, codexhostThreadId: hostThreadId } : current.session
+          }
         })
         if (lastCodeInventory) {
           const nextBySession = new Map(lastCodeInventory.sessions.map((session) => [session.sessionId, session]))
@@ -705,6 +716,19 @@ function createClaudeBridge(dependencies) {
     unread.close()
     appState.close()
   }
+
+  // The generated hook body evolves with the companion while the registered
+  // command line (a path into EyPc's own data directory) stays fixed, so an
+  // already-installed hook is refreshed in place on start. This never touches
+  // `~/.claude` and never installs a hook that was not explicitly registered.
+  try {
+    if (fs.existsSync(hookCommandPath)) {
+      const desired = hookScript({ queuePath: queue.queuePath })
+      if (fs.readFileSync(hookCommandPath, 'utf8') !== desired) {
+        writeExecutable(hookCommandPath, desired)
+      }
+    }
+  } catch { /* fail open: the installed script keeps working as-is */ }
 
   return {
     revision: CLAUDE_BRIDGE_REVISION,

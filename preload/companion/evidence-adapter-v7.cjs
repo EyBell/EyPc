@@ -52,15 +52,19 @@ function codexBranchObservationV7(value = {}) {
     && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(branch.lastTurnEvidence)
   const terminalNewer = exactTerminal && terminalSequence > 0 && activeSequence > 0
     && terminalSequence > activeSequence
+  const hostExternalLive = branch.hostExternal === true && !exactTerminal
   const liveAuthority = branch.statusAuthority === 'desktop-live'
     || branch.statusAuthority === 'app-server-live'
     || branch.statusAuthority === 'persisted-decision'
+    || hostExternalLive
   const live = branch.status === 'active' && liveAuthority
     && !terminalNewer
+    && !(branch.hostExternal === true && exactTerminal && flags.length === 0)
     && (branch.activityEvidence === 'activity-event'
       || activeSequence > 0
       || flags.length > 0
-      || branch.planImplementationOnly === true)
+      || branch.planImplementationOnly === true
+      || hostExternalLive)
   const goalFresh = branch.goalFreshness !== 'verifying'
     && branch.goalStatus !== 'unknown'
     && branch.goalStatus !== 'none'

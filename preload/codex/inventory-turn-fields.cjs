@@ -6,12 +6,19 @@
  * regresses evidence that a live source already established.
  *
  * The guards fire in a fixed order: a still-live directly-observed turn wins
- * outright; a projection whose `startedAt` is older than what is already
- * known is a regression and is discarded; a same-instant flip away from
- * `completed` is treated the same way (an inventory re-read racing a Turn
- * boundary, not a new outcome). Only past those does the merge keep the new
- * projection, carrying forward the previous evidence tag and `completedAt`
- * when the outcome did not actually change.
+ * unless the new projection is an exact terminal for a CodexHost extra
+ * process (`snapshot-corroborated`, `targeted-after-exit`, `turn-completed`
+ * on a row carrying a Harness id). That exception is scoped to those ids on
+ * purpose — RAW-190 makes the Host CLI the exact terminal authority for
+ * extra processes only, and letting an inventory-derived terminal outrank a
+ * live turn on a native Codex thread would resurrect the rebuild-overwrites-
+ * live-evidence bug. A projection whose `startedAt`
+ * is older than what is already known is a regression and is discarded; a
+ * same-instant flip away from `completed` is treated the same way (an
+ * inventory re-read racing a Turn boundary, not a new outcome). Only past
+ * those does the merge keep the new projection, carrying forward the
+ * previous evidence tag and `completedAt` when the outcome did not actually
+ * change.
  *
  * Pure computation over its two arguments — no host contact, no module
  * state. `timestampMs` is injected on the rollout-evidence precedent: it is
@@ -51,11 +58,16 @@ function createCodexInventoryTurnFields(dependencies = {}) {
       && (previousActivity.statusAuthority === 'desktop-live' || previousActivity.statusAuthority === 'app-server-live')
       && previousActivity.lastTurnStatus === 'inProgress'
       && (previousActivity.lastTurnEvidence === 'turn-started' || previousActivity.activityEvidence === 'activity-event')
+    // Only a Host-managed extra process carries a Harness id; a native Codex
+    // row never reaches the exception, whatever evidence tag it arrives with.
+    const nextExactTerminal = typeof projection.codexhostHarnessId === 'string'
+      && ['completed', 'interrupted', 'failed'].includes(next.lastTurnStatus)
+      && ['snapshot-corroborated', 'targeted-after-exit', 'turn-completed'].includes(next.lastTurnEvidence)
     const regressedRevision = previousStartedAt > next.lastTurnStartedAt
     const regressedCompletedOutcome = previousStartedAt === next.lastTurnStartedAt
       && previousActivity.lastTurnStatus === 'completed'
       && next.lastTurnStatus !== 'completed'
-    if (previousDirectLive || regressedRevision || regressedCompletedOutcome) return previous
+    if ((previousDirectLive && !nextExactTerminal) || regressedRevision || regressedCompletedOutcome) return previous
 
     const sameOutcome = previousStartedAt === next.lastTurnStartedAt
       && previousActivity.lastTurnStatus === next.lastTurnStatus

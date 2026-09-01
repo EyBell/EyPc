@@ -265,6 +265,13 @@ export interface CodexHostThread {
   projectKind?: 'project' | 'chats'
   nativePinned?: boolean
   nativePinnedOrder?: number
+  /**
+   * Harness that actually runs this Thread when it is a CodexHost extra
+   * process (`claude-code`, `grok`, `pi`, …). Absent for a native Codex
+   * thread. Kept an open string: a Harness the Host adds later must still be
+   * identifiable here without a code change.
+   */
+  codexhostHarnessId?: string
 }
 
 export interface CodexHostProject {
@@ -783,6 +790,8 @@ export interface CodexTaskCard {
   actionAlias?: string
   displayName?: string
   name: string
+  /** Set only for a CodexHost extra process; carries its Harness id verbatim. */
+  codexhostHarnessId?: string
   /** V2 primary state. Hiding is intentionally orthogonal to this bucket. */
   bucket: CodexTaskBucket
   activityState: CodexTaskActivityState
@@ -1917,6 +1926,7 @@ export function projectConversations(input: {
       displayName: displayLabel,
       name: displayLabel,
       originalName,
+      ...(thread.codexhostHarnessId ? { codexhostHarnessId: thread.codexhostHarnessId } : {}),
       ...(alias ? { alias } : {}),
       projectKey: PROJECT_KEY.test(thread.projectKey || '') ? thread.projectKey! : 'chats',
       projectName: '',

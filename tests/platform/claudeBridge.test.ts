@@ -112,6 +112,11 @@ describe('ordered hook state', () => {
     expect(entry).toEqual({ sessionId: CLI_A, event: 'pre-tool', at: 5, pid: 42, reason: 'ask-user-question' })
     expect(JSON.stringify(entry)).not.toContain('secret')
     expect(events.normalizeQueueEntry({ s: CLI_A, e: 'PreToolUse', r: 'raw-tool-name' })?.reason).toBe('')
+    // The CodexHost link is the one additional identity field: a well-formed
+    // thread id normalizes to lowercase, anything else is dropped entirely.
+    expect(events.normalizeQueueEntry({ s: CLI_A, e: 'PreToolUse', t: 5, h: '209851CA-e41e-4a09-8145-6576959a4bcf' })?.hostThreadId)
+      .toBe('209851ca-e41e-4a09-8145-6576959a4bcf')
+    expect(events.normalizeQueueEntry({ s: CLI_A, e: 'PreToolUse', t: 5, h: 'not a thread id!' })).not.toHaveProperty('hostThreadId')
   })
 
   it('keeps only bounded subagent identity and lifecycle fields', () => {

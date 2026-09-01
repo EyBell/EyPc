@@ -12,7 +12,10 @@
 | `src/help/guides/codex.md` | extra-process completion copy |
 | `vibe/specs/PRODUCT_REQUIREMENTS.md` | RAW-190 current semantics |
 | `preload/codex/codexhost-discovery.cjs` | Host 全状态映射：creating/running/input/approval/interrupted/failed/completed |
-| `preload/codex/codexhost-discovery.cjs` | RAW-193：`compareHostDesktopUnread` 把 Host 未读与 Desktop follow 比对；相位不另做全量对照 |
+| `preload/codex/codexhost-discovery.cjs` | RAW-193：Host 未读有值即用；仅 unread event false / 跳转可清未读 |
+| `preload/codex/codexhost-discovery.cjs` | RAW-194：会合点失败不缓存空列表；thread list 翻页 |
+| `preload/companion/evidence-adapter-v7.cjs` | RAW-194：Host extra-process connector-active 是 live |
+| `preload/codex/inventory-turn-fields.cjs` | RAW-195：snapshot-corroborated 终态盖过 Desktop live inProgress |
 | CodexHost `app-server-host.ts` | list 保留 interrupted/failed/creating；提问 `attention: "input"` |
 | `vibe/specs/requirements/codex-raw-190.md` | registry leaf |
 | `vibe/knowledge/error-memory/codexhost-external-threads-invisible-to-official-surfaces.md` | completion overlay occurrence |

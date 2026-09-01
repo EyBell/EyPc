@@ -77,7 +77,42 @@ const BUDGET = Object.freeze({
   // Host waiting-flag honor lives in codexhost-discovery, entry shrinks.
   // 2026-09-01 (l): RAW-193 extra-process unread compares with Desktop follow;
   // compareHostDesktopUnread lives in discovery, entry shrinks.
-  lines: 14094,
+  // 2026-09-01 (m): RAW-193 Codex APP 已读 — extra-process jump wiring
+  // (`honorHostExternalOpenRead`); mark-read and confirmsRead live in
+  // discovery plus the existing Desktop opened-read ack.
+  // 2026-09-01 (n): RAW-194 Host extra-process rows stay live after reload;
+  // hostExternal is stamped onto V7 branches in the evidence builder.
+  // 2026-09-01 (o): withdrawn — the entry-level external unread guards
+  // duplicated and short-circuited the discovery-owned Host↔Desktop unread
+  // projection (`compareHostDesktopUnread` inside the observation chain,
+  // RAW-193); Host unread authority lives in codexhost-discovery, not here.
+  // 2026-09-01 (p): +7 lines — the two official-atom writers
+  // (refreshPersistedUnread, applyFreshCompletionUnread) skip external ids:
+  // the atom never lists Host conversations, so deriving their connector
+  // unread from it stomped the merge-recorded Host value to read on every
+  // desktop refresh — the reason Host unread never reached completed-unread.
+  // 2026-09-01 (q): +22 lines — Host-authority suppression of native claude
+  // rows: a session linked to a CodexHost thread (hook-stamped
+  // CODEXHOST_THREAD_ID) is skipped and retired by the state push and kept
+  // retired by metadata upserts while the Host roster carries the thread;
+  // roster gone → the native row returns. Link capture lives in
+  // claude/scripts.cjs + events.cjs + code-sessions.cjs.
+  // 2026-09-01 (r): +2 lines — the public thread projection kept the Harness
+  // identity of a Host extra process instead of dropping it, so a consumer can
+  // tell a claude-code/grok Thread from a native Codex one without parsing the
+  // compressed name prefix. Validation and shape live in
+  // preload/codex/codexhost-discovery.cjs (`codexhostExternalIdentity`); the
+  // entry keeps one guarded spread.
+  // 2026-09-01 (s): -2 lines — the extra-process unread branch (including the
+  // new "Host reported nothing, adopt a Desktop unread-true" fallback) moved
+  // into codexhost-discovery (`codexhostExternalUnreadFields`); the entry keeps
+  // one spread and nets back to the pre-(r) ceiling.
+  // 2026-09-01 (t): +3 lines — a CodexHost lane that failed to load used to
+  // contribute zero rows with no record anywhere, which reads identically to
+  // "this machine has no extra processes"; the scan now says `unloaded` once
+  // per pass. Refresh failures and cache-served passes are reported by
+  // codexhost-discovery itself (`failed` / `cached`), not here.
+  lines: 14138,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

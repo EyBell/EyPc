@@ -66,6 +66,7 @@ function normalizeQueueEntry(value) {
   const rawAgentId = typeof value.a === 'string' ? value.a.trim() : ''
   const agentId = AGENT_ID_PATTERN.test(rawAgentId) ? rawAgentId : ''
   const agentType = AGENT_TYPES.has(value.g) ? value.g : ''
+  const rawHostThreadId = typeof value.h === 'string' ? value.h.trim() : ''
   // Deliberately narrow: identity, event class, timing and the owning process.
   // App project metadata comes from the Code inventory, never from hook input.
   return {
@@ -73,6 +74,7 @@ function normalizeQueueEntry(value) {
     event,
     at: at || 0,
     pid: safeInteger(value.p),
+    ...(/^[A-Za-z0-9-]{8,64}$/.test(rawHostThreadId) ? { hostThreadId: rawHostThreadId.toLowerCase() } : {}),
     ...(agentId ? { agentId, agentType } : {}),
     reason: value.r === 'ask-user-question'
       ? 'ask-user-question'
@@ -111,6 +113,7 @@ function emptyHookState() {
     lastSessionEndAt: 0,
     turnCloseKind: '',
     pid: 0,
+    hostThreadId: '',
     subagents: {}
   }
 }
@@ -153,7 +156,10 @@ function reduceQueueEntry(previous, entry) {
     turnOpen: known.turnOpen === true,
     lastEvent: entry.event,
     lastEventAt: at,
-    pid: entry.pid || known.pid || 0
+    pid: entry.pid || known.pid || 0,
+    // Sticky: the Host link arrives with any event from the harness child and
+    // survives quiet stretches; a manual session never carries one.
+    hostThreadId: entry.hostThreadId || known.hostThreadId || ''
   }
 
   if (entry.agentId) {
