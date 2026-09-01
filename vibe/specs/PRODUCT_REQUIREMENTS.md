@@ -16,9 +16,9 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 333 leaves / 6 modules / 306 active / 22 superseded / 5 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 96 scoped |
-| 原始来源 | 44 documents / 230 ordered / 125 RAW-parent / 105 source-only |
+| 需求登记 | 335 leaves / 6 modules / 306 active / 22 superseded / 7 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 98 scoped |
+| 原始来源 | 45 documents / 230 ordered / 125 RAW-parent / 105 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
 | 当前构建产物 | `host-442d52309eb9208928ed / renderer-50371e922a83209b458c` · `artifact-ready` |
@@ -34,18 +34,18 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 333,
+    "leaves": 335,
     "modules": 6,
-    "proposed": 5,
+    "proposed": 7,
     "active": 306,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 96
+    "scoped_relations": 98
   },
   "source_anchor_catalog": {
-    "documents": 44,
+    "documents": 45,
     "ordered_anchors": 230,
     "raw_parent_ordered": 125,
     "registered_requirements": 105,
@@ -70,9 +70,9 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "ce3fbebb09543267b5a1c7119fd3129143a463a209a350a1b766276601a37606",
-    "raw_sources": "ad62552e43d43d453b556b8a77f7f487621633e23ba8dca5c006d0d5f2298607",
-    "source_anchor_catalog": "736ffd289d35f03b3e27307d4268fa6d86fbcfc0e6f1821b2caa09395541bc6d",
+    "requirement_registry": "cca04d6aa5d60de91f128d22f25db44073c6b802543b0252f26c9942b3dd4fcd",
+    "raw_sources": "e561946fffa97cc3ba93c0862427935699eb7d3ed965ff671b8ffd3e78cd75b9",
+    "source_anchor_catalog": "dd9c35aaf9035990b8090fa81964032bc4b33818b9ac25bb54a6bc11106424d6",
     "product_body": "27cd78aa2825dc2cf0aa5cd71dff656d7351609b80faec31b2bbcd8bbb93a3e8",
     "architecture": "fb0e74cc48da62a7df63cd67855d5a9dae28a08c2b221bfbf5f06cab4e5cfda5",
     "runtime_contract": "d963927d0109859566554bbd151130adbc854c7a4611f3419c802b033f6cad32"

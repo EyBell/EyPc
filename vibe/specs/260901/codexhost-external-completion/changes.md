@@ -21,4 +21,6 @@
 | `vibe/knowledge/error-memory/codexhost-external-threads-invisible-to-official-surfaces.md` | completion overlay occurrence |
 | `vibe/specs/260901/codexhost-external-completion/*` | raw + spec |
 
+同批提交 `96cf75a` 还携带了 Claude 侧的 Host 线程接管（`claude/scripts.cjs`、`events.cjs`、`code-sessions.cjs`、`claude/index.cjs`、`preload/index.js` 的 `hostSuppressedKeys` 段）。那是 RAW-190 在 Claude 侧的推论，**不属于本任务**，登记在 [claude-host-thread-authority](../claude-host-thread-authority/spec.md#L1) RAW-198（`proposed`）。它与 RAW-194/195 挤进同一个提交，是因为入口预算棘轮对 `preload/index.js` 做恒等断言，拆分需要伪造一个中间行数。
+
 Not done: real uTools reload. RAW-185 pin-group changes remain a separate review and commit batch even when closed out in the same working tree.
