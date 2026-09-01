@@ -140,10 +140,19 @@ export function projectCodexDynamicStatus(
     .filter((task) => !task.isHidden)
   const visibleUnread = conversations.completedUnread
     .filter((task) => !task.isHidden)
-  // Window-exempt like attention: a pin on a finished, already-read task is a
-  // request to keep it findable, which the activity window would otherwise undo.
-  const visiblePinned = conversations.completed
-    .filter((task) => !task.isHidden && task.pinSource === 'local')
+  // A local pin moves the ROW into the pin group in every phase (user
+  // decision, 2026-09-01); the pin is window-exempt like attention, since it
+  // is a "keep this where I can find it" request. Badges keep counting by
+  // real state below, so a pinned waiting-input task still counts as 待输入.
+  const visiblePinned = [
+    ...visibleInput,
+    ...conversations.ongoing,
+    ...(conversations.stopped || []),
+    ...visibleUnread,
+    ...conversations.completed
+  ].filter((task, index, list) => !task.isHidden
+    && task.pinSource === 'local'
+    && list.findIndex((candidate) => candidate.key === task.key) === index)
   const pinnedKeys = new Set(visiblePinned.map((task) => task.key))
   const recent = [
     ...conversations.ongoing,
@@ -155,10 +164,10 @@ export function projectCodexDynamicStatus(
     pinned: orderCodexTasksForDisplay(visiblePinned),
     // Attention is an all-visible inventory concern. It must not disappear just
     // because the underlying Turn is older than the ordinary activity window.
-    input: orderCodexAttentionTasks(visibleInput),
+    input: orderCodexAttentionTasks(visibleInput.filter((task) => !pinnedKeys.has(task.key))),
     active: orderCodexTasksForDisplay(recentOngoing.filter(isDynamicActiveTask)),
     stopped: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'stopped')),
-    unread: orderCodexAttentionTasks(visibleUnread),
+    unread: orderCodexAttentionTasks(visibleUnread.filter((task) => !pinnedKeys.has(task.key))),
     completed: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'completed'))
   }
   const tasks = [groups.pinned, groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
@@ -170,9 +179,12 @@ export function projectCodexDynamicStatus(
     tasks,
     groups,
     compactCounts: {
-      input: groups.input.length,
-      active: groups.active.length,
-      unread: groups.unread.length
+      // State-earned counts include pinned rows: moving a row into the pin
+      // group must not shrink what the attention badges promise.
+      input: visibleInput.length,
+      active: groups.active.length
+        + visiblePinned.filter((task) => isDynamicActiveTask(task) && taskActivityAt(task) >= windowStart).length,
+      unread: visibleUnread.length
     },
     nextTransitionAt
   }
