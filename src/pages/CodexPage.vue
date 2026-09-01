@@ -27,7 +27,12 @@ import {
   resolveCodexExpandedCardTheme
 } from '../domain/codexAppearance'
 import { buildCodexCompactPresentation, codexBadgeText } from '../domain/codexPresentation'
-import { buildCodexEnvironmentPresentation, codexConnectionStatusLabel } from '../domain/codexEnvironmentPresentation'
+import {
+  buildCodexEnvironmentPresentation,
+  codexConnectionStatusLabel,
+  shouldInlineCodexEnvironmentDetail,
+  visibleCodexEnvironmentRows
+} from '../domain/codexEnvironmentPresentation'
 import { claudeRegistrationRows, claudeSourceStatusText, cursorRegistrationRows, cursorSourceStatusText, resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
@@ -220,6 +225,8 @@ const environmentPresentation = computed(() => buildCodexEnvironmentPresentation
   props.snapshot.environment,
   props.snapshot.activityDecisionDiagnostics
 ))
+const visibleEnvironmentRows = computed(() => visibleCodexEnvironmentRows(environmentPresentation.value))
+const showEnvironmentDetail = computed(() => shouldInlineCodexEnvironmentDetail(environmentPresentation.value.diagnostic.tone))
 
 const runtimeDiagnosticHighlights = computed(() => (props.snapshot.runtimeDiagnostics?.recent || [])
   .filter((entry) => entry.level === 'error' || (entry.durationMs || 0) >= 250)
@@ -453,8 +460,8 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
   >
   <header class="codex-config-hero" aria-label="额度任务悬浮球配置总览">
     <div class="codex-hero-copy">
-      <span class="codex-eyebrow"><Bot :size="15" /> CODEX · CLAUDE COMPANION</span>
       <h1>额度任务悬浮球</h1>
+      <span class="codex-eyebrow"><Bot :size="12" /> CODEX · CLAUDE COMPANION</span>
     </div>
       <div class="codex-hero-actions">
         <button
@@ -468,8 +475,8 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           data-operation-description="显示或隐藏 Codex 浮窗主入口；隐藏后仅保留主界面入口。"
           @click="update({ floatEnabled: !snapshot.settings.floatEnabled })"
         >
-          <EyeOff v-if="snapshot.settings.floatEnabled" :size="15" aria-hidden="true" />
-          <Eye v-else :size="15" aria-hidden="true" />
+          <EyeOff v-if="snapshot.settings.floatEnabled" :size="13" aria-hidden="true" />
+          <Eye v-else :size="13" aria-hidden="true" />
           {{ snapshot.settings.floatEnabled ? '隐藏桌面悬浮' : '显示桌面悬浮' }}
         </button>
         <span
@@ -516,16 +523,34 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         :aria-atomic="environmentPresentation.diagnostic.role === 'alert' ? 'true' : undefined"
         :aria-busy="environmentPresentation.busy ? 'true' : undefined"
       >
-        <LoaderCircle v-if="environmentPresentation.diagnostic.tone === 'checking'" :size="19" class="spinning" aria-hidden="true" />
-        <CircleCheckBig v-else-if="environmentPresentation.diagnostic.tone === 'ready'" :size="19" aria-hidden="true" />
-        <AlertTriangle v-else :size="19" aria-hidden="true" />
+        <LoaderCircle v-if="environmentPresentation.diagnostic.tone === 'checking'" :size="13" class="spinning" aria-hidden="true" />
+        <CircleCheckBig v-else-if="environmentPresentation.diagnostic.tone === 'ready'" :size="13" aria-hidden="true" />
+        <AlertTriangle v-else :size="13" aria-hidden="true" />
         <div class="codex-diagnostic-heading">
           <strong>{{ environmentPresentation.diagnostic.title }}</strong>
-          <p>{{ environmentPresentation.diagnostic.detail }}</p>
+          <button
+            type="button"
+            class="codex-tip"
+            aria-label="运行诊断详情"
+            data-operation-tooltip="运行诊断详情"
+            :data-operation-description="environmentPresentation.diagnostic.detail"
+            :data-tip="environmentPresentation.diagnostic.detail"
+          >i</button>
+          <p v-if="showEnvironmentDetail">{{ environmentPresentation.diagnostic.detail }}</p>
         </div>
+        <button
+          type="button"
+          class="secondary"
+          :disabled="snapshot.refreshing || snapshot.environment.checking"
+          data-operation-tooltip="重新检测"
+          data-operation-description="立即重新核查当前 Codex 运行环境与连接可用性。"
+          @click="$emit('dispatch', 'codex.inspect-environment')"
+        >
+          <RefreshCw :size="12" :class="{ spinning: snapshot.refreshing || snapshot.environment.checking }" />重新检测
+        </button>
       </div>
-      <dl class="codex-diagnostic-grid">
-        <div v-for="row in environmentPresentation.rows" :key="row.label">
+      <dl v-if="visibleEnvironmentRows.length" class="codex-diagnostic-grid">
+        <div v-for="row in visibleEnvironmentRows" :key="row.label">
           <dt :class="{ 'has-detail': row.detail }">
             <span>{{ row.label }}</span>
             <button
@@ -542,8 +567,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </div>
       </dl>
       <form class="codex-launch-config" @submit.prevent="saveLaunchPath">
-        <div class="codex-launch-copy">
-          <strong>连接位置</strong>
+        <div class="codex-launch-row">
           <button
             type="button"
             class="codex-tip"
@@ -552,22 +576,20 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             :data-operation-description="environmentPresentation.launchHelpText"
             :data-tip="environmentPresentation.launchHelpText"
           >i</button>
-        </div>
-        <label class="codex-launch-field" for="codex-launch-path">
-          <span>手动指定 Codex CLI 路径（可选）</span>
-          <input
-            id="codex-launch-path"
-            v-model="manualLaunchPath"
-            class="codex-input codex-launch-path-input"
-            type="text"
-            autocomplete="off"
-            spellcheck="false"
-            :aria-invalid="launchPathError ? 'true' : undefined"
-            :aria-describedby="launchPathError ? 'codex-launch-path-error' : undefined"
-            placeholder="选择 codex 或 codex.exe 的完整路径"
-          />
-        </label>
-        <div class="codex-launch-actions">
+          <label class="codex-launch-field" for="codex-launch-path">
+            <span class="codex-sr-only">手动指定 Codex CLI 路径（可选）</span>
+            <input
+              id="codex-launch-path"
+              v-model="manualLaunchPath"
+              class="codex-input codex-launch-path-input"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              :aria-invalid="launchPathError ? 'true' : undefined"
+              :aria-describedby="launchPathError ? 'codex-launch-path-error' : undefined"
+              placeholder="手动指定 Codex CLI 路径（可选）"
+            />
+          </label>
           <button type="button" class="secondary" :disabled="snapshot.refreshing" @click="$emit('dispatch', 'codex.pick-launch-path')">从磁盘选择</button>
           <button type="submit" class="secondary" :disabled="snapshot.refreshing">使用此位置</button>
           <button
@@ -584,22 +606,12 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           </li>
         </ul>
       </form>
-        <button
-          type="button"
-          class="secondary"
-          :disabled="snapshot.refreshing || snapshot.environment.checking"
-          data-operation-tooltip="重新检测"
-          data-operation-description="立即重新核查当前 Codex 运行环境与连接可用性。"
-          @click="$emit('dispatch', 'codex.inspect-environment')"
-        >
-          <RefreshCw :size="14" :class="{ spinning: snapshot.refreshing || snapshot.environment.checking }" />重新检测
-        </button>
     </section>
 
     <div class="codex-workbench">
       <article v-if="activeConfigTab === 'shortcuts'" class="codex-panel codex-settings-section codex-shortcuts-panel">
         <div class="codex-panel-title">
-          <div><LayoutDashboard :size="17" /><strong>快捷方式</strong></div>
+          <div><LayoutDashboard :size="13" /><strong>快捷方式</strong></div>
           <button
             type="button"
             class="codex-tip"
@@ -611,7 +623,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </div>
         <div class="codex-shortcut-stack">
           <div class="codex-hotkey-row">
-            <Keyboard :size="17" aria-hidden="true" />
+            <Keyboard :size="12" aria-hidden="true" />
             <span><strong>悬浮球开关</strong></span>
             <button
               type="button"
@@ -623,7 +635,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             >去设置</button>
           </div>
           <div class="codex-hotkey-row">
-            <Keyboard :size="17" aria-hidden="true" />
+            <Keyboard :size="12" aria-hidden="true" />
             <span><strong>直接展开卡片</strong></span>
             <button
               type="button"
@@ -643,10 +655,9 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             >立即展开</button>
           </div>
           <div class="codex-hotkey-row">
-            <Keyboard :size="17" aria-hidden="true" />
+            <Keyboard :size="12" aria-hidden="true" />
             <span>
               <strong>快速任务查看</strong>
-              <small>展开动态列表并进入筛选模式：直接打字筛选，c-1…0 打开对应编号任务。</small>
             </span>
             <button
               type="button"
@@ -666,7 +677,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             >立即进入</button>
           </div>
           <div class="codex-hotkey-row">
-            <Keyboard :size="17" aria-hidden="true" />
+            <Keyboard :size="12" aria-hidden="true" />
             <span><strong>待输入任务</strong></span>
             <button
               type="button"
@@ -678,7 +689,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             >去设置</button>
           </div>
           <div class="codex-hotkey-row">
-            <Keyboard :size="17" aria-hidden="true" />
+            <Keyboard :size="12" aria-hidden="true" />
             <span><strong>已完成未读任务</strong></span>
             <button
               type="button"
@@ -690,7 +701,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             >去设置</button>
           </div>
           <div class="codex-hotkey-row">
-            <Keyboard :size="17" aria-hidden="true" />
+            <Keyboard :size="12" aria-hidden="true" />
             <span><strong>上一个 Codex 任务</strong></span>
             <button
               type="button"
@@ -702,7 +713,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             >去设置</button>
           </div>
           <div class="codex-hotkey-row">
-            <Keyboard :size="17" aria-hidden="true" />
+            <Keyboard :size="12" aria-hidden="true" />
             <span><strong>下一个 Codex 任务</strong></span>
             <button
               type="button"
@@ -714,10 +725,9 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             >去设置</button>
           </div>
           <div class="codex-hotkey-row">
-            <Keyboard :size="17" aria-hidden="true" />
+            <Keyboard :size="12" aria-hidden="true" />
             <span>
               <strong>归档当前任务</strong>
-              <small>归档卡片里当前高亮或已选中的 Codex / Claude 任务；不可归档时保持原状并提示。</small>
             </span>
             <button
               type="button"
@@ -729,7 +739,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             >去设置</button>
           </div>
           <div class="codex-hotkey-row">
-            <Keyboard :size="17" aria-hidden="true" />
+            <Keyboard :size="12" aria-hidden="true" />
             <span><strong>Action 执行工作台</strong></span>
             <button
               type="button"
@@ -745,7 +755,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             :key="`action-slot-${slot}`"
             class="codex-hotkey-row"
           >
-            <Keyboard :size="17" aria-hidden="true" />
+            <Keyboard :size="12" aria-hidden="true" />
             <span><strong>Action 槽 {{ slot }}</strong></span>
             <button
               type="button"
@@ -761,7 +771,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
 
       <article v-if="activeConfigTab === 'tasks'" class="codex-panel codex-settings-section">
         <div class="codex-panel-title">
-          <div><SlidersHorizontal :size="17" /><strong>内容</strong></div>
+          <div><SlidersHorizontal :size="13" /><strong>内容</strong></div>
           <button
             type="button"
             class="codex-tip"
@@ -784,7 +794,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
 
       <article v-if="activeConfigTab === 'tasks'" class="codex-panel codex-settings-section">
         <div class="codex-panel-title">
-          <div><BellRing :size="17" /><strong>任务</strong></div>
+          <div><BellRing :size="13" /><strong>任务</strong></div>
           <button
             type="button"
             class="codex-tip"
@@ -858,14 +868,14 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           data-operation-tooltip="待确认持久化"
           data-operation-description="打开、刷新或重启都不会清除待确认状态；会话正文不在此页展示。"
         >
-          <Check :size="15" />
+          <Check :size="13" />
           <strong>待确认持久化</strong>
         </div>
       </article>
 
       <article v-if="activeConfigTab === 'water' || activeConfigTab === 'card'" class="codex-panel codex-settings-section codex-appearance-panel">
         <div class="codex-panel-title">
-          <div><Palette :size="17" /><strong>{{ activeConfigTab === 'water' ? '悬浮水球' : '展开卡片' }}</strong></div>
+          <div><Palette :size="13" /><strong>{{ activeConfigTab === 'water' ? '悬浮水球' : '展开卡片' }}</strong></div>
           <button type="button" class="codex-tip" aria-label="外观配置说明" data-operation-tooltip="外观配置说明" data-operation-description="主题预设会同时保存水球与展开卡片；当前页只展示所选目标的预览与控件。" data-tip="主题预设会同时保存水球与展开卡片；当前页只展示所选目标的预览与控件。">i</button>
         </div>
         <div class="codex-theme-toolbar">
@@ -969,7 +979,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
 
       <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section">
         <div class="codex-panel-title">
-          <div><CircleGauge :size="17" /><strong>接入来源</strong></div>
+          <div><CircleGauge :size="13" /><strong>接入来源</strong></div>
           <button
             type="button"
             class="codex-tip"
@@ -1090,7 +1100,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
 
       <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section">
         <div class="codex-panel-title">
-          <div><CircleGauge :size="17" /><strong>额度与 Codex 配置</strong></div>
+          <div><CircleGauge :size="13" /><strong>额度与 Codex 配置</strong></div>
           <button
             type="button"
             class="codex-tip"
@@ -1129,7 +1139,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             data-operation-description="恢复浮窗尺寸与窗口位置到首次配置记录，不影响当前布局策略。"
             @click="$emit('dispatch', 'codex.float.position.reset')"
           >
-            <RotateCcw :size="14" />重置浮窗位置
+            <RotateCcw :size="12" />重置浮窗位置
           </button>
         </div>
         <div class="codex-model-policy-card" role="note">
@@ -1166,15 +1176,12 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             data-operation-description="恢复浮窗为内容驱动尺寸，清空手动修改后的宽高。"
             @click="$emit('dispatch', 'codex.float.size.reset', { displayId: snapshot.floatHost.displayId })"
           >
-            <RotateCcw :size="14" />恢复自适应尺寸
+            <RotateCcw :size="12" />恢复自适应尺寸
           </button>
         </div>
         <div class="codex-size-summary codex-runtime-build" role="status" aria-label="当前宿主产物构建时间">
           <span>
-            <span>
-              <strong>当前宿主产物：<time :datetime="runtimeBuildPresentation.builtAt || undefined">{{ runtimeBuildPresentation.builtAtLocal }}</time></strong>
-              <small>{{ runtimeBuildPresentation.summary }}</small>
-            </span>
+            <strong>当前宿主产物：<time :datetime="runtimeBuildPresentation.builtAt || undefined">{{ runtimeBuildPresentation.builtAtLocal }}</time> · {{ runtimeBuildPresentation.summary }}</strong>
             <button type="button" class="codex-tip" aria-label="构建时间凭据说明" data-operation-tooltip="构建时间凭据说明" :data-operation-description="runtimeBuildPresentation.detail" :data-tip="runtimeBuildPresentation.detail">i</button>
           </span>
         </div>
@@ -1194,7 +1201,14 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           <header>
             <div>
               <strong id="codex-runtime-log-title">全局安装诊断日志</strong>
-              <small>精确记录运行 ID、Provider 状态、水位、缓存、路径、动作结果与耗时；可在这里直接启停和切换等级，设置页保留同一入口。</small>
+              <button
+                type="button"
+                class="codex-tip"
+                aria-label="安装诊断日志说明"
+                data-operation-tooltip="安装诊断日志说明"
+                data-operation-description="精确记录运行 ID、Provider 状态、水位、缓存、路径、动作结果与耗时；可在这里直接启停和切换等级，设置页保留同一入口。"
+                data-tip="精确记录运行 ID、Provider 状态、水位、缓存、路径、动作结果与耗时；可在这里直接启停和切换等级，设置页保留同一入口。"
+              >i</button>
             </div>
             <span :class="`is-${snapshot.runtimeDiagnostics.status}`">{{ snapshot.runtimeDiagnostics.status === 'ok' ? '正常写入' : snapshot.runtimeDiagnostics.status === 'degraded' ? '写入降级' : snapshot.runtimeDiagnostics.status === 'disabled' ? '已关闭' : '不可用' }}</span>
           </header>
@@ -1208,7 +1222,6 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               />
               <span>
                 <strong>{{ snapshot.runtimeDiagnostics.settings.enabled ? '日志已开启' : '日志已关闭' }}</strong>
-                <small>立即生效并持久化</small>
               </span>
             </label>
             <label class="codex-runtime-log-level" for="codex-runtime-diagnostics-level">

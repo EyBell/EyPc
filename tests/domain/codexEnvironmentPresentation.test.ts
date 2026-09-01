@@ -8,7 +8,9 @@ import {
   buildCodexEnvironmentPresentation,
   codexConnectionStatusLabel,
   hasStableCodexEnvironment,
-  isLegacyCodexEnvironmentPending
+  isLegacyCodexEnvironmentPending,
+  shouldInlineCodexEnvironmentDetail,
+  visibleCodexEnvironmentRows
 } from '../../src/domain/codexEnvironmentPresentation'
 
 const DECISIONS: CodexActivityDecisionDiagnostics = {
@@ -111,6 +113,37 @@ describe('Codex environment presentation', () => {
     expect(presentation.launchCandidates).toEqual([{ source: 'volta', label: 'Volta', state: 'available' }])
     expect(presentation.launchHelpText).toContain('Windows 优先选择 codex.exe')
     expect(presentation.launchHelpText).not.toContain('兼容连接器降级')
+    expect(visibleCodexEnvironmentRows(presentation).map((row) => row.label)).toEqual([
+      'Codex CLI',
+      '启动方式',
+      '手动位置',
+      'App Server',
+      '桌面实时桥',
+      '状态裁决'
+    ])
+    expect(shouldInlineCodexEnvironmentDetail(presentation.diagnostic.tone)).toBe(false)
+  })
+
+  it('hides healthy-noise rows on a ready automatic snapshot and inlines detail only for alerts', () => {
+    const ready = buildCodexEnvironmentPresentation(environment({
+      connectionState: 'connected',
+      desktopBridgeState: 'connected',
+      configState: 'loaded',
+      processState: 'running'
+    }), { ...DECISIONS, liveEpochOpened: 0, staleTurnDiscarded: 0, branchTerminalDeferred: 0, snapshotConflictSuppressed: 0, missingMappingRetained: 0 })
+    expect(visibleCodexEnvironmentRows(ready).map((row) => row.label)).toEqual([
+      'Codex CLI',
+      'App Server',
+      '桌面实时桥'
+    ])
+    expect(shouldInlineCodexEnvironmentDetail(ready.diagnostic.tone)).toBe(false)
+
+    const warning = buildCodexEnvironmentPresentation(environment({
+      connectionState: 'connected',
+      desktopBridgeState: 'not-running'
+    }), DECISIONS)
+    expect(shouldInlineCodexEnvironmentDetail(warning.diagnostic.tone)).toBe(true)
+    expect(visibleCodexEnvironmentRows(warning)).toHaveLength(warning.rows.length)
   })
 
   it('adds the fallback warning only when the desktop feed is not authoritative', () => {

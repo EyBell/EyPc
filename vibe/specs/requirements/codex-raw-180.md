@@ -12,6 +12,9 @@ scoped_relations:
   - kind: refines
     target: eypc-req-codex-raw-133
     scope: "live region 只在 warning/error 时宣告，例行刷新不朗读"
+  - kind: superseded-by
+    target: eypc-req-codex-raw-196
+    scope: "ready/checking 主诊断详情常显与十格卡片常显；警告/失败分项、静默刷新与不透明 i 仍有效"
 ---
 
 # RAW-180 · companion-codex
