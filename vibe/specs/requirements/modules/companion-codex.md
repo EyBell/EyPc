@@ -171,12 +171,15 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 - [RAW-167#3](../codex-quick-task-view-raw-167-clause-003.md#L1) — `active`
 - [RAW-173](../codex-raw-173.md#L1) — `active`
 - [RAW-175](../codex-raw-175.md#L1) — `active`
-- [RAW-180](../codex-raw-180.md#L1) — `active`
+- [RAW-180](../codex-raw-180.md#L1) — `active`（运行区常显详情/十格卡片已被 RAW-196 局部取代）
 - [RAW-181](../codex-raw-181.md#L1) — `active`
 - [RAW-190](../codex-raw-190.md#L1) — `active`
 - [RAW-191](../codex-raw-191.md#L1) — `active`
 - [RAW-192](../codex-raw-192.md#L1) — `active`
 - [RAW-193](../codex-raw-193.md#L1) — `active`
+- [RAW-194](../codex-raw-194.md#L1) — `active`
+- [RAW-195](../codex-raw-195.md#L1) — `active`
+- [RAW-196](../codex-raw-196.md#L1) — `active`
 
 ## Related Requirements
 
