@@ -1170,6 +1170,42 @@ try {
   }
 } catch { codexSideRelationHints = null }
 
+// A failed load silently disables rollout-file subagent discovery: the scan
+// then sees exactly the `thread/list` inventory, which is the pre-discovery
+// baseline, never a partially validated candidate set.
+let codexSubagentDiscovery = null
+try {
+  let subagentDiscoveryModule = null
+  try {
+    subagentDiscoveryModule = require('./codex/subagent-discovery.cjs')
+  } catch {}
+  if (!subagentDiscoveryModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        subagentDiscoveryModule = require(path.join(base, 'codex', 'subagent-discovery.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof subagentDiscoveryModule?.createCodexSubagentDiscovery === 'function') {
+    codexSubagentDiscovery = subagentDiscoveryModule.createCodexSubagentDiscovery({
+      fs,
+      path,
+      validThreadId: validCodexThreadId,
+      readThread: (threadId) => requestCodexRpc(
+        'thread/read',
+        { threadId, includeTurns: false },
+        CODEX_THREAD_TURN_STATUS_TIMEOUT_MS
+      ),
+      record: (entry) => runtimeDiagnostics.record(entry)
+    })
+  }
+} catch { codexSubagentDiscovery = null }
+
 
 // A failed load degrades to the bare minimum safe fields (`key` plus an
 // `unavailable` unread authority) rather than a partial passthrough: this is
@@ -3976,8 +4012,14 @@ function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persiste
 // A failed load reads as no unread evidence at all: the same shape an
 // observation set with nothing positive already produces.
 function codexDesktopAggregateUnread(bridge, known, parentThreadId, ownShadow, childEntries, persistedUnreadIds) {
+  // A machine sub-run (subagent/guardian) sits in the desktop unread set
+  // forever because the user never opens it. Letting it into this aggregation
+  // pinned every parent 'desktop-persisted unread' while the opened-read
+  // acknowledgement kept publishing read — the completed-unread tug-of-war.
+  const humanChildEntries = (Array.isArray(childEntries) ? childEntries : [])
+    .filter(([threadId]) => codexSubagentDiscovery?.codexIsMachineRunThread?.(threadId) !== true)
   return codexDesktopActivityAggregation
-    ? codexDesktopActivityAggregation.codexDesktopAggregateUnread(bridge, known, parentThreadId, ownShadow, childEntries, persistedUnreadIds)
+    ? codexDesktopActivityAggregation.codexDesktopAggregateUnread(bridge, known, parentThreadId, ownShadow, humanChildEntries, persistedUnreadIds)
     : { hasUnreadTurn: false, unreadAuthority: 'unavailable' }
 }
 
@@ -6970,6 +7012,7 @@ function resetCodexThreadSessionState(options = {}) {
     })
   }
   codexInventorySideBranchEvidence.clear()
+  codexSubagentDiscovery?.codexResetSubagentDiscovery?.()
   codexCompleteInventoryThreadIds = null
   codexSideTopologyDiagnosticFingerprints.clear()
   codexPrivateBranchTerminals.clear()
@@ -8093,7 +8136,10 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
     if (turnLive) codexForgetPrivateBranchTerminal(parentThreadId, threadId)
     const terminal = codexReadPrivateBranchTerminal(parentThreadId, threadId)
     const openedRead = codexDesktopOpenedReadAcknowledgements.has(threadId)
-    const unreadKnown = openedRead || unreadIds instanceof Set
+    // A machine sub-run (subagent/guardian review) is never user-read, so its
+    // permanent desktop unread entry must not pin the parent completed-unread.
+    const machineRun = codexSubagentDiscovery?.codexIsMachineRunThread?.(threadId) === true
+    const unreadKnown = machineRun || openedRead || unreadIds instanceof Set
     const evidence = {
       parentThreadId,
       status: turnLive || persistedWaiting ? 'active' : connectorStatus,
@@ -8102,7 +8148,7 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
       activityEvidence: turnLive ? 'activity-event' : 'initial-snapshot',
       activeEvidenceSequence,
       unreadKnown,
-      hasUnreadTurn: openedRead ? false : unreadKnown && unreadIds.has(threadId),
+      hasUnreadTurn: machineRun || openedRead ? false : unreadKnown && unreadIds.has(threadId),
       turnId: typeof turn?.id === 'string' ? turn.id : '',
       turnStartedAt: codexTimestampMs(turn?.startedAt),
       lastTurnStatus: turn?.status || terminal?.lastTurnStatus || '',
@@ -8217,7 +8263,12 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       row.threadId,
       row.shadow
     )
-    const unread = desktopUnread.unreadAuthority !== 'unavailable'
+    // The machine-run guard must sit above the desktop observation: the
+    // parsed native unread set answers for any id, and a subagent/guardian
+    // child the user never opens stays in it forever.
+    const unread = codexSubagentDiscovery?.codexIsMachineRunThread?.(row.threadId) === true
+      ? { hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' }
+      : desktopUnread.unreadAuthority !== 'unavailable'
       ? desktopUnread
       : codexDesktopOpenedReadAcknowledgements.has(row.threadId)
         ? { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
@@ -8415,7 +8466,35 @@ function readCodexNativeRegistry() {
   throw codexError('protocol-error', 'Codex native project state is unavailable')
 }
 
+/** The desktop unread set flips whole groups when its read outcome flips, so
+ * transitions (ok<->failed, size changes) are logged; steady reads are not. */
+let codexDesktopUnreadReadLastLine = ''
+function codexNoteDesktopUnreadRead(outcome, size) {
+  const line = `${outcome}:${size}`
+  if (line === codexDesktopUnreadReadLastLine) return
+  codexDesktopUnreadReadLastLine = line
+  runtimeDiagnostics.record({
+    level: outcome === 'ok' ? 'info' : 'error',
+    scope: 'task-evidence',
+    event: 'desktop-unread-read',
+    outcome,
+    provider: 'codex',
+    details: { size }
+  })
+}
+
 function readCodexDesktopUnreadIds() {
+  try {
+    const result = readCodexDesktopUnreadIdsInner()
+    codexNoteDesktopUnreadRead('ok', result.size)
+    return result
+  } catch (error) {
+    codexNoteDesktopUnreadRead('failed', -1)
+    throw error
+  }
+}
+
+function readCodexDesktopUnreadIdsInner() {
   const { primary } = codexNativeStatePaths()
   const stat = fs.statSync(primary)
   if (!stat || typeof stat.size !== 'number' || stat.size <= 0 || stat.size > CODEX_NATIVE_STATE_MAX_BYTES) {
@@ -9461,7 +9540,16 @@ async function scanVerifiedCodexInventory() {
       .some((threadId) => validCodexThreadId(threadId) && !listedThreadIds.has(threadId))
     const archivedRows = missingDirtyThread ? await listAllCodexThreads(true) : []
     const archivedThreadIds = new Set(archivedRows.map((row) => codexRecord(row).id).filter(validCodexThreadId))
-    const rows = await recoverDirtyCodexThreadsMissingFromInventory(listedRows, dirtySnapshot.keys(), archivedThreadIds)
+    const recoveredRows = await recoverDirtyCodexThreadsMissingFromInventory(listedRows, dirtySnapshot.keys(), archivedThreadIds)
+    // `thread/list` omits subagent runs; rollout-file discovery hands back
+    // `thread/read`-verified rows so the ordinary pipeline can member them.
+    const subagentRows = codexSubagentDiscovery
+      ? await codexSubagentDiscovery.codexDiscoverSubagentThreadRows({
+          root: codexInventoryMembershipRoots()[0] || '',
+          rows: recoveredRows
+        })
+      : []
+    const rows = subagentRows.length ? [...recoveredRows, ...subagentRows] : recoveredRows
     const topology = codexInventoryThreadTopology(rows)
     const assignments = new Map()
     for (const thread of rows) {
@@ -10844,6 +10932,25 @@ function companionCodexInventoryMatchV7(key) {
   return null
 }
 
+/** The completed-unread badge oscillated because two evidence builders kept
+ * publishing different root unread values for the same tasks. Logging only
+ * per-key transitions of that value names both sides of the tug-of-war. */
+const codexRootUnreadEvidenceLines = new Map()
+function noteCodexRootUnreadEvidence(key, details) {
+  const line = JSON.stringify(details)
+  if (codexRootUnreadEvidenceLines.get(key) === line) return
+  codexRootUnreadEvidenceLines.set(key, line)
+  runtimeDiagnostics.record({
+    level: 'info',
+    scope: 'task-evidence',
+    event: 'root-unread-evidence',
+    outcome: details.observationUnread ? 'unread' : details.observationKnown ? 'read' : 'unknown',
+    provider: 'codex',
+    taskRef: key,
+    details
+  })
+}
+
 function companionCodexFallbackBranchV7(threadValue) {
   const thread = codexRecord(threadValue)
   return {
@@ -10942,6 +11049,14 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       observation.unreadKnown = true
       observation.unread = thread.hasUnreadTurn === true
     }
+    if (isRoot) noteCodexRootUnreadEvidence(key, {
+      entryUnread: typeof thread.hasUnreadTurn === 'boolean' ? thread.hasUnreadTurn : null,
+      entryAuthority: typeof thread.unreadAuthority === 'string' ? thread.unreadAuthority : '',
+      observationUnread: observation.unread === true,
+      observationKnown: observation.unreadKnown === true,
+      branchSource: privateEvidence ? 'private' : 'fallback',
+      authority: typeof input.authority === 'string' ? input.authority : ''
+    })
     if (observation.unreadKnown === true && input.unreadSequence) {
       observation.unreadSequence = Math.max(
         companionEvidenceSequenceV7(observation.unreadSequence),

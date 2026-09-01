@@ -2144,10 +2144,39 @@ function createCompanionTaskKernel(dependencies = {}) {
     next.packageRevision = ++packageSequence
     currentPackage = next
     lastSemantic = semantic
+    recordGroupCountsOnChange(next)
     syncConsumers(next)
     emitPackage(currentPackage)
     scheduleVisibilityTransition()
     return currentPackage
+  }
+
+  /** Publishes are frequent; the visible group sizes are not. Logging only
+   * their transitions gives an oscillating badge (e.g. completed-unread
+   * jumping 1↔5↔25) a correlated timeline without flooding the file. */
+  let lastGroupCountsLine = ''
+  function recordGroupCountsOnChange(packageValue) {
+    const groups = packageValue.views.groups
+    const line = JSON.stringify({
+      pinned: groups.pinned.length,
+      input: groups.input.length,
+      active: groups.active.length,
+      stopped: groups.stopped.length,
+      unread: groups.unread.length,
+      completed: groups.completed.length,
+      counts: packageValue.views.counts
+    })
+    if (line === lastGroupCountsLine) return
+    lastGroupCountsLine = line
+    record({
+      level: 'info',
+      scope: 'task-kernel',
+      event: 'group-counts-changed',
+      outcome: 'published',
+      packageRevision: packageValue.packageRevision,
+      count: groups.unread.length,
+      details: JSON.parse(line)
+    })
   }
 
   function attach(input = {}) {

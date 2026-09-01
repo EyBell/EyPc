@@ -32,17 +32,39 @@ const BUDGET = Object.freeze({
   // preload/codex/side-relation-hints.cjs; the entry keeps only wiring.
   // 2026-08-29 RAW-189: Plan lifecycle normalization/merge moved into the
   // bounded rollout-evidence owner while adding structural execution clear.
-  lines: 13894,
+  // 2026-08-31: +46 lines / +1 mutable binding for rollout-file subagent
+  // discovery wiring (`thread/list` omits subagent runs). Candidate walk,
+  // thread/read verification and the mtime cache all live in
+  // preload/codex/subagent-discovery.cjs; the entry keeps loader, one scan
+  // injection and the session-state reset hook.
+  // 2026-09-01: +8 lines for the machine-run unread guards at the two unread
+  // evidence sites (a subagent/guardian child is never user-read; its desktop
+  // unread entry must not pin the parent completed-unread). The predicate and
+  // discovered-run memory live in subagent-discovery.cjs.
+  // 2026-09-01 (b): +28 lines / +2 codex functions / +1 mutable binding for
+  // the desktop-unread read-outcome transition diagnostic — the completed-
+  // unread badge oscillated 1↔5↔25 and the silent per-scan catch around
+  // readCodexDesktopUnreadIds left no timeline to correlate against.
+  // 2026-09-01 (c): +27 lines / +1 codex function / +1 mutable binding for the
+  // per-key root-unread evidence transition diagnostic in
+  // companionCodexEvidenceV7 — the oscillation proved to be two evidence
+  // builders publishing different root unread for the same tasks, and only
+  // the payload difference at this point can name both sides.
+  // 2026-09-01 (d): +6 lines — the tug-of-war's unread side was
+  // codexDesktopAggregateUnread bubbling machine children's permanent desktop
+  // unread entries into parents; the wrapper now filters them before
+  // delegating to the aggregation module.
+  lines: 14009,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
   // silently undercounts them by more than half.
-  codexFunctions: 273,
+  codexFunctions: 276,
   // Module-level mutable state: top-level `let`/`var` plus top-level `const`
   // bindings holding a fresh `Map`/`Set`. These are the bindings a closure
   // rewrite has to either move or inject, so they measure coupling rather than
   // volume.
-  mutableBindings: 149
+  mutableBindings: 152
 })
 
 const root = resolve(import.meta.dirname, '..')
