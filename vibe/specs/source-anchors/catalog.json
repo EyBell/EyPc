@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 44,
+    "source_documents": 45,
     "ordered_anchors": 230,
     "raw_parent_ordered": 125,
     "unparented_ordered": 105,
@@ -429,6 +429,16 @@
       "spec_id": "SPEC-260829-COMPANION-UNREAD-PIN-FALLBACK",
       "content_sha256": "634ab635f6c19e8d85463d6cfcb9219909ab8c7766e86f4ec7187818a0024a9b",
       "raw_identity_count": 3,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260901/claude-host-thread-authority",
+      "source_path": "vibe/specs/260901/claude-host-thread-authority/raw-requirement.md",
+      "spec_id": "SPEC-260901-CLAUDE-HOST-THREAD-AUTHORITY",
+      "content_sha256": "cff9bc507cd3866068bc3108a468c4043fd453b300a1b2bd48f8a9851f2b5f51",
+      "raw_identity_count": 5,
       "ordered_anchor_count": 0,
       "raw_parent_ordered_count": 0,
       "unparented_ordered_count": 0

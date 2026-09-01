@@ -155,6 +155,8 @@ Claude Code 是独立 Provider，可与 Codex/Cursor 各自开关并共享同一
 
 - **只显示 App Code 会话**：库存来自 `claude-code-sessions`；CLI-only、Cowork 和其它桌面会话不显示。名称使用 App 标题，空标题显示 `General coding session`，不显示 UUID。
 - **状态互斥且可恢复历史**：兼容版本的 App 精确日志优先，唯一 official Hook 次之，`completedTurns` 恢复无更新 active 证据的历史完成；证据歧义显示 unknown。一张卡只进「待输入 / 进行中 / 待继续 / 已完成未读 / 已完成」中的一个分组。
+- **按 Esc 打断也会立刻显示「待继续」**：Claude Code 的 Esc 打断不产生任何钩子事件，因此 EyPc 改看会话记录本身——读到那一轮被你打断的标记就直接归为「待继续」，不用等你下一次提问才纠正。工具还在跑、或你已经发出了新提问的会话不受影响。
+- **由 CodexHost 拉起的 Claude Code 只出现一行**：这类会话同时属于 Claude 和 CodexHost 额外进程两条来源。列表里只保留 CodexHost 那一行并以它的状态为准，不再额外出现一条原生 Claude Code 会话；该会话离开 CodexHost 后，原生那行会自己回来。手工在终端起的 Claude Code 不受影响。
 - **旧任务不会被子代理尾事件复活**：只有新 Prompt 开启父 Turn；Stop 后的 SubagentStop、工具或 SessionEnd 尾事件不能把已完成任务重新显示为进行中。App 明确完成优先同一轮 Hook 尾事件。
 - **Subagent 拓扑与隐私**：官方 Hook 的 `session_id + agent_id` 形成子任务身份，受控 `agent_type` 只用于有限分类；`SubagentStart/Stop` 建立/关闭成员生命周期并聚合回父根任务。队列拒绝任务正文、summary 与 transcript，V1 不显示或打开子任务。Claude Agent Teams 是多独立会话，当前不建立折叠关系。
 - **完成/焦点热未读 + 持久恢复**：已门禁 Claude App 的精确完成与当前聚焦会话事件会立即更新 EyPc：聚焦任务完成保持已读，非聚焦任务完成进入已完成未读，聚焦到该任务立即清除；新一轮运行可再次未读。App Local Storage 的 exact `epitaxy-unread-v1` LevelDB 快照继续用于冷启动与漏事件恢复，迟到持久值不会推翻更新的热事件。EyPc 不写 Claude App，也不持久化这层热提示。Claude 的全局聚焦事件无法判断“多窗格可见但未聚焦”是否已阅读，因此这个场景不承诺与原生小点完全同步。
