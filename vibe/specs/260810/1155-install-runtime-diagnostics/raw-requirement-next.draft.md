@@ -1,9 +1,9 @@
 # RAW-167 draft — 单一判断点从状态裁决扩展到全部横切逻辑
 
 Date: 2026-08-13
-Status: `draft / pending-user-confirmation / current-canonical-unchanged`
+Status: `confirmed / transcription-faithful 2026-09-01 / current-canonical-unchanged`
 
-> 本文件是 Claude Code 对用户真实原始需求的**理解重述**，不是已接纳的需求。当前 canonical 仍是 [raw-requirement.md](raw-requirement.md#L1)。用户确认转述忠实之前，本文件不参与任何实现或验收。
+> 本文件是 Claude Code 对用户真实原始需求的**理解重述**。用户已于 2026-09-01 确认该转述忠实于原话，由它派生的 [RAW-167/168/170/171/172](../../requirements/modules/engineering-invariants.md#L18) 随之转 `active`（RAW-169 更早单独确认）。确认的是**忠实度**，不是作者身份：登记里的 `authority` 仍是 `agent-transcribed`。当前 canonical 仍是 [raw-requirement.md](raw-requirement.md#L1)——本文件是被确认的转述来源，不是 canonical 本身。
 
 ## 1. 我理解的核心理念
 
@@ -49,8 +49,10 @@ RAW-159 已经把这句话写成「从分布式补丁收敛为单一 Kernel」�
 - 不重新打开已由用户决定的 RAW-164 all-bead 展示与 RAW-163 parent-only 打开。
 - 不改变 `dev-plugin-reload-pending` 门禁；真机验收仍是独立前置。
 
-## 5. 待用户确认项
+## 5. 待用户确认项（已于 2026-09-01 全部结清）
 
-1. 上述「单一判断点」是否确为你的核心理念，而非我从代码痕迹反推的过度概括。
-2. 第 85 条的 Codex 侧拆分是否在本轮范围内——它是最大的一块，也可以单列一个增量。
-3. 第 87 条「零行为 diff」是否是你要的验收口径。
+1. 上述「单一判断点」是否确为你的核心理念，而非我从代码痕迹反推的过度概括。 — **确认**。
+2. 第 85 条的 Codex 侧拆分是否在本轮范围内——它是最大的一块，也可以单列一个增量。 — **确认**，且早已单列为 [RAW-169](../../requirements/invariants-raw-169.md#L1)（`active` / `user-stated`）。
+3. 第 87 条「零行为 diff」是否是你要的验收口径。 — **确认**。
+
+确认形态：本轮 Agent 就 5 条 `proposed` 条款给出「确认转述忠实 / 标 retired / 保持 proposed」三选，用户选择确认转述忠实并转 `active`。三问在同一次确认里一并结清，无逐条例外。

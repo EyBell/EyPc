@@ -11,16 +11,16 @@
 - 当前 V7 全局体系合同：[RAW-179](../../260824/eypc-v7-global-refactor/raw-requirement.md#L1)
 - 唯一全局当前产品真值：[PRODUCT_REQUIREMENTS](../../PRODUCT_REQUIREMENTS.md#L1)
 - 交付记录：[verify.md](../../260810/1155-install-runtime-diagnostics/verify.md#L1)
-- RAW-167～172 六条工程草案仍为 `proposed`；RAW-177#1、RAW-178 系列与 RAW-179 工程条款为用户明确确认的 `active` 不变量。
+- RAW-167～172 六条工程草案已于 2026-09-01 由用户确认转述忠实，全部 `active`；RAW-169 更早单独确认。`authority` 保留 `agent-transcribed`——正文是 Claude Code 对原话的转述，不是逐字原话，确认的是忠实度而非作者身份。RAW-177#1、RAW-178 系列与 RAW-179 工程条款为用户明确确认的 `active` 不变量。
 
 ## Primary Requirements
 
-- [RAW-167](../invariants-raw-167.md#L1) — `proposed` · `agent-transcribed`
-- [RAW-168](../invariants-raw-168.md#L1) — `proposed` · `agent-transcribed`
+- [RAW-167](../invariants-raw-167.md#L1) — `active` · `agent-transcribed`
+- [RAW-168](../invariants-raw-168.md#L1) — `active` · `agent-transcribed`
 - [RAW-169](../invariants-raw-169.md#L1) — `active` · `user-stated`
-- [RAW-170](../invariants-raw-170.md#L1) — `proposed` · `agent-transcribed`
-- [RAW-171](../invariants-raw-171.md#L1) — `proposed` · `agent-transcribed`
-- [RAW-172](../invariants-raw-172.md#L1) — `proposed` · `agent-transcribed`
+- [RAW-170](../invariants-raw-170.md#L1) — `active` · `agent-transcribed`
+- [RAW-171](../invariants-raw-171.md#L1) — `active` · `agent-transcribed`
+- [RAW-172](../invariants-raw-172.md#L1) — `active` · `agent-transcribed`
 - [RAW-177#1](../invariants-raw-177-clause-001.md#L1) — `active` · 来源锚点与需求身份分层
 - [RAW-178](../invariants-raw-178.md#L1) — `active` · 唯一全局当前产品真值
 - [RAW-178#1](../invariants-raw-178-clause-001.md#L1) — `active` · 最新有效语义融合/替代

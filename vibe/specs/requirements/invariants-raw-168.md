@@ -1,14 +1,14 @@
 ---
 id: eypc-req-invariants-raw-168
 qualified_source: SPEC-260810-1155-INSTALL-RUNTIME-DIAGNOSTICS::RAW-168
-status: proposed
+status: active
 domain: engineering-invariants
 authority: agent-transcribed
 ---
 
 # RAW-168 · engineering-invariants
 
-> 正文由来源草案保存：[RAW-167 draft](../260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1)。该草案标注 `pending-user-confirmation`，用户从未确认其转述忠实于原话，因此全部条款状态为 `proposed`。
+> 正文由来源草案保存：[RAW-167 draft](../260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1)。用户于 2026-09-01 确认该草案对原话的转述忠实，五条条款随之转 `active`；`authority` 如实保留 `agent-transcribed`，因为正文仍是转述而非用户逐字原话。
 
 五处重复判断按同一原则收敛：proposal→canonical 接纳判定抽为单一出口；phase 集合抽为命名谓词并被 preload 与 renderer 共用；1 秒漏通知恢复收敛为单一策略常量；SUPPORTED_APP_VERSIONS 与 coalesce 窗口各自单点定义。收敛不得改变任何现行外部行为。
 

@@ -1,14 +1,14 @@
 ---
 id: eypc-req-invariants-raw-170
 qualified_source: SPEC-260810-1155-INSTALL-RUNTIME-DIAGNOSTICS::RAW-170
-status: proposed
+status: active
 domain: engineering-invariants
 authority: agent-transcribed
 ---
 
 # RAW-170 · engineering-invariants
 
-> 正文由来源草案保存：[RAW-167 draft](../260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1)。该草案标注 `pending-user-confirmation`，用户从未确认其转述忠实于原话，因此全部条款状态为 `proposed`。
+> 正文由来源草案保存：[RAW-167 draft](../260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1)。用户于 2026-09-01 确认该草案对原话的转述忠实，五条条款随之转 `active`；`authority` 如实保留 `agent-transcribed`，因为正文仍是转述而非用户逐字原话。
 
 校验、筛选、防抖三类横切逻辑分别收口：校验层的 fail-closed 门禁单点定义并显式导出；筛选层不允许内联 phase 字符串集合；防抖层区分「原生回调快路」与「定时漏通知恢复」两个概念，各自单点表达，且恢复间隔的语义写在定义处而非调用处。
 
