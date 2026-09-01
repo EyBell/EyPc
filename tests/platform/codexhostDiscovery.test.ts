@@ -36,8 +36,8 @@ function processTable() {
 function listPayload() {
   return JSON.stringify({
     threads: [
-      { threadId: CLAUDE_ID, harnessId: 'claude-code', status: 'running', cwd: '/repo/gonavi', title: '260901-供应商调优' },
-      { threadId: PI_ID, harnessId: 'pi', status: 'completed', cwd: '/repo/gonavi', title: '你好' },
+      { threadId: CLAUDE_ID, harnessId: 'claude-code', status: 'running', cwd: '/repo/gonavi', title: '260901-供应商调优', attention: 'approval' },
+      { threadId: PI_ID, harnessId: 'pi', status: 'completed', cwd: '/repo/gonavi', title: '你好', hasUnreadTurn: true },
       { threadId: NATIVE_ID, harnessId: 'codex', status: 'completed', cwd: '/repo/gonavi', title: '原生任务' },
       { threadId: 'not-a-thread-id', harnessId: 'pi', status: 'completed', cwd: '/repo/gonavi', title: 'x' }
     ],
@@ -45,7 +45,7 @@ function listPayload() {
   })
 }
 
-function fakeExecFile(calls: Array<{ command: string; args: string[] }>, options: { failList?: boolean } = {}) {
+function fakeExecFile(calls: Array<{ command: string; args: string[] }>, options: { failList?: boolean; list?: () => string } = {}) {
   return (command: string, args: string[], _settings: unknown, done: (error: Error | null, stdout?: string) => void) => {
     calls.push({ command, args })
     if (command === 'ps' && args[0] === '-axww') return done(null, processTable())
@@ -55,16 +55,20 @@ function fakeExecFile(calls: Array<{ command: string; args: string[] }>, options
     }
     if (command === CLI) {
       if (options.failList) return done(null, JSON.stringify({ error: { code: 'RUNTIME_UNREACHABLE', message: 'x' } }))
-      return done(null, listPayload())
+      return done(null, options.list ? options.list() : listPayload())
     }
     return done(new Error('unexpected command'))
   }
 }
 
 describe('codexhost external conversation discovery', () => {
-  it('labels harnesses for display', () => {
-    expect(discoveryModule.codexhostHarnessLabel('pi')).toBe('Pi')
-    expect(discoveryModule.codexhostHarnessLabel('claude-code')).toBe('Claude Code')
+  it('labels harnesses with compressed prefixes', () => {
+    expect(discoveryModule.codexhostHarnessLabel('pi')).toBe('pi')
+    expect(discoveryModule.codexhostHarnessLabel('claude-code')).toBe('cc')
+    expect(discoveryModule.codexhostHarnessLabel('grok')).toBe('gr')
+    expect(discoveryModule.codexhostHarnessLabel('dsh')).toBe('ds')
+    expect(discoveryModule.codexhostHarnessLabel('omp')).toBe('op')
+    expect(discoveryModule.codexhostHarnessLabel('cursor')).toBe('cs')
     expect(discoveryModule.codexhostHarnessLabel('mystery')).toBe('mystery')
   })
 
@@ -84,27 +88,70 @@ describe('codexhost external conversation discovery', () => {
     expect(result.rows.map((row) => row.id).sort()).toEqual([NATIVE_ID < PI_ID ? PI_ID : PI_ID, CLAUDE_ID].sort())
     const claudeRow = result.rows.find((row) => row.id === CLAUDE_ID)!
     expect(claudeRow).toMatchObject({
-      name: 'Claude Code · 260901-供应商调优',
-      status: { type: 'active' },
+      name: 'cc · 260901-供应商调优',
+      // A pending Desktop approval maps to the waiting-approval flag so the
+      // row lands in the attention group instead of a plain "running".
+      status: { type: 'active', activeFlags: ['waitingOnApproval'] },
       cwd: '/repo/gonavi',
       codexhostExternal: true,
       codexhostHarnessId: 'claude-code'
     })
     expect(result.turns.get(CLAUDE_ID)).toMatchObject({ status: 'inProgress' })
     expect(result.turns.get(PI_ID)).toMatchObject({ status: 'completed' })
+    // Host-exposed unread passes through; an absent field stays absent.
+    expect(result.rows.find((row) => row.id === PI_ID)).toMatchObject({
+      status: { type: 'idle' },
+      codexhostHasUnreadTurn: true
+    })
+    expect(claudeRow).not.toHaveProperty('codexhostHasUnreadTurn')
     expect(result.turns.get(PI_ID)!.completedAt).toBeGreaterThan(0)
     expect(discovery.isExternalThreadId(PI_ID)).toBe(true)
     expect(discovery.isExternalThreadId(NATIVE_ID)).toBe(false)
     expect(discovery.isExternalThreadKey(`key:${PI_ID}`)).toBe(true)
 
-    // Inside the TTL a second scan serves the snapshot without new exec work.
+    // A running extra process uses a 1s TTL, so a half-second scan still
+    // serves the snapshot. Completion must not wait on the idle 12s cache.
     const callCount = calls.length
-    clock += 1_000
+    clock += 500
     await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
     expect(calls.length).toBe(callCount)
 
     discovery.codexhostResetDiscovery()
     expect(discovery.isExternalThreadId(PI_ID)).toBe(false)
+  })
+
+  it('refreshes a running extra process so Host completion is not stuck behind the idle TTL', async () => {
+    const calls: Array<{ command: string; args: string[] }> = []
+    let clock = 2_000_000
+    let completed = false
+    const discovery = discoveryModule.createCodexhostDiscovery({
+      execFile: fakeExecFile(calls, {
+        list: () => JSON.stringify({
+          threads: [{
+            threadId: PI_ID,
+            harnessId: 'pi',
+            status: completed ? 'completed' : 'running',
+            cwd: '/repo/gonavi',
+            title: '你好',
+            hasUnreadTurn: completed
+          }],
+          nextCursor: null
+        })
+      }),
+      now: () => clock
+    })
+    const first = await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
+    expect(first.rows[0]).toMatchObject({ status: { type: 'active' } })
+    expect(first.turns.get(PI_ID)).toMatchObject({ status: 'inProgress' })
+
+    completed = true
+    clock += 1_001
+    const second = await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
+    expect(second.rows[0]).toMatchObject({
+      status: { type: 'idle' },
+      codexhostHasUnreadTurn: true
+    })
+    expect(second.turns.get(PI_ID)).toMatchObject({ status: 'completed' })
   })
 
   it('fails open when the CLI answers with an error and drops the rendezvous', async () => {

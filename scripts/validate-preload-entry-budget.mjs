@@ -62,7 +62,16 @@ const BUDGET = Object.freeze({
   // 2026-09-01 (f): +5 lines — external conversations keep unread inside the
   // Host (absent from every bucket of the official unread atom), so sanitize
   // answers "unknown" for them instead of claiming read.
-  lines: 14061,
+  // 2026-09-01 (g): +4 lines — consume the Host-exposed `hasUnreadTurn`
+  // (codexhost add-external-thread-unread) for external rows, unknown when
+  // the field is absent (older Hosts).
+  // 2026-09-01 (h): +4 lines — the root-unread-evidence diagnostic also
+  // carries localPin/persistedPinCount, the evidence half of pin-flash
+  // forensics (the kernel half is the set-pin acceptance mark).
+  // 2026-09-01 (i): RAW-190 CodexHost extra-process completion — Host CLI
+  // completed is exact terminal, Host unread is not overwritten by the
+  // official atom, and Desktop follow cannot revive a corroborated idle row.
+  lines: 14096,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

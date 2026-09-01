@@ -29,6 +29,9 @@
 const CODEXHOST_DISCOVERY_REVISION = 'codexhost-discovery-v1'
 /** How long one thread-list snapshot serves scans before a refresh. */
 const CODEXHOST_LIST_TTL_MS = 12_000
+/** Running extra processes can complete between inventory scans; keep that
+ * snapshot hot without treating elapsed time as a terminal. */
+const CODEXHOST_RUNNING_LIST_TTL_MS = 1_000
 /** How long a resolved rendezvous is trusted before re-reading process env. */
 const CODEXHOST_RENDEZVOUS_TTL_MS = 60_000
 /** Per-`thread list` invocation timeout; the CLI answers a local runtime. */
@@ -37,13 +40,17 @@ const CODEXHOST_MAX_ROOTS = 12
 const CODEXHOST_MAX_THREADS = 200
 const THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const RUNTIME_COMMAND_PATTERN = /(^|\s)\S*\/bin\/node\s+\S*\/host-runtime\/dist\/main\.js\s/
+/** Compressed 2–3 letter harness prefixes for row titles (user-decided):
+ * cc=Claude Code, cx=Codex, gr=Grok, ds=DeepSeek Harness, pi=Pi,
+ * op=Oh My Pi/OMP, cs=Cursor. Unknown harnesses keep their raw id. */
 const HARNESS_LABELS = Object.freeze({
-  'claude-code': 'Claude Code',
-  pi: 'Pi',
-  grok: 'Grok',
-  omp: 'OMP',
-  dsh: 'DSH',
-  cursor: 'Cursor'
+  'claude-code': 'cc',
+  codex: 'cx',
+  pi: 'pi',
+  grok: 'gr',
+  omp: 'op',
+  dsh: 'ds',
+  cursor: 'cs'
 })
 
 function record(value) {
@@ -137,7 +144,13 @@ function createCodexhostDiscovery(dependencies = {}) {
       harnessId,
       status: thread.status === 'running' ? 'running' : 'completed',
       cwd: typeof thread.cwd === 'string' ? thread.cwd : '',
-      title: typeof thread.title === 'string' ? thread.title.trim().slice(0, 200) : ''
+      title: typeof thread.title === 'string' ? thread.title.trim().slice(0, 200) : '',
+      // Host-owned unread (codexhost >= add-external-thread-unread); older
+      // Hosts omit the field and the consumer stays on "unknown".
+      hasUnreadTurn: typeof thread.hasUnreadTurn === 'boolean' ? thread.hasUnreadTurn : null,
+      // A Turn blocked on a pending Desktop approval (codexhost >=
+      // add-desktop-bypass-follow) surfaces as the waiting-approval flag.
+      awaitingApproval: thread.attention === 'approval'
     }
   }
 
@@ -224,16 +237,20 @@ function createCodexhostDiscovery(dependencies = {}) {
    * caller must exclude them from targeted reads and merge `turns` instead.
    */
   async function codexhostRowsForScan(input = {}) {
-    if (now() - listRefreshedAt > CODEXHOST_LIST_TTL_MS) {
+    const hasRunning = [...externalThreads.values()].some((thread) => thread.status === 'running')
+    const ttl = hasRunning ? CODEXHOST_RUNNING_LIST_TTL_MS : CODEXHOST_LIST_TTL_MS
+    if (now() - listRefreshedAt > ttl) {
       if (!refreshInFlight) {
         refreshInFlight = refreshExternalThreads(input.roots, input.threadKey)
           .then(() => { listRefreshedAt = now() })
           .catch(() => undefined)
           .finally(() => { refreshInFlight = null })
       }
-      // First scan waits so the lane appears without an extra cycle; later
-      // scans serve the cached snapshot while a refresh runs behind them.
-      if (!externalThreads.size) await refreshInFlight
+      // First scan waits so the lane appears without an extra cycle. A live
+      // extra process also waits: serving a stale running snapshot after the
+      // Host already reported completed is the user-visible stuck-in-progress
+      // failure. Idle snapshots may refresh behind the scan.
+      if (!externalThreads.size || hasRunning) await refreshInFlight
     }
     const rows = []
     const turns = new Map()
@@ -244,13 +261,16 @@ function createCodexhostDiscovery(dependencies = {}) {
         id: thread.threadId,
         sessionId: thread.threadId,
         name: thread.title ? `${label} · ${thread.title}` : `${label} · 未命名会话`,
-        status: { type: running ? 'active' : 'notLoaded' },
+        status: running
+          ? { type: 'active', activeFlags: thread.awaitingApproval ? ['waitingOnApproval'] : [] }
+          : { type: 'idle' },
         cwd: thread.cwd,
         createdAt: thread.firstSeenAt,
         updatedAt: thread.statusChangedAt,
         recencyAt: thread.statusChangedAt,
         codexhostExternal: true,
-        codexhostHarnessId: thread.harnessId
+        codexhostHarnessId: thread.harnessId,
+        ...(typeof thread.hasUnreadTurn === 'boolean' ? { codexhostHasUnreadTurn: thread.hasUnreadTurn } : {})
       })
       turns.set(thread.threadId, {
         status: running ? 'inProgress' : 'completed',
@@ -289,6 +309,7 @@ function createCodexhostDiscovery(dependencies = {}) {
 module.exports = {
   CODEXHOST_DISCOVERY_REVISION,
   CODEXHOST_LIST_TTL_MS,
+  CODEXHOST_RUNNING_LIST_TTL_MS,
   CODEXHOST_RENDEZVOUS_TTL_MS,
   codexhostHarnessLabel,
   createCodexhostDiscovery

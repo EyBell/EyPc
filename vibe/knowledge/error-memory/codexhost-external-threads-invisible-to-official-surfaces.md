@@ -44,11 +44,13 @@ CodexHost 是官方 app-server 的 shim：外部会话由 Host Runtime 托管并
 ## 预防规则
 
 - 已实施（2026-09-01）：[codexhost-discovery.cjs](../../../preload/codex/codexhost-discovery.cjs#L1) lane——会合点发现（仅信 harness 子进程 env）、CLI `thread list` 契约面、TTL 快照、外部行+合成 turn 注入扫描；外部 id 从官方 turn/goal 读取与 membership 回扫中剔除；token 仅驻内存、不入日志与持久文档。
-- 外部行未读一律「未知」，不得宣称已读（sanitize 守卫；官方持久集对它们无发言权）。
-- 蓝点对齐的唯一正规出口是 codexhost 侧给 `thread list` 增加 unread 字段（二期）；EyPc 侧按字段存在与否 fail-open 接入。
+- CLI `completed` 必须映射为 connector `idle` + 已确认 `snapshot-corroborated` Turn，禁止再写成官方 `notLoaded` 或弱 `inventory` 终态。Desktop follow 不得把无 waiting flag 的已确认完成行重新打成进行中。
+- 外部未读只信 Host `hasUnreadTurn`；字段缺省的新完成不得宣称已读。官方未读原子对这些 id 无发言权，不得覆盖 Host 未读。
+- 运行中快照可缩短 TTL，墙钟不能单独制造终态。
 
 ## 记录历史
 
 | 日期 | 任务 | 触发 | 失败路线 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-09-01 | codexhost 对话识别与跳转 | 用户要求识别 Host 托管会话并跳转 | 官方清单/rollout/未读原子三面皆缺席 | 委派 CLI 实测枚举+实跳；lane 实装并实机验收（发现 6 行、targets 60→67） | 预防规则已实施 / 未读蓝点待二期 |
+| 2026-09-01 | RAW-190 完成态 | 已识别的额外进程完成后仍停在进行中 | CLI completed 被当成 notLoaded/弱 inventory；Desktop 覆盖 status/unread | idle + snapshot-corroborated；Host unread 优先；禁止无 flag 的 desktop-live 复活 | candidate；聚焦测试通过，真实 uTools 待重载 |

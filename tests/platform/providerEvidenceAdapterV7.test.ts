@@ -102,4 +102,24 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
     expect(batch.channels.activity).toMatchObject({ mode: 'delta', complete: false, generation: 41 })
     expect(batch.relationsComplete).toBe(true)
   })
+
+  it('treats Host-corroborated extra-process completion as exact terminal unread', () => {
+    expect(codexBranchObservationV7({
+      status: 'idle',
+      statusAuthority: 'connector',
+      activityEvidence: 'connector',
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'snapshot-corroborated',
+      terminalEvidenceSequence: 40,
+      activeEvidenceSequence: 30,
+      turnStartedAt: 10,
+      terminalAt: 20,
+      unreadKnown: true,
+      hasUnreadTurn: true
+    })).toMatchObject({
+      candidates: [expect.objectContaining({ kind: 'turn-completed', authority: 'terminal', exact: true })],
+      unreadKnown: true,
+      unread: true
+    })
+  })
 })

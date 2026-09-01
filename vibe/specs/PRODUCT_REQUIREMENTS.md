@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 326 leaves / 6 modules / 299 active / 22 superseded / 5 proposed / 0 conflicted |
+| 需求登记 | 327 leaves / 6 modules / 300 active / 22 superseded / 5 proposed / 0 conflicted |
 | 取代关系 | 22 whole / 88 scoped |
-| 原始来源 | 42 documents / 230 ordered / 125 RAW-parent / 105 source-only |
+| 原始来源 | 43 documents / 230 ordered / 125 RAW-parent / 105 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-ad42ce0d23bc4cc65e34 / renderer-b590e2e72b8e73f18254` · `artifact-ready` |
-| 当前构建时间 | `2026/09/01 09:32:48`（`2026-09-01T01:32:48.485Z`） |
+| 当前构建产物 | `host-970a86469727af877b26 / renderer-44ecc3f0dae3d69824fe` · `artifact-ready` |
+| 当前构建时间 | `2026/09/01 11:13:01`（`2026-09-01T03:13:01.212Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,10 +34,10 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 326,
+    "leaves": 327,
     "modules": 6,
     "proposed": 5,
-    "active": 299,
+    "active": 300,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
@@ -45,7 +45,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "scoped_relations": 88
   },
   "source_anchor_catalog": {
-    "documents": 42,
+    "documents": 43,
     "ordered_anchors": 230,
     "raw_parent_ordered": 125,
     "registered_requirements": 105,
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-ad42ce0d23bc4cc65e34",
-    "renderer_asset": "renderer-b590e2e72b8e73f18254",
+    "host_asset": "host-970a86469727af877b26",
+    "renderer_asset": "renderer-44ecc3f0dae3d69824fe",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-01T01:32:48.485Z",
-    "built_at_local": "2026/09/01 09:32:48",
+    "built_at": "2026-09-01T03:13:01.212Z",
+    "built_at_local": "2026/09/01 11:13:01",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "8ccd112f237bd90f37acc39387b77df46b894ba40bb6975b7949ccfb7f2f335d",
-    "raw_sources": "23e01645eeb1ed03986022ecd17647b32952f700aa6ed9d3d206bd2386d57355",
-    "source_anchor_catalog": "5e4b0506708ec9cf8ae64260385ee31e8325bccd5a1ece8d7cd5a750ef06ba9e",
-    "product_body": "bea8f0d6b4e2371db69d6f603ff912277896794d0a904995f03ca8aab5e3bdce",
+    "requirement_registry": "4f7cd0fa142a1d20df56d81f52957894b52f7e09ed9a6bf87bd6226b625f3745",
+    "raw_sources": "4b58eba5245eb9d87eb5975b862eacad0597ea39e99726c5e0027bac86aa9e3a",
+    "source_anchor_catalog": "3025100add07956bb025ea0bd1fbfb0779a277dd251aed92e312ca929e7f70c4",
+    "product_body": "98c7cbe91601b3fa717cc332cea0a82abc51680eca457ce46de77fa9e88e2b0c",
     "architecture": "bdb39cebc69739188d14d09c39723745f6edef1171d6bcb8a3073b6aa18d757d",
-    "runtime_contract": "0ce2f7099eaa4806d45b794396bb6d0b5740c41bb33a483c5ab27424826abb84"
+    "runtime_contract": "ca0c3456d50373f206aa04a5166f434dc5e0a19d6586f2622667c68eb70d18ee"
   }
 }
 ```
@@ -304,6 +304,7 @@ Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-globa
 - Easy Agent is not implemented yet. The interim adapter keeps two host channels: the local Codex App Server supplies quota, models, inventory, creation and verified persistent actions; a macOS Codex Desktop private-IPC companion bridge supplies live task/read authority and archive-refresh notification. The App Server connector is therefore still required in the current phase.
 - CLI startup is independently diagnosable: EyPc auto-discovers only controlled macOS/Windows candidates and may store one user-selected, validated executable location in local plugin storage. The UI exposes only safe source/availability labels, never the actual path. Without a manual location it falls back to automatic discovery plus the existing App Server connector and explicitly warns about connection delay; this fallback never turns local cache or App Server activity into Input, ongoing or completed-unread authority. Windows supports CLI discovery/validated shim handling, while the private Desktop live bridge remains a macOS canary.
 - Host Snapshot V2 reads the local Codex App Server plus an allowlisted native project registry. Ordinary inventory remains strictly read-only: the main `.codex-global-state.json` is authoritative and `.bak` is used only when the main file is missing/invalid. The sole write exception is an explicitly confirmed native project removal transaction; EyPc never scans Codex SQLite or LevelDB. A Codex Desktop full snapshot may be consumed transiently inside preload for live-state projection, but its bodies/items/raw identities never cross the bridge or persist.
+- CodexHost extra processes (Pi / Claude Code / Grok / OMP / DSH / Cursor harness threads) never appear in official `thread/list` or the Desktop unread atom. EyPc discovers them through the Host delegation CLI. CLI `status=running` is 进行中 (`attention=approval` is 待输入). CLI `status=completed` is an exact Host-corroborated terminal: the row leaves 进行中 and uses Host `hasUnreadTurn` for 已完成未读 vs 已完成; a completed row that omits the field must not be claimed read. Official App Server `notLoaded` is still not completion. Desktop follow of an open extra process cannot keep a Host-completed row in 进行中 or overwrite Host unread. RAW-190.
 - Every `archived=false` page is read to completion. Project ownership uses native thread assignment first, native projectless IDs as `Chats` second, deepest active project-root cwd match third; unmatched tasks are treated as removed/unregistered and excluded. Native state is fingerprinted before and after scanning and the entire scan retries once on change.
 - Each candidate must have a valid newest Turn `startedAt`; there is no `updatedAt`/recency fallback. A malformed cursor, page, project state or existing Turn without `startedAt` fails the whole scan. Controller retains an older verified snapshot as explicitly stale, or shows an error empty state when no verified snapshot exists.
 - A single otherwise-complete inventory that omits a published anonymous key is a transport-dropout candidate, not immediate deletion. Controller retains the previous projection and requests one Provider-only recheck. Reappearance, changed keys, failure, disablement or disposal resets the candidate. Codex explicit archive events bypass the ordinary hold only by starting/advancing task-scoped verification；local removal still requires native postconditions and Kernel commit. Verified project removal and existing Claude membership mutation retain their Provider-specific contracts. No task list or raw identity is persisted.
