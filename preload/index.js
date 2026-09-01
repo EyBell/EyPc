@@ -3993,6 +3993,14 @@ function honorHostExternalProjection(threadId, known, activity) {
     : activity
 }
 
+function honorHostExternalOpenRead(threadId, result) {
+  return typeof codexhostDiscovery?.honorExternalOpenRead === 'function'
+    ? codexhostDiscovery.honorExternalOpenRead(threadId, result, (id) => {
+      codexEnsureDesktopBridge()?.markThreadOpenedRead(id)
+    })
+    : result
+}
+
 function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persistedUnreadIds) {
   if (codexDesktopOpenedReadAcknowledgements.has(threadId)) {
     return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
@@ -5038,7 +5046,9 @@ class CodexDesktopCompanionBridge {
     if (options.clearStaleLiveFalse === true) codexClearStalePreCompletionLiveUnread(this, threadId)
     let unreadIds = null
     try { unreadIds = readCodexDesktopUnreadIds() } catch {}
-    if (unreadIds) {
+    // External conversations keep unread inside the Host; the official atom
+    // never lists them, so it must not overwrite the merged connector value.
+    if (unreadIds && codexhostDiscovery?.isExternalThreadId?.(threadId) !== true) {
       known.connectorHasUnreadTurn = unreadIds.has(threadId)
       known.connectorUnreadAuthority = 'desktop-persisted'
     }
@@ -6680,7 +6690,12 @@ class CodexDesktopCompanionBridge {
       const known = codexActivityInventory.get(threadId)
       if (!known) continue
       const shadow = this.shadows.get(threadId)
-      const connectorHasUnreadTurn = unreadIds instanceof Set
+      // CodexHost external conversations are absent from the official unread
+      // atom by design; deriving their connector unread from it stomps the
+      // Host-written value the inventory merge just recorded (RAW-190: Host
+      // unread is not overwritten by the official atom).
+      const externalUnreadOwner = codexhostDiscovery?.isExternalThreadId?.(threadId) === true
+      const connectorHasUnreadTurn = unreadIds instanceof Set && !externalUnreadOwner
         ? unreadIds.has(threadId)
         : known.connectorHasUnreadTurn === true
       let persistedBecameTrueQuery = Boolean(unreadIds)
@@ -6688,7 +6703,7 @@ class CodexDesktopCompanionBridge {
         && connectorHasUnreadTurn
         ? threadId
         : ''
-      if (unreadIds instanceof Set) {
+      if (unreadIds instanceof Set && !externalUnreadOwner) {
         this.persistedUnread.set(threadId, connectorHasUnreadTurn)
         known.connectorHasUnreadTurn = connectorHasUnreadTurn
         known.connectorUnreadAuthority = 'desktop-persisted'
@@ -9513,19 +9528,19 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       } : {}),
       turnMode: planLifecycle.turnMode,
       statusAuthority: persistedDecision ? 'persisted-decision' : 'connector',
-      // CodexHost external conversations keep unread inside the Host. The CLI
-      // field is authoritative when present. A completed row without the field
-      // (older Host) must not be claimed read — it becomes completed-unread.
-      hasUnreadTurn: thread.codexhostExternal === true
-        ? typeof thread.codexhostHasUnreadTurn === 'boolean'
-          ? thread.codexhostHasUnreadTurn === true
-          : lastTurn.status === 'completed'
-        : unreadIds ? unreadIds.has(thread.id) : false,
-      unreadAuthority: thread.codexhostExternal === true
-        ? typeof thread.codexhostHasUnreadTurn === 'boolean' || lastTurn.status === 'completed'
-          ? 'desktop-persisted'
-          : 'unavailable'
-        : unreadIds ? 'desktop-persisted' : 'unavailable',
+      // Which Harness runs this row; shape and validation live in discovery.
+      ...(codexhostDiscovery ? codexhostDiscovery.codexhostExternalIdentity(thread) : {}),
+      // Extra-process unread is Host-owned; the Host-silent fallback to Desktop
+      // evidence lives with it in the discovery owner.
+      ...(thread.codexhostExternal === true && codexhostDiscovery
+        ? codexhostDiscovery.codexhostExternalUnreadFields(
+          thread.codexhostHasUnreadTurn,
+          unreadIds ? unreadIds.has(thread.id) : null,
+          lastTurn.status === 'completed')
+        : {
+          hasUnreadTurn: unreadIds ? unreadIds.has(thread.id) : false,
+          unreadAuthority: unreadIds ? 'desktop-persisted' : 'unavailable'
+        }),
       updatedAt: codexTimestampMs(thread.recencyAt) || codexTimestampMs(thread.updatedAt) || lastTurn.startedAt,
       ...(codexTimestampMs(thread.createdAt) ? { createdAt: codexTimestampMs(thread.createdAt) } : {}),
       ...(codexThreadFirstPromptCache.get(thread.id)?.firstPromptAt ? { firstPromptAt: codexThreadFirstPromptCache.get(thread.id).firstPromptAt } : {}),
@@ -9610,6 +9625,9 @@ async function scanVerifiedCodexInventory() {
     // CodexHost external Harness conversations are invisible to the official
     // app-server; the codexhost CLI is their contract surface. Their turn
     // evidence is synthesized because thread/turns/list cannot answer them.
+    // A lane that failed to load contributes zero rows and looks exactly like
+    // one with no extra processes; say so instead of disappearing silently.
+    if (!codexhostDiscovery) runtimeDiagnostics.record({ level: 'error', scope: 'task-recovery', event: 'codexhost-discovery', outcome: 'unloaded', provider: 'codex', count: 0, details: {} })
     const codexhost = codexhostDiscovery
       ? await codexhostDiscovery.codexhostRowsForScan({
           roots: [...new Set([
@@ -10160,12 +10178,12 @@ async function openCodexThread(actionAlias) {
   if (shell && typeof shell.openExternal === 'function') {
     try {
       await withFileActionTimeout(shell.openExternal(target))
-      return {
+      return honorHostExternalOpenRead(entry.threadId, {
         outcome: 'dispatched',
         confirmsRead: false,
         handoff: codexOpenHandoff(handoffId, 'dispatched'),
         message: '已发送打开请求，等待 Codex 原生确认'
-      }
+      })
     } catch {
       return {
         outcome: 'failed',
@@ -10180,12 +10198,12 @@ async function openCodexThread(actionAlias) {
     if (globalThis.utools && typeof globalThis.utools.shellOpenExternal === 'function') {
       const dispatched = globalThis.utools.shellOpenExternal(target)
       if (dispatched === false) throw new Error('shellOpenExternal rejected')
-      return {
+      return honorHostExternalOpenRead(entry.threadId, {
         outcome: 'dispatched',
         confirmsRead: false,
         handoff: codexOpenHandoff(handoffId, 'dispatched'),
         message: '已发送打开请求，等待 Codex 原生确认'
-      }
+      })
     }
   } catch {}
   return {
@@ -11081,9 +11099,12 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
   const persisted = input.persisted || companionPersistedTaskState()
   const match = companionCodexInventoryMatchV7(key)
   const privateEvidence = match ? codexPrivateBranchEvidence(match.threadId, match.known) : null
-  const branches = Array.isArray(privateEvidence?.branches) && privateEvidence.branches.length
+  const hostExternal = match?.threadId
+    && codexhostDiscovery?.isExternalThreadId?.(match.threadId) === true
+  const branches = (Array.isArray(privateEvidence?.branches) && privateEvidence.branches.length
     ? privateEvidence.branches
-    : [companionCodexFallbackBranchV7({ ...(match?.known || {}), ...thread })]
+    : [companionCodexFallbackBranchV7({ ...(match?.known || {}), ...thread })])
+    .map((branch) => hostExternal ? { ...codexRecord(branch), hostExternal: true } : branch)
   const family = `codex:${key}`
   const dynamicCutoff = Number(input.dynamicCutoff) || 0
   const nodes = []
@@ -11111,6 +11132,7 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       && thread.activityEvidence !== 'activity-event'
       && Number(thread.activeEvidenceSequence) <= 0
       && (!Array.isArray(thread.activeFlags) || thread.activeFlags.length === 0)
+      && hostExternal !== true
     if (hydrationOnlyActive) {
       // A hydration row is membership evidence, not proof of a running or
       // terminal Turn. Conflicting private history therefore enters the V7
@@ -12448,8 +12470,17 @@ function applyClaudeStateToCompanionKernel() {
     generation
   )
   let order = 0
+  const hostSuppressedKeys = []
   for (const session of source.sessions) {
     const sessionId = typeof session?.sessionId === 'string' ? session.sessionId : ''
+    // A session running as a CodexHost harness child is the same conversation
+    // as its Host thread. While the Host roster carries that thread, the Host
+    // status is the sole authority: retire the native row instead of letting
+    // two lanes publish contradictory phases. Roster gone → native row returns.
+    if (codexhostDiscovery?.isExternalThreadId?.(session?.codexhostThreadId) === true) {
+      hostSuppressedKeys.push(`claude:${sessionId}`)
+      continue
+    }
     const unreadKnown = companionClaudeUnreadSnapshot.available === true
     const unread = unreadKnown && companionClaudeUnreadSnapshot.ids.has(sessionId)
     const evidence = companionClaudeEvidenceV7(session, unread, {
@@ -12471,8 +12502,14 @@ function applyClaudeStateToCompanionKernel() {
     relations.push(...evidence.relations)
     order += evidence.nodes.length
   }
+  // A retirement only lands on an advancing membership lane; bump it exactly
+  // when a Host-suppressed session still has a live native task to retire.
+  const hostRemovalKeys = hostSuppressedKeys.filter((key) =>
+    (Array.isArray(current.tasks) ? current.tasks : []).some((task) => task?.key === key && task?.provider === 'claude'))
   const laneGenerations = {
-    membership: companionEvidenceSequenceV7(currentLanes.membership),
+    membership: hostRemovalKeys.length
+      ? Math.max(companionEvidenceSequenceV7(currentLanes.membership) + 1, generation)
+      : companionEvidenceSequenceV7(currentLanes.membership),
     activity: generation,
     interaction: generation,
     unread: companionEvidenceSequenceV7(currentLanes.unread),
@@ -12487,6 +12524,7 @@ function applyClaudeStateToCompanionKernel() {
     interactionSets,
     relations,
     laneGenerations,
+    ...(hostRemovalKeys.length ? { removedKeys: { membership: hostRemovalKeys } } : {}),
     health: current.providerHealth?.claude?.status
   })
   const beforeRevision = current.packageRevision
@@ -12654,6 +12692,12 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
       continue
     }
     if (mutation.mutation !== 'upsert' || !mutation.session) { exact = false; continue }
+    // Host-suppressed conversation: the CodexHost lane owns this row while the
+    // Host roster carries its thread; a metadata upsert must not resurrect it.
+    if (codexhostDiscovery?.isExternalThreadId?.(mutation.session?.codexhostThreadId) === true) {
+      removedKeys.push(key)
+      continue
+    }
     const sessionId = typeof mutation.session.sessionId === 'string' ? mutation.session.sessionId : key.slice('claude:'.length)
     const unreadKnown = companionClaudeUnreadSnapshot.available === true
     const unread = unreadKnown && companionClaudeUnreadSnapshot.ids.has(sessionId)

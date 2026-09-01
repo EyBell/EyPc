@@ -61,6 +61,41 @@ function codexhostHarnessLabel(harnessId) {
   return HARNESS_LABELS[harnessId] || (typeof harnessId === 'string' && harnessId ? harnessId : 'Harness')
 }
 
+/** Open charset: a Harness the Host adds later must cross without a change. */
+const HARNESS_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/
+
+/**
+ * Identity fields a scan row hands to the public thread projection. A Host
+ * extra process rides the Codex lane by transport only; the Harness that
+ * actually runs it is the row's identity. While this was dropped at the
+ * bridge, every consumer saw a claude-code/grok Thread as a native Codex one
+ * and the compressed name prefix was the sole surviving trace.
+ */
+function codexhostExternalIdentity(row) {
+  const thread = record(row)
+  if (thread.codexhostExternal !== true) return {}
+  const harnessId = typeof thread.codexhostHarnessId === 'string' ? thread.codexhostHarnessId : ''
+  return HARNESS_ID_PATTERN.test(harnessId) ? { codexhostHarnessId: harnessId } : {}
+}
+
+/**
+ * Unread fields for one Host extra process. The Host CLI value is exact when
+ * present. When the Host reports nothing — an older Host, or a record written
+ * before external unread was persisted — a Desktop unread-*true* is still real
+ * evidence and is adopted. Desktop *silence* is not a read receipt for these
+ * ids: the official unread atom simply does not list Host conversations, so a
+ * completed Turn stays unread rather than being claimed read.
+ */
+function codexhostExternalUnreadFields(hostUnread, desktopUnread, lastTurnCompleted) {
+  if (typeof hostUnread === 'boolean') {
+    return { hasUnreadTurn: hostUnread, unreadAuthority: 'desktop-persisted' }
+  }
+  if (desktopUnread === true || lastTurnCompleted === true) {
+    return { hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' }
+  }
+  return { hasUnreadTurn: false, unreadAuthority: 'unavailable' }
+}
+
 const HOST_STATUSES = new Set(['creating', 'running', 'completed', 'failed', 'interrupted'])
 
 function normalizeHostStatus(value) {
@@ -97,32 +132,28 @@ function projectHostTurn(thread, at) {
   return { status: 'completed', startedAt: at, completedAt: at }
 }
 
-/**
- * Extra-process unread is Host `hasUnreadTurn` compared with Codex Desktop
- * follow of the same thread. Native Codex already uses Desktop unread and
- * never enters this function. The official unread atom still has no say:
- * extra-process ids are absent there, so treating the atom as false would
- * claim read.
- */
-function compareHostDesktopUnread(known, input = {}) {
+function desktopAppRead(input = {}) {
   const live = input.connected === true || input.liveUnread?.ownerClientId === 'eypc-open'
     ? input.liveUnread
     : null
   const shadow = input.shadow && typeof input.shadow === 'object' ? input.shadow : null
-  if (live?.ownerClientId === 'eypc-open' && live.hasUnreadTurn === false) {
-    return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
-  }
+  if (live?.ownerClientId === 'eypc-open' && live.hasUnreadTurn === false) return true
   const exact = shadow?.unreadEvidence === 'event'
     ? shadow
     : live?.unreadEvidence === 'event' ? live : null
-  if (exact && typeof exact.hasUnreadTurn === 'boolean') {
-    return { hasUnreadTurn: exact.hasUnreadTurn === true, unreadAuthority: 'desktop-live' }
-  }
-  if (typeof shadow?.hasUnreadTurn === 'boolean') {
-    return { hasUnreadTurn: shadow.hasUnreadTurn === true, unreadAuthority: 'desktop-live' }
-  }
-  if (typeof live?.hasUnreadTurn === 'boolean') {
-    return { hasUnreadTurn: live.hasUnreadTurn === true, unreadAuthority: 'desktop-live' }
+  if (exact && exact.hasUnreadTurn === false) return true
+  return false
+}
+
+/**
+ * Extra-process unread: Host `hasUnreadTurn` is real when present and is not
+ * compared against Desktop unread-true. Codex APP 已读 is an unread *event*
+ * false or an EyPc jump into Codex — not a Desktop snapshot false, which is
+ * the missing official unread atom. Native Codex already uses Desktop unread.
+ */
+function compareHostDesktopUnread(known, input = {}) {
+  if (desktopAppRead(input)) {
+    return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
   }
   if (known?.connectorUnreadAuthority === 'desktop-persisted') {
     return {
@@ -188,7 +219,7 @@ function createCodexhostDiscovery(dependencies = {}) {
     const childList = await run('pgrep', ['-P', String(runtimePid)], { timeout: 4000 })
     const childPids = (childList || '').split('\n').map((value) => Number.parseInt(value.trim(), 10))
       .filter((pid) => Number.isInteger(pid) && pid > 0)
-      .slice(0, 8)
+      .slice(0, 24)
     for (const pid of childPids) {
       const psLine = await run('ps', ['eww', '-p', String(pid)], { timeout: 4000 })
       if (!psLine) continue
@@ -235,7 +266,7 @@ function createCodexhostDiscovery(dependencies = {}) {
         externalKeys = new Set()
       }
       noteDiagnostic('unavailable', 0, 0)
-      return
+      return false
     }
     const uniqueRoots = [...new Set((Array.isArray(roots) ? roots : [])
       .filter((root) => typeof root === 'string' && root.startsWith('/')))].slice(0, CODEXHOST_MAX_ROOTS)
@@ -257,29 +288,51 @@ function createCodexhostDiscovery(dependencies = {}) {
       return {
         ok: true,
         stale: false,
-        threads: Array.isArray(record(parsed).threads) ? parsed.threads : []
+        threads: Array.isArray(record(parsed).threads) ? parsed.threads : [],
+        nextCursor: typeof parsed.nextCursor === 'string' && parsed.nextCursor ? parsed.nextCursor : ''
       }
+    }
+    async function listPages(baseArgs) {
+      const collected = []
+      let cursor = ''
+      for (let pageIndex = 0; pageIndex < 8; pageIndex += 1) {
+        const args = cursor ? [...baseArgs, '--cursor', cursor] : baseArgs
+        const page = parseList(await run(resolved.cliPath, args, { env: listEnv }))
+        if (!page.ok) return { pages: collected, failed: true, stale: page.stale }
+        collected.push(page)
+        cursor = page.nextCursor
+        if (!cursor || collected.reduce((count, item) => count + item.threads.length, 0) >= CODEXHOST_MAX_THREADS) break
+      }
+      return { pages: collected, failed: false, stale: false }
     }
     // Official inventory cwds miss extra processes whose folder has no native
     // Codex thread. One --all list is the contract; older Hosts reject the
     // flag and we fall back to per-root scans without dropping rendezvous.
-    const allList = parseList(await run(resolved.cliPath, [
+    const allList = await listPages([
       'thread', 'list', '--limit', '50', '--sort', 'recency-desc', '--all', 'true'
-    ], { env: listEnv }))
+    ])
     const pages = []
-    if (allList.ok) pages.push(allList)
+    if (allList.pages.length) pages.push(...allList.pages)
     else {
       for (const root of uniqueRoots) {
-        const page = parseList(await run(resolved.cliPath, [
+        const listed = await listPages([
           'thread', 'list', '--limit', '50', '--sort', 'recency-desc', '--cwd', root
-        ], { env: listEnv }))
-        if (!page.ok) {
+        ])
+        if (listed.failed) {
           listFailures += 1
-          if (page.stale) rendezvous = null
+          if (listed.stale) rendezvous = null
           continue
         }
-        pages.push(page)
+        pages.push(...listed.pages)
       }
+    }
+    // A CLI that fails on every list (broken install, transient runtime
+    // hiccup) yields zero pages while the Host itself may be healthy. Wiping
+    // the roster here made all external tasks vanish until the next good
+    // scan; keep the previous roster and report the degraded pass instead.
+    if (!pages.length && (allList.failed || listFailures)) {
+      noteDiagnostic('partial', externalThreads.size, uniqueRoots.length)
+      return true
     }
     for (const page of pages) {
       for (const value of page.threads) {
@@ -304,6 +357,25 @@ function createCodexhostDiscovery(dependencies = {}) {
       ? [...nextThreads.keys()].map((threadId) => threadKey(threadId))
       : [])
     noteDiagnostic(listFailures ? 'partial' : 'ok', nextThreads.size, uniqueRoots.length)
+    return true
+  }
+
+  /**
+   * Names a refresh failure without leaking a command line, a path or the
+   * rendezvous secret. The dedupe line is cleared so the next healthy pass is
+   * reported too, instead of being swallowed as "same as last time".
+   */
+  function noteFailure(error) {
+    lastDiagnosticLine = ''
+    recordDiagnostic({
+      level: 'error',
+      scope: 'task-recovery',
+      event: 'codexhost-discovery',
+      outcome: 'failed',
+      provider: 'codex',
+      count: externalThreads.size,
+      details: { error: String(error && error.name ? error.name : 'Error').slice(0, 40) }
+    })
   }
 
   function noteDiagnostic(outcome, threadCount, rootCount) {
@@ -332,8 +404,10 @@ function createCodexhostDiscovery(dependencies = {}) {
     if (now() - listRefreshedAt > ttl) {
       if (!refreshInFlight) {
         refreshInFlight = refreshExternalThreads(input.roots, input.threadKey)
-          .then(() => { listRefreshedAt = now() })
-          .catch(() => undefined)
+          .then((ok) => { if (ok) listRefreshedAt = now() })
+          // A throw before the first noteDiagnostic used to leave the lane
+          // completely silent, which reads exactly like "no extra processes".
+          .catch((error) => noteFailure(error))
           .finally(() => { refreshInFlight = null })
       }
       // First scan waits so the lane appears without an extra cycle. A live
@@ -361,6 +435,7 @@ function createCodexhostDiscovery(dependencies = {}) {
       })
       turns.set(thread.threadId, projectHostTurn(thread, thread.statusChangedAt))
     }
+    noteDiagnostic('cached', rows.length, 0)
     return { rows, turns }
   }
 
@@ -370,6 +445,13 @@ function createCodexhostDiscovery(dependencies = {}) {
 
   function isExternalThreadKey(key) {
     return externalKeys.has(key)
+  }
+
+  function honorExternalOpenRead(threadId, result, markRead) {
+    if (!result || (result.outcome !== 'dispatched' && result.outcome !== 'opened')) return result
+    if (isExternalThreadId(threadId) !== true) return result
+    if (typeof markRead === 'function') markRead(threadId)
+    return { ...result, confirmsRead: true }
   }
 
   function honorExternalProjection(threadId, known, activity) {
@@ -414,10 +496,13 @@ function createCodexhostDiscovery(dependencies = {}) {
 
   return {
     revision: CODEXHOST_DISCOVERY_REVISION,
+    codexhostExternalIdentity,
+    codexhostExternalUnreadFields,
     codexhostRowsForScan,
     isExternalThreadId,
     isExternalThreadKey,
     honorExternalProjection,
+    honorExternalOpenRead,
     compareHostDesktopUnread,
     codexhostResetDiscovery
   }
@@ -429,6 +514,8 @@ module.exports = {
   CODEXHOST_RUNNING_LIST_TTL_MS,
   CODEXHOST_RENDEZVOUS_TTL_MS,
   codexhostHarnessLabel,
+  codexhostExternalIdentity,
+  codexhostExternalUnreadFields,
   normalizeHostStatus,
   projectHostConnector,
   projectHostTurn,

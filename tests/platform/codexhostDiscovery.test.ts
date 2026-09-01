@@ -5,6 +5,12 @@ const require = createRequire(import.meta.url)
 const discoveryModule = require('../../preload/codex/codexhost-discovery.cjs') as {
   CODEXHOST_LIST_TTL_MS: number
   codexhostHarnessLabel(value: unknown): string
+  codexhostExternalIdentity(row: unknown): Record<string, string>
+  codexhostExternalUnreadFields(
+    hostUnread: unknown,
+    desktopUnread: unknown,
+    lastTurnCompleted: unknown
+  ): { hasUnreadTurn: boolean; unreadAuthority: string }
   projectHostConnector(thread: Record<string, any>): { type: string; activeFlags?: string[] }
   projectHostTurn(thread: Record<string, any>, at: number): Record<string, any>
   compareHostDesktopUnread(known: Record<string, any>, input?: Record<string, any>): Record<string, any>
@@ -16,6 +22,7 @@ const discoveryModule = require('../../preload/codex/codexhost-discovery.cjs') a
     isExternalThreadId(threadId: string): boolean
     isExternalThreadKey(key: string): boolean
     honorExternalProjection(threadId: string, known: Record<string, any>, activity: Record<string, any>): Record<string, any>
+    honorExternalOpenRead(threadId: string, result: Record<string, any>, markRead?: (id: string) => void): Record<string, any>
     compareHostDesktopUnread(known: Record<string, any>, input?: Record<string, any>): Record<string, any>
     codexhostResetDiscovery(): void
   }
@@ -124,6 +131,54 @@ describe('codexhost external conversation discovery', () => {
     expect(discoveryModule.codexhostHarnessLabel('omp')).toBe('op')
     expect(discoveryModule.codexhostHarnessLabel('cursor')).toBe('cs')
     expect(discoveryModule.codexhostHarnessLabel('mystery')).toBe('mystery')
+  })
+
+  it('falls back to Desktop unread only when the Host reports nothing', () => {
+    const unread = discoveryModule.codexhostExternalUnreadFields
+    // Host value present: exact, and a Desktop disagreement never overrides it.
+    expect(unread(false, true, true)).toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' })
+    expect(unread(true, false, false)).toEqual({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
+    // Host silent: a Desktop unread-true is real evidence and is adopted.
+    expect(unread(null, true, false)).toEqual({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
+    // Host silent and Desktop silent: silence is not a read receipt for these
+    // ids, so a completed Turn stays unread; anything else is simply unknown.
+    expect(unread(null, false, true)).toEqual({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
+    expect(unread(null, null, false)).toEqual({ hasUnreadTurn: false, unreadAuthority: 'unavailable' })
+  })
+
+  it('reports a refresh failure and a cache-served pass instead of going silent', async () => {
+    const records: Array<Record<string, any>> = []
+    const discovery = discoveryModule.createCodexhostDiscovery({
+      execFile: fakeExecFile([]),
+      record: (entry: Record<string, any>) => { records.push(entry) }
+    })
+
+    // Throwing inside refreshExternalThreads before its first diagnostic used
+    // to leave nothing in the log — identical to "no extra processes".
+    await discovery.codexhostRowsForScan({
+      roots: ['/repo/gonavi'],
+      threadKey: () => { throw new RangeError('bad key') }
+    })
+
+    const failure = records.find((entry) => entry.outcome === 'failed')
+    expect(failure).toMatchObject({ level: 'error', event: 'codexhost-discovery', details: { error: 'RangeError' } })
+    // A pass served from the cache still leaves a breadcrumb, so "the lane ran"
+    // stays distinguishable from "the lane was never reached".
+    expect(records.some((entry) => entry.outcome === 'cached')).toBe(true)
+  })
+
+  it('projects the Harness identity only for external rows with a well-formed id', () => {
+    // Native Codex rows must not gain the field, and an unknown Harness the
+    // Host adds later must cross unchanged — the charset is the only gate.
+    expect(discoveryModule.codexhostExternalIdentity({ codexhostExternal: true, codexhostHarnessId: 'claude-code' }))
+      .toEqual({ codexhostHarnessId: 'claude-code' })
+    expect(discoveryModule.codexhostExternalIdentity({ codexhostExternal: true, codexhostHarnessId: 'mystery-9' }))
+      .toEqual({ codexhostHarnessId: 'mystery-9' })
+    expect(discoveryModule.codexhostExternalIdentity({ codexhostHarnessId: 'grok' })).toEqual({})
+    expect(discoveryModule.codexhostExternalIdentity({ codexhostExternal: true })).toEqual({})
+    expect(discoveryModule.codexhostExternalIdentity({ codexhostExternal: true, codexhostHarnessId: 'Bad Id' }))
+      .toEqual({})
+    expect(discoveryModule.codexhostExternalIdentity(null)).toEqual({})
   })
 
   it('discovers the rendezvous from runtime children and shapes external rows with synthetic turns', async () => {
@@ -235,7 +290,7 @@ describe('codexhost external conversation discovery', () => {
     expect(result.turns.size).toBe(0)
   })
 
-  it('compares extra-process unread with Codex Desktop live unread', () => {
+  it('keeps Host unread unless Codex APP has already marked the thread read', () => {
     const hostUnread = {
       connectorHasUnreadTurn: true,
       connectorUnreadAuthority: 'desktop-persisted'
@@ -252,11 +307,15 @@ describe('codexhost external conversation discovery', () => {
     expect(discoveryModule.compareHostDesktopUnread(hostRead, {
       connected: true,
       shadow: { hasUnreadTurn: true, unreadEvidence: 'event' }
-    })).toEqual({ hasUnreadTurn: true, unreadAuthority: 'desktop-live' })
+    })).toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' })
+    expect(discoveryModule.compareHostDesktopUnread(hostUnread, {
+      connected: true,
+      shadow: { hasUnreadTurn: true, unreadEvidence: 'event' }
+    })).toEqual({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
     expect(discoveryModule.compareHostDesktopUnread(hostUnread, {
       connected: true,
       shadow: { hasUnreadTurn: false, unreadEvidence: 'snapshot' }
-    })).toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
+    })).toEqual({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
     expect(discoveryModule.compareHostDesktopUnread(hostUnread, { connected: false }))
       .toEqual({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
     expect(discoveryModule.compareHostDesktopUnread({}, { connected: true }))
@@ -265,6 +324,54 @@ describe('codexhost external conversation discovery', () => {
       connected: false,
       liveUnread: { hasUnreadTurn: false, ownerClientId: 'eypc-open' }
     })).toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
+  })
+
+  it('treats an extra-process jump into Codex APP as read and leaves native jumps unchanged', async () => {
+    const marked: string[] = []
+    const discovery = discoveryModule.createCodexhostDiscovery({
+      execFile: fakeExecFile([]),
+      now: () => 6_000_000
+    })
+    await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
+    const extra = discovery.honorExternalOpenRead(PI_ID, {
+      outcome: 'dispatched',
+      confirmsRead: false
+    }, (id) => { marked.push(id) })
+    expect(extra).toEqual({ outcome: 'dispatched', confirmsRead: true })
+    expect(marked).toEqual([PI_ID])
+    const native = discovery.honorExternalOpenRead(NATIVE_ID, {
+      outcome: 'dispatched',
+      confirmsRead: false
+    }, (id) => { marked.push(id) })
+    expect(native).toEqual({ outcome: 'dispatched', confirmsRead: false })
+    expect(marked).toEqual([PI_ID])
+    discovery.codexhostResetDiscovery()
+  })
+
+  it('retries Host list after a missed rendezvous instead of caching empty', async () => {
+    const calls: Array<{ command: string; args: string[] }> = []
+    let hasChild = false
+    let clock = 7_000_000
+    const discovery = discoveryModule.createCodexhostDiscovery({
+      execFile: (command: string, args: string[], _settings: unknown, done: (error: Error | null, stdout?: string) => void) => {
+        calls.push({ command, args })
+        if (command === 'ps' && args[0] === '-axww') return done(null, processTable())
+        if (command === 'pgrep') return done(null, hasChild ? `${CHILD_PID}\n` : '')
+        if (command === 'ps' && args[0] === 'eww') {
+          return done(null, `${CHILD_PID} node adapter CODEXHOST_RUNTIME_ENDPOINT=${ENDPOINT} CODEXHOST_RUNTIME_TOKEN=${TOKEN} CODEXHOST_CLI_PATH=${CLI}`)
+        }
+        if (command === CLI) return done(null, listPayload())
+        return done(new Error('unexpected command'))
+      },
+      now: () => clock
+    })
+    const first = await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
+    expect(first.rows).toEqual([])
+    hasChild = true
+    clock += 200
+    const second = await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
+    expect(second.rows.length).toBeGreaterThan(0)
+    expect(discovery.isExternalThreadId(PI_ID)).toBe(true)
   })
 
   it('fails open with no runtime process at all', async () => {

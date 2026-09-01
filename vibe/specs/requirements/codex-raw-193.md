@@ -8,11 +8,11 @@ source_annotations: "implementation-landed / focused-automated-verified / host-p
 scoped_relations:
   - kind: refines
     target: eypc-req-codex-raw-190
-    scope: "额外进程已读/未读改为 Host hasUnreadTurn 与 Codex Desktop follow 比对；官方未读原子仍无发言权；相位等其余状态不另做全量对照"
+    scope: "Host hasUnreadTurn 有值时不再跟 Desktop 未读-true 比对；偏差以 Codex APP 已读为准（Desktop follow false 或快捷键跳转）；官方未读原子仍无发言权"
 ---
 
 # RAW-193 · companion-codex
 
 > 正文由来源任务保存，此处只登记身份、状态与关系：[原始记录](../260901/codexhost-external-completion/raw-requirement.md#L1)。
 
-额外进程的已读/未读应根据 Codex Desktop 里同一条会话的实时未读比对；相位等其余状态已经可以直接感知，不另做全量对照。
+Host 已有真实已读/未读时不再跟 Desktop 未读比对；偏差以 Codex APP「已读」为准。快捷键跳进 Codex APP 立即记为已读。相位等其余状态已经可以直接感知。

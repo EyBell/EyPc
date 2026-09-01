@@ -103,6 +103,48 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
     expect(batch.relationsComplete).toBe(true)
   })
 
+  it('does not keep Host extra-process running after a corroborated completion', () => {
+    expect(codexBranchObservationV7({
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      activityEvidence: 'activity-event',
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'snapshot-corroborated',
+      hostExternal: true,
+      activeEvidenceSequence: 50,
+      terminalEvidenceSequence: 40,
+      turnStartedAt: 10,
+      terminalAt: 20,
+      unreadKnown: true,
+      hasUnreadTurn: true
+    })).toMatchObject({
+      candidates: [expect.objectContaining({ kind: 'turn-completed', authority: 'terminal', exact: true })]
+    })
+    expect(codexBranchObservationV7({
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      activityEvidence: 'activity-event',
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'snapshot-corroborated',
+      hostExternal: true,
+      activeEvidenceSequence: 50,
+      terminalEvidenceSequence: 40
+    }).candidates.some((candidate: { kind: string }) => candidate.kind === 'turn-running')).toBe(false)
+  })
+
+  it('treats Host extra-process connector-active as live running', () => {
+    expect(codexBranchObservationV7({
+      status: 'active',
+      statusAuthority: 'connector',
+      activityEvidence: 'connector',
+      lastTurnStatus: 'inProgress',
+      hostExternal: true,
+      turnStartedAt: 10
+    })).toMatchObject({
+      candidates: [expect.objectContaining({ kind: 'turn-running', exact: true })]
+    })
+  })
+
   it('treats Host-corroborated extra-process completion as exact terminal unread', () => {
     expect(codexBranchObservationV7({
       status: 'idle',

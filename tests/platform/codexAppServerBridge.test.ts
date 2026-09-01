@@ -773,6 +773,35 @@ draft: v7EvidenceDraft({
   return kernel
 }
 
+const CODEXHOST_RUNTIME_PID = 4242
+const CODEXHOST_CHILD_PID = 4243
+const CODEXHOST_CLI_PATH = '/opt/codexhost/bin/codexhost'
+const CODEXHOST_LIST_MARKER = '\u0000codexhost-list'
+
+/**
+ * Answers the rendezvous probe `preload/codex/codexhost-discovery.cjs` runs
+ * before it can call the delegation CLI: find the Host Runtime process, read
+ * one harness child's environment, then list Threads. Returns `null` for any
+ * command this harness does not own so the ordinary stub still applies.
+ */
+function codexhostExecFileReply(command: string, args: string[]): string | null {
+  if (command === 'ps' && args[0] === '-axww') {
+    return `  ${CODEXHOST_RUNTIME_PID} /opt/node/bin/node /opt/codexhost/host-runtime/dist/main.js app-server\n`
+  }
+  if (command === 'pgrep' && args[0] === '-P' && args[1] === String(CODEXHOST_RUNTIME_PID)) {
+    return `${CODEXHOST_CHILD_PID}\n`
+  }
+  if (command === 'ps' && args[0] === 'eww' && args[2] === String(CODEXHOST_CHILD_PID)) {
+    return `  ${CODEXHOST_CHILD_PID} node CODEXHOST_RUNTIME_ENDPOINT=http://127.0.0.1:8931`
+      + ` CODEXHOST_RUNTIME_TOKEN=${'a1b2c3d4'.repeat(4)}`
+      + ` CODEXHOST_CLI_PATH=${CODEXHOST_CLI_PATH}\n`
+  }
+  if (command === CODEXHOST_CLI_PATH && args[0] === 'thread' && args[1] === 'list') {
+    return CODEXHOST_LIST_MARKER
+  }
+  return null
+}
+
 function loadCodexBridge(
   child: FakeCodexProcess,
   readRegistry: (candidate: string, readIndex: number) => string = () => nativeRegistryText(),
@@ -781,11 +810,19 @@ function loadCodexBridge(
   useElectronShell = true,
   claudeBridgeOverride: Record<string, any> | null = null,
   enableFloatHarness = false,
-  dbStorageHarness: { values: Map<string, unknown>; failWrites?: boolean; writes?: string[] } | null = null
+  dbStorageHarness: { values: Map<string, unknown>; failWrites?: boolean; writes?: string[] } | null = null,
+  codexhostThreads: Array<Record<string, unknown>> | null = null
 ) {
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const spawn = vi.fn(() => child)
   const execFile = vi.fn((command: string, args: string[], options: Record<string, unknown>, callback: ExecFileCallback) => {
+    const codexhost = codexhostThreads ? codexhostExecFileReply(command, args) : null
+    if (codexhost !== null) {
+      queueMicrotask(() => callback(null, codexhost === CODEXHOST_LIST_MARKER
+        ? JSON.stringify({ threads: codexhostThreads, nextCursor: null })
+        : codexhost, ''))
+      return
+    }
     if (command !== '/usr/sbin/lsof') {
       noSystemProxyExecFile(command, args, options, callback)
       return
@@ -1105,6 +1142,70 @@ function loadCodexBridge(
 }
 
 describe('Codex App Server preload bridge', () => {
+  it('adopts Desktop unread for an external Thread the Host has no record for', async () => {
+    // The live shape behind 880e66ab: a Host that reports no unread for the
+    // Thread (older Host, or a record predating persisted unread) while the
+    // Desktop atom still remembers it as unread. Desktop-true must win.
+    const child = new FakeCodexProcess()
+    const externalId = 'cccccccc-1234-4234-8234-123456789abc'
+    const { bridge } = loadCodexBridge(
+      child,
+      () => nativeRegistryTextWithUnread([externalId]),
+      null, false, true, null, false, null,
+      [{
+        threadId: externalId,
+        harnessId: 'grok',
+        // Interrupted, so the completed-Turn fallback cannot answer and the
+        // Desktop atom is the only remaining evidence.
+        status: 'interrupted',
+        // hasUnreadTurn deliberately absent: the Host has no record.
+        cwd: '/tmp/project',
+        title: '260901-完成未读感知'
+      }]
+    )
+
+    const snapshot = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const external = (snapshot.value.threads as Array<Record<string, any>>)
+      .find((entry) => entry.codexhostHarnessId === 'grok')
+
+    expect(external).toMatchObject({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
+    bridge.close()
+  })
+
+  it('keeps the CodexHost Harness identity on an external Thread and off native ones', async () => {
+    const child = new FakeCodexProcess()
+    const externalId = 'aaaaaaaa-1234-4234-8234-123456789abc'
+    const { bridge } = loadCodexBridge(child, undefined, null, false, true, null, false, null, [
+      {
+        threadId: externalId,
+        harnessId: 'claude-code',
+        status: 'completed',
+        hasUnreadTurn: false,
+        cwd: '/tmp/project',
+        title: '260901-供应商调优'
+      },
+      // A native Codex row is already in the official inventory; the lane
+      // drops it instead of hosting the same task twice.
+      {
+        threadId: 'bbbbbbbb-1234-4234-8234-123456789abc',
+        harnessId: 'codex',
+        status: 'completed',
+        cwd: '/tmp/project',
+        title: '原生会话'
+      }
+    ])
+
+    const snapshot = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(snapshot).toMatchObject({ ok: true })
+    const threads = snapshot.value.threads as Array<Record<string, any>>
+    const external = threads.filter((entry) => entry.codexhostHarnessId !== undefined)
+
+    expect(external).toHaveLength(1)
+    expect(external[0]).toMatchObject({ codexhostHarnessId: 'claude-code', name: 'cc · 260901-供应商调优' })
+    expect(threads.filter((entry) => entry.name === 'cx · 原生会话')).toHaveLength(0)
+    bridge.close()
+  })
+
   it('records the non-private Runtime Identity handshake once per semantic identity', () => {
     const context = loadCodexBridge(new FakeCodexProcess())
     const handshakes = () => context.diagnosticEvents.filter((event) => event.event === 'runtime-identity-handshake')

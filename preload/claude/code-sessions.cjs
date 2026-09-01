@@ -360,9 +360,14 @@ function correlateCodeSessions(sessions, hookState, previousBySession, appSnapsh
           lastActivityAt: numberOf(value.lastActivityAt)
         }))
       : []
+    // The Host link is identity, not phase: it rides along even when the hook
+    // correlation is too weak to own the phase, so the consumer can defer the
+    // whole row to the CodexHost lane's status for that thread.
+    const hostThreadId = typeof hookResult.hook?.hostThreadId === 'string' ? hookResult.hook.hostThreadId : ''
     return {
       ...session,
       ...state,
+      ...(hostThreadId ? { codexhostThreadId: hostThreadId } : {}),
       ...(topologyExact ? { subagents, topologyComplete: true } : {})
     }
   })
