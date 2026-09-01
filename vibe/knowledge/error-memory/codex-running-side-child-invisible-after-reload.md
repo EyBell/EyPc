@@ -61,3 +61,4 @@ Codex 任务的子任务（Side 分支）仍在运行、主任务已完成且已
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-25 | Codex 子任务活动聚合核验 | 用户报子任务进行中但父卡片显示已完成 | 怀疑聚合规则 | 9 代理对抗核验：聚合正确，C1 重载证据丢失 CONFIRMED、C2 潜在、C3 排除 | verified（根因）/ 补救待需求裁决 |
 | 2026-08-25 | RAW-181 重载恢复实现 | 用户指派裁决+实现 | 方向 B 无协议枚举证据被否决 | 方向 A 有界持久化提示 + C2 补齐；重载往返/不虚构/TTL/判活 4 个新回归用例，platform 全量 627/627 | 预防规则已实施 / 真实宿主重载验收待用户 |
+| 2026-08-31 | 子任务活动上浮主任务状态 | subagent 型子线程（非 fork）任何状态下都不在 `thread/list` | Lane A 对 subagent 恒缺席，与重载无关 | 拆出独立记录 [subagent 线程从不进清单](codex-subagent-thread-unlisted-parent-shows-stopped.md#L1)：rollout 文件发现 + `thread/read.parentThreadId` 链接 | 同族新类已单独收口 |

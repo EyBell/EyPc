@@ -21,6 +21,7 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 - [Counter and timestamp units in one comparison set](../comparison-set-mixing-counter-and-timestamp-units.md#L1)
 - [Cross-process notLoaded is not completion](../codex-cross-process-notloaded-is-not-completion.md#L1)
 - [Running side child invisible after reload](../codex-running-side-child-invisible-after-reload.md#L1)
+- [Subagent thread unlisted, parent shows stopped](../codex-subagent-thread-unlisted-parent-shows-stopped.md#L1)
 - [Desktop unread missing-field fallback](../codex-desktop-unread-missing-field-fallback.md#L1)
 - [Detection recorded without a repair path](../detection-recorded-without-any-repair-path.md#L1)
 - [Explicit archive bypasses inventory quarantine](../codex-explicit-archive-event-bypasses-inventory-quarantine.md#L1)
