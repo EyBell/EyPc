@@ -602,58 +602,62 @@ function visibilityAnchor(task) {
   )
 }
 
+/**
+ * The state-earned reachability of a task, independent of where the list
+ * displays it. A local pin moves the ROW into the pin group (user decision,
+ * 2026-09-01: any phase may be pinned), but it must never remove the task
+ * from the shortcuts its own state earns it — so counts, attention walks and
+ * the ring all resolve through this phase reading, not through the display
+ * group.
+ */
+function derivedAttentionState(task) {
+  if (task.hidden || task.paused) return 'none'
+  if (isAttentionTaskPhase(task.phase)) return 'input'
+  if (task.phase === 'completed' && task.unread) return 'unread'
+  if (task.phase === 'running') return 'active'
+  return 'none'
+}
+
 function derivedCycleTier(task) {
   if (task.hidden || task.paused) return 'none'
-  // Every set this function names is resolved through `derivedDynamicGroup`
-  // rather than restated as a phase test. A set whose membership is spelled out
-  // at each consumer has no owner, so widening it silently misses copies — the
-  // failure that put an `unknown` pin in the list with no shortcut able to
-  // reach it, and then left its visit progress on a drifting anchor.
-  if (task.dynamicGroup === 'input') {
+  const attention = derivedAttentionState(task)
+  if (attention === 'input') {
     return task.planImplementation ? 'plan' : 'attention'
   }
   if (task.phase === 'stopped' && task.planReady) return 'plan'
   if (task.phase === 'running' && task.dynamicEligible) return 'active'
   // Deliberately not gated on `dynamicEligible`: the unread badge counts every
   // visible completed-unread root, so the ring must reach exactly the same set
-  // or the count is advertising something the shortcut cannot deliver. Reading
-  // the group is how that set stays one set — the badge, this tier and the
-  // fast-access entry all resolve it through `derivedDynamicGroup`.
-  if (task.dynamicGroup === 'unread') return 'unread'
-  // The one case a pin changes: a pin the list shows under the pin group has no
-  // status group of its own, and that is exactly the set the dedicated
-  // fast-access entry serves, so it must not also ride the ordinary ring. A pin
-  // that kept its own status group is already placed by that state and keeps the
-  // tier it always had — pinning must not quietly remove a task from the
-  // shortcuts its own state earns it. Reading the group rather than repeating
-  // its phase list is what keeps the two rings from ever overlapping.
-  if (task.localPin && task.dynamicGroup !== 'pinned') return 'fallback'
+  // or the count is advertising something the shortcut cannot deliver.
+  if (attention === 'unread') return 'unread'
+  // Parked pins — completed-read or unknown, with no state-earned tier at
+  // all — are exactly the set the dedicated fast-access entry serves, so they
+  // must not also ride the ring. A pin whose state is still continuable
+  // (stopped without a Plan, a retired running task) keeps the fallback tier
+  // so the ring can reach it; the two sets never overlap.
+  if (task.localPin) {
+    return task.phase === 'completed' || task.phase === 'unknown' ? 'none' : 'fallback'
+  }
   return 'none'
 }
 
 function derivedDynamicGroup(task) {
   if (task.hidden || task.paused) return 'none'
+  // A local pin is a "keep this where I can find it" request; the row moves to
+  // the pin group in EVERY phase (user decision, 2026-09-01 — previously only
+  // completed-read pins did, which made pinning a live task look like a flash
+  // that immediately reverted). State-earned reachability — badges, attention
+  // walks, the ring — stays with `derivedAttentionState`/`derivedCycleTier`,
+  // so a pinned waiting-input task still answers the 待输入 shortcut.
+  if (task.localPin) return 'pinned'
   // Attention survives the ordinary activity window. A long-waiting prompt or
   // unread completion must remain reachable until the user handles it.
   if (isAttentionTaskPhase(task.phase)) return 'input'
   if (task.phase === 'completed' && task.unread) return 'unread'
-  // Pinning a finished, already-read task is a "keep this where I can find it"
-  // request, so it outranks the activity window that would otherwise retire the
-  // task from the dynamic list entirely — which made the pin do nothing at all.
-  // Pins in any other phase stay in their own status group.
-  if (task.localPin && task.phase === 'completed' && !task.unread) return 'pinned'
-  // The same "keep this where I can find it" reading applies to a pin in every
-  // other phase, so the window retires only unpinned work. `derivedCycleTier`
-  // never consulted the window for a pin, so a retired pin used to keep its
-  // ring slot while disappearing from the list: the shortcut cycled through a
-  // task the user could not see anywhere.
-  if (!task.localPin && !task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
+  // The activity window retires only unpinned work.
+  if (!task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
   if (task.phase === 'running') return 'active'
-  // `unknown` earns no group on its own, so a pinned one has no status group to
-  // stay in and goes to the pin's own group. Every task therefore appears in
-  // exactly one place: a second home for the same pin reads as a duplicate,
-  // which is the whole complaint pinning was meant to answer.
-  if (task.phase === 'unknown') return task.localPin ? 'pinned' : 'none'
+  if (task.phase === 'unknown') return 'none'
   if (task.phase === 'stopped') return 'stopped'
   if (task.phase === 'completed') return 'completed'
   return 'none'
@@ -788,11 +792,15 @@ function buildViews(tasks) {
   }
   // A badge is a promise that something is reachable, so it counts what the
   // ring can actually open — an unopenable task used to be counted and then
-  // silently skipped by every shortcut.
+  // silently skipped by every shortcut. Counts read the state-earned
+  // attention (not the display group): a pinned waiting-input task now sits
+  // in the pin group but must still be counted and reachable as 待输入.
   const countable = visible.filter((task) => task.capabilities.open)
-  views.counts.input = countable.filter((task) => task.dynamicGroup === 'input').length
-  views.counts.active = countable.filter((task) => task.dynamicGroup === 'active').length
-  views.counts.unread = countable.filter((task) => task.dynamicGroup === 'unread').length
+  views.counts.input = countable.filter((task) => derivedAttentionState(task) === 'input').length
+  views.counts.active = countable.filter((task) => (
+    task.phase === 'running' && (task.dynamicEligible || task.localPin)
+  )).length
+  views.counts.unread = countable.filter((task) => derivedAttentionState(task) === 'unread').length
 
   const cycleCandidates = [...visible]
     .filter((task) => task.capabilities.open && task.cycleTier !== 'none')
@@ -803,30 +811,25 @@ function buildViews(tasks) {
 
   const attention = [...visible].sort(compareByLatestQuestion)
   const inputAttention = attention
-    .filter((task) => task.capabilities.open && task.dynamicGroup === 'input')
+    .filter((task) => task.capabilities.open && derivedAttentionState(task) === 'input')
     .map((task) => task.key)
   // Direct attention actions are exact: "待输入" must never fall through to
-  // an unrelated pinned/completed task.
+  // an unrelated pinned/completed task. Membership is state-earned, so a
+  // pinned waiting-input task stays reachable here even though its row now
+  // lives in the pin group.
   views.attentionKeys.input = inputAttention
   // "已完成未读" is also the fallback entry for pins that have no other
   // shortcut, but the two sets must never share one walk. While a real unread
   // completion exists, every press stays inside that backlog; only an empty
-  // backlog lets the first press start cycling pins.
-  //
-  // Both halves are display groups, not a second phase list. The list already
-  // answers "is this unread" and "does this pin have a status group of its own",
-  // and every consumer resolving membership through `derivedDynamicGroup` is
-  // what keeps one concept from drifting into several: an `unknown` pin sat in
-  // 置顶 while matching neither the old `completed && !unread` test here nor any
-  // other entry, so it was visible and unreachable. Reading the groups instead
-  // gives every task one display owner: the pin group becomes this entry's
-  // empty-unread fallback, while status-owned pins stay in the ordinary ring.
+  // backlog lets the first press start cycling those parked pins — exactly
+  // the pins whose cycle tier is the fallback tier, so this entry and the
+  // ordinary ring never overlap.
   const unreadAttention = attention
-    .filter((task) => task.capabilities.open && task.dynamicGroup === 'unread')
-  const taskByKey = new Map(visible.map((task) => [task.key, task]))
-  const pinnedAttention = views.groups.pinned
-    .map((key) => taskByKey.get(key))
-    .filter((task) => task?.capabilities.open)
+    .filter((task) => task.capabilities.open && derivedAttentionState(task) === 'unread')
+  const pinnedOrder = new Map(views.groups.pinned.map((key, index) => [key, index]))
+  const pinnedAttention = attention
+    .filter((task) => task.capabilities.open && task.localPin && task.cycleTier === 'none')
+    .sort((left, right) => (pinnedOrder.get(left.key) ?? 0) - (pinnedOrder.get(right.key) ?? 0))
   views.attentionKeys.completedUnread = (unreadAttention.length > 0 ? unreadAttention : pinnedAttention)
     .map((task) => task.key)
   views.attentionKeys.archive = attention
@@ -2811,6 +2814,19 @@ function createCompanionTaskKernel(dependencies = {}) {
         ? { hidden: value }
         : { localPin: value, kind: value ? 'local-pin' : providerTraits(task.provider).taskKind }
       commitLocalTaskState(task, patch, command.command)
+      if (command.command === 'set-pin') {
+        // A pin that "flashes and reverts" needs this acceptance mark to be
+        // separable from a later evidence rebuild overwriting the value.
+        record({
+          level: 'info',
+          scope: 'task-kernel',
+          event: 'set-pin',
+          outcome: value ? 'pinned' : 'unpinned',
+          taskRef: key,
+          source: command.source,
+          packageRevision: currentPackage.packageRevision
+        })
+      }
       return { outcome: 'updated', key }
     }
     /**

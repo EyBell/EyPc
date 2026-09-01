@@ -2347,11 +2347,31 @@ export function createCodexController(options: CodexControllerOptions) {
   function toggleLocalPin(kind: CodexLocalPin['kind'], key: string) {
     // Task rows are projected from the Kernel package, so their pin flag must be
     // committed there as well; project pins stay a Renderer-owned projection.
-    const task = kind === 'task' ? allTasks().find((item) => item.key === key) : undefined
+    // Existence is answered by the KERNEL first: the float lists tasks straight
+    // from the kernel package, while this renderer's own presentation can lag
+    // behind it (a hidden main window, a task discovered afterwards) — the old
+    // presentation-only check silently swallowed every pin on such a task.
+    const presentationTask = kind === 'task' ? allTasks().find((item) => item.key === key) : undefined
+    const kernelTask = kind === 'task' && !presentationTask && companionKernel
+      ? companionKernel.getLatest().tasks.find((item) => item.key === key)
+      : undefined
+    const task = presentationTask
+      || (kernelTask ? ({ key: kernelTask.key, revisionAt: kernelTask.revisionAt } as CodexTaskCard) : undefined)
     const exists = kind === 'task'
       ? Boolean(task)
       : sourceTaskState.conversations.projects.some((project) => project.key === key && project.kind !== 'chats')
-    if (!exists) return false
+    if (!exists) {
+      options.platform.diagnostics?.record?.({
+        level: 'error',
+        scope: 'task-action',
+        event: 'set-pin-gate',
+        outcome: 'blocked',
+        code: 'target-not-found',
+        provider: 'codex',
+        taskRef: key
+      })
+      return false
+    }
     const identity = `${kind}:${key}`
     const pins = codexState().localPins
     const pinned = pins.some((pin) => `${pin.kind}:${pin.key}` === identity)
@@ -3102,8 +3122,35 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   /** Same unified command contract as visibility; Plan-ready rows stay pinnable. */
+  function companionCommandGate(key: string): string {
+    if (!companionKernel) return 'kernel-missing'
+    if (!companionKernelLease) return 'lease-missing'
+    if (!kernelOwnsTask(key)) return 'task-unowned'
+    return ''
+  }
+
   function commitCompanionLocalPin(task: CodexTaskCard, localPin: boolean) {
-    if (!companionKernel || !companionKernelLease || !kernelOwnsTask(task.key)) return false
+    let gate = companionCommandGate(task.key)
+    if (gate === 'lease-missing' || gate === 'task-unowned') {
+      // A stale lease or a stale kernel view after a preload restart used to
+      // eat every pin silently — the toggle returned false with no command,
+      // no message and no log. One re-attach turns that into either a working
+      // command or a logged gate the next diagnosis can read.
+      syncCompanionTaskAuthority()
+      gate = companionCommandGate(task.key)
+    }
+    if (gate) {
+      options.platform.diagnostics?.record?.({
+        level: 'error',
+        scope: 'task-action',
+        event: 'set-pin-gate',
+        outcome: 'blocked',
+        code: gate,
+        provider: 'codex',
+        taskRef: task.key
+      })
+      return false
+    }
     void dispatchCompanionCommand('set-pin', { key: task.key }, 'task-pin', {
       pinned: localPin,
       revisionAt: task.revisionAt

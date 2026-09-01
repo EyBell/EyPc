@@ -1151,10 +1151,12 @@ describe('CompanionTaskKernel', () => {
       ], 1, { providers: { codex: true, claude: false } })
     })
 
-    // A pin in another phase keeps its own status group — it just stops being
-    // retired by the window, which is what "keep this where I can find it" means.
-    expect(current.views.groups.active).toEqual(['codex-pin-running'])
-    expect(current.views.groups.stopped).toEqual(['codex-pin-stopped'])
+    // A pin in ANY phase moves the row to the pin group (user decision,
+    // 2026-09-01) and is exempt from the activity window; the badges keep
+    // counting by real state, so the pinned running task still counts active.
+    expect(current.views.groups.pinned).toEqual(['codex-pin-running', 'codex-pin-stopped'])
+    expect(current.views.groups.active).toEqual([])
+    expect(current.views.groups.stopped).toEqual([])
     // The window still retires unpinned work.
     expect(current.views.counts).toEqual({ input: 0, active: 1, unread: 0 })
   })
@@ -1213,25 +1215,33 @@ describe('CompanionTaskKernel', () => {
 
     const ring = new Set<string>(current.views.cycleKeys)
     const entry = new Set<string>(current.views.attentionKeys.completedUnread)
+    // Every pin now displays in the pin group (user decision, 2026-09-01)...
+    expect([...current.views.groups.pinned].sort())
+      .toEqual((current.tasks as Array<Record<string, any>>).map((value) => value.key).sort())
     for (const value of current.tasks as Array<Record<string, any>>) {
-      if (value.dynamicGroup === 'pinned') {
-        // Pins without their own status group stay out of the ordinary ring.
-        // A real unread backlog also keeps them out of its dedicated entry, so
-        // the same shortcut can never drift from unread work into parked pins.
+      const parked = value.phase === 'completed' && !value.unread || value.phase === 'unknown'
+      if (parked) {
+        // ...but a parked pin (completed-read / unknown) stays out of the
+        // ordinary ring, and a real unread backlog keeps it out of the
+        // dedicated entry, so that shortcut can never drift from unread work
+        // into parked pins.
         expect(entry.has(value.key)).toBe(false)
         expect(ring.has(value.key)).toBe(false)
       } else {
-        // Its own state places it. Pinning must neither add a ring slot nor take
-        // one away.
+        // Its state-earned reachability survives the display move: pinning
+        // must neither add a ring slot nor take one away.
         expect(ring.has(value.key)).toBe(true)
       }
     }
     // The unread backlog is deliberately reachable both ways: the entry is the
     // fast path to it, the ring still walks it as a tier. Parked pins become the
     // entry's fallback only after this backlog is empty.
-    expect([...entry]).toEqual(current.views.groups.unread)
-    expect(current.views.groups.pinned.every((key: string) => !entry.has(key) && !ring.has(key))).toBe(true)
-    expect([...current.views.groups.pinned].sort()).toEqual(['codex-completed-read', 'codex-unknown-read', 'codex-unknown-unread'])
+    expect([...entry].sort()).toEqual(
+      (current.tasks as Array<Record<string, any>>)
+        .filter((value) => value.phase === 'completed' && value.unread)
+        .map((value) => value.key)
+        .sort()
+    )
   })
 
   it('derives every badge and entry from the display group rather than a restated phase test', () => {
@@ -1255,24 +1265,28 @@ describe('CompanionTaskKernel', () => {
       draft: draft(tasks, 1, { providers: { codex: true, claude: false } })
     })
 
-    const byKey = new Map<string, any>(current.tasks.map((value: any) => [value.key, value]))
-    const openable = (keys: string[]) => keys.filter((key) => byKey.get(key)?.capabilities.open)
-    // `derivedDynamicGroup` is the sole owner of "which set is this task in".
-    // Each badge is its group minus what cannot be opened. Each direct entry
-    // selects those same openable groups without restating phase predicates — a
-    // consumer that copied the predicate would drift the moment the set widened,
-    // which is exactly how an `unknown` pin ended up unreachable.
-    expect(current.views.counts.input).toBe(openable(current.views.groups.input).length)
-    expect(current.views.counts.active).toBe(openable(current.views.groups.active).length)
-    expect(current.views.counts.unread).toBe(openable(current.views.groups.unread).length)
-    expect(current.views.attentionKeys.input).toEqual(openable(current.views.groups.input))
-    const unreadEntry = openable(current.views.groups.unread)
-    const pinnedFallback = openable(current.views.groups.pinned)
-    expect(current.views.attentionKeys.completedUnread).toEqual(unreadEntry.length > 0 ? unreadEntry : pinnedFallback)
+    const rows = current.tasks as Array<Record<string, any>>
+    // Badges and entries read state-earned reachability (RAW + user decision
+    // 2026-09-01): moving every pin's ROW into the pin group must not shrink
+    // what the attention badges promise or what the direct entries reach.
+    const stateInput = rows
+      .filter((value) => ['waiting-input', 'waiting-approval'].includes(value.phase) && value.capabilities.open)
+      .map((value) => value.key)
+    const stateUnread = rows
+      .filter((value) => value.phase === 'completed' && value.unread && value.capabilities.open)
+      .map((value) => value.key)
+    const stateActive = rows
+      .filter((value) => value.phase === 'running' && value.localPin && value.capabilities.open)
+      .map((value) => value.key)
+    expect(current.views.counts.input).toBe(stateInput.length)
+    expect(current.views.counts.unread).toBe(stateUnread.length)
+    expect(current.views.counts.active).toBe(stateActive.length)
+    expect([...current.views.attentionKeys.input].sort()).toEqual(stateInput.sort())
+    expect([...current.views.attentionKeys.completedUnread].sort()).toEqual(stateUnread.sort())
     // A guard on the fixture itself: an all-open or all-empty matrix would let
     // every assertion above hold vacuously.
     expect(current.views.groups.pinned.length).toBeGreaterThan(0)
-    expect(current.views.counts.unread).toBeLessThan(current.views.groups.unread.length)
+    expect(stateUnread.length).toBeGreaterThan(0)
   })
 
   it('never puts a task in the ring that no dynamic group shows', () => {
@@ -1912,14 +1926,14 @@ describe('CompanionTaskKernel', () => {
     })
 
     // Pinning must never quietly remove a task from the entries its own phase
-    // earns it; only a finished, already-read pin leaves the ordinary ring.
+    // earns it; the rows themselves now display in the pin group (user
+    // decision, 2026-09-01) while every shortcut stays state-earned.
     expect(current.views.cycleKeys).toEqual(['codex-pin-input', 'codex-pin-running', 'codex-pin-unread'])
     expect(current.views.attentionKeys.input).toEqual(['codex-pin-input'])
-    expect(current.views.groups.input).toEqual(['codex-pin-input'])
-    expect(current.views.groups.active).toEqual(['codex-pin-running'])
-    expect(current.views.groups.unread).toEqual(['codex-pin-unread'])
-    // None of them is finished-and-read, so the pinned group stays empty.
-    expect(current.views.groups.pinned).toEqual([])
+    expect(current.views.groups.pinned).toEqual(['codex-pin-input', 'codex-pin-running', 'codex-pin-unread'])
+    expect(current.views.groups.input).toEqual([])
+    expect(current.views.groups.active).toEqual([])
+    expect(current.views.groups.unread).toEqual([])
     expect(current.views.counts).toEqual({ input: 1, active: 1, unread: 1 })
   })
 
@@ -2198,9 +2212,10 @@ describe('CompanionTaskKernel', () => {
       ], 1)
     })
 
-    // A pin on a live task changes nothing: it keeps the ring position its own
-    // running state earns it.
-    expect(current.views.groups.active).toEqual(['claude-new', 'codex-pinned-middle', 'codex-old'])
+    // A pin on a live task keeps the ring position its own running state earns
+    // it; only the ROW moves to the pin group (user decision, 2026-09-01).
+    expect(current.views.groups.pinned).toEqual(['codex-pinned-middle'])
+    expect(current.views.groups.active).toEqual(['claude-new', 'codex-old'])
     expect(current.views.cycleKeys).toEqual(['claude-new', 'codex-pinned-middle', 'codex-old'])
   })
 
@@ -2221,10 +2236,11 @@ describe('CompanionTaskKernel', () => {
     })
     expect(current.tasks[0].cycleTier).toBe('fallback')
     expect(current.views.cycleKeys).toEqual(['codex-a'])
-    // Not finished-and-read, so it is neither collected by the pinned group nor
-    // served by the fast-access entry: its own stopped state already places it.
-    expect(current.views.groups.pinned).toEqual([])
-    expect(current.views.groups.stopped).toEqual(['codex-a'])
+    // The ROW displays in the pin group (user decision, 2026-09-01), but a
+    // continuable stopped pin rides the ring's fourth layer, not the parked
+    // fast-access entry.
+    expect(current.views.groups.pinned).toEqual(['codex-a'])
+    expect(current.views.groups.stopped).toEqual([])
     expect(current.views.attentionKeys.completedUnread).toEqual([])
   })
 
@@ -3802,12 +3818,12 @@ describe('hand-set phase for an unknown task', () => {
       })], 1, { providers: { codex: true, claude: false } })
     })
 
-    // The deliberate exception, and it is not the pin's: an unread completion is
-    // reachable from the entry AND the ring's `unread` tier because the badge
-    // promises exactly that set. Pinning changes nothing here — an unpinned
-    // unread completion is served by both in the same way.
-    expect(current.views.groups.unread).toEqual(['codex-a'])
-    expect(current.views.groups.pinned).toEqual([])
+    // The deliberate exception, and it is not the pin's: an unread completion
+    // stays reachable from the entry AND the ring's `unread` tier because the
+    // badge promises exactly that set. The ROW itself displays in the pin
+    // group (user decision, 2026-09-01).
+    expect(current.views.groups.pinned).toEqual(['codex-a'])
+    expect(current.views.groups.unread).toEqual([])
     expect(current.views.counts.unread).toBe(1)
     expect(current.views.attentionKeys.completedUnread).toEqual(['codex-a'])
     expect(current.views.cycleKeys).toEqual(['codex-a'])

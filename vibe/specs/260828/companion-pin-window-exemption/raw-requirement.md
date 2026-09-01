@@ -57,26 +57,27 @@ Tool: claude · Date: 2026-08-28 · Level: Standard（需求）
 | added | `unknown` 相位置顶项的落点 | `unknown` 自身不挣得分组，置顶的 `unknown` 任务因而没有可留守的状态组，直接归入置顶分组 |
 | added | 对称不变式 | 凡进入 `cycleKeys` 的任务必须在某个动态分组可见。RAW-182 立的是「角标里有＝循环能到」，这是它的反面 |
 | added | 单一落点不变式 | 每个任务恰好出现在一个动态分组里。首版把置顶的 `unknown` 放进 stopped 组，用户当场看到同一条任务出现两次，「重复」正是置顶要消除的东西 |
-| changed | 置顶分组成员（RAW-183） | 由「本地置顶 + 已完成 + 已读」扩为「本地置顶且没有属于自己的状态组」，即再加上 `unknown` 相位；有自己状态组的置顶项仍留在各自状态组 |
-| unchanged | 层序与退出规则（RAW-182/183） | 层序并集、环冻结、游标归属不变；只有已完成已读的置顶项退出通用循环 |
+| changed | 置顶分组成员（RAW-183） | 用户原话「如果它属于置顶，也归到置顶里面」按字面收敛：任何相位的本地置顶根任务都只显示在置顶分组，不再同时留在状态分组 |
+| unchanged | 状态入口与计数语义（RAW-182/183） | 置顶只改变行的位置；待输入、进行中、待继续、已完成未读仍按真实相位进入计数与快捷入口。已完成已读和 `unknown` 没有状态入口，走置顶兜底 |
 | unchanged | 角标计数口径 | 置顶是位置不是角标，三个计数不变 |
 | unchanged | 未置顶任务的时间窗 | 未置顶任务过窗照旧从动态页消失；未置顶的 `unknown` 相位任务仍不进入任何分组与环 |
 
-`decision`：`explicit-current-request`（用户明确要求置顶豁免时间窗；`unknown` 落点与不变式是让该要求真正生效所必需的最小补齐，已在本文件写明）。
+`decision`：`explicit-current-request`（用户明确要求置顶豁免时间窗，并进一步要求「如果它属于置顶，也归到置顶里面」；显示分组统一归置顶，状态计数与快捷入口仍由真实相位决定）。
 
-`residual_tradeoff`：置顶一条永不过期的任务，会让它长期占据动态页与通用循环的一个位置——这正是「暂存待查」的定义，取消置顶即可移除。「状态未知」分组自此可能出现内容（此前恒空），但仅限置顶项。
+`residual_tradeoff`：置顶一条永不过期的任务，会让它长期占据动态页置顶分组；这正是「暂存待查」的定义，取消置顶即可恢复按状态分组和活动时间窗。待输入、进行中与未读角标仍按真实状态计数，不因显示位置改变。
 
 ## 实现
 
 [task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L616) `derivedDynamicGroup`：
 
 ```js
-if (!task.localPin && !task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
+if (task.localPin) return 'pinned'
+if (!task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
 if (task.phase === 'running') return 'active'
-if (task.phase === 'unknown') return task.localPin ? 'pinned' : 'none'
+if (task.phase === 'unknown') return 'none'
 ```
 
-首版曾把这条写成 `? 'stopped'`，让 Float 已有却一直为空的「状态未知」分区来承载。用户立刻指出那是重复：同一条置顶任务在动态页出现了两次。`unknown` 没有属于自己的状态组，所以置顶分组就是它的唯一落点——这也顺带把「每个任务恰好一个分组」补成了显式不变式。Float 的「状态未知」分区因此重新回到恒空状态（渲染层未改动，`if (!tasks.length) return []` 使它不产生任何行）。
+首版曾把置顶 `unknown` 写进 stopped 的「状态未知」分区，用户当场指出重复，并补充「如果它属于置顶，也归到置顶里面」。最终按原话把所有本地置顶行统一收进置顶分组；`derivedAttentionState` 与 `derivedCycleTier` 独立保留真实相位挣得的计数和快捷入口，因此置顶的待输入、进行中、待继续与已完成未读仍可从原入口到达，但列表只出现一行。
 
 [scheduleVisibilityTransition](../../../../preload/companion/task-kernel.cjs#L1178) 跳过置顶任务：窗口不再对它作判定，那个到期时刻也就不再是一次需要唤醒的可见性切换。
 
