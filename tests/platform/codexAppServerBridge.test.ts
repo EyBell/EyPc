@@ -8934,7 +8934,9 @@ draft: v7EvidenceDraft({
         })
       })
     )
-    expect(execFile.mock.calls.map((call) => call[0])).toEqual(['/usr/sbin/scutil', '/usr/bin/curl'])
+    // 'ps' is the CodexHost lane's rendezvous probe (codexhost-discovery); in
+    // this sandbox no Host Runtime exists, so the lane stops after one probe.
+    expect(execFile.mock.calls.map((call) => call[0])).toEqual(['/usr/sbin/scutil', '/usr/bin/curl', 'ps'])
     expect(child.writes.map((frame) => frame.method)).toEqual(expect.arrayContaining([
       'initialize',
       'initialized',
