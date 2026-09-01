@@ -40,6 +40,7 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
       'app-paths.cjs',
       'app-state.cjs',
       'code-sessions.cjs',
+      'interrupt-probe.cjs',
       'unread.cjs',
       'plan-usage.cjs',
       'settings.cjs',
