@@ -3829,3 +3829,91 @@ describe('hand-set phase for an unknown task', () => {
     expect(current.views.cycleKeys).toEqual(['codex-a'])
   })
 })
+
+describe('per-task phase transition diagnostics', () => {
+  const providers = { codex: true, claude: false }
+
+  function attachedKernel() {
+    const records: Array<Record<string, any>> = []
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      record: (entry: Record<string, any>) => records.push(entry),
+      initialConfiguration: { enabled: true, providers }
+    })
+    const receipt = kernel.attach({ enabled: true, providers })
+    const transitions = () => records.filter((entry) => entry.event === 'phase-transition')
+    return { kernel, receipt, records, transitions }
+  }
+
+  it('names the flipping task, which an aggregate group count cannot attribute', () => {
+    const { kernel, receipt, transitions } = attachedKernel()
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([task({ phase: 'running' })], 1, { providers }) })
+    // First publish has no previous package to diff against. Membership is not
+    // a transition, so it must stay out of the timeline.
+    expect(transitions()).toEqual([])
+
+    const published = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        phase: 'completed',
+        cycleTier: 'none',
+        dynamicGroup: 'completed',
+        phaseRevision: 200,
+        statusEnteredAt: 200,
+        terminalAt: 200
+      })], 2, { providers })
+    })
+
+    expect(published.tasks[0].phase).toBe('completed')
+    expect(transitions()).toEqual([expect.objectContaining({
+      level: 'info',
+      scope: 'task-kernel',
+      event: 'phase-transition',
+      outcome: 'completed',
+      taskRef: 'codex-a',
+      packageRevision: published.packageRevision,
+      details: expect.objectContaining({
+        from: 'running',
+        provider: 'codex',
+        unread: false,
+        forced: false,
+        batchNodes: expect.objectContaining({ codex: 1 })
+      })
+    })])
+  })
+
+  it('caps one publish at eight named flips and summarizes the remainder', () => {
+    const { kernel, receipt, transitions } = attachedKernel()
+    // Zero-padded so the published task order — which is what the cap walks —
+    // matches the order these are declared in.
+    const keys = Array.from({ length: 11 }, (_, index) => `codex-${String(index).padStart(2, '0')}`)
+    const rows = (phase: string, revision: number) => keys.map((key, index) => task({
+      key,
+      actionAlias: `ct_${key.replace('-', '_')}_1234567890`,
+      phase,
+      cycleTier: phase === 'running' ? 'active' : 'none',
+      dynamicGroup: phase === 'running' ? 'active' : 'completed',
+      phaseRevision: revision,
+      statusEnteredAt: revision,
+      terminalAt: phase === 'running' ? 0 : revision,
+      displayOrder: index,
+      cycleOrder: index,
+      attentionOrder: index
+    }))
+
+    kernel.syncPackage({ lease: receipt.lease, draft: draft(rows('running', 100), 1, { providers }) })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft(rows('completed', 200), 2, { providers }) })
+
+    const named = transitions().filter((entry) => entry.outcome !== 'overflow')
+    expect(named).toHaveLength(8)
+    expect(named.map((entry) => entry.taskRef)).toEqual(keys.slice(0, 8))
+    // The remainder is counted rather than dropped: a silent cap would read as
+    // "only eight tasks moved".
+    expect(transitions().filter((entry) => entry.outcome === 'overflow')).toEqual([expect.objectContaining({
+      scope: 'task-kernel',
+      event: 'phase-transition',
+      outcome: 'overflow',
+      count: 3
+    })])
+  })
+})
