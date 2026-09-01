@@ -173,6 +173,7 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 - [RAW-175](../codex-raw-175.md#L1) — `active`
 - [RAW-180](../codex-raw-180.md#L1) — `active`
 - [RAW-181](../codex-raw-181.md#L1) — `active`
+- [RAW-190](../codex-raw-190.md#L1) — `active`
 
 ## Related Requirements
 

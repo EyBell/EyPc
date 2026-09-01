@@ -3987,9 +3987,32 @@ function codexIsConfirmedTurnEvidence(value) {
   return value === 'turn-completed' || value === 'targeted-after-exit' || value === 'snapshot-corroborated'
 }
 
+function honorHostExternalTerminal(threadId, known, activity) {
+  if (!activity || !known) return activity
+  if (codexhostDiscovery?.isExternalThreadId?.(threadId) !== true) return activity
+  if (known.lastTurnStatus !== 'completed' || !codexIsConfirmedTurnEvidence(known.lastTurnEvidence)) return activity
+  if (activity.status !== 'active' || (Array.isArray(activity.activeFlags) && activity.activeFlags.length)) return activity
+  return {
+    ...activity,
+    status: known.connectorStatus === 'idle' || known.connectorStatus === 'notLoaded'
+      ? known.connectorStatus
+      : 'idle',
+    activeFlags: []
+  }
+}
+
 function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persistedUnreadIds) {
   if (codexDesktopOpenedReadAcknowledgements.has(threadId)) {
     return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
+  }
+  if (codexhostDiscovery?.isExternalThreadId?.(threadId) === true) {
+    if (known?.connectorUnreadAuthority === 'desktop-persisted') {
+      return {
+        hasUnreadTurn: known.connectorHasUnreadTurn === true,
+        unreadAuthority: 'desktop-persisted'
+      }
+    }
+    return { hasUnreadTurn: false, unreadAuthority: 'unavailable' }
   }
   const cachedUnread = bridge?.liveUnread.get(threadId)
   const liveUnread = bridge?.state === 'connected' || cachedUnread?.ownerClientId === 'eypc-open'
@@ -6241,7 +6264,7 @@ class CodexDesktopCompanionBridge {
 
   publishShadow(threadId, shadow, readStateOnly = false) {
     const known = codexActivityInventory.get(threadId)
-    const activity = codexDesktopShadowActivity(shadow)
+    const activity = honorHostExternalTerminal(threadId, known, codexDesktopShadowActivity(shadow))
     if (!known || !activity) return
     codexRecordDesktopShadowInventoryBaseline(shadow, known)
     const previousStatus = known.status
@@ -6283,7 +6306,7 @@ class CodexDesktopCompanionBridge {
     const known = codexActivityInventory.get(parentThreadId)
     if (!known) return
     const priorStatus = previousStatus || known.status
-    const own = codexDesktopShadowActivity(this.shadows.get(parentThreadId)) || {
+    const own = honorHostExternalTerminal(parentThreadId, known, codexDesktopShadowActivity(this.shadows.get(parentThreadId))) || {
       status: known.connectorStatus,
       activeFlags: [...known.connectorActiveFlags],
       ...(codexTimestampMs(known.connectorWaitingSince) ? { waitingSince: known.connectorWaitingSince } : {})
@@ -9500,13 +9523,19 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       } : {}),
       turnMode: planLifecycle.turnMode,
       statusAuthority: persistedDecision ? 'persisted-decision' : 'connector',
-      // CodexHost external conversations keep their unread state inside the
-      // Host, not in the official persisted atom, so for them the set can
-      // only answer "unknown" — claiming read here would contradict the
-      // Desktop's own badge (verified: an unread Grok thread is absent from
-      // every host bucket of unread-thread-ids-by-host-v1).
-      hasUnreadTurn: thread.codexhostExternal !== true && unreadIds ? unreadIds.has(thread.id) : false,
-      unreadAuthority: thread.codexhostExternal !== true && unreadIds ? 'desktop-persisted' : 'unavailable',
+      // CodexHost external conversations keep unread inside the Host. The CLI
+      // field is authoritative when present. A completed row without the field
+      // (older Host) must not be claimed read — it becomes completed-unread.
+      hasUnreadTurn: thread.codexhostExternal === true
+        ? typeof thread.codexhostHasUnreadTurn === 'boolean'
+          ? thread.codexhostHasUnreadTurn === true
+          : lastTurn.status === 'completed'
+        : unreadIds ? unreadIds.has(thread.id) : false,
+      unreadAuthority: thread.codexhostExternal === true
+        ? typeof thread.codexhostHasUnreadTurn === 'boolean' || lastTurn.status === 'completed'
+          ? 'desktop-persisted'
+          : 'unavailable'
+        : unreadIds ? 'desktop-persisted' : 'unavailable',
       updatedAt: codexTimestampMs(thread.recencyAt) || codexTimestampMs(thread.updatedAt) || lastTurn.startedAt,
       ...(codexTimestampMs(thread.createdAt) ? { createdAt: codexTimestampMs(thread.createdAt) } : {}),
       ...(codexThreadFirstPromptCache.get(thread.id)?.firstPromptAt ? { firstPromptAt: codexThreadFirstPromptCache.get(thread.id).firstPromptAt } : {}),
@@ -9515,7 +9544,9 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       ...(lastTurn.completedAt ? { lastTurnCompletedAt: lastTurn.completedAt } : {}),
       ...(lastTurn.status === 'interrupted' || lastTurn.status === 'failed'
         ? { lastTurnEvidence: 'targeted-after-exit', idleConfirmed: connectorStatus !== 'active' }
-        : {}),
+        : thread.codexhostExternal === true && lastTurn.status === 'completed'
+          ? { lastTurnEvidence: 'snapshot-corroborated', idleConfirmed: connectorStatus !== 'active' }
+          : {}),
       projectKey: project.key,
       projectName: project.name,
       projectKind: project.kind === 'chats' ? 'chats' : 'project',
@@ -11107,7 +11138,11 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       observationUnread: observation.unread === true,
       observationKnown: observation.unreadKnown === true,
       branchSource: privateEvidence ? 'private' : 'fallback',
-      authority: typeof input.authority === 'string' ? input.authority : ''
+      authority: typeof input.authority === 'string' ? input.authority : '',
+      // A rebuilt node overwrites kernel-local pin state with this value, so
+      // its transitions are the other half of any pin-flash forensics.
+      localPin: persisted.pins.has(key),
+      persistedPinCount: persisted.pins.size
     })
     if (observation.unreadKnown === true && input.unreadSequence) {
       observation.unreadSequence = Math.max(
