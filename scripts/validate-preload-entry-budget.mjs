@@ -54,7 +54,15 @@ const BUDGET = Object.freeze({
   // codexDesktopAggregateUnread bubbling machine children's permanent desktop
   // unread entries into parents; the wrapper now filters them before
   // delegating to the aggregation module.
-  lines: 14009,
+  // 2026-09-01 (e): +47 lines / +1 mutable binding for the CodexHost lane
+  // wiring — loader, scan row/turn injection, official-only turn-read split,
+  // membership guard and session reset. Rendezvous discovery, CLI transport,
+  // normalization, TTL cache and the external-id/key sets all live in
+  // preload/codex/codexhost-discovery.cjs.
+  // 2026-09-01 (f): +5 lines — external conversations keep unread inside the
+  // Host (absent from every bucket of the official unread atom), so sanitize
+  // answers "unknown" for them instead of claiming read.
+  lines: 14061,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
@@ -64,7 +72,7 @@ const BUDGET = Object.freeze({
   // bindings holding a fresh `Map`/`Set`. These are the bindings a closure
   // rewrite has to either move or inject, so they measure coupling rather than
   // volume.
-  mutableBindings: 152
+  mutableBindings: 153
 })
 
 const root = resolve(import.meta.dirname, '..')

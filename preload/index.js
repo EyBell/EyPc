@@ -1206,6 +1206,34 @@ try {
   }
 } catch { codexSubagentDiscovery = null }
 
+// A failed load silently disables the CodexHost lane: the scan then sees
+// exactly the official inventory, which is the pre-lane baseline.
+let codexhostDiscovery = null
+try {
+  let codexhostDiscoveryModule = null
+  try {
+    codexhostDiscoveryModule = require('./codex/codexhost-discovery.cjs')
+  } catch {}
+  if (!codexhostDiscoveryModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        codexhostDiscoveryModule = require(path.join(base, 'codex', 'codexhost-discovery.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof codexhostDiscoveryModule?.createCodexhostDiscovery === 'function') {
+    codexhostDiscovery = codexhostDiscoveryModule.createCodexhostDiscovery({
+      execFile,
+      record: (entry) => runtimeDiagnostics.record(entry)
+    })
+  }
+} catch { codexhostDiscovery = null }
+
 
 // A failed load degrades to the bare minimum safe fields (`key` plus an
 // `unavailable` unread authority) rather than a partial passthrough: this is
@@ -7013,6 +7041,7 @@ function resetCodexThreadSessionState(options = {}) {
   }
   codexInventorySideBranchEvidence.clear()
   codexSubagentDiscovery?.codexResetSubagentDiscovery?.()
+  codexhostDiscovery?.codexhostResetDiscovery?.()
   codexCompleteInventoryThreadIds = null
   codexSideTopologyDiagnosticFingerprints.clear()
   codexPrivateBranchTerminals.clear()
@@ -7170,7 +7199,10 @@ async function reconcileCodexInventoryMembership(reason, forceTasksOnly, generat
   const added = [...unarchivedKeys].some((key) => !currentCodexKeys.has(key))
   const missingUnclassified = [...currentCodexKeys].some((key) => !suppressedKeys.has(key)
     && !unarchivedKeys.has(key)
-    && !archivedKeysInInventory.has(key))
+    && !archivedKeysInInventory.has(key)
+    // CodexHost external conversations never appear in the official
+    // membership listing; treating them as missing would loop cold scans.
+    && codexhostDiscovery?.isExternalThreadKey?.(key) !== true)
   const contradictory = [...unarchivedKeys].some((key) => archivedKeysInInventory.has(key))
   const inventoryChanged = confirmedArchived.length > 0 || added || missingUnclassified || contradictory
   if (inventoryChanged) {
@@ -9468,8 +9500,13 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       } : {}),
       turnMode: planLifecycle.turnMode,
       statusAuthority: persistedDecision ? 'persisted-decision' : 'connector',
-      hasUnreadTurn: unreadIds ? unreadIds.has(thread.id) : false,
-      unreadAuthority: unreadIds ? 'desktop-persisted' : 'unavailable',
+      // CodexHost external conversations keep their unread state inside the
+      // Host, not in the official persisted atom, so for them the set can
+      // only answer "unknown" — claiming read here would contradict the
+      // Desktop's own badge (verified: an unread Grok thread is absent from
+      // every host bucket of unread-thread-ids-by-host-v1).
+      hasUnreadTurn: thread.codexhostExternal !== true && unreadIds ? unreadIds.has(thread.id) : false,
+      unreadAuthority: thread.codexhostExternal !== true && unreadIds ? 'desktop-persisted' : 'unavailable',
       updatedAt: codexTimestampMs(thread.recencyAt) || codexTimestampMs(thread.updatedAt) || lastTurn.startedAt,
       ...(codexTimestampMs(thread.createdAt) ? { createdAt: codexTimestampMs(thread.createdAt) } : {}),
       ...(codexThreadFirstPromptCache.get(thread.id)?.firstPromptAt ? { firstPromptAt: codexThreadFirstPromptCache.get(thread.id).firstPromptAt } : {}),
@@ -9549,7 +9586,18 @@ async function scanVerifiedCodexInventory() {
           rows: recoveredRows
         })
       : []
-    const rows = subagentRows.length ? [...recoveredRows, ...subagentRows] : recoveredRows
+    // CodexHost external Harness conversations are invisible to the official
+    // app-server; the codexhost CLI is their contract surface. Their turn
+    // evidence is synthesized because thread/turns/list cannot answer them.
+    const codexhost = codexhostDiscovery
+      ? await codexhostDiscovery.codexhostRowsForScan({
+          roots: [...new Set(listedRows.map((row) => codexNormalizeNativeRoot(codexRecord(row).cwd)).filter(Boolean))],
+          threadKey: codexThreadKey
+        })
+      : { rows: [], turns: new Map() }
+    const rows = subagentRows.length || codexhost.rows.length
+      ? [...recoveredRows, ...subagentRows, ...codexhost.rows]
+      : recoveredRows
     const topology = codexInventoryThreadTopology(rows)
     const assignments = new Map()
     for (const thread of rows) {
@@ -9570,8 +9618,12 @@ async function scanVerifiedCodexInventory() {
     const orphanCount = eligibleRows.filter((thread) => topology.isolated.has(thread.id)
       || topology.relations.has(thread.id) && !sideRelations.has(thread.id)).length
     const excludedSourceCount = rows.length - eligibleRows.length
-    const turns = await readCodexThreadTurnStatuses(eligibleRows, new Set(dirtySnapshot.keys()))
-    await readCodexThreadGoals(eligibleRows)
+    const officialEligibleRows = codexhost.rows.length
+      ? eligibleRows.filter((thread) => !codexhostDiscovery.isExternalThreadId(codexRecord(thread).id))
+      : eligibleRows
+    const turns = await readCodexThreadTurnStatuses(officialEligibleRows, new Set(dirtySnapshot.keys()))
+    for (const [threadId, turn] of codexhost.turns) turns.latest.set(threadId, turn)
+    await readCodexThreadGoals(officialEligibleRows)
     const endingRegistry = readCodexNativeRegistry()
     if (endingRegistry.fingerprint !== registry.fingerprint) {
       if (attempt === 0) continue
