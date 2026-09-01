@@ -71,7 +71,13 @@ const BUDGET = Object.freeze({
   // 2026-09-01 (i): RAW-190 CodexHost extra-process completion — Host CLI
   // completed is exact terminal, Host unread is not overwritten by the
   // official atom, and Desktop follow cannot revive a corroborated idle row.
-  lines: 14096,
+  // 2026-09-01 (j): extra processes whose cwd is absent from official
+  // inventory still member; unmatched Host rows fall through to Chats.
+  // 2026-09-01 (k): RAW-191 extra-process questions/prompts map to 待输入;
+  // Host waiting-flag honor lives in codexhost-discovery, entry shrinks.
+  // 2026-09-01 (l): RAW-193 extra-process unread compares with Desktop follow;
+  // compareHostDesktopUnread lives in discovery, entry shrinks.
+  lines: 14094,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

@@ -22,13 +22,25 @@ Canonical target: `vibe/specs/PRODUCT_REQUIREMENTS.md` Codex Companion
   "documents": [
     "vibe/specs/260901/codexhost-external-completion/raw-requirement.md",
     "vibe/specs/260901/codexhost-external-completion/spec.md",
+    "vibe/specs/260901/codexhost-external-completion/changes.md",
     "vibe/specs/PRODUCT_REQUIREMENTS.md",
+    "vibe/specs/PROJECT_STATUS.md",
+    "vibe/specs/requirements/codex-raw-190.md",
+    "vibe/specs/requirements/codex-raw-191.md",
+    "vibe/specs/requirements/codex-raw-192.md",
+    "vibe/specs/requirements/codex-raw-193.md",
+    "vibe/specs/requirements/modules/companion-codex.md",
+    "vibe/rules/README.md",
     "src/help/guides/codex.md",
     "vibe/knowledge/error-memory/codexhost-external-threads-invisible-to-official-surfaces.md"
   ],
   "dependencies": [
     "preload/codex/codexhost-discovery.cjs",
+    "public/codex/codexhost-discovery.cjs",
     "preload/index.js",
+    "public/preload.js",
+    "scripts/validate-preload-entry-budget.mjs",
+    "vibe/specs/source-anchors/catalog.json",
     "tests/platform/codexhostDiscovery.test.ts",
     "tests/platform/providerEvidenceAdapterV7.test.ts"
   ],
@@ -37,9 +49,24 @@ Canonical target: `vibe/specs/PRODUCT_REQUIREMENTS.md` Codex Companion
     "scripts/sync-utools-preloads.mjs"
   ],
   "git_scope_prefixes": [
-    "vibe/specs/260901/codexhost-external-completion/",
+    "vibe/specs/260901/codexhost-external-completion",
+    "vibe/specs/PRODUCT_REQUIREMENTS.md",
+    "vibe/specs/PROJECT_STATUS.md",
+    "vibe/specs/requirements/codex-raw-190.md",
+    "vibe/specs/requirements/codex-raw-191.md",
+    "vibe/specs/requirements/codex-raw-192.md",
+    "vibe/specs/requirements/codex-raw-193.md",
+    "vibe/specs/requirements/modules/companion-codex.md",
+    "vibe/specs/source-anchors/catalog.json",
+    "vibe/rules/README.md",
+    "src/help/guides/codex.md",
+    "vibe/knowledge/error-memory/codexhost-external-threads-invisible-to-official-surfaces.md",
     "preload/codex/codexhost-discovery.cjs",
-    "preload/index.js"
+    "public/codex/codexhost-discovery.cjs",
+    "preload/index.js",
+    "public/preload.js",
+    "scripts/validate-preload-entry-budget.mjs",
+    "tests/platform/codexhostDiscovery.test.ts"
   ]
 }
 ```
@@ -48,6 +75,8 @@ Canonical target: `vibe/specs/PRODUCT_REQUIREMENTS.md` Codex Companion
 
 - Add: CodexHost 额外进程（`harnessId != codex`）在委派 CLI `thread list` 报告 `status=completed` 时，EyPc 必须离开「进行中」，并按 Host 未读进入「已完成未读」或「已完成」。
 - Add: 该 completed 是精确终态（`snapshot-corroborated`），可关闭同 id 残留的 Desktop live active（无 waiting flag）。
+- Add: Host `attention=input` 是外置智能体提问/提示的待输入；`attention=approval` 仍是待确认。Desktop follow 不得剥掉这些 Host waiting flag。RAW-191.
+- Add: 额外进程的已读/未读必须与 Codex Desktop 同一条会话的实时未读比对；相位等其余状态仍走既有 Desktop follow，不另做全量对照。官方未读原子仍无发言权。RAW-193.
 - Clarify: 官方 App Server `notLoaded` 仍不是完成；禁止再把 CLI completed 映射成 `notLoaded`。
 - Pending decisions: 无。Host 仍报 `running` 时不得用 Desktop 空闲外观或刷新间隔发明完成。
 
@@ -57,7 +86,10 @@ Acceptance:
 2. `hasUnreadTurn: true` → 已完成未读；`false` → 已完成已读；字段缺省的新完成 → 已完成未读（不得宣称已读）。
 3. Desktop 官方未读原子不得覆盖外部行的 Host 未读。
 4. 打开成功仍清未读。
-5. CLI `running` 保持进行中；`attention=approval` 仍进待输入。
+5. Host list 必须保留 `creating | running | completed | failed | interrupted`，不得再折叠成 running/completed。
+6. 映射：`creating`/`running` → 进行中；`attention=input` → 待输入；`attention=approval` → 待确认（提问优先）；`interrupted`/`failed` → 待继续；`completed` + Host unread → 已完成未读 / 已完成。
+7. Desktop follow 不得剥掉 Host waiting flag，也不得把已确认终态打回进行中。
+8. 额外进程未读与 Desktop follow 的 `hasUnreadTurn` 比对：Desktop 实时未读（event/snapshot）覆盖 Host 字段；没有 Desktop 观察时才用 Host `hasUnreadTurn`；官方未读原子仍不得宣称已读。相位不另做全量对照。RAW-193.
 
 ## Prior Task Overlap
 
@@ -66,7 +98,7 @@ Acceptance:
 
 ## VerificationImpactTrace
 
-- Changed surface: discovery 行/Turn 形状、sanitize 终态标签与未读、Desktop shadow 对外部 id 的 status/unread 覆盖。
+- Changed surface: discovery 行/Turn 形状、sanitize 终态标签、Host 未读与 Desktop follow 的已读/未读比对、Desktop shadow 对外部 id 的 status/unread 覆盖。
 - Direct consumers: `scanVerifiedCodexInventory` → `companionCodexEvidenceV7` → Kernel groups。
 - Focused tests: `tests/platform/codexhostDiscovery.test.ts`、`tests/platform/providerEvidenceAdapterV7.test.ts`。
 - Not selected: 仓库级 `pnpm test` / MQTT / 真实 uTools。
@@ -74,7 +106,7 @@ Acceptance:
 
 ## Implementation Sync
 
-Desired behavior: Host CLI 是外部会话唯一 Turn 权威。completed 映射为 idle + 已确认 completed Turn；unread 走 Host 字段；Desktop follow 不能把已确认完成重新打成进行中，也不能用官方未读原子宣称已读。
+Desired behavior: Host CLI 负责额外进程 membership 与终态分类。未读与 Codex Desktop follow 比对：Desktop 实时已读/未读覆盖 Host 字段，没有 Desktop 观察时才用 Host `hasUnreadTurn`。相位仍走既有 Desktop follow 与 Host waiting/终态防护，不另做全量对照。官方未读原子不得宣称已读。
 
 ## Closeout
 

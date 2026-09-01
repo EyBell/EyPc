@@ -25,3 +25,32 @@ spec_id: SPEC-260901-CODEXHOST-EXTERNAL-COMPLETION
 | unchanged | 禁止用 TTL/墙钟推断终态 | 运行中快照只缩短列表刷新，不单独制造 completed |
 
 Conflict classification: `compatible-update`。Decision status: `explicit-current-request`。
+
+## RAW-191
+
+captured_at: 2026-09-01
+state: active
+text: >
+
+  还有通过 Cloud Code 或 PI 等其他外置智能体发过来的请求和提示信息 在 插件内应该是待输入, 这个你解决了吗？
+
+## RAW-192
+
+captured_at: 2026-09-01
+state: active
+text: >
+
+  再核验一下其他这种状态的映射是否合理 你应该已经理解了我原始需求的样式和分类 接下来根据 code host 里面的状态 一一进行区分和补充
+
+## RAW-193
+
+captured_at: 2026-09-01
+state: active
+text: >
+
+  这个读取状态是不是应该根据codex里面的这个状态去比对一下？其他的应该是可以直接感知到了
+
+clarification_at: 2026-09-01
+clarification: >
+
+  不是完全比对 我主要是想针对于那个已读未读

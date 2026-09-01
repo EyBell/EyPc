@@ -45,7 +45,7 @@ CodexHost 是官方 app-server 的 shim：外部会话由 Host Runtime 托管并
 
 - 已实施（2026-09-01）：[codexhost-discovery.cjs](../../../preload/codex/codexhost-discovery.cjs#L1) lane——会合点发现（仅信 harness 子进程 env）、CLI `thread list` 契约面、TTL 快照、外部行+合成 turn 注入扫描；外部 id 从官方 turn/goal 读取与 membership 回扫中剔除；token 仅驻内存、不入日志与持久文档。
 - CLI `completed` 必须映射为 connector `idle` + 已确认 `snapshot-corroborated` Turn，禁止再写成官方 `notLoaded` 或弱 `inventory` 终态。Desktop follow 不得把无 waiting flag 的已确认完成行重新打成进行中。
-- 外部未读只信 Host `hasUnreadTurn`；字段缺省的新完成不得宣称已读。官方未读原子对这些 id 无发言权，不得覆盖 Host 未读。
+- 额外进程未读与 Desktop follow 的 `hasUnreadTurn` 比对（打开过 Codex 即已读）；官方未读原子对这些 id 无发言权，不得覆盖或宣称已读。没有 Desktop 实时观察时才用 Host `hasUnreadTurn`。相位不另做全量对照。
 - 运行中快照可缩短 TTL，墙钟不能单独制造终态。
 
 ## 记录历史
