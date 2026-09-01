@@ -5,6 +5,9 @@ const require = createRequire(import.meta.url)
 const discoveryModule = require('../../preload/codex/codexhost-discovery.cjs') as {
   CODEXHOST_LIST_TTL_MS: number
   codexhostHarnessLabel(value: unknown): string
+  projectHostConnector(thread: Record<string, any>): { type: string; activeFlags?: string[] }
+  projectHostTurn(thread: Record<string, any>, at: number): Record<string, any>
+  compareHostDesktopUnread(known: Record<string, any>, input?: Record<string, any>): Record<string, any>
   createCodexhostDiscovery(dependencies?: Record<string, unknown>): {
     codexhostRowsForScan(input?: Record<string, unknown>): Promise<{
       rows: Array<Record<string, any>>
@@ -12,6 +15,8 @@ const discoveryModule = require('../../preload/codex/codexhost-discovery.cjs') a
     }>
     isExternalThreadId(threadId: string): boolean
     isExternalThreadKey(key: string): boolean
+    honorExternalProjection(threadId: string, known: Record<string, any>, activity: Record<string, any>): Record<string, any>
+    compareHostDesktopUnread(known: Record<string, any>, input?: Record<string, any>): Record<string, any>
     codexhostResetDiscovery(): void
   }
 }
@@ -37,7 +42,7 @@ function listPayload() {
   return JSON.stringify({
     threads: [
       { threadId: CLAUDE_ID, harnessId: 'claude-code', status: 'running', cwd: '/repo/gonavi', title: '260901-供应商调优', attention: 'approval' },
-      { threadId: PI_ID, harnessId: 'pi', status: 'completed', cwd: '/repo/gonavi', title: '你好', hasUnreadTurn: true },
+      { threadId: PI_ID, harnessId: 'pi', status: 'running', cwd: '/repo/gonavi', title: '你好', attention: 'input' },
       { threadId: NATIVE_ID, harnessId: 'codex', status: 'completed', cwd: '/repo/gonavi', title: '原生任务' },
       { threadId: 'not-a-thread-id', harnessId: 'pi', status: 'completed', cwd: '/repo/gonavi', title: 'x' }
     ],
@@ -62,6 +67,55 @@ function fakeExecFile(calls: Array<{ command: string; args: string[] }>, options
 }
 
 describe('codexhost external conversation discovery', () => {
+  it('maps every Host list status onto the companion connector/turn shape', () => {
+    const at = 1_000
+    expect(discoveryModule.projectHostConnector({ status: 'creating' })).toEqual({ type: 'active', activeFlags: [] })
+    expect(discoveryModule.projectHostTurn({ status: 'creating' }, at)).toEqual({ status: 'inProgress', startedAt: at })
+
+    expect(discoveryModule.projectHostConnector({ status: 'running' })).toEqual({ type: 'active', activeFlags: [] })
+    expect(discoveryModule.projectHostTurn({ status: 'running' }, at)).toEqual({ status: 'inProgress', startedAt: at })
+
+    expect(discoveryModule.projectHostConnector({ status: 'running', awaitingInput: true })).toEqual({
+      type: 'active',
+      activeFlags: ['waitingOnUserInput']
+    })
+    expect(discoveryModule.projectHostTurn({ status: 'running', awaitingInput: true }, at)).toEqual({
+      status: 'inProgress',
+      startedAt: at
+    })
+
+    expect(discoveryModule.projectHostConnector({ status: 'running', awaitingApproval: true })).toEqual({
+      type: 'active',
+      activeFlags: ['waitingOnApproval']
+    })
+
+    expect(discoveryModule.projectHostConnector({ status: 'interrupted', awaitingInput: true })).toEqual({
+      type: 'active',
+      activeFlags: ['waitingOnUserInput']
+    })
+
+    expect(discoveryModule.projectHostConnector({ status: 'interrupted' })).toEqual({ type: 'idle' })
+    expect(discoveryModule.projectHostTurn({ status: 'interrupted' }, at)).toEqual({
+      status: 'interrupted',
+      startedAt: at,
+      completedAt: at
+    })
+
+    expect(discoveryModule.projectHostConnector({ status: 'failed' })).toEqual({ type: 'idle' })
+    expect(discoveryModule.projectHostTurn({ status: 'failed' }, at)).toEqual({
+      status: 'failed',
+      startedAt: at,
+      completedAt: at
+    })
+
+    expect(discoveryModule.projectHostConnector({ status: 'completed' })).toEqual({ type: 'idle' })
+    expect(discoveryModule.projectHostTurn({ status: 'completed' }, at)).toEqual({
+      status: 'completed',
+      startedAt: at,
+      completedAt: at
+    })
+  })
+
   it('labels harnesses with compressed prefixes', () => {
     expect(discoveryModule.codexhostHarnessLabel('pi')).toBe('pi')
     expect(discoveryModule.codexhostHarnessLabel('claude-code')).toBe('cc')
@@ -84,6 +138,9 @@ describe('codexhost external conversation discovery', () => {
       threadKey: (threadId: string) => `key:${threadId}`
     })
 
+    const listCall = calls.find((call) => call.command === CLI)
+    expect(listCall?.args).toEqual(['thread', 'list', '--limit', '50', '--sort', 'recency-desc', '--all', 'true'])
+
     // Native codex threads and invalid ids are excluded; harness rows remain.
     expect(result.rows.map((row) => row.id).sort()).toEqual([NATIVE_ID < PI_ID ? PI_ID : PI_ID, CLAUDE_ID].sort())
     const claudeRow = result.rows.find((row) => row.id === CLAUDE_ID)!
@@ -97,14 +154,17 @@ describe('codexhost external conversation discovery', () => {
       codexhostHarnessId: 'claude-code'
     })
     expect(result.turns.get(CLAUDE_ID)).toMatchObject({ status: 'inProgress' })
-    expect(result.turns.get(PI_ID)).toMatchObject({ status: 'completed' })
-    // Host-exposed unread passes through; an absent field stays absent.
-    expect(result.rows.find((row) => row.id === PI_ID)).toMatchObject({
-      status: { type: 'idle' },
-      codexhostHasUnreadTurn: true
+    expect(result.turns.get(PI_ID)).toMatchObject({ status: 'inProgress' })
+    const piRow = result.rows.find((row) => row.id === PI_ID)!
+    expect(piRow).toMatchObject({
+      name: 'pi · 你好',
+      status: { type: 'active', activeFlags: ['waitingOnUserInput'] },
+      codexhostExternal: true,
+      codexhostHarnessId: 'pi'
     })
+    expect(piRow).not.toHaveProperty('codexhostHasUnreadTurn')
     expect(claudeRow).not.toHaveProperty('codexhostHasUnreadTurn')
-    expect(result.turns.get(PI_ID)!.completedAt).toBeGreaterThan(0)
+    expect(result.turns.get(PI_ID)).not.toHaveProperty('completedAt')
     expect(discovery.isExternalThreadId(PI_ID)).toBe(true)
     expect(discovery.isExternalThreadId(NATIVE_ID)).toBe(false)
     expect(discovery.isExternalThreadKey(`key:${PI_ID}`)).toBe(true)
@@ -115,6 +175,16 @@ describe('codexhost external conversation discovery', () => {
     clock += 500
     await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
     expect(calls.length).toBe(callCount)
+
+    const preserved = discovery.honorExternalProjection(PI_ID, {
+      connectorActiveFlags: ['waitingOnUserInput'],
+      connectorWaitingSince: 9
+    }, { status: 'active', activeFlags: [] })
+    expect(preserved).toMatchObject({
+      status: 'active',
+      activeFlags: ['waitingOnUserInput'],
+      waitingSince: 9
+    })
 
     discovery.codexhostResetDiscovery()
     expect(discovery.isExternalThreadId(PI_ID)).toBe(false)
@@ -163,6 +233,38 @@ describe('codexhost external conversation discovery', () => {
     const result = await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
     expect(result.rows).toEqual([])
     expect(result.turns.size).toBe(0)
+  })
+
+  it('compares extra-process unread with Codex Desktop live unread', () => {
+    const hostUnread = {
+      connectorHasUnreadTurn: true,
+      connectorUnreadAuthority: 'desktop-persisted'
+    }
+    const hostRead = {
+      connectorHasUnreadTurn: false,
+      connectorUnreadAuthority: 'desktop-persisted'
+    }
+
+    expect(discoveryModule.compareHostDesktopUnread(hostUnread, {
+      connected: true,
+      shadow: { hasUnreadTurn: false, unreadEvidence: 'event' }
+    })).toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
+    expect(discoveryModule.compareHostDesktopUnread(hostRead, {
+      connected: true,
+      shadow: { hasUnreadTurn: true, unreadEvidence: 'event' }
+    })).toEqual({ hasUnreadTurn: true, unreadAuthority: 'desktop-live' })
+    expect(discoveryModule.compareHostDesktopUnread(hostUnread, {
+      connected: true,
+      shadow: { hasUnreadTurn: false, unreadEvidence: 'snapshot' }
+    })).toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
+    expect(discoveryModule.compareHostDesktopUnread(hostUnread, { connected: false }))
+      .toEqual({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
+    expect(discoveryModule.compareHostDesktopUnread({}, { connected: true }))
+      .toEqual({ hasUnreadTurn: false, unreadAuthority: 'unavailable' })
+    expect(discoveryModule.compareHostDesktopUnread(hostUnread, {
+      connected: false,
+      liveUnread: { hasUnreadTurn: false, ownerClientId: 'eypc-open' }
+    })).toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
   })
 
   it('fails open with no runtime process at all', async () => {

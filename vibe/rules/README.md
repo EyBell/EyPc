@@ -15,6 +15,7 @@ design-preference-gate: accepted
 ## Project Skills
 
 - Companion task/session state reconciliation: use [companion-state-reconciliation](../../.agents/skills/companion-state-reconciliation/SKILL.md#L1) for anonymized provider→controller→companion state, unread-badge, title-fingerprint, quota, provider-filter and restart-recovery checks. It requires a grace window plus two consecutive mismatches, remains read-only, rejects raw task/conversation content, and cannot enable monitoring until a separate live-host canary passes.
+- CodexHost extra-process membership, title display, jump, and phase: use [codexhost-companion](../../.agents/skills/codexhost-companion/SKILL.md#L1). OMP / Claude Code / Cursor / later harnesses stay Codex-owned and open with `codex://threads/<id>`; Host CLI list/read/rename/send lives in global [codexhost-thread-surface](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Skills/global/codexhost-thread-surface/SKILL.md#L1). Do not add a per-harness companion source.
 
 ## Project Rules
 

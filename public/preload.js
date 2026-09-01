@@ -3987,18 +3987,10 @@ function codexIsConfirmedTurnEvidence(value) {
   return value === 'turn-completed' || value === 'targeted-after-exit' || value === 'snapshot-corroborated'
 }
 
-function honorHostExternalTerminal(threadId, known, activity) {
-  if (!activity || !known) return activity
-  if (codexhostDiscovery?.isExternalThreadId?.(threadId) !== true) return activity
-  if (known.lastTurnStatus !== 'completed' || !codexIsConfirmedTurnEvidence(known.lastTurnEvidence)) return activity
-  if (activity.status !== 'active' || (Array.isArray(activity.activeFlags) && activity.activeFlags.length)) return activity
-  return {
-    ...activity,
-    status: known.connectorStatus === 'idle' || known.connectorStatus === 'notLoaded'
-      ? known.connectorStatus
-      : 'idle',
-    activeFlags: []
-  }
+function honorHostExternalProjection(threadId, known, activity) {
+  return typeof codexhostDiscovery?.honorExternalProjection === 'function'
+    ? codexhostDiscovery.honorExternalProjection(threadId, known, activity)
+    : activity
 }
 
 function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persistedUnreadIds) {
@@ -4006,13 +3998,11 @@ function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persiste
     return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
   }
   if (codexhostDiscovery?.isExternalThreadId?.(threadId) === true) {
-    if (known?.connectorUnreadAuthority === 'desktop-persisted') {
-      return {
-        hasUnreadTurn: known.connectorHasUnreadTurn === true,
-        unreadAuthority: 'desktop-persisted'
-      }
-    }
-    return { hasUnreadTurn: false, unreadAuthority: 'unavailable' }
+    return codexhostDiscovery.compareHostDesktopUnread(known, {
+      connected: bridge?.state === 'connected',
+      liveUnread: bridge?.liveUnread.get(threadId),
+      shadow
+    })
   }
   const cachedUnread = bridge?.liveUnread.get(threadId)
   const liveUnread = bridge?.state === 'connected' || cachedUnread?.ownerClientId === 'eypc-open'
@@ -6264,7 +6254,7 @@ class CodexDesktopCompanionBridge {
 
   publishShadow(threadId, shadow, readStateOnly = false) {
     const known = codexActivityInventory.get(threadId)
-    const activity = honorHostExternalTerminal(threadId, known, codexDesktopShadowActivity(shadow))
+    const activity = honorHostExternalProjection(threadId, known, codexDesktopShadowActivity(shadow))
     if (!known || !activity) return
     codexRecordDesktopShadowInventoryBaseline(shadow, known)
     const previousStatus = known.status
@@ -6306,7 +6296,7 @@ class CodexDesktopCompanionBridge {
     const known = codexActivityInventory.get(parentThreadId)
     if (!known) return
     const priorStatus = previousStatus || known.status
-    const own = honorHostExternalTerminal(parentThreadId, known, codexDesktopShadowActivity(this.shadows.get(parentThreadId))) || {
+    const own = honorHostExternalProjection(parentThreadId, known, codexDesktopShadowActivity(this.shadows.get(parentThreadId))) || {
       status: known.connectorStatus,
       activeFlags: [...known.connectorActiveFlags],
       ...(codexTimestampMs(known.connectorWaitingSince) ? { waitingSince: known.connectorWaitingSince } : {})
@@ -9622,7 +9612,10 @@ async function scanVerifiedCodexInventory() {
     // evidence is synthesized because thread/turns/list cannot answer them.
     const codexhost = codexhostDiscovery
       ? await codexhostDiscovery.codexhostRowsForScan({
-          roots: [...new Set(listedRows.map((row) => codexNormalizeNativeRoot(codexRecord(row).cwd)).filter(Boolean))],
+          roots: [...new Set([
+            ...listedRows.map((row) => codexNormalizeNativeRoot(codexRecord(row).cwd)),
+            ...registry.projects.flatMap((project) => Array.isArray(project.roots) ? project.roots : [])
+          ].filter(Boolean))],
           threadKey: codexThreadKey
         })
       : { rows: [], turns: new Map() }
@@ -9631,9 +9624,14 @@ async function scanVerifiedCodexInventory() {
       : recoveredRows
     const topology = codexInventoryThreadTopology(rows)
     const assignments = new Map()
+    const chatsAssignment = {
+      project: { id: '', key: 'chats', name: 'Chats', roots: [], kind: 'chats' },
+      reason: 'projectless'
+    }
     for (const thread of rows) {
       const native = codexThreadNativeProject(thread, registry)
       if (native) assignments.set(thread.id, native)
+      else if (codexRecord(thread).codexhostExternal === true) assignments.set(thread.id, chatsAssignment)
     }
     const sideRelations = new Map()
     for (const [threadId, parentThreadId] of topology.relations) {
