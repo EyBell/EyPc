@@ -19,10 +19,13 @@ export interface CodexEnvironmentDiagnostic {
   detail: string
 }
 
+export type CodexEnvironmentRowProminence = 'always' | 'healthy-hidden'
+
 export interface CodexEnvironmentDiagnosticRow {
   label: string
   value: string
   detail?: string
+  prominence: CodexEnvironmentRowProminence
 }
 
 export interface CodexEnvironmentPresentation {
@@ -183,18 +186,35 @@ function rowsFor(
     + decisions.snapshotConflictSuppressed
     + decisions.missingMappingRetained)
   const decisionDetail = `开启新周期 ${decisions.liveEpochOpened}；丢弃旧读 ${decisions.staleTurnDiscarded}；延后分支终态 ${decisions.branchTerminalDeferred}；抑制冲突快照 ${decisions.snapshotConflictSuppressed}；保留缺行映射 ${decisions.missingMappingRetained}`
+  const launchMode = environment.launchMode || 'unknown'
+  const manualState = environment.manualLaunchPathState || 'unavailable'
+  const statusFeed = environment.statusFeedMode || 'unavailable'
   return [
-    { label: '系统', value: platform },
-    { label: 'Codex CLI', value: runtime },
-    { label: '启动方式', value: LAUNCH_MODE_LABELS[environment.launchMode || 'unknown'] },
-    { label: '手动位置', value: MANUAL_PATH_STATE_LABELS[environment.manualLaunchPathState || 'unavailable'] },
-    { label: '相关进程', value: process },
-    { label: '本地配置', value: config },
-    { label: 'App Server', value: connection },
-    { label: '桌面实时桥', value: desktopBridge },
-    { label: '状态来源', value: STATUS_FEED_LABELS[environment.statusFeedMode || 'unavailable'] },
-    { label: '状态裁决', value: `保护 ${protectionCount} · 周期 ${decisions.liveEpochOpened}`, detail: decisionDetail }
+    { label: '系统', value: platform, prominence: platform === '不支持' ? 'always' : 'healthy-hidden' },
+    { label: 'Codex CLI', value: runtime, prominence: 'always' },
+    { label: '启动方式', value: LAUNCH_MODE_LABELS[launchMode], prominence: launchMode === 'automatic' ? 'healthy-hidden' : 'always' },
+    { label: '手动位置', value: MANUAL_PATH_STATE_LABELS[manualState], prominence: manualState === 'not-configured' ? 'healthy-hidden' : 'always' },
+    { label: '相关进程', value: process, prominence: 'healthy-hidden' },
+    { label: '本地配置', value: config, prominence: environment.configState === 'loaded' || environment.configState === 'detected' ? 'healthy-hidden' : 'always' },
+    { label: 'App Server', value: connection, prominence: 'always' },
+    { label: '桌面实时桥', value: desktopBridge, prominence: 'always' },
+    { label: '状态来源', value: STATUS_FEED_LABELS[statusFeed], prominence: statusFeed === 'desktop-live' ? 'healthy-hidden' : 'always' },
+    {
+      label: '状态裁决',
+      value: `保护 ${protectionCount} · 周期 ${decisions.liveEpochOpened}`,
+      detail: decisionDetail,
+      prominence: protectionCount > 0 || decisions.liveEpochOpened > 0 ? 'always' : 'healthy-hidden'
+    }
   ]
+}
+
+export function shouldInlineCodexEnvironmentDetail(tone: CodexEnvironmentDiagnosticTone): boolean {
+  return tone === 'warning' || tone === 'error'
+}
+
+export function visibleCodexEnvironmentRows(presentation: CodexEnvironmentPresentation): CodexEnvironmentDiagnosticRow[] {
+  if (shouldInlineCodexEnvironmentDetail(presentation.diagnostic.tone)) return presentation.rows
+  return presentation.rows.filter((row) => row.prominence === 'always')
 }
 
 function launchHelpTextFor(environment: CodexEnvironmentSnapshotV1): string {
