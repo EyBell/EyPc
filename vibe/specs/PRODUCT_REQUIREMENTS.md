@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 330 leaves / 6 modules / 303 active / 22 superseded / 5 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 91 scoped |
-| 原始来源 | 43 documents / 230 ordered / 125 RAW-parent / 105 source-only |
+| 需求登记 | 333 leaves / 6 modules / 306 active / 22 superseded / 5 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 96 scoped |
+| 原始来源 | 44 documents / 230 ordered / 125 RAW-parent / 105 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-e270774e3d27b650fe8d / renderer-b24b82f36fcf2d925c18` · `artifact-ready` |
-| 当前构建时间 | `2026/09/01 13:59:01`（`2026-09-01T05:59:01.423Z`） |
+| 当前构建产物 | `host-442d52309eb9208928ed / renderer-50371e922a83209b458c` · `artifact-ready` |
+| 当前构建时间 | `2026/09/01 21:43:13`（`2026-09-01T13:43:13.808Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,18 +34,18 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 330,
+    "leaves": 333,
     "modules": 6,
     "proposed": 5,
-    "active": 303,
+    "active": 306,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 91
+    "scoped_relations": 96
   },
   "source_anchor_catalog": {
-    "documents": 43,
+    "documents": 44,
     "ordered_anchors": 230,
     "raw_parent_ordered": 125,
     "registered_requirements": 105,
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-e270774e3d27b650fe8d",
-    "renderer_asset": "renderer-b24b82f36fcf2d925c18",
+    "host_asset": "host-442d52309eb9208928ed",
+    "renderer_asset": "renderer-50371e922a83209b458c",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-01T05:59:01.423Z",
-    "built_at_local": "2026/09/01 13:59:01",
+    "built_at": "2026-09-01T13:43:13.808Z",
+    "built_at_local": "2026/09/01 21:43:13",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "3699e29d2d9b7d5ef47a34116a831cd19c1f7d923ccefece90d817a7ae89a7cf",
-    "raw_sources": "bba863dab7c508007f2a72b8ef0b375897164d8fae93783eaa3e4cc8fd6dc954",
-    "source_anchor_catalog": "00bcc97a2aee868af6046bc09f7e3ae7486e5021f1b9537f0aeb011ddf7ba2bb",
-    "product_body": "c54d7522830c4cf3a937b2e2de24698bbef14dffb04e19ddc0ddcf34d5dd5263",
-    "architecture": "bdb39cebc69739188d14d09c39723745f6edef1171d6bcb8a3073b6aa18d757d",
-    "runtime_contract": "6041cda075fe776f7984698bbc2e65f9d8181f83ece8acbbe8be064f92ac25d7"
+    "requirement_registry": "ce3fbebb09543267b5a1c7119fd3129143a463a209a350a1b766276601a37606",
+    "raw_sources": "ad62552e43d43d453b556b8a77f7f487621633e23ba8dca5c006d0d5f2298607",
+    "source_anchor_catalog": "736ffd289d35f03b3e27307d4268fa6d86fbcfc0e6f1821b2caa09395541bc6d",
+    "product_body": "27cd78aa2825dc2cf0aa5cd71dff656d7351609b80faec31b2bbcd8bbb93a3e8",
+    "architecture": "fb0e74cc48da62a7df63cd67855d5a9dae28a08c2b221bfbf5f06cab4e5cfda5",
+    "runtime_contract": "d963927d0109859566554bbd151130adbc854c7a4611f3419c802b033f6cad32"
   }
 }
 ```
@@ -279,7 +279,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-global-refactor/spec.md#L1), with [RAW-176 / Companion Task Topology V6](260823/companion-task-topology-v5/spec.md#L1) retained as historical foundation. Codex Tab feature authority and detailed routes: [codex-quota-float](260718/1148-codex-quota-float/spec.md#current-requirement-and-implementation-map)、[Environment Action](260729/1435-codex-environment-actions/spec.md#L1)、[quick task view / RAW-167](260813/1455-companion-quick-task-view/spec.md#L1)、[search compact](260817/0859-float-search-status-compact/spec.md#L1)、[confirmation popover](260817/1618-float-action-hint-popover/spec.md#L1)、[current truth / RAW-178](260823/codex-tab-boundary-optimization/spec.md#L1) and [V7 current delta](260824/eypc-v7-global-refactor/raw-requirement.md#L1). 条款状态与取代关系见 [companion-codex 登记](requirements/modules/companion-codex.md#L1)、[companion-shared 登记](requirements/modules/companion-shared.md#L1) 与 [engineering-invariants 登记](requirements/modules/engineering-invariants.md#L1)。
 
-- Codex is an independently configurable feature Tab. General Settings controls feature enablement; the Codex page owns the 1–365 day inventory window, the `动态` Tab's 1–8760 hour activity filter and quota auto-refresh (`quotaRefreshSeconds`, default 300, integer 1–86400; legacy zero migrates to 300). There is no user-configurable full-inventory period, broad manual refresh or Ctrl+R task refresh. Trusted Provider push is primary; full inventory runs only for cold start, reconnect or an explicit membership gap. Targeted environment detection and Claude task sync remain. The page also owns companion visibility, appearance, readiness, diagnostics and shortcuts; the product title is “额度任务悬浮球” with eyebrow “CODEX · CLAUDE COMPANION”. Its「运行」panel shows the current Host artifact's `runtime-identity.cjs` build timestamp and package version plus `host-loaded/reload-required`; it never infers the loaded version from source mtime or a newer on-disk `dist`. `pnpm run build` rewrites the `dist` identity as `artifact-ready`, while real Host load remains a separate gate. RAW-180: automatic quota/environment reread is silent once a successful snapshot exists—the header pill and runtime diagnostic keep the last stable copy, with busy indicated only on the pill/redetect control; warning/error still replace the copy immediately. The runtime diagnostic is a stacked, wrapping status panel whose title and detail stay visible; remaining `i` help uses the opaque main-app tooltip, not a transparent overlapping bubble. See [RAW-180](260825/codex-config-silent-integration/spec.md#L1) and [RAW-189](260829/companion-pinned-collapse-plan-input/spec.md#L1).
+- Codex is an independently configurable feature Tab. General Settings controls feature enablement; the Codex page owns the 1–365 day inventory window, the `动态` Tab's 1–8760 hour activity filter and quota auto-refresh (`quotaRefreshSeconds`, default 300, integer 1–86400; legacy zero migrates to 300). There is no user-configurable full-inventory period, broad manual refresh or Ctrl+R task refresh. Trusted Provider push is primary; full inventory runs only for cold start, reconnect or an explicit membership gap. Targeted environment detection and Claude task sync remain. The page also owns companion visibility, appearance, readiness, diagnostics and shortcuts; the product title is “额度任务悬浮球” with eyebrow “CODEX · CLAUDE COMPANION”. Its「运行」panel shows the current Host artifact's `runtime-identity.cjs` build timestamp and package version plus `host-loaded/reload-required`; it never infers the loaded version from source mtime or a newer on-disk `dist`. `pnpm run build` rewrites the `dist` identity as `artifact-ready`, while real Host load remains a separate gate. RAW-180: automatic quota/environment reread is silent once a successful snapshot exists—the header pill and runtime diagnostic keep the last stable copy, with busy indicated only on the pill/redetect control; warning/error still replace the copy immediately. RAW-196: the runtime diagnostic is a compact title row plus fact chips; ready/checking detail stays behind `i`, healthy-noise rows are omitted, and warning/error inline remediation with the full itemized set. Remaining `i` help uses the opaque main-app tooltip, not a transparent overlapping bubble. See [RAW-196](260901/codex-config-density/spec.md#L1), [RAW-180](260825/codex-config-silent-integration/spec.md#L1) and [RAW-189](260829/companion-pinned-collapse-plan-input/spec.md#L1).
 - Runtime diagnostics use the independent `eypc-runtime-diagnostics-v3` plain JSONL Host sink. Installation verification defaults to `{enabled:true, level:debug, userConfigured:false}`；manual error/info/debug/off choices persist. Every call supplies an explicit level. One session/seq/operation/trace timeline records Provider、session-only `h:<hex>` taskRef、before/after state、Turn/watermark/revision、cache、navigation/focus、duration/errorCode and action stages. Files rotate at 8 MB/file、64 MB total、14 days；the sink excludes raw task IDs/paths、prompt/Plan/execute instruction/conversation bodies、commands/argv/tool arguments、stdout/stderr、credentials/tokens、stacks and hidden reasoning. The read-only v2/v3 probe filters session/operation/trace/provider/taskRef/scope/event/level/since/tail and aggregates state changes、no-ops、shortcuts、navigation、archive stages and errors.
 - Codex archive is commit-on-native-postcondition. One operationId covers intent、confirmation、preflight、one provider write、server verify-1、Desktop sync、matching native ACK when connected、server verify-2 after at least 300ms、Kernel commit and reconciliation/UI removal. RPC success、one transient list result or dispatched Desktop message cannot hide a card. Failure/indeterminate retains the card、button、alias/cache/shortcut target and notifies all surfaces with the short operationId. Claude/Cloud archive behavior is unchanged in RAW-159.
 - External Codex archive membership is recovered from authoritative App Server inventories, not from archive broadcasts alone. The process Host watches exact `CODEX_HOME/sessions` and `archived_sessions` membership roots; a native rename triggers immediate full-cursor `thread/list archived:false/true` comparison, and one-second Node StatWatchers recover a dropped directory event within 1.25 seconds. A current anonymous key found only in archived inventory emits urgent `archivedKeys` and bypasses ordinary missing-row quarantine；ambiguous/missing membership only requests Codex tasks-only reconciliation. Plugin enter、Desktop IPC reconnect and watcher rebuild force one such tasks-only check。Dirty-thread `thread/read` recovery excludes archived inventory, and this external path cannot bypass the stricter EyPc-owned archive transaction above.
@@ -304,7 +304,7 @@ Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-globa
 - Easy Agent is not implemented yet. The interim adapter keeps two host channels: the local Codex App Server supplies quota, models, inventory, creation and verified persistent actions; a macOS Codex Desktop private-IPC companion bridge supplies live task/read authority and archive-refresh notification. The App Server connector is therefore still required in the current phase.
 - CLI startup is independently diagnosable: EyPc auto-discovers only controlled macOS/Windows candidates and may store one user-selected, validated executable location in local plugin storage. The UI exposes only safe source/availability labels, never the actual path. Without a manual location it falls back to automatic discovery plus the existing App Server connector and explicitly warns about connection delay; this fallback never turns local cache or App Server activity into Input, ongoing or completed-unread authority. Windows supports CLI discovery/validated shim handling, while the private Desktop live bridge remains a macOS canary.
 - Host Snapshot V2 reads the local Codex App Server plus an allowlisted native project registry. Ordinary inventory remains strictly read-only: the main `.codex-global-state.json` is authoritative and `.bak` is used only when the main file is missing/invalid. The sole write exception is an explicitly confirmed native project removal transaction; EyPc never scans Codex SQLite or LevelDB. A Codex Desktop full snapshot may be consumed transiently inside preload for live-state projection, but its bodies/items/raw identities never cross the bridge or persist.
-- CodexHost extra processes (Pi / Claude Code / Grok / OMP / DSH / Cursor harness threads) never appear in official `thread/list` or the Desktop unread atom. EyPc discovers them through the Host delegation CLI. Host list status is not collapsed: `creating`/`running` is 进行中; `attention=input` is 待输入; `attention=approval` is 待确认; `interrupted`/`failed` is 待继续 (idle + confirmed interrupted/failed Turn); `completed` unread is Host `hasUnreadTurn` compared with Codex Desktop follow of the same thread. Desktop live unread (opened in Codex) covers the Host field; without a Desktop observation the Host field stands, and a completed row that omits it must not be claimed read. Official App Server `notLoaded` is still not completion. Desktop follow of an open extra process cannot keep a Host-completed row in 进行中 or strip Host waiting flags. Native Codex already uses Desktop unread and does not enter this compare. RAW-190 / RAW-191 / RAW-193.
+- CodexHost extra processes (Pi / Claude Code / Grok / OMP / DSH / Cursor harness threads) never appear in official `thread/list` or the Desktop unread atom. EyPc discovers them through the Host delegation CLI, including after plugin reload, for idle and completed rows — not only newly created or running ones. Host `creating`/`running` is 进行中 even before Desktop follow. When Host later reports `completed` with unread, EyPc must leave 进行中 and enter 已完成未读; a leftover Desktop live inProgress turn must not keep the row running. `attention=input` is 待输入; `attention=approval` is 待确认; `interrupted`/`failed` is 待继续. Codex APP 已读 is an unread event false or an EyPc jump; a Desktop snapshot false is not read. Official `notLoaded` is still not completion. RAW-190 / RAW-191 / RAW-193 / RAW-194 / RAW-195.
 - Every `archived=false` page is read to completion. Project ownership uses native thread assignment first, native projectless IDs as `Chats` second, deepest active project-root cwd match third; unmatched tasks are treated as removed/unregistered and excluded. Native state is fingerprinted before and after scanning and the entire scan retries once on change.
 - Each candidate must have a valid newest Turn `startedAt`; there is no `updatedAt`/recency fallback. A malformed cursor, page, project state or existing Turn without `startedAt` fails the whole scan. Controller retains an older verified snapshot as explicitly stale, or shows an error empty state when no verified snapshot exists.
 - A single otherwise-complete inventory that omits a published anonymous key is a transport-dropout candidate, not immediate deletion. Controller retains the previous projection and requests one Provider-only recheck. Reappearance, changed keys, failure, disablement or disposal resets the candidate. Codex explicit archive events bypass the ordinary hold only by starting/advancing task-scoped verification；local removal still requires native postconditions and Kernel commit. Verified project removal and existing Claude membership mutation retain their Provider-specific contracts. No task list or raw identity is persisted.

@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 43,
+    "source_documents": 44,
     "ordered_anchors": 230,
     "raw_parent_ordered": 125,
     "unparented_ordered": 105,
@@ -434,11 +434,21 @@
       "unparented_ordered_count": 0
     },
     {
+      "source_task": "260901/codex-config-density",
+      "source_path": "vibe/specs/260901/codex-config-density/raw-requirement.md",
+      "spec_id": "SPEC-260901-CODEX-CONFIG-DENSITY",
+      "content_sha256": "4a91407e7bed8171f5e1e3ccfee17473b0c34331dc31532194a870ee9779f768",
+      "raw_identity_count": 4,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
+      "unparented_ordered_count": 0
+    },
+    {
       "source_task": "260901/codexhost-external-completion",
       "source_path": "vibe/specs/260901/codexhost-external-completion/raw-requirement.md",
       "spec_id": "SPEC-260901-CODEXHOST-EXTERNAL-COMPLETION",
-      "content_sha256": "5f304363cb99e93de04f7705ab9db4e081fc73cf4de640a752d48d27988e66cd",
-      "raw_identity_count": 4,
+      "content_sha256": "2bffe1d120b323f0711a0c5a15f7fcc01b82a80a7511e162b8e5e60f273c18bc",
+      "raw_identity_count": 6,
       "ordered_anchor_count": 0,
       "raw_parent_ordered_count": 0,
       "unparented_ordered_count": 0
