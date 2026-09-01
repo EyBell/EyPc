@@ -16,7 +16,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 335 leaves / 6 modules / 306 active / 22 superseded / 7 proposed / 0 conflicted |
+| 需求登记 | 335 leaves / 6 modules / 311 active / 22 superseded / 2 proposed / 0 conflicted |
 | 取代关系 | 22 whole / 98 scoped |
 | 原始来源 | 45 documents / 230 ordered / 125 RAW-parent / 105 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
@@ -36,8 +36,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "requirement_registry": {
     "leaves": 335,
     "modules": 6,
-    "proposed": 7,
-    "active": 306,
+    "proposed": 2,
+    "active": 311,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
@@ -70,7 +70,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "cca04d6aa5d60de91f128d22f25db44073c6b802543b0252f26c9942b3dd4fcd",
+    "requirement_registry": "214058230de351cd9c9a241c9ef66c421493bd27d7b2866769b3feed55397f79",
     "raw_sources": "e561946fffa97cc3ba93c0862427935699eb7d3ed965ff671b8ffd3e78cd75b9",
     "source_anchor_catalog": "dd9c35aaf9035990b8090fa81964032bc4b33818b9ac25bb54a6bc11106424d6",
     "product_body": "27cd78aa2825dc2cf0aa5cd71dff656d7351609b80faec31b2bbcd8bbb93a3e8",
