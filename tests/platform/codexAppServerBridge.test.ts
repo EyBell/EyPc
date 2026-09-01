@@ -1488,6 +1488,33 @@ draft: v7EvidenceDraft({
     context.bridge.close()
   })
 
+  it('links a forkless subagent row to the root its parentThreadId names', () => {
+    const context = loadCodexBridge(new FakeCodexProcess())
+    const rootId = FIXED_THREAD_IDS[0]
+    const subagentId = 'a3345678-1234-4234-8234-123456789abc'
+    const orphanSubagentId = 'b3345678-1234-4234-8234-123456789abc'
+    const plainRootId = 'c3345678-1234-4234-8234-123456789abc'
+    const topology = context.native.codexInventoryThreadTopology([
+      // A root makes no parent claim; its sessionId is its own id.
+      { id: rootId, sessionId: rootId },
+      // A subagent run: no forkedFromId, parentThreadId names the root and
+      // its sessionId stays its own id (the RPC boundary shape).
+      { id: subagentId, sessionId: subagentId, parentThreadId: rootId },
+      // The same claim with the root absent from the inventory is an orphan.
+      { id: orphanSubagentId, sessionId: orphanSubagentId, parentThreadId: '02345678-1234-4234-8234-123456789abc' },
+      // A session id naming another thread is not a claim by itself.
+      { id: plainRootId, sessionId: rootId }
+    ])
+
+    expect(topology.relations.get(subagentId)).toBe(rootId)
+    expect(topology.depths.get(subagentId)).toBe(1)
+    expect(topology.relations.has(rootId)).toBe(false)
+    expect(topology.relations.has(plainRootId)).toBe(false)
+    expect(topology.relations.has(orphanSubagentId)).toBe(false)
+    expect([...topology.isolated]).toEqual([orphanSubagentId])
+    context.bridge.close()
+  })
+
   it('keeps the Claude Node Host and Float package lane live while Main is hidden', async () => {
     const realFs = nodeRequire('node:fs') as typeof import('node:fs')
     const claudeModule = nodeRequire(resolve(process.cwd(), 'preload/claude/index.cjs')) as {
