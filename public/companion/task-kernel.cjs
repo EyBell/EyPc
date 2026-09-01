@@ -2145,13 +2145,64 @@ function createCompanionTaskKernel(dependencies = {}) {
       return currentPackage
     }
     next.packageRevision = ++packageSequence
+    const previousTasks = currentPackage.tasks
     currentPackage = next
     lastSemantic = semantic
+    recordPhaseTransitionsOnChange(previousTasks, nextTasks, draft, forceUnknown)
     recordGroupCountsOnChange(next)
     syncConsumers(next)
     emitPackage(currentPackage)
     scheduleVisibilityTransition()
     return currentPackage
+  }
+
+  /** Group counts name the flood; per-task phase flips name the culprit. A
+   * task oscillating running↔completed surfaces here as paired transitions
+   * carrying its key and provider, which no aggregate counter can attribute. */
+  function recordPhaseTransitionsOnChange(previousTasks, nextTasks, draft, forceUnknown) {
+    if (!Array.isArray(previousTasks) || !previousTasks.length) return
+    const previousByKey = new Map(previousTasks.map((task) => [task.key, task]))
+    const batchNodes = Object.fromEntries(PROVIDERS.map((provider) => [
+      provider,
+      Array.isArray(draft?.evidenceBatches?.[provider]?.nodes) ? draft.evidenceBatches[provider].nodes.length : 0
+    ]))
+    let overflow = 0
+    let logged = 0
+    for (const task of nextTasks) {
+      const before = previousByKey.get(task.key)
+      if (!before || before.phase === task.phase) continue
+      if (logged >= 8) { overflow += 1; continue }
+      logged += 1
+      record({
+        level: 'info',
+        scope: 'task-kernel',
+        event: 'phase-transition',
+        outcome: task.phase,
+        taskRef: task.key,
+        packageRevision: currentPackage.packageRevision,
+        details: {
+          from: before.phase,
+          provider: task.provider,
+          unread: task.unread === true,
+          freshness: task.freshness,
+          phaseRevision: task.phaseRevision,
+          prevPhaseRevision: before.phaseRevision,
+          forced: forceUnknown === true,
+          producer: draftProducer(draft?.producer),
+          batchNodes
+        }
+      })
+    }
+    if (overflow) {
+      record({
+        level: 'info',
+        scope: 'task-kernel',
+        event: 'phase-transition',
+        outcome: 'overflow',
+        count: overflow,
+        packageRevision: currentPackage.packageRevision
+      })
+    }
   }
 
   /** Publishes are frequent; the visible group sizes are not. Logging only
