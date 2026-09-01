@@ -145,6 +145,33 @@ function createClaudeBridge(dependencies) {
     readCurrentSessionPhase
   })
 
+  // An Esc interrupt fires no hook at all, so hook-folded phases keep an
+  // interrupted CLI turn "running" until the next prompt. The transcript tail
+  // is the one durable witness; a failed probe load degrades to the hook-only
+  // baseline.
+  let interruptProbe = null
+  try {
+    const { createClaudeInterruptProbe } = require('./interrupt-probe.cjs')
+    interruptProbe = createClaudeInterruptProbe({
+      fs,
+      path,
+      projectsRoot: path.join(dependencies.os.homedir(), '.claude', 'projects')
+    })
+  } catch { interruptProbe = null }
+
+  function withTranscriptInterrupts(sessions) {
+    if (!interruptProbe || !Array.isArray(sessions)) return sessions
+    return sessions.map((session) => {
+      const phase = session?.phase
+      if (phase !== 'running' && phase !== 'waiting-input' && phase !== 'waiting-approval') return session
+      const startedAt = Number(session.turnStartedAt) || 0
+      if (!startedAt) return session
+      const at = interruptProbe.claudeInterruptedAt(session.sessionId, startedAt)
+      if (!at) return session
+      return { ...session, phase: 'stopped', phaseUpdatedAt: at, waitingApprovalAt: 0, waitingInputAt: 0 }
+    })
+  }
+
   function stateEnvelope(sessions, appSnapshot, readAt) {
     const stateRows = sessions.map((session) => ({
       sessionId: session.sessionId,
@@ -354,11 +381,12 @@ function createClaudeBridge(dependencies) {
     previousCodeMetadata = correlated.nextMetadata
     lastCodeInventory = inventory
     const readAt = Number(inventory.readAt) || Date.now()
+    const sessions = withTranscriptInterrupts(correlated.sessions)
     return {
       ...inventory,
-      sessions: correlated.sessions,
+      sessions,
       topologyComplete: correlated.topologyComplete,
-      ...stateEnvelope(correlated.sessions, appSnapshot, readAt)
+      ...stateEnvelope(sessions, appSnapshot, readAt)
     }
   }
 
@@ -390,14 +418,15 @@ function createClaudeBridge(dependencies) {
     const correlated = correlateCodeSessions(lastCodeInventory.sessions, queue.state(), previousCodeMetadata, appSnapshot)
     previousCodeMetadata = correlated.nextMetadata
     const readAt = Date.now()
+    const sessions = withTranscriptInterrupts(correlated.sessions)
     return {
       version: 2,
       revision: `${CLAUDE_BRIDGE_REVISION}:state-v2`,
-      sessions: correlated.sessions,
+      sessions,
       topologyComplete: correlated.topologyComplete,
       truncated: lastCodeInventory.truncated === true,
       readAt,
-      ...stateEnvelope(correlated.sessions, appSnapshot, readAt)
+      ...stateEnvelope(sessions, appSnapshot, readAt)
     }
   }
 
