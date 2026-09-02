@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 336 leaves / 6 modules / 312 active / 22 superseded / 2 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 99 scoped |
-| 原始来源 | 45 documents / 230 ordered / 125 RAW-parent / 105 source-only |
+| 需求登记 | 337 leaves / 6 modules / 313 active / 22 superseded / 2 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 100 scoped |
+| 原始来源 | 46 documents / 234 ordered / 129 RAW-parent / 105 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-12d0666f1b06419aecb0 / renderer-ea0d82c52e423e6fda7e` · `artifact-ready` |
-| 当前构建时间 | `2026/09/02 14:22:39`（`2026-09-02T06:22:39.882Z`） |
+| 当前构建产物 | `host-59baecc4efb844fcf235 / renderer-76cc83562a56945a6196` · `artifact-ready` |
+| 当前构建时间 | `2026/09/02 18:46:58`（`2026-09-02T10:46:58.292Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,20 +34,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 336,
+    "leaves": 337,
     "modules": 6,
     "proposed": 2,
-    "active": 312,
+    "active": 313,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 99
+    "scoped_relations": 100
   },
   "source_anchor_catalog": {
-    "documents": 45,
-    "ordered_anchors": 230,
-    "raw_parent_ordered": 125,
+    "documents": 46,
+    "ordered_anchors": 234,
+    "raw_parent_ordered": 129,
     "registered_requirements": 105,
     "source_only": 105
   },
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-12d0666f1b06419aecb0",
-    "renderer_asset": "renderer-ea0d82c52e423e6fda7e",
+    "host_asset": "host-59baecc4efb844fcf235",
+    "renderer_asset": "renderer-76cc83562a56945a6196",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-02T06:22:39.882Z",
-    "built_at_local": "2026/09/02 14:22:39",
+    "built_at": "2026-09-02T10:46:58.292Z",
+    "built_at_local": "2026/09/02 18:46:58",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "bde56b87a9ad9885c51468e47d85c81053c9cad53cf4b3e5a06c1d8a6bb5be9b",
-    "raw_sources": "3df38f16475bb9df15987e32f5bfd429e44660837bfe1522cdfc1f6e8fcd5d87",
-    "source_anchor_catalog": "a7bf3988934ad36c1a9877e0dd7caad77272f2e05d5b06fa3729258aa5c7e0a8",
-    "product_body": "ff3816971235f0ee0c9002a111f42a013d298bce307287b8cf3c105ba4e610f4",
-    "architecture": "0956bc3be7f886d95240a58e0fa4de1deae205cdffd4a72328df459cc25b2699",
-    "runtime_contract": "7f916b2de86bb20a26424662ea25a85c01c33807c1b60040f1b1c968584babe5"
+    "requirement_registry": "e1426b273d726633f2c10166e6a2d4760f62d591f6a020aa244d6bcd2259f534",
+    "raw_sources": "24100016c15191fc0442cec069127f3627a847e3f186c1b17b1806e1deb963c8",
+    "source_anchor_catalog": "45fad5315246daba3b42ef0dd7c578bfab11bc6caef68be8effc0f0d96951057",
+    "product_body": "38fb700247bfadd1ed6fe835db4b9c562e64fea6976d2f0d705278be85230ff0",
+    "architecture": "e582f13fea69fa6a2977aafdfc61d1a0091446d322164d7b414da72487eb1279",
+    "runtime_contract": "725bf40217d69b91dd71364ba76004f69d7453927b3db3bd6d25bb5f11f9c06f"
   }
 }
 ```
@@ -267,7 +267,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 每次生产/uTools 构建生成确定性 `hostAssetId / rendererAssetId`，并同时验证 Registry、Topology、Snapshot、Command、Subscribe 与 ACK 能力/版本。Main UI、Main Preload、Float UI、Float Preload 任一身份缺失或不一致时必须显示 `reload-required` 并停止任务动作，不得表现为无响应或继续运行旧逻辑。构建只表示 `artifact-ready`；只有真实 uTools 重新接入/安装产物并完成全链握手才表示 `host-loaded`。产品不调用私有 uTools API，也不自动结束插件后台进程。
 - EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶、隐藏、折叠偏好、alias 与**状态未知任务的手动指定相位**是唯一可持久化的任务侧本地配置；手动相位仅对 `unknown` 行开放（已有真实证据的行拒绝指定，不允许伪造状态），且只在设定时所处的那一段未知内有效——任务离开 `unknown` 再回来即自动失效，不复活旧答案。覆盖落在 Kernel 单点，使相位、分组、cycle 层级与计数读同一个值；`canonicalPhase` 保存证据原值，一切关于证据的判断（首推 unknown 宽限窗）读它而非被用户偏好回答。其余的 live phase、unread 与 cycle 位置只在进程内，topology 仅 RAW-181 的有界 Side→parent 恢复提示（ID+observedAt）可持久化且不携带任何状态。
 - 水球额度映射随启用组合变化：仅 Codex 时与旧版完全一致；仅 Claude 时 Claude 独占整个水球；两者同时启用时外圈进度表示 Codex、球心百分比表示 Claude 并标注来源，Claude 未连接或无读数时百分比回退为 Codex 原样。球心那个 Claude 读数以**无 scope 的普通周限额**（`weekly_all`）为基准：它是真正约束一周节奏的那条线，5 小时窗口摆动过快，不适合当常驻状态数字。账号同时上报按模型的 scoped 周限额时，球心并列读作 `{scoped}/{plain}`（scoped 优先取 Fable，在前）且**不带百分号**——两个百分号在球体里放不下；scoped 侧仍不得冒充普通周限额，也不得在没有普通周窗口时单独占据球心。并列字号取用户设定 `percentSize` 的 `.7` 与球体尺寸 `.165` 的较小值，使 32px 设置下最宽的 `100/100` 仍在圈内、12px 设置仍被尊重；球心读数使用 `tabular-nums lining-nums`，避免就地刷新时中心左右跳动。账号只有普通周窗口时球心是单值 `{plain}%`；确实没有普通周窗口时才依次回退到 5 小时窗口、其它已上报窗口，只为不让球心空着。展开卡额度区仍逐窗口显示全部窗口，不受球心选择影响。
-- 展开卡额度区按来源分区展示；Claude 分区在授权关闭、凭据不可用、Retry-After 或其它失败时显示对应安全原因，已有值保留但标为可能过期。
+- 展开卡额度区按来源分区展示；Claude 分区在授权关闭、凭据不可用、Retry-After 或其它失败时显示对应安全原因，已有值保留但标为可能过期。展开卡额度行的每个读数块都是刷新触发器：点击（Claude 块亦可 Enter / Space，以 button 角色播报）立即强制刷新两个来源的额度，Claude usage API 借此绕过普通 cadence 与通用退避，但 429 Retry-After 与 401/403 凭据锁不变；每次 Claude 额度读取记录一条有界 `quota / claude-quota-read` 诊断（触发原因、各车道读数年龄、usage API 结果与阻塞原因、Retry 与 reset 距离、窗口计数与主读数来源，不含百分比、reset 时刻或身份）。RAW-201。
 - 新设置 `claudeAppQuotaAccess` 默认关闭，旧已授权 quota fallback 配置迁移为开启。授权后 macOS 只读 Claude App `oauth:tokenCacheV2` 并以内存方式使用 Claude 专属 Safe Storage Keychain 项；账号/组织无法唯一仲裁时失败关闭，密钥、令牌和缓存明文不进入诊断/Renderer/持久化。
 - 额度窗口由实际动态 limits 声明：`session`、`weekly_all`、`weekly_scoped` 映射为 5h、总周与稳定 scoped key，名称来自上游 Fable/Fable 5，`spend` 等非额度元数据不得显示。Node 16 通过显式 HTTPS 读取主权威，App history/statusline 只逐窗补充，不能抹掉 scoped 窗口、source、freshness 或 reset。启动/启用/恢复/网络、普通 cadence 与最早 reset+1s 唤醒；401/403 等凭据变化，429 遵循 Retry-After，其它失败按 1m/5m/15m/每小时退避。每个周限额显示剩余百分比，200ms 提示包含绝对/相对 reset 与 freshness，20%/10% 为警告/危险。
 - 项目区只生成 EyPc 虚拟项目，不写两端原生项目。合并先按规范绝对路径对应的稳定 key，双方名称都唯一时才以名称兜底；重名歧义保持分离，Claude-only 项目批量加入，共享项目只显示一次。Projects 子页签提供会话级 `全部 / 只显示 Codex / 只显示 Claude`，同步过滤子任务并重算计数。Claude 任务支持打开、本地置顶、本地隐藏，以及 macOS 下 completed/stopped 的静默归档（资格为状态门禁：进行中阻断、待继续/已完成放行；版本白名单自 2026-08-21 起不再作为归档资格硬闸，写入安全由派发时结构化重验保障）；可见“待继续”行直接提供任务级归档入口，但仍保留既有五秒二次确认。普通库存读取只在 Preload 内建立 `sessionId → 唯一 local_*.json` 私有索引；写前重新核验平台、版本、精确身份、phase 与文件 stat/hash，事务只把单一目标对象的 `isArchived` 改为 `true`，同目录临时文件核验后原子替换，禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话。若过期索引仍可精确解析到当前唯一目标，普通 title/focus/activity 元数据 churn 可安全 rebase；只对写前 `source-changed` 在重新读取 phase 后重试一次，写后并发绝不重试。元数据为 true 且私有活动库存移除即为 `archived`，插件任务包立即精确移除并自动刷新；该结果只确认 EyPc 归档/移除，成功提示必须同时声明 Claude 原生侧栏可能仍待刷新且尚未确认同步。当前没有受支持的本地 Code 原生归档入口，因而不得用元数据/LevelDB、私有 IPC、AX/JXA/UI 自动化、重启或事后视觉结果宣称原生侧栏已及时收敛。App 日志仅作增强证据；失败安全恢复且返回 `failed`，检测到 Claude 并发修改或恢复不能确定时返回 `indeterminate`，两者均保留卡片。项目级归档、移除、移动等未支持能力继续禁用并解释，不能误调 Codex 动作。

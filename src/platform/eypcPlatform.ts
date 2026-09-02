@@ -659,7 +659,8 @@ export interface EypcPlatformApi {
      * Authorized Claude App quota read. `enabled` is the hard access gate;
      * coldStart/supplement describe urgency and never bypass that gate.
      */
-    readQuotaFallback?(options?: { enabled?: boolean; coldStart?: boolean; supplement?: boolean; now?: number; minStaleMs?: number; refreshIntervalMs?: number }): Promise<{ rateLimits: ClaudeRateLimitsInput; updatedAt: number } | null>
+    /** `force` marks a manual refresh: the fallback skips its interval/backoff clock but never Retry-After or a credential lock. */
+    readQuotaFallback?(options?: { enabled?: boolean; coldStart?: boolean; supplement?: boolean; now?: number; minStaleMs?: number; refreshIntervalMs?: number; force?: boolean }): Promise<{ rateLimits: ClaudeRateLimitsInput; updatedAt: number } | null>
     /**
      * Drains the first semantic Hook append from the process-owned native file
      * callback; duplicate tails are fingerprint no-ops. Native StatWatcher

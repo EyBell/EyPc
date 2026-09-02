@@ -344,6 +344,7 @@ function createClaudeBridge(dependencies) {
       now: settings.now,
       minStaleMs: settings.minStaleMs,
       refreshIntervalMs: settings.refreshIntervalMs,
+      force: settings.force === true,
       primaryUpdatedAt: cached ? cached.updatedAt : 0,
       claudeHome: environment.claudeHome()
     })
@@ -681,7 +682,11 @@ function createClaudeBridge(dependencies) {
         lastAttemptAt: Number(quota.lastAttemptAt) || 0,
         retryAt: Number.isFinite(quota.nextAllowedAt) && quota.nextAllowedAt < Number.MAX_SAFE_INTEGER
           ? Math.max(0, Number(quota.nextAllowedAt))
-          : 0
+          : 0,
+        // Bounded failure code and schedule reason for diagnostics only; never
+        // status text, identities or credentials.
+        reason: failure.slice(0, 40),
+        blockedBy: String(quota.nextAllowedReason || '').slice(0, 20)
       }
     }
   }

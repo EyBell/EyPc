@@ -9709,6 +9709,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         ? codexController.saveGeometry(position as CodexFloatPosition, expandedSize as { displayId?: string; width: number; height: number; updatedAt?: number })
         : false
     } })
+    // A quota reading is also its own refresh trigger (RAW-201): the float's chips dispatch this.
+    actions.register({ id: 'codex.quota.refresh', title: '立即刷新额度读数', group: 'Codex', risk: 'normal', scope: 'global', priority: 90, when: () => true, run: () => { void codexController.refreshQuota(); return true } })
     actions.register({ id: 'codex.float.position.reset', title: '重置 Codex 悬浮球位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 91, when: () => true, run: () => codexController.resetPosition() })
     actions.register({ id: 'codex.float.size.reset', title: '恢复 Codex 自适应展开尺寸', group: 'Codex', risk: 'data-write', scope: 'global', priority: 91, when: () => true, run: (_ctx, args) => codexController.resetExpandedSize(typeof args?.displayId === 'string' ? args.displayId : undefined) })
     actions.registerHandler({ commandId: 'codex.float.toggle', scope: 'global', priority: 1000, when: () => true, run: (_ctx, args) => {

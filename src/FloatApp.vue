@@ -340,7 +340,7 @@ const quotaStrip = computed(() => buildCompanionQuotaStrip(
  * and accessible name (user decision 2026-08-06); Codex chips keep the original
  * `formatReset` strings byte-for-byte.
  */
-function quotaChipHint(chip: CompanionQuotaChip) {
+function quotaChipReadingHint(chip: CompanionQuotaChip) {
   if (chip.provider === 'claude') {
     const now = Date.now()
     return companionQuotaChipHint(
@@ -351,6 +351,15 @@ function quotaChipHint(chip: CompanionQuotaChip) {
     )
   }
   return companionQuotaChipHint(chip, formatReset(chip.resetAt), quotaStrip.value.multiProvider)
+}
+/** The reading's own hint ends with the one action the chip offers (RAW-201). */
+function quotaChipHint(chip: CompanionQuotaChip) {
+  return `${quotaChipReadingHint(chip)} · 点击立即刷新`
+}
+/** A reading is also its own refresh trigger: one click forces both providers' quota lanes. */
+function refreshQuotaFromChip(chip: CompanionQuotaChip) {
+  if (!action('codex.quota.refresh', { source: 'float-quota-chip', provider: chip.provider })) return
+  liveMessage.value = '正在刷新额度读数'
 }
 function quotaChipAria(chip: CompanionQuotaChip) {
   if (chip.provider === 'claude') {
@@ -3387,11 +3396,15 @@ onUnmounted(() => {
             class="float-quota-chip"
             :class="{ spark: chip.spark, 'is-stale': chip.stale === true, 'is-warning': chip.tone === 'warning', 'is-danger': chip.tone === 'danger' }"
             :tabindex="chip.provider === 'claude' ? 0 : undefined"
+            :role="chip.provider === 'claude' ? 'button' : undefined"
             :aria-label="chip.provider === 'claude' ? quotaChipAria(chip) : undefined"
             @pointerenter="queueActionHint($event, quotaChipHint(chip))"
             @pointerleave="clearActionHint"
             @focus="queueActionHint($event, quotaChipHint(chip))"
             @blur="clearActionHint"
+            @click="refreshQuotaFromChip(chip)"
+            @keydown.enter.prevent="refreshQuotaFromChip(chip)"
+            @keydown.space.prevent="refreshQuotaFromChip(chip)"
           >
             <span class="sr-only">{{ quotaChipAria(chip) }}</span>
             <span aria-hidden="true">{{ chip.shortLabel }}</span><strong aria-hidden="true">{{ chip.remainingPercent }}%</strong>

@@ -1201,7 +1201,7 @@ try {
         { threadId, includeTurns: false },
         CODEX_THREAD_TURN_STATUS_TIMEOUT_MS
       ),
-      record: (entry) => runtimeDiagnostics.record(entry)
+      record: (entry) => recordCompanionDiagnosticEvent(entry)
     })
   }
 } catch { codexSubagentDiscovery = null }
@@ -1229,7 +1229,7 @@ try {
   if (typeof codexhostDiscoveryModule?.createCodexhostDiscovery === 'function') {
     codexhostDiscovery = codexhostDiscoveryModule.createCodexhostDiscovery({
       execFile,
-      record: (entry) => runtimeDiagnostics.record(entry)
+      record: (entry) => recordCompanionDiagnosticEvent(entry)
     })
   }
 } catch { codexhostDiscovery = null }
