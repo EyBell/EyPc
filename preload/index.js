@@ -3599,6 +3599,8 @@ function codexMarkThreadGoalVerifying(threadId) {
 }
 
 function codexPrivateThreadGoalEvidence(threadId) {
+  const hostExternal = codexhostDiscovery?.externalGoalEvidence?.(threadId) || null
+  if (hostExternal) return hostExternal
   const entry = codexThreadGoalCache.get(threadId)
   if (!entry) {
     return codexThreadGoalRpcAvailable === false
@@ -3634,6 +3636,8 @@ function codexThreadGoalNeedsTerminalRefresh(threadId, known) {
 
 function refreshCodexThreadGoal(threadId, options = {}) {
   if (!validCodexThreadId(threadId)) return Promise.resolve(null)
+  // Extra-process ids never reach the App Server; a read would only leave a verifying entry.
+  if (codexhostDiscovery?.externalGoalEvidence?.(threadId)) return Promise.resolve(null)
   const current = codexThreadGoalCache.get(threadId)
   if (codexThreadGoalRpcAvailable === false) {
     return Promise.resolve(codexSetThreadGoalEvidence(threadId, {
@@ -4217,10 +4221,10 @@ function codexRememberDesktopOpenedRead(threadId, parentThreadId, known) {
     threadId === parentThreadId
       ? known?.lastTurnStartedAt
       : branchEvidence?.turnStartedAt || known?.lastTurnStartedAt
-  )
-  // A process-scope acknowledgement must be bound to a concrete Turn. An
-  // unbound false could otherwise suppress every later completion if an open
-  // races inventory/bootstrap and no exact started event is observed.
+  ) || (codexhostDiscovery?.isExternalThreadId?.(threadId) === true ? Date.now() : 0)
+  // A process-scope acknowledgement must be bound to a concrete Turn; an unbound false could
+  // suppress every later completion. An extra-process id binds to the open time instead:
+  // Host turns started before the jump are read, a later Host status change still supersedes.
   if (!turnStartedAt) return false
   codexDesktopOpenedReadAcknowledgements.delete(threadId)
   codexDesktopOpenedReadAcknowledgements.set(threadId, {
@@ -4273,6 +4277,7 @@ function codexClearDesktopOpenedRead(bridge, parentThreadId) {
     if (threadId === parentThreadId || acknowledgement.parentThreadId === parentThreadId) relatedThreadIds.push(threadId)
   }
   if (!relatedThreadIds.length) return false
+  runtimeDiagnostics.record({ level: 'debug', scope: 'task-evidence', event: 'opened-read-cleared', outcome: 'cleared', provider: 'codex', taskRef: codexThreadKey(parentThreadId), count: relatedThreadIds.length, details: { caller: String(new Error().stack || '').split('\n').slice(2, 4).map((line) => line.trim().split(' ')[1] || '').join('<') } })
   for (const threadId of relatedThreadIds) {
     codexDesktopOpenedReadAcknowledgements.delete(threadId)
     const liveUnread = bridge?.liveUnread.get(threadId)
@@ -8241,7 +8246,11 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       childEntries.push([threadId, null])
     }
   }
-  const ownDesktopActivity = codexDesktopShadowActivity(ownShadow)
+  const ownDesktopActivity = honorHostExternalProjection(
+    parentThreadId,
+    known,
+    codexDesktopShadowActivity(ownShadow)
+  )
   const appServerLive = known.appServerLiveActive === true
     && Number(known.appServerLiveSequence) > 0
     && known.activityEvidence === 'activity-event'
@@ -8311,6 +8320,9 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
     || (row.authority === 'persisted-decision'
       && ((row.activity?.activeFlags || []).length > 0 || row.activity?.planImplementationOnly === true))
     || row.activity?.planImplementationOnly === true
+    // Host extra-process connector-active is live before Desktop follow. The
+    // official follow of these ids is notLoaded, which must not strip flags.
+    || codexhostDiscovery?.isExternalThreadId?.(row.threadId) === true
   )
   const exactParentTerminal = ['completed', 'interrupted', 'failed'].includes(known.lastTurnStatus)
     && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(known.lastTurnEvidence)
@@ -9536,7 +9548,8 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
         ? codexhostDiscovery.codexhostExternalUnreadFields(
           thread.codexhostHasUnreadTurn,
           unreadIds ? unreadIds.has(thread.id) : null,
-          lastTurn.status === 'completed')
+          lastTurn.status === 'completed',
+          codexDesktopOpenedReadCoversCompletion(thread.id, { lastTurnStartedAt: lastTurn.startedAt, lastTurnCompletedAt: lastTurn.completedAt }))
         : {
           hasUnreadTurn: unreadIds ? unreadIds.has(thread.id) : false,
           unreadAuthority: unreadIds ? 'desktop-persisted' : 'unavailable'
@@ -9687,6 +9700,9 @@ async function scanVerifiedCodexInventory() {
       orphanCount
     )
     const threads = sanitizeCodexThreads(publicRows, registry, assignments, turns.latest, unreadIds)
+    // How many extra processes survived into the published set. A lane that
+    // discovers nine and publishes none is otherwise completely invisible.
+    if (codexhost.rows.length) runtimeDiagnostics.record({ level: 'info', scope: 'task-recovery', event: 'codexhost-published', outcome: 'projected', provider: 'codex', count: threads.filter((thread) => thread.codexhostHarnessId).length, details: { discovered: codexhost.rows.length, publicRows: publicRows.length } })
     const eligibleIds = new Set(eligibleRows.map((thread) => thread.id))
     for (const threadId of codexThreadTurnStatusCache.keys()) {
       if (!eligibleIds.has(threadId)) codexThreadTurnStatusCache.delete(threadId)
@@ -9849,7 +9865,11 @@ async function scanVerifiedCodexInventory() {
     codexActivityInventory = activityInventory
     codexActivitySourceFingerprint = registry.fingerprint
     codexSyncRolloutDecisionTrackers(eligibleRows, turns.latest)
-    codexEnsureDesktopBridge().updateInventory(activityInventory.keys())
+    // Official thread/follow cannot answer extra-process ids; following them
+    // plants notLoaded shadows that later hide Host running/completed rows.
+    codexEnsureDesktopBridge().updateInventory(
+      [...activityInventory.keys()].filter((threadId) => !codexhostDiscovery?.isExternalThreadId?.(threadId))
+    )
     const inventoryChanged = previousInventoryFingerprint !== codexActivityInventorySemanticFingerprint()
     if (inventoryChanged) codexActivityGeneration += 1
     codexPrimeActivitySemanticFingerprints()

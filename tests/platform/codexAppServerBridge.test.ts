@@ -1206,6 +1206,150 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('does not official-follow extra-process ids, so Host running stays live without a notLoaded shadow', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const externalId = 'dddddddd-1234-4234-8234-123456789abc'
+    const context = loadCodexBridge(
+      child,
+      () => nativeRegistryText(),
+      desktopSocket,
+      false, true, null, false, null,
+      [{
+        threadId: externalId,
+        harnessId: 'grok',
+        status: 'running',
+        cwd: '/tmp/project',
+        title: '260901-对话发现'
+      }]
+    )
+
+    const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await vi.waitFor(() => {
+      expect(desktopSocket.writes.some((message) => (
+        message.method === 'thread-stream-following-changed'
+        && message.params?.following === true
+        && message.params?.conversationId !== externalId
+      ))).toBe(true)
+    })
+
+    // Official thread/follow cannot answer these ids. Following them plants a
+    // notLoaded idle snapshot that later hides Host running/completed rows.
+    expect(desktopSocket.writes.some((message) => (
+      message.method === 'thread-stream-following-changed'
+      && message.params?.conversationId === externalId
+    ))).toBe(false)
+    expect((snapshot.value.threads as Array<Record<string, any>>)
+      .find((entry) => entry.codexhostHarnessId === 'grok')).toMatchObject({
+      status: 'active',
+      lastTurnStatus: 'inProgress',
+      name: 'gr · 260901-对话发现'
+    })
+    expect(context.diagnosticEvents).toContainEqual(expect.objectContaining({
+      event: 'codexhost-published',
+      outcome: 'projected',
+      count: 1,
+      details: expect.objectContaining({ discovered: 1 })
+    }))
+    context.bridge.close()
+  })
+
+  it('answers an extra-process id with no Goal, so Host running/completed is not outranked by goal-verifying', async () => {
+    // The live shape behind af54797a / 5d686475 after the notLoaded shadow was
+    // removed: the row reached the Kernel yet sat in `unknown` — never active,
+    // never completed-unread, absent from every group. Extra-process ids are
+    // (correctly) excluded from thread/goal/get, but a missing Goal cache entry
+    // read as unknown/verifying, and that goal-verifying candidate outranks the
+    // inventory-authority Host evidence in the Kernel's reducer.
+    const child = new FakeCodexProcess()
+    const completedId = 'eeeeeeee-1234-4234-8234-123456789abc'
+    const runningId = 'ffffffff-1234-4234-8234-123456789abc'
+    const context = loadCodexBridge(
+      child,
+      () => nativeRegistryText(),
+      null, false, true, null, false, null,
+      [{
+        threadId: completedId,
+        harnessId: 'grok',
+        status: 'completed',
+        hasUnreadTurn: true,
+        cwd: '/tmp/project',
+        title: '260902-完成未读'
+      }, {
+        threadId: runningId,
+        harnessId: 'claude-code',
+        status: 'running',
+        cwd: '/tmp/project',
+        title: '260902-进行中'
+      }]
+    )
+    const { codexBranchObservationV7 } = nodeRequire('../../preload/companion/evidence-adapter-v7.cjs') as {
+      codexBranchObservationV7(branch: Record<string, unknown>): { candidates: Array<{ kind: string; authority: string }>; unread: boolean }
+    }
+
+    await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+
+    // Nothing asks the App Server about ids it cannot answer.
+    expect(child.writes.some((frame) => frame.method === 'thread/goal/get'
+      && [completedId, runningId].includes(String((frame.params as Record<string, unknown>)?.threadId)))).toBe(false)
+
+    // companionCodexEvidenceV7 stamps `hostExternal` on the branch; mirror it.
+    const completedBranch = context.native.privateBranchEvidence(completedId)?.branches?.[0] as Record<string, any>
+    expect(completedBranch).toMatchObject({ goalStatus: 'none', goalFreshness: 'fresh' })
+    const completed = codexBranchObservationV7({ ...completedBranch, hostExternal: true })
+    expect(completed.candidates.map((candidate) => candidate.kind)).toEqual(['turn-completed'])
+    expect(completed.candidates.some((candidate) => candidate.authority === 'goal-verifying')).toBe(false)
+    expect(completed.unread).toBe(true)
+
+    const runningBranch = context.native.privateBranchEvidence(runningId)?.branches?.[0] as Record<string, any>
+    expect(runningBranch).toMatchObject({ goalStatus: 'none', goalFreshness: 'fresh' })
+    const running = codexBranchObservationV7({ ...runningBranch, hostExternal: true })
+    expect(running.candidates.map((candidate) => candidate.kind)).toEqual(['turn-running'])
+    expect(running.candidates.some((candidate) => candidate.authority === 'goal-verifying')).toBe(false)
+    context.bridge.close()
+  })
+
+  it('treats an EyPc jump into an extra-process completed row as read while the Host still reports unread', async () => {
+    // Live shape behind 5d686475 (2026-09-02): the completed-unread shortcut
+    // dispatched the deep link, but the next snapshot re-asserted Host
+    // unread=true — only a card click looked read, and only because the
+    // Desktop happened to issue thread/read first. Both paths open through the
+    // same navigation; the snapshot must honor EyPc's own opened-read mark.
+    const child = new FakeCodexProcess()
+    const externalId = 'abababab-1234-4234-8234-123456789abc'
+    const context = loadCodexBridge(
+      child,
+      () => nativeRegistryText(),
+      null, false, true, null, false, null,
+      [{
+        threadId: externalId,
+        harnessId: 'grok',
+        status: 'completed',
+        hasUnreadTurn: true,
+        cwd: '/tmp/project',
+        title: '260902-快捷键打开即读'
+      }]
+    )
+    const external = () => context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      .then((snapshot) => (snapshot.value.threads as Array<Record<string, any>>).find((row) => row.codexhostHarnessId === 'grok'))
+    const before = await external()
+    expect(before).toMatchObject({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
+
+    await expect(context.native.openCompanionCodexTarget({
+      key: before!.key,
+      provider: 'codex',
+      actionAlias: before!.actionAlias,
+      revisionAt: before!.updatedAt,
+      phase: 'completed'
+    })).resolves.toMatchObject({ outcome: 'dispatched' })
+    expect(context.native.openedReadAcknowledgements()).toHaveLength(1)
+    // The Host list still says unread (the fixture never flips it); EyPc's
+    // read wins in the snapshot as well as in the private branch evidence.
+    expect(await external()).toMatchObject({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
+    expect(context.native.privateBranchEvidence(externalId)?.branches?.[0]).toMatchObject({ hasUnreadTurn: false, unreadKnown: true })
+    context.bridge.close()
+  })
+
   it('records the non-private Runtime Identity handshake once per semantic identity', () => {
     const context = loadCodexBridge(new FakeCodexProcess())
     const handshakes = () => context.diagnosticEvents.filter((event) => event.event === 'runtime-identity-handshake')

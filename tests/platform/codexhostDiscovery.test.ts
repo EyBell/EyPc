@@ -21,8 +21,9 @@ const discoveryModule = require('../../preload/codex/codexhost-discovery.cjs') a
     }>
     isExternalThreadId(threadId: string): boolean
     isExternalThreadKey(key: string): boolean
-    honorExternalProjection(threadId: string, known: Record<string, any>, activity: Record<string, any>): Record<string, any>
+    honorExternalProjection(threadId: string, known: Record<string, any>, activity: Record<string, any> | null): Record<string, any>
     honorExternalOpenRead(threadId: string, result: Record<string, any>, markRead?: (id: string) => void): Record<string, any>
+    externalGoalEvidence(threadId: string): Record<string, unknown> | null
     compareHostDesktopUnread(known: Record<string, any>, input?: Record<string, any>): Record<string, any>
     codexhostResetDiscovery(): void
   }
@@ -146,6 +147,33 @@ describe('codexhost external conversation discovery', () => {
     expect(unread(null, null, false)).toEqual({ hasUnreadTurn: false, unreadAuthority: 'unavailable' })
   })
 
+  it('drops a cached rendezvous when every list fails so a new Host generation is picked up', async () => {
+    const calls: Array<{ command: string; args: string[] }> = []
+    let clock = 1_000_000
+    let listWorks = false
+    const execFile = (command: string, args: string[], settings: unknown, done: (error: Error | null, stdout?: string) => void) => {
+      // A dead endpoint yields no output at all — it never produces the CLI
+      // error envelope that used to be the only thing invalidating the cache.
+      if (command === CLI && !listWorks) {
+        calls.push({ command, args })
+        return done(new Error('endpoint is gone'))
+      }
+      return fakeExecFile(calls, {})(command, args, settings, done)
+    }
+    const discovery = discoveryModule.createCodexhostDiscovery({ execFile, now: () => clock, record: () => undefined })
+
+    await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'], threadKey: (id: string) => id })
+    const afterFailedPass = calls.length
+    // Past the list TTL but still inside the rendezvous TTL: without the drop
+    // the next pass reuses the previous runtime's endpoint and fails again.
+    clock += 30_000
+    listWorks = true
+    const recovered = await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'], threadKey: (id: string) => id })
+
+    expect(calls.slice(afterFailedPass).some((call) => call.command === 'pgrep')).toBe(true)
+    expect(recovered.rows.length).toBeGreaterThan(0)
+  })
+
   it('reports a refresh failure and a cache-served pass instead of going silent', async () => {
     const records: Array<Record<string, any>> = []
     const discovery = discoveryModule.createCodexhostDiscovery({
@@ -223,6 +251,12 @@ describe('codexhost external conversation discovery', () => {
     expect(discovery.isExternalThreadId(PI_ID)).toBe(true)
     expect(discovery.isExternalThreadId(NATIVE_ID)).toBe(false)
     expect(discovery.isExternalThreadKey(`key:${PI_ID}`)).toBe(true)
+    // No App Server Goal exists for an extra-process id. Answering none/fresh
+    // keeps the Kernel from ranking a goal-verifying `unknown` above the Host
+    // running/completed evidence (which hid every extra-process row).
+    expect(discovery.externalGoalEvidence(PI_ID))
+      .toEqual({ goalStatus: 'none', goalFreshness: 'fresh', goalEvidenceSequence: 0, goalUpdatedAt: 0 })
+    expect(discovery.externalGoalEvidence(NATIVE_ID)).toBeNull()
 
     // A running extra process uses a 1s TTL, so a half-second scan still
     // serves the snapshot. Completion must not wait on the idle 12s cache.
@@ -240,6 +274,28 @@ describe('codexhost external conversation discovery', () => {
       activeFlags: ['waitingOnUserInput'],
       waitingSince: 9
     })
+
+    // Official follow of extra-process ids is notLoaded/idle. That silence is
+    // not Host state: running stays running, completed stays idle, and a
+    // leftover Desktop inProgress cannot revive a corroborated Host terminal.
+    const running = { connectorStatus: 'active', connectorActiveFlags: [] }
+    expect(discovery.honorExternalProjection(PI_ID, running, { status: 'notLoaded' }))
+      .toMatchObject({ status: 'active', activeFlags: [] })
+    expect(discovery.honorExternalProjection(PI_ID, running, null))
+      .toMatchObject({ status: 'active', activeFlags: [] })
+    expect(discovery.honorExternalProjection(PI_ID, running, { status: 'idle' }))
+      .toMatchObject({ status: 'active', activeFlags: [] })
+    const completed = {
+      connectorStatus: 'idle',
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'snapshot-corroborated'
+    }
+    expect(discovery.honorExternalProjection(PI_ID, completed, { status: 'notLoaded' }))
+      .toMatchObject({ status: 'idle', activeFlags: [] })
+    expect(discovery.honorExternalProjection(PI_ID, completed, { status: 'active', activeFlags: [] }))
+      .toMatchObject({ status: 'idle', activeFlags: [] })
+    expect(discovery.honorExternalProjection(NATIVE_ID, running, { status: 'notLoaded' }))
+      .toEqual({ status: 'notLoaded' })
 
     discovery.codexhostResetDiscovery()
     expect(discovery.isExternalThreadId(PI_ID)).toBe(false)

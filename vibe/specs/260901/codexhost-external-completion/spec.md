@@ -44,7 +44,8 @@ Canonical target: `vibe/specs/PRODUCT_REQUIREMENTS.md` Codex Companion
     "scripts/validate-preload-entry-budget.mjs",
     "vibe/specs/source-anchors/catalog.json",
     "tests/platform/codexhostDiscovery.test.ts",
-    "tests/platform/providerEvidenceAdapterV7.test.ts"
+    "tests/platform/providerEvidenceAdapterV7.test.ts",
+    "tests/platform/codexAppServerBridge.test.ts"
   ],
   "validators": [
     "scripts/validate-requirements.mjs",
@@ -68,7 +69,8 @@ Canonical target: `vibe/specs/PRODUCT_REQUIREMENTS.md` Codex Companion
     "preload/index.js",
     "public/preload.js",
     "scripts/validate-preload-entry-budget.mjs",
-    "tests/platform/codexhostDiscovery.test.ts"
+    "tests/platform/codexhostDiscovery.test.ts",
+    "tests/platform/codexAppServerBridge.test.ts"
   ]
 }
 ```
@@ -94,7 +96,7 @@ Acceptance:
 6. 映射：`creating`/`running` → 进行中；`attention=input` → 待输入；`attention=approval` → 待确认（提问优先）；`interrupted`/`failed` → 待继续；`completed` + Host unread → 已完成未读 / 已完成。
 7. Desktop follow 不得剥掉 Host waiting flag，也不得把已确认终态打回进行中。
 8. Host 未读有值时直接用；Desktop 未读-true 不得覆盖 Host 已读。Codex APP 已读（unread event false 或跳转 dispatch）可清未读；snapshot false 不是已读。RAW-193.
-9. 重启后 Host list 里已有的额外进程必须进库存；进行中以 Host connector 为 live，不等 Desktop follow。RAW-194.
+9. 重启后 Host list 里已有的额外进程必须进库存；进行中以 Host connector 为 live，不等 Desktop follow。官方 follow 不得针对这些 id；Desktop `notLoaded`/idle 不得把 Host running/completed 打成 unknown。官方回答不了的 id 不得以 `verifying` 占位：额外进程 id 的 Goal 证据固定 `none/fresh`，不发 `thread/goal/get`。RAW-194.
 10. Host `completed` + unread 必须盖过 Desktop 残留 live inProgress，进入已完成未读。RAW-195.
 
 ## Prior Task Overlap
@@ -106,7 +108,7 @@ Acceptance:
 
 - Changed surface: discovery 行/Turn 形状、sanitize 终态标签、Host 未读权威、Codex APP 已读（follow false / 跳转 dispatch）清未读。
 - Direct consumers: `scanVerifiedCodexInventory` → `companionCodexEvidenceV7` → Kernel groups。
-- Focused tests: `tests/platform/codexhostDiscovery.test.ts`、`tests/platform/providerEvidenceAdapterV7.test.ts`。
+- Focused tests: `tests/platform/codexhostDiscovery.test.ts`、`tests/platform/providerEvidenceAdapterV7.test.ts`、`tests/platform/codexAppServerBridge.test.ts`（额外进程不得官方 follow）。
 - Not selected: 仓库级 `pnpm test` / MQTT / 真实 uTools。
 - Identity: preload 变更，收尾 `pnpm run build` + `validate-requirements --write-current-truth`。
 
