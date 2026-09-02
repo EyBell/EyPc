@@ -86,7 +86,11 @@ function codexhostExternalIdentity(row) {
  * ids: the official unread atom simply does not list Host conversations, so a
  * completed Turn stays unread rather than being claimed read.
  */
-function codexhostExternalUnreadFields(hostUnread, desktopUnread, lastTurnCompleted) {
+function codexhostExternalUnreadFields(hostUnread, desktopUnread, lastTurnCompleted, openedRead = false) {
+  // An EyPc jump is a read — the same rule for a card click and a shortcut.
+  // The local acknowledgement outranks a Host that has not yet seen the
+  // Desktop read, until a newer Host completion supersedes it.
+  if (openedRead === true) return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
   if (typeof hostUnread === 'boolean') {
     return { hasUnreadTurn: hostUnread, unreadAuthority: 'desktop-persisted' }
   }
@@ -331,6 +335,12 @@ function createCodexhostDiscovery(dependencies = {}) {
     // the roster here made all external tasks vanish until the next good
     // scan; keep the previous roster and report the degraded pass instead.
     if (!pages.length && (allList.failed || listFailures)) {
+      // Every list failed. The usual cause is a Host that changed generation:
+      // the cached rendezvous still names the previous runtime's endpoint, and
+      // holding it for the rest of its TTL makes every scan in that window fail
+      // identically. Only a CLI error *envelope* used to invalidate it, which a
+      // dead endpoint never produces — it just yields no output at all.
+      rendezvous = null
       noteDiagnostic('partial', externalThreads.size, uniqueRoots.length)
       return true
     }
@@ -454,8 +464,29 @@ function createCodexhostDiscovery(dependencies = {}) {
     return { ...result, confirmsRead: true }
   }
 
+  function hostConnectorActivity(known) {
+    const flags = (Array.isArray(known.connectorActiveFlags) ? known.connectorActiveFlags : [])
+      .filter((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+    const live = known.connectorStatus === 'active' || flags.length > 0
+    return {
+      status: live ? 'active' : 'idle',
+      activeFlags: flags,
+      ...(Number(known.connectorWaitingSince) > 0 ? { waitingSince: known.connectorWaitingSince } : {}),
+      ...(known.connectorPlanImplementationOnly === true ? { planImplementationOnly: true } : {})
+    }
+  }
+
   function honorExternalProjection(threadId, known, activity) {
-    if (!activity || !known || isExternalThreadId(threadId) !== true) return activity
+    if (!known || isExternalThreadId(threadId) !== true) return activity
+    // Official App Server follow cannot load extra-process ids. A missing or
+    // notLoaded Desktop shadow is silence, not Host state — keep the connector
+    // so completed/idle/running rows stay visible after reload. Host running
+    // also wins a Desktop idle, which is the same unloaded follow.
+    const hostActivity = hostConnectorActivity(known)
+    if (!activity || activity.status === 'notLoaded'
+      || (hostActivity.status === 'active' && activity.status !== 'active')) {
+      return hostActivity
+    }
     let next = activity
     const confirmed = known.lastTurnEvidence === 'turn-completed'
       || known.lastTurnEvidence === 'targeted-after-exit'
@@ -468,14 +499,11 @@ function createCodexhostDiscovery(dependencies = {}) {
       && !(Array.isArray(next.activeFlags) && next.activeFlags.length)) {
       next = {
         ...next,
-        status: known.connectorStatus === 'idle' || known.connectorStatus === 'notLoaded'
-          ? known.connectorStatus
-          : 'idle',
+        status: hostActivity.status,
         activeFlags: []
       }
     }
-    const connectorWaiting = (Array.isArray(known.connectorActiveFlags) ? known.connectorActiveFlags : [])
-      .filter((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+    const connectorWaiting = hostActivity.activeFlags
     if (!connectorWaiting.length || next.status !== 'active') return next
     const liveFlags = Array.isArray(next.activeFlags) ? next.activeFlags : []
     if (liveFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')) return next
@@ -484,6 +512,20 @@ function createCodexhostDiscovery(dependencies = {}) {
       activeFlags: [...connectorWaiting, ...liveFlags.filter((flag) => !connectorWaiting.includes(flag))],
       ...(Number(known.connectorWaitingSince) > 0 ? { waitingSince: known.connectorWaitingSince } : {})
     }
+  }
+
+  /**
+   * A Host extra-process thread has no App Server Goal: `thread/goal/get`
+   * cannot answer its id and the scan never queues it. Without this answer a
+   * missing Goal cache entry reads as `unknown/verifying`, whose goal-verifying
+   * candidate outranks the Host running/completed evidence in the Kernel and
+   * parks every extra-process row in `unknown` — invisible, never active,
+   * never completed-unread. Returns null for native ids.
+   */
+  function externalGoalEvidence(threadId) {
+    return isExternalThreadId(threadId)
+      ? { goalStatus: 'none', goalFreshness: 'fresh', goalEvidenceSequence: 0, goalUpdatedAt: 0 }
+      : null
   }
 
   function codexhostResetDiscovery() {
@@ -503,6 +545,7 @@ function createCodexhostDiscovery(dependencies = {}) {
     isExternalThreadKey,
     honorExternalProjection,
     honorExternalOpenRead,
+    externalGoalEvidence,
     compareHostDesktopUnread,
     codexhostResetDiscovery
   }

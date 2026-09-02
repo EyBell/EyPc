@@ -112,7 +112,22 @@ const BUDGET = Object.freeze({
   // "this machine has no extra processes"; the scan now says `unloaded` once
   // per pass. Refresh failures and cache-served passes are reported by
   // codexhost-discovery itself (`failed` / `cached`), not here.
-  lines: 14138,
+  // 2026-09-01 (u): +3 lines — the scan now reports how many extra processes
+  // reached the published Thread set alongside how many were discovered. A
+  // lane that finds nine rows and publishes none looked identical to a healthy
+  // one, which cost a full round of forensics; discovery-side outcomes cannot
+  // answer this because only the entry knows what survived sanitize.
+  // 2026-09-01 (v): +8 lines — extra processes reached the published Thread
+  // set (9 of 9) yet none appeared in the task list, and nothing between the
+  // Provider snapshot and the Kernel said where they stopped. The codex
+  // evidence build now reports arrived/with-node/total-node counts. Remove
+  // this once the drop is fixed and the boundary has a durable contract.
+  // 2026-09-01 (w): +11 lines — official Desktop follow of extra-process ids
+  // planted notLoaded shadows; Host running/completed rows then collapsed to
+  // Kernel unknown. Stop following those ids, wrap private Desktop activity
+  // through honorExternalProjection, and treat extra-process connector-active
+  // as live so flags survive. Shape lives in codexhost-discovery.cjs.
+  lines: 14158,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
