@@ -12044,6 +12044,7 @@ try {
       activityInventory: () => codexActivityInventory,
       localArchiveRecoverySuppressions: codexLocalArchiveRecoverySuppressions,
       activityKeyForArchivedThread: codexArchivedActivityKey,
+      codexhostDiscovery: () => codexhostDiscovery,
       companionTaskKernel
     })
   }

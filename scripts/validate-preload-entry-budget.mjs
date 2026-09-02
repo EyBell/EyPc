@@ -127,7 +127,12 @@ const BUDGET = Object.freeze({
   // Kernel unknown. Stop following those ids, wrap private Desktop activity
   // through honorExternalProjection, and treat extra-process connector-active
   // as live so flags survive. Shape lives in codexhost-discovery.cjs.
-  lines: 14158,
+  // 2026-09-02 (x): +1 line — the archive bridge learns which rows are
+  // CodexHost extra processes so it archives them through the Host CLI. The
+  // official app-server cannot see those ids; every archive of one died at
+  // the thread/read preflight as protocol-error. Shape lives in
+  // archive-bridge.cjs and codexhost-discovery.cjs.
+  lines: 14159,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

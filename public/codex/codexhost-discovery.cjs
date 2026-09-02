@@ -184,6 +184,8 @@ function createCodexhostDiscovery(dependencies = {}) {
   let listRefreshedAt = 0
   let refreshInFlight = null
   let lastDiagnosticLine = ''
+  /** The scan's thread-key function, kept so a forget can rebuild externalKeys. */
+  let threadKeyFn = null
 
   function run(command, args, options = {}) {
     return new Promise((resolve) => {
@@ -363,6 +365,7 @@ function createCodexhostDiscovery(dependencies = {}) {
       }
     }
     externalThreads = nextThreads
+    if (typeof threadKey === 'function') threadKeyFn = threadKey
     externalKeys = new Set(typeof threadKey === 'function'
       ? [...nextThreads.keys()].map((threadId) => threadKey(threadId))
       : [])
@@ -528,6 +531,149 @@ function createCodexhostDiscovery(dependencies = {}) {
       : null
   }
 
+  /**
+   * Runs one delegation CLI command and returns its JSON envelope whatever
+   * the exit code. The roster refresh can afford to treat any failure as "no
+   * rows this scan"; an archive cannot — the caller must retain the task on
+   * THREAD_BUSY / THREAD_NOT_FOUND instead of guessing, and the CLI writes
+   * that envelope to stderr with exit 1. No output at all means the cached
+   * rendezvous names a dead Host generation, so it is dropped here too.
+   */
+  function runEnvelope(command, args, options = {}) {
+    return new Promise((resolve) => {
+      try {
+        execFile(command, args, {
+          timeout: options.timeout || CODEXHOST_CLI_TIMEOUT_MS,
+          maxBuffer: 4 * 1024 * 1024,
+          env: options.env,
+          encoding: 'utf8'
+        }, (error, stdout, stderr) => {
+          const out = String(stdout || '').trim()
+          const err = String(stderr || '').trim()
+          if (out) return resolve(out)
+          if (err) return resolve(err)
+          resolve(error ? null : '')
+        })
+      } catch {
+        resolve(null)
+      }
+    })
+  }
+
+  function cliEnv(resolved) {
+    return {
+      PATH: '/usr/bin:/bin:/usr/local/bin',
+      HOME: process.env.HOME || '',
+      CODEXHOST_RUNTIME_ENDPOINT: resolved.endpoint,
+      CODEXHOST_RUNTIME_TOKEN: resolved.token
+    }
+  }
+
+  async function codexhostCommand(verb, args) {
+    const resolved = await resolveRendezvous()
+    if (!resolved) {
+      noteCommand(verb, 'RUNTIME_UNREACHABLE')
+      return { ok: false, code: 'RUNTIME_UNREACHABLE', message: 'codexhost rendezvous unavailable' }
+    }
+    const output = await runEnvelope(resolved.cliPath, args, { env: cliEnv(resolved) })
+    if (output === null) {
+      rendezvous = null
+      noteCommand(verb, 'RUNTIME_UNREACHABLE')
+      return { ok: false, code: 'RUNTIME_UNREACHABLE', message: 'codexhost CLI produced no output' }
+    }
+    let parsed
+    try { parsed = JSON.parse(output) } catch {
+      noteCommand(verb, 'PROTOCOL_ERROR')
+      return { ok: false, code: 'PROTOCOL_ERROR', message: 'codexhost CLI output is not JSON' }
+    }
+    if (record(parsed).error) {
+      const failure = record(parsed.error)
+      const code = typeof failure.code === 'string' && failure.code ? failure.code : 'INTERNAL_ERROR'
+      if (code === 'RUNTIME_UNREACHABLE') rendezvous = null
+      noteCommand(verb, code)
+      return { ok: false, code, message: typeof failure.message === 'string' ? failure.message.slice(0, 200) : '' }
+    }
+    noteCommand(verb, 'ok')
+    return { ok: true, value: parsed }
+  }
+
+  /** Counts and codes only: never an id, a title or the rendezvous. */
+  function noteCommand(verb, code) {
+    recordDiagnostic({
+      level: code === 'ok' ? 'debug' : 'error',
+      scope: 'task-recovery',
+      event: 'codexhost-command',
+      outcome: code === 'ok' ? 'ok' : 'failed',
+      provider: 'codex',
+      count: externalThreads.size,
+      details: { verb, code }
+    })
+  }
+
+  /** Host `thread read` for an archive preflight: status and latest Turn only. */
+  async function codexhostReadThread(threadId) {
+    const result = await codexhostCommand('read', ['thread', 'read', String(threadId)])
+    if (!result.ok) return result
+    const snapshot = record(result.value)
+    const turn = record(snapshot.turn)
+    return {
+      ok: true,
+      status: normalizeHostStatus(snapshot.status),
+      turnStatus: typeof turn.status === 'string' ? turn.status : ''
+    }
+  }
+
+  /**
+   * Host `thread archive|unarchive`. The Host persists the state and sends
+   * Desktop the same `thread/archived` a sidebar archive does, so EyPc has no
+   * Desktop leg of its own here.
+   */
+  async function codexhostArchiveThread(threadId, archived = true) {
+    const verb = archived === false ? 'unarchive' : 'archive'
+    const result = await codexhostCommand(verb, ['thread', verb, String(threadId)])
+    if (!result.ok) return result
+    const value = record(result.value)
+    return {
+      ok: true,
+      threadId: typeof value.threadId === 'string' ? value.threadId : String(threadId),
+      archived: value.archived === true
+    }
+  }
+
+  /**
+   * Archive verdict from the Host lists, in the official lane's shape: the
+   * live list must no longer carry the id and the archived list must. Both
+   * lists are scoped to the row's cwd when known and sorted by update time,
+   * so the row just archived sorts first instead of behind years of native
+   * archive history.
+   */
+  async function codexhostArchiveState(threadId) {
+    const id = String(threadId || '').toLowerCase()
+    const cwd = externalThreads.get(id)?.cwd || ''
+    const scope = cwd ? ['--cwd', cwd] : ['--all', 'true']
+    const base = ['thread', 'list', '--limit', '100', '--sort', 'updated-desc', ...scope]
+    const [live, archived] = await Promise.all([
+      codexhostCommand('list', base),
+      codexhostCommand('list', [...base, '--archived', 'true'])
+    ])
+    const failed = !live.ok ? live : !archived.ok ? archived : null
+    if (failed) return { ok: false, code: failed.code, message: failed.message }
+    const has = (page) => (Array.isArray(record(page.value).threads) ? page.value.threads : [])
+      .some((thread) => typeof record(thread).threadId === 'string' && thread.threadId.toLowerCase() === id)
+    return { ok: true, unarchivedPresent: has(live), archivedPresent: has(archived) }
+  }
+
+  /** Drops a just-archived row so the next scan does not wait a TTL for it. */
+  function codexhostForgetThread(threadId) {
+    const id = String(threadId || '').toLowerCase()
+    if (!externalThreads.delete(id)) return false
+    externalKeys = new Set(typeof threadKeyFn === 'function'
+      ? [...externalThreads.keys()].map((known) => threadKeyFn(known))
+      : [])
+    listRefreshedAt = 0
+    return true
+  }
+
   function codexhostResetDiscovery() {
     rendezvous = null
     externalThreads = new Map()
@@ -547,6 +693,10 @@ function createCodexhostDiscovery(dependencies = {}) {
     honorExternalOpenRead,
     externalGoalEvidence,
     compareHostDesktopUnread,
+    codexhostReadThread,
+    codexhostArchiveThread,
+    codexhostArchiveState,
+    codexhostForgetThread,
     codexhostResetDiscovery
   }
 }

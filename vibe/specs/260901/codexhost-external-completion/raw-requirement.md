@@ -72,3 +72,16 @@ state: active
 text: >
 
   因为都读不到之前的对话 那之前的对话可能也会有这个问题 之前是进行中的 变成已完成 未读了 这个也感知不到
+
+## RAW-199
+
+captured_at: 2026-09-02
+state: active
+text: >
+
+  而且在插件内 对于未命名的对话 点击归档 有没有真实地去触发 CodeX Host 的归档？ 或者是触发在codex里面展示的这个归档体现
+
+clarification_at: 2026-09-02
+clarification: >
+
+  用户选择 D-1：打通 Host 通道——codex-host 委派 CLI 增加 thread archive/unarchive，EyPc 归档桥对额外进程改走 CLI，预检用 Host thread read，核验用 Host 列表消失

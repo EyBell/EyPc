@@ -457,8 +457,8 @@
       "source_task": "260901/codexhost-external-completion",
       "source_path": "vibe/specs/260901/codexhost-external-completion/raw-requirement.md",
       "spec_id": "SPEC-260901-CODEXHOST-EXTERNAL-COMPLETION",
-      "content_sha256": "2bffe1d120b323f0711a0c5a15f7fcc01b82a80a7511e162b8e5e60f273c18bc",
-      "raw_identity_count": 6,
+      "content_sha256": "fcea25b1f57d2e2c5470f3916325989d2b0457b80e443fd94c5b8c8cb4cec4d5",
+      "raw_identity_count": 7,
       "ordered_anchor_count": 0,
       "raw_parent_ordered_count": 0,
       "unparented_ordered_count": 0
