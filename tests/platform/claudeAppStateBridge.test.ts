@@ -27,7 +27,10 @@ describe('Claude App version-gated state log', () => {
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.30096.5')).toBe(true)
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.34493.1')).toBe(true)
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.37937.0')).toBe(true)
+    expect(appState.SUPPORTED_APP_VERSIONS.has('1.40609.1')).toBe(true)
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.37938.0')).toBe(false)
+    // The staged-but-never-installed sibling build stays closed until its own log is checked.
+    expect(appState.SUPPORTED_APP_VERSIONS.has('1.40609.0')).toBe(false)
   })
 
   it('accepts only the fixed privacy-safe lifecycle grammar', () => {

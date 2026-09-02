@@ -17,9 +17,9 @@ const CLAUDE_APP_STATE_REVISION = 'claude-app-log-state-v2'
 const CLAUDE_APP_STATE_VERSION = 2
 // Each version is admitted only after its privacy-safe lifecycle grammar has
 // been checked against the installed App logs. 1.28929.0, 1.30096.5,
-// 1.34493.1 and 1.37937.0 preserve the exact Code session messages accepted
-// below; unrelated Cowork identifiers and non-local `session_*` ids remain outside
-// LOCAL_SESSION_PATTERN and therefore fail closed.
+// 1.34493.1, 1.37937.0 and 1.40609.1 preserve the exact Code session messages
+// accepted below; unrelated Cowork identifiers and non-local `session_*` ids
+// remain outside LOCAL_SESSION_PATTERN and therefore fail closed.
 // Single owner of the Claude App version gate. The state reader fails closed
 // on an unlisted version, so the list has to be one thing: two copies agreeing
 // today is discipline, not structure, and a version added to one side alone
@@ -30,7 +30,8 @@ const SUPPORTED_APP_VERSIONS = new Set([
   '1.28929.0',
   '1.30096.5',
   '1.34493.1',
-  '1.37937.0'
+  '1.37937.0',
+  '1.40609.1'
 ])
 const LOG_FILE_NAMES = ['main1.log', 'main.log']
 const LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024
