@@ -78,6 +78,7 @@ interface HarnessOptions {
   archiveResult?: { outcome: 'archived' | 'failed' | 'indeterminate'; message?: string }
   codexThreads?: CodexHostThread[]
   kernelActions?: boolean
+  recordDiagnostic?: (input: Record<string, unknown>) => void
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -477,7 +478,10 @@ function harness(options: HarnessOptions = {}) {
       close: () => undefined
     },
     ...(companionKernel ? { companionKernel } : {}),
-    ...(options.bridgeAbsent ? {} : { claude })
+    ...(options.bridgeAbsent ? {} : { claude }),
+    ...(options.recordDiagnostic
+      ? { diagnostics: { revision: 'eypc-runtime-diagnostics-v3', record: options.recordDiagnostic, snapshot: () => null } }
+      : {})
   } as unknown as EypcPlatformApi
 
   const controller = createCodexController({
@@ -816,6 +820,67 @@ describe('dynamic quota supplement', () => {
       ['seven_day', 80, 'usage-api'],
       ['seven_day_fable', 70, 'usage-api']
     ])
+    context.controller.dispose()
+  })
+})
+
+describe('Claude quota lane diagnostics and manual refresh', () => {
+  function quotaHarness(events: Array<Record<string, unknown>>) {
+    const now = Date.now()
+    return harness({
+      appQuotaAccess: true,
+      quota: { five_hour: { used_percentage: 25, resets_at: Math.round(now / 1000) + 3_600 } },
+      planUsage: { at: now - 5 * 60_000, fiveHourUsedPercent: 30, sevenDayUsedPercent: 55 },
+      fallback: { rateLimits: { seven_day: { used_percentage: 60, resets_at: Math.round(now / 1000) + 86_400 } }, updatedAt: now },
+      recordDiagnostic: (input) => { events.push(input) }
+    })
+  }
+
+  it('records one bounded quota-read line per Claude quota read without any reading values', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const context = quotaHarness(events)
+    context.controller.start()
+    await settle()
+    const read = events.find((event) => event.scope === 'quota' && event.event === 'claude-quota-read')
+    expect(read).toMatchObject({ level: 'info', provider: 'claude', outcome: 'changed', reason: 'cold', count: 2 })
+    const details = read?.details as Record<string, unknown>
+    expect(details).toMatchObject({
+      trigger: 'cold',
+      force: false,
+      usageApi: 'accepted',
+      accessStatus: 'idle',
+      windowCount: 2,
+      scopedCount: 0,
+      resetKnownCount: 2,
+      primarySource: 'usage-api',
+      primaryFresh: true,
+      quotaStatus: 'ok'
+    })
+    expect(typeof details.statuslineAgeMs).toBe('number')
+    expect(details.planSampleAgeMs).toBeGreaterThanOrEqual(5 * 60_000 - 1_000)
+    expect(details.nextResetInMs).toBeGreaterThan(0)
+    // Ages, counts and enums only: no percentage, reset moment, identity or credential leaves the lane.
+    expect(JSON.stringify(details)).not.toMatch(/remainingPercent|used_percentage|resets_at|resetAt|token|account/i)
+    context.controller.dispose()
+  })
+
+  it('a chip refresh forces the Claude fallback past its cadence and is tagged manual', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const context = quotaHarness(events)
+    context.controller.start()
+    await settle()
+    const callsBefore = context.fallbackCalls.length
+    const readsBefore = events.filter((event) => event.event === 'claude-quota-read').length
+    await expect(context.controller.refreshQuota()).resolves.toBe(true)
+    await settle()
+    expect(context.fallbackCalls.length).toBeGreaterThan(callsBefore)
+    expect(context.fallbackCalls.at(-1)).toMatchObject({ enabled: true, force: true })
+    const reads = events.filter((event) => event.event === 'claude-quota-read')
+    expect(reads.length).toBeGreaterThan(readsBefore)
+    expect(reads.at(-1)).toMatchObject({ level: 'info', reason: 'manual' })
+    expect((reads.at(-1)?.details as Record<string, unknown>)).toMatchObject({ trigger: 'manual', force: true })
+    // Automatic reads never carry force.
+    expect(context.fallbackCalls[0]).toMatchObject({ force: false })
     context.controller.dispose()
   })
 })

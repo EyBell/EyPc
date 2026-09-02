@@ -592,3 +592,48 @@ describe('authorization gate and retry schedule', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('manual refresh from a quota reading', () => {
+  const home = makeHome()
+  const base = { enabled: true, primaryUpdatedAt: 0 }
+
+  it('skips the post-success cadence only when asked to', async () => {
+    const fetchImpl = vi.fn(async () => okResponse({ five_hour: { used_percentage: 10 } }))
+    const fallback = makeFallback(fetchImpl)
+    expect(await fallback.read({ ...base, now: NOW, refreshIntervalMs: 300_000, claudeHome: home.claudeHome })).not.toBeNull()
+    expect(await fallback.read({ ...base, now: NOW + 1_000, refreshIntervalMs: 300_000, claudeHome: home.claudeHome })).toBeNull()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fallback.diagnostics().nextAllowedReason).toBe('interval')
+    expect(await fallback.read({ ...base, now: NOW + 2_000, refreshIntervalMs: 300_000, force: true, claudeHome: home.claudeHome })).not.toBeNull()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries through the generic failure backoff', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 500, headers: { get: () => '' }, json: async () => ({}) }))
+    const fallback = makeFallback(fetchImpl)
+    await fallback.read({ ...base, now: NOW, claudeHome: home.claudeHome })
+    expect(fallback.diagnostics().nextAllowedReason).toBe('backoff')
+    await fallback.read({ ...base, now: NOW + 1_000, claudeHome: home.claudeHome })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    await fallback.read({ ...base, now: NOW + 2_000, force: true, claudeHome: home.claudeHome })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('never overrides a 429 Retry-After', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 429, headers: { get: () => '120' }, json: async () => ({}) }))
+    const fallback = makeFallback(fetchImpl)
+    await fallback.read({ ...base, now: NOW, claudeHome: home.claudeHome })
+    await fallback.read({ ...base, now: NOW + 1_000, force: true, claudeHome: home.claudeHome })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fallback.diagnostics()).toMatchObject({ nextAllowedReason: 'retry-after', lastFailure: 'http-429' })
+  })
+
+  it('never retries a rejected credential', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 401, headers: { get: () => '' }, json: async () => ({}) }))
+    const fallback = makeFallback(fetchImpl)
+    await fallback.read({ ...base, now: NOW, claudeHome: home.claudeHome })
+    await fallback.read({ ...base, now: NOW + 60 * 60 * 1000, force: true, claudeHome: home.claudeHome })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fallback.diagnostics().nextAllowedReason).toBe('credential')
+  })
+})

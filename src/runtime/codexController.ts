@@ -210,6 +210,17 @@ function quotaDelay(settings: CodexSettings): number {
   return settings.quotaRefreshSeconds > 0 ? settings.quotaRefreshSeconds * 1000 : Number.POSITIVE_INFINITY
 }
 
+/** Why a Claude quota read ran; `force` lets a manual read skip the fallback's ordinary cadence. */
+interface ClaudeQuotaTrigger { reason: string; force?: boolean }
+
+/** What each Claude quota lane contributed to one read, for the bounded diagnostics line. */
+interface ClaudeQuotaLaneObservation {
+  statuslineAgeMs: number | null
+  planSampleAgeMs: number | null
+  usageApi: 'disabled' | 'accepted' | 'skipped' | 'failed'
+  access: Record<string, unknown> | null
+}
+
 /** Independent Claude quota wake-up: cadence or the earliest reset + 1 second. */
 export function claudeQuotaScheduleDelay(
   settings: Pick<CodexSettings, 'quotaRefreshSeconds'>,
@@ -1313,16 +1324,20 @@ export function createCodexController(options: CodexControllerOptions) {
     return inFlight
   }
 
-  async function refreshClaudeQuota(now = Date.now()) {
+  async function refreshClaudeQuota(now = Date.now(), trigger: ClaudeQuotaTrigger = { reason: 'timer' }) {
     const bridge = options.platform.claude
     if (!bridge || claudeQuotaInFlight) return false
     claudeQuotaInFlight = true
     const laneToken = runtimeGeneration
     const previous = JSON.stringify({ quota: claudeQuota, access: claudeQuotaAccess })
+    const startedAt = Date.now()
+    const lane: ClaudeQuotaLaneObservation = { statuslineAgeMs: null, planSampleAgeMs: null, usageApi: 'disabled', access: null }
     try {
       const snapshot = await Promise.resolve(bridge.readSnapshot({ now })).catch(() => null)
       if (disposed || laneToken !== runtimeGeneration) return false
       if (snapshot?.quota) {
+        const statuslineAt = Number(snapshot.quota.updatedAt) || 0
+        lane.statuslineAgeMs = statuslineAt > 0 ? Math.max(0, now - statuslineAt) : null
         const primary = normalizeClaudeQuota(snapshot.quota.rateLimits, {
           updatedAt: snapshot.quota.updatedAt,
           now
@@ -1339,6 +1354,7 @@ export function createCodexController(options: CodexControllerOptions) {
         try {
           const sample = await bridge.readPlanUsage()
           if (!disposed && laneToken === runtimeGeneration && sample) {
+            lane.planSampleAgeMs = Number.isFinite(sample.at) && sample.at > 0 ? Math.max(0, now - sample.at) : null
             const appOwned = new Map(claudeQuota.windows
               .filter((window) => claudeAppQuotaKeys.has(window.key))
               .map((window) => [window.key, window] as const))
@@ -1370,8 +1386,10 @@ export function createCodexController(options: CodexControllerOptions) {
               : 10 * 60 * 1000,
             refreshIntervalMs: Number.isFinite(quotaDelay(codexState().settings))
               ? quotaDelay(codexState().settings)
-              : 0
+              : 0,
+            force: trigger.force === true
           })
+          lane.usageApi = fallback ? 'accepted' : 'skipped'
           if (!disposed && laneToken === runtimeGeneration && fallback) {
             const appQuota = normalizeClaudeQuota(fallback.rateLimits, {
               updatedAt: fallback.updatedAt,
@@ -1391,9 +1409,12 @@ export function createCodexController(options: CodexControllerOptions) {
             for (const key of incomingKeys) claudeAppQuotaKeys.add(key)
           }
           if (!disposed && laneToken === runtimeGeneration) {
-            const access = normalizeClaudeQuotaAccess(bridge.diagnostics().quotaAccess)
+            const rawAccess = bridge.diagnostics().quotaAccess
+            lane.access = rawAccess && typeof rawAccess === 'object' ? rawAccess as unknown as Record<string, unknown> : null
+            const access = normalizeClaudeQuotaAccess(rawAccess)
             claudeQuotaAccess = access
             if (!fallback && access.lastAttemptAt >= now && access.status !== 'idle' && access.status !== 'ok') {
+              lane.usageApi = 'failed'
               claudeQuota = staleClaudeQuota(claudeQuota, now)
             }
           }
@@ -1403,17 +1424,74 @@ export function createCodexController(options: CodexControllerOptions) {
       }
       const changed = previous !== JSON.stringify({ quota: claudeQuota, access: claudeQuotaAccess })
       if (changed) claudeControllerRevision += 1
+      recordClaudeQuotaRead(trigger, lane, { now, startedAt, changed })
       return changed
     } finally {
       claudeQuotaInFlight = false
     }
   }
 
-  function kickClaudeQuota(now = Date.now()) {
+  /**
+   * One bounded diagnostics line per Claude quota read. It answers "which lane
+   * produced the number, how old it is and why the read ran" — the question the
+   * surface cannot — without carrying any percentage, reset timestamp, identity
+   * or credential state. Diagnostics never affect the lane itself.
+   */
+  function recordClaudeQuotaRead(trigger: ClaudeQuotaTrigger, lane: ClaudeQuotaLaneObservation, result: { now: number; startedAt: number; changed: boolean }) {
+    const record = options.platform.diagnostics?.record
+    if (typeof record !== 'function') return
+    const windows = claudeQuota.windows
+    const primary = windows.find((window) => window.kind === 'weekly' && !window.scope)
+      || windows.find((window) => window.kind === 'short' && !window.scope)
+      || windows[0]
+      || null
+    const earliestReset = windows.reduce<number | null>((earliest, window) => (
+      window.resetAt !== null && window.resetAt > result.now && (earliest === null || window.resetAt < earliest) ? window.resetAt : earliest
+    ), null)
+    const newestUsageApiAt = windows.reduce((newest, window) => window.source === 'usage-api' ? Math.max(newest, window.updatedAt || 0) : newest, 0)
+    const access = lane.access || {}
+    const token = (value: unknown, max = 40) => typeof value === 'string' ? value.slice(0, max) : ''
+    const retryAt = Number(access.retryAt) || 0
+    const attempted = lane.usageApi === 'accepted' || lane.usageApi === 'failed'
+    try {
+      record({
+        level: result.changed || attempted || trigger.reason === 'manual' ? 'info' : 'debug',
+        scope: 'quota',
+        event: 'claude-quota-read',
+        outcome: result.changed ? 'changed' : 'unchanged',
+        provider: 'claude',
+        reason: trigger.reason,
+        durationMs: Math.max(0, Date.now() - result.startedAt),
+        count: windows.length,
+        details: {
+          trigger: trigger.reason,
+          force: trigger.force === true,
+          statuslineAgeMs: lane.statuslineAgeMs,
+          planSampleAgeMs: lane.planSampleAgeMs,
+          usageApi: lane.usageApi,
+          usageApiAgeMs: newestUsageApiAt > 0 ? Math.max(0, result.now - newestUsageApiAt) : null,
+          accessStatus: token(access.status, 32) || 'idle',
+          accessReason: token(access.reason),
+          blockedBy: token(access.blockedBy, 20),
+          retryInMs: retryAt > result.now ? retryAt - result.now : 0,
+          windowCount: windows.length,
+          scopedCount: windows.filter((window) => Boolean(window.scope)).length,
+          resetKnownCount: windows.filter((window) => window.resetAt !== null).length,
+          nextResetInMs: earliestReset === null ? null : Math.max(0, earliestReset - result.now),
+          primarySource: primary?.source || claudeQuota.source,
+          primaryAgeMs: primary && (primary.updatedAt || 0) > 0 ? Math.max(0, result.now - (primary.updatedAt || 0)) : null,
+          primaryFresh: primary ? primary.freshness === 'fresh' : false,
+          quotaStatus: claudeQuota.status
+        }
+      })
+    } catch { /* diagnostics never affect the quota lane */ }
+  }
+
+  function kickClaudeQuota(now = Date.now(), trigger: ClaudeQuotaTrigger = { reason: 'timer' }) {
     if (claudeQuotaInFlight) return
     lastClaudeQuotaReadAt = now
     const laneToken = runtimeGeneration
-    void refreshClaudeQuota(now).then((changed) => {
+    void refreshClaudeQuota(now, trigger).then((changed) => {
       if (changed && !disposed && laneToken === runtimeGeneration) options.notify()
     }).catch(() => undefined)
   }
@@ -1426,14 +1504,14 @@ export function createCodexController(options: CodexControllerOptions) {
       document?: Document
     }
     if (typeof target.addEventListener !== 'function' || typeof target.removeEventListener !== 'function') return
-    const requestRefresh = () => {
+    const requestRefresh = (reason: string) => {
       if (disposed || !started || !claudeEnabled()) return
-      kickClaudeQuota(Date.now())
+      kickClaudeQuota(Date.now(), { reason })
     }
-    const refreshOnResume: EventListener = () => requestRefresh()
+    const refreshOnResume: EventListener = (event) => requestRefresh(`lifecycle-${event.type}`)
     const refreshWhenVisible: EventListener = () => {
       if (target.document?.visibilityState === 'hidden') return
-      requestRefresh()
+      requestRefresh('lifecycle-visible')
     }
     target.addEventListener('online', refreshOnResume)
     target.addEventListener('focus', refreshOnResume)
@@ -1471,7 +1549,7 @@ export function createCodexController(options: CodexControllerOptions) {
       return false
     }
     kickClaudeAppPresence()
-    if (includeQuota) kickClaudeQuota(now)
+    if (includeQuota) kickClaudeQuota(now, { reason: 'cold' })
     const [environmentChanged, inventoryChanged, unreadResult] = await Promise.all([
       refreshClaudeEnvironment(),
       refreshClaudeInventory(now),
@@ -1768,7 +1846,7 @@ export function createCodexController(options: CodexControllerOptions) {
     return environmentInFlight
   }
 
-  async function refresh(input: { force?: boolean; forceQuota?: boolean; forceTasks?: boolean; actionPreflight?: boolean } = {}) {
+  async function refresh(input: { force?: boolean; forceQuota?: boolean; forceTasks?: boolean; actionPreflight?: boolean; manualQuota?: boolean } = {}) {
     const actionPreflight = input.actionPreflight === true
     const refreshAllowed = () => actionPreflight ? isFeatureEnabled() : shouldRun()
     if (disposed || !refreshAllowed()) return
@@ -1791,13 +1869,22 @@ export function createCodexController(options: CodexControllerOptions) {
     const includeConfig = includeQuota && !actionPreflight
     // Claude membership/state/unread are push-owned after cold admission. A full
     // read is reserved for cold start, reconnect and an explicit gap recovery.
+    const claudeResetDue = claudeQuota.windows.some((window) => window.resetAt !== null
+      && now >= window.resetAt + 1000
+      && lastClaudeQuotaReadAt < window.resetAt + 1000)
     const includeClaudeQuota = !actionPreflight && claudeEnabled()
       && (input.force === true || input.forceQuota === true || lastClaudeQuotaReadAt <= 0
         || (Number.isFinite(quotaDelay(settings)) && now - lastClaudeQuotaReadAt >= quotaDelay(settings))
-        || claudeQuota.windows.some((window) => window.resetAt !== null
-          && now >= window.resetAt + 1000
-          && lastClaudeQuotaReadAt < window.resetAt + 1000))
-    if (includeClaudeQuota) kickClaudeQuota(now)
+        || claudeResetDue)
+    if (includeClaudeQuota) {
+      kickClaudeQuota(now, input.manualQuota === true
+        ? { reason: 'manual', force: true }
+        : lastClaudeQuotaReadAt <= 0
+          ? { reason: 'cold' }
+          : input.force === true || input.forceQuota === true
+            ? { reason: 'force' }
+            : claudeResetDue ? { reason: 'reset' } : { reason: 'timer' })
+    }
     if (!includeQuota && !includeThreads) {
       schedule()
       return
@@ -3406,6 +3493,13 @@ export function createCodexController(options: CodexControllerOptions) {
     },
     syncActivation,
     refresh: () => refresh({ force: true }),
+    /** Manual refresh from a quota reading: both providers now, Claude bypassing its ordinary cadence. */
+    async refreshQuota() {
+      if (disposed || !started) return false
+      kickClaudeQuota(Date.now(), { reason: 'manual', force: true })
+      await refresh({ forceQuota: true, manualQuota: true })
+      return true
+    },
     /** Registers or removes the explicitly confirmed Claude hook/status line. */
     async setCursorRegistration(register: boolean) {
       const bridge = options.platform.cursor

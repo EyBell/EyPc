@@ -377,6 +377,8 @@ function createQuotaFallback(dependencies) {
   let nextAllowedAt = 0
   let lastFailure = ''
   let credentialFingerprint = ''
+  /** Why `nextAllowedAt` is set: interval | backoff | retry-after | credential. */
+  let nextAllowedReason = ''
 
   /**
    * Attempts one fallback read.
@@ -405,9 +407,16 @@ function createQuotaFallback(dependencies) {
     if (nextCredentialFingerprint && nextCredentialFingerprint !== credentialFingerprint) {
       credentialFingerprint = nextCredentialFingerprint
       nextAllowedAt = 0
+      nextAllowedReason = ''
       consecutiveFailures = 0
     }
-    if (nextAllowedAt > 0 && now < nextAllowedAt) return null
+    // A manual refresh (the user clicked a quota reading) may skip the ordinary
+    // post-success cadence and the generic failure backoff. It never skips a
+    // 429 Retry-After or a 401/403 credential lock: those are the endpoint's
+    // terms, not ours.
+    const manualBypass = settings.force === true
+      && (nextAllowedReason === 'interval' || nextAllowedReason === 'backoff')
+    if (nextAllowedAt > 0 && now < nextAllowedAt && !manualBypass) return null
     lastAttemptAt = now
 
     const attempt = await withAccessToken(dependencies, settings.claudeHome || '', async (token) => {
@@ -454,22 +463,30 @@ function createQuotaFallback(dependencies) {
         ? Math.max(1000, settings.refreshIntervalMs)
         : MIN_CALL_INTERVAL_MS
       nextAllowedAt = now + refreshIntervalMs
+      nextAllowedReason = 'interval'
       lastFailure = ''
       return result
     }
     lastFailure = attempt && attempt.reason ? attempt.reason : 'credential-unavailable'
     consecutiveFailures += 1
     const retryDelay = FAILURE_RETRY_DELAYS_MS[consecutiveFailures - 1] || FAILURE_COOLDOWN_MS
-    if (attempt && (attempt.status === 401 || attempt.status === 403)) nextAllowedAt = Number.MAX_SAFE_INTEGER
-    else if (attempt && attempt.status === 429 && Number.isFinite(attempt.retryAt) && attempt.retryAt > now) nextAllowedAt = attempt.retryAt
-    else nextAllowedAt = now + retryDelay
+    if (attempt && (attempt.status === 401 || attempt.status === 403)) {
+      nextAllowedAt = Number.MAX_SAFE_INTEGER
+      nextAllowedReason = 'credential'
+    } else if (attempt && attempt.status === 429 && Number.isFinite(attempt.retryAt) && attempt.retryAt > now) {
+      nextAllowedAt = attempt.retryAt
+      nextAllowedReason = 'retry-after'
+    } else {
+      nextAllowedAt = now + retryDelay
+      nextAllowedReason = 'backoff'
+    }
     return null
   }
 
   return {
     read,
-    diagnostics: () => ({ lastAttemptAt, consecutiveFailures, nextAllowedAt, lastFailure }),
-    reset: () => { lastAttemptAt = 0; consecutiveFailures = 0; nextAllowedAt = 0; lastFailure = ''; credentialFingerprint = '' }
+    diagnostics: () => ({ lastAttemptAt, consecutiveFailures, nextAllowedAt, nextAllowedReason, lastFailure }),
+    reset: () => { lastAttemptAt = 0; consecutiveFailures = 0; nextAllowedAt = 0; nextAllowedReason = ''; lastFailure = ''; credentialFingerprint = '' }
   }
 }
 

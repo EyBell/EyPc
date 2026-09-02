@@ -738,7 +738,9 @@ button.float-search-glyph { cursor: pointer; }
   white-space: nowrap;
 }
 .float-quota-group > p { margin: 0; overflow: hidden; color: var(--codex-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.float-quota-chip { display: flex; min-width: 0; align-items: baseline; gap: 3px; white-space: nowrap; }
+.float-quota-chip { display: flex; min-width: 0; align-items: baseline; gap: 3px; white-space: nowrap; cursor: pointer; }
+/* A reading is also its own refresh trigger; the press feedback stays inside the chip. */
+.float-quota-chip:active strong { opacity: .55; }
 .float-quota-chip.spark { padding-left: 7px; border-left: 1px solid color-mix(in srgb, var(--codex-border) 46%, transparent); }
 .float-quota-group.provider-codex .float-quota-chip strong { color: var(--codex-quota-codex); }
 .float-quota-group.provider-claude .float-quota-chip strong { color: var(--codex-quota-claude); }
