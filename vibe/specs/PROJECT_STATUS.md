@@ -1,7 +1,7 @@
 # EyPc Project Status Hub
 
 Tool: codex
-Date: 2026-08-30
+Date: 2026-09-02
 
 ## Purpose
 
@@ -16,6 +16,8 @@ This hub routes current implementation, verification gates and durable authoriti
 
 ## Current Snapshot
 
+- RAW-199 额外进程归档走 Host 通道（2026-09-02，claude 会话）：EyPc 归档桥对 `codexhostExternal` 行改走 codex-host 委派 CLI `thread archive`（read 预检 / archive 写入 / live+archived 列表双核验），官方 app-server 不再收到这些 id；codex-host 侧新增 `thread archive|unarchive` 动词（其仓库 `vibe/specs/260902/1412-delegation-thread-archive/task-card.md`）。聚焦测试与构建通过（`host-12d0666f1b06419aecb0`）；Host 运行时新路由需 Desktop 正常退出后 `codexhost launch` 重启，uTools 重载与实机归档验收待用户。见 [spec](260901/codexhost-external-completion/spec.md#L94)。
+- 2026-09-02 Claude App 版本门扩至 `1.40609.1`（跳转已读延迟核验）is `implementation-landed / focused-automated-verified / artifact-ready / host-reload-pending`。用户报快捷键跳转后「已完成已读」仍延迟；真机诊断两次样本均为 Claude Code 会话而非 CodexHost 额外进程，分别 56.2s / 42.9s 才翻转，都落在 Claude App 每分钟 hh:mm:30 的 LevelDB 刷盘栅格上。根因是 App 08-30 自更新到 `1.40609.1` 后 [app-state.cjs](../../preload/claude/app-state.cjs#L26-L35) 白名单第三次滞后，app-log 热未读车道（focused 即清）fail closed，只剩分钟刷盘兜底；EyPc watcher 本身在每次刷盘后 <1s 发布。新版 `setFocusedSession 214 / Query completed 22 / Sending message 27 / permission 3+3 / Stopping 4` 行式与 v2 语法逐字一致，已加入 canonical+镜像版本门并钉测试；`3` 文件 `95/95`、contracts、typecheck、production/uTools build 与 requirements 均通过，artifact `host-12d0666f1b06419aecb0 / renderer-1bd741805912f6467de8`。CodexHost 额外进程「跳转即已读」（`0768ca4`）已在运行中 asar 内，本窗口无该类样本；运行中的 Host 仍是旧版本门，focused ≤1–2s 快清待插件重载后真机验收。见 [error-memory](../knowledge/error-memory/claude-unread-decay-blocked-by-version-gate-and-minute-flush.md#L1)。
 - RAW-167/168/170/171/172 工程不变量 is `user-confirmed / active`（2026-09-01）。五条同源于 [RAW-167 draft](260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1)，此前因「用户从未确认转述忠实」滞留 `proposed`，`validate:requirements` 每次都为此告警。本轮用户确认转述忠实并转 `active`；草案 §5 的三项待确认项（单一判断点是否为核心理念、Codex 侧拆分范围、零行为 diff 验收口径）同批结清。`authority` 保留 `agent-transcribed`——确认的是忠实度，不是作者身份。登记 `proposed` 由 5 降到 2，剩余两条是本轮新补的 RAW-197/198。
 - RAW-197/198 Claude 会话中断相位与 Host 线程权威 is `implementation-landed / focused-automated-verified / pending-user-confirmation`。**事后补登记**：两条行为已随 `8bb0e3e` / `96cf75a` 落地，此前唯一书面依据是入口预算棘轮注释 (q)。RAW-197 用转录尾巴的 `[Request interrupted by user]` 把 Esc 中断的 CLI 轮次折成「待继续」（Esc 不触发任何 Hook）；RAW-198 让绑定 `CODEXHOST_THREAD_ID` 的会话在 Host roster 持有期间退掉原生 claude 行。两条 `authority: agent-transcribed / status: proposed`——非用户当轮请求，**用户确认前不得当作已接纳语义引用**。RAW-198 会改变用户可见行数。聚焦 `claudeInterruptProbe` + `claudeBridge` 通过。Current authority: [spec](260901/claude-host-thread-authority/spec.md#L1)。
 - RAW-196 Codex 配置页信息密度收紧 is `implementation-landed / focused-automated-verified / artifact-ready / host-visual-pending`。运行区 ready/checking 改为单行标题 + 小图标 + 事实芯片，健康噪声行与说明性详情默认不常显；warning/error 仍内联详情并展示全部分项。静默刷新与不透明 i 仍属 RAW-180。聚焦 `codexEnvironmentPresentation` + `codexCompanion` + `designSystemV7` `91/91`。当前产物 `host-4f0c0fa37a7a7e0d4822 / renderer-95c8612052694f015d41`，builtAt `2026-09-01T07:14:40.662Z`；真实 uTools 重载仍待用户执行。Current authority: [spec](260901/codex-config-density/spec.md#L1)。

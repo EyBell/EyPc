@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 335 leaves / 6 modules / 311 active / 22 superseded / 2 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 98 scoped |
+| 需求登记 | 336 leaves / 6 modules / 312 active / 22 superseded / 2 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 99 scoped |
 | 原始来源 | 45 documents / 230 ordered / 125 RAW-parent / 105 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-77e99c6b3bdc24397bf4 / renderer-d0af6b7d4758cc371d06` · `artifact-ready` |
-| 当前构建时间 | `2026/09/02 13:25:30`（`2026-09-02T05:25:30.857Z`） |
+| 当前构建产物 | `host-12d0666f1b06419aecb0 / renderer-ea0d82c52e423e6fda7e` · `artifact-ready` |
+| 当前构建时间 | `2026/09/02 14:22:39`（`2026-09-02T06:22:39.882Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,15 +34,15 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 335,
+    "leaves": 336,
     "modules": 6,
     "proposed": 2,
-    "active": 311,
+    "active": 312,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 98
+    "scoped_relations": 99
   },
   "source_anchor_catalog": {
     "documents": 45,
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-77e99c6b3bdc24397bf4",
-    "renderer_asset": "renderer-d0af6b7d4758cc371d06",
+    "host_asset": "host-12d0666f1b06419aecb0",
+    "renderer_asset": "renderer-ea0d82c52e423e6fda7e",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-02T05:25:30.857Z",
-    "built_at_local": "2026/09/02 13:25:30",
+    "built_at": "2026-09-02T06:22:39.882Z",
+    "built_at_local": "2026/09/02 14:22:39",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "214058230de351cd9c9a241c9ef66c421493bd27d7b2866769b3feed55397f79",
-    "raw_sources": "e561946fffa97cc3ba93c0862427935699eb7d3ed965ff671b8ffd3e78cd75b9",
-    "source_anchor_catalog": "dd9c35aaf9035990b8090fa81964032bc4b33818b9ac25bb54a6bc11106424d6",
-    "product_body": "27cd78aa2825dc2cf0aa5cd71dff656d7351609b80faec31b2bbcd8bbb93a3e8",
-    "architecture": "fb0e74cc48da62a7df63cd67855d5a9dae28a08c2b221bfbf5f06cab4e5cfda5",
-    "runtime_contract": "38bc767d6e92d724c60d5662c2051d4b2d95009eff4cca276cee538de0fec210"
+    "requirement_registry": "bde56b87a9ad9885c51468e47d85c81053c9cad53cf4b3e5a06c1d8a6bb5be9b",
+    "raw_sources": "3df38f16475bb9df15987e32f5bfd429e44660837bfe1522cdfc1f6e8fcd5d87",
+    "source_anchor_catalog": "a7bf3988934ad36c1a9877e0dd7caad77272f2e05d5b06fa3729258aa5c7e0a8",
+    "product_body": "ff3816971235f0ee0c9002a111f42a013d298bce307287b8cf3c105ba4e610f4",
+    "architecture": "0956bc3be7f886d95240a58e0fa4de1deae205cdffd4a72328df459cc25b2699",
+    "runtime_contract": "7f916b2de86bb20a26424662ea25a85c01c33807c1b60040f1b1c968584babe5"
   }
 }
 ```
@@ -245,7 +245,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 只有 `UserPromptSubmit` 开启 Claude 父 Turn。成功 `Stop` 关闭当前 Turn 为 completed。Hook `StopFailure` 只记录水位，可以暂标 `stopped`，但同一 Turn 内随后的 prompt/tool/permission 必须恢复 running/waiting，不得保持「待继续」。SessionEnd 只有在同一 reducer 已实际观察到 open Turn 时才可关闭它。冷启动或生命周期扫描得到的 SessionEnd 只记录 session lifecycle，不能凭空创建 stopped，也不能压制 `completedTurns > 0` 的历史 completed。已观察 Turn 内，同一 Turn 已有成功 Stop/Result 时保持 completed；无成功结果的 SessionEnd 或显式 App failed/interrupted 才进入 stopped。SubagentStop、工具和 lifecycle 尾事件不得在成功 Stop 或 observed SessionEnd 之后把旧任务恢复为 running。App live-append 的 running/waiting 压过 Hook `stopped`，除非 Hook `turnStartedAt` 严格新于该 App 证据；App 明确终态仍优先同 Turn Hook 尾事件；source generation 优先于事件时间参与版本纠错。RAW-174 是该 StopFailure 合同的当前条款。子代理成员收敛完全源结构化：无 agent_type 的孤儿 `SubagentStop` 在父 Turn 关闭后一对一关闭同会话最早未决 active 子代理；带类型孤儿、同 id 重复 stop、开 Turn 到达或无候选时只记 inactive 占位；被收敛者遇同 id 直接证据立即复活，`SessionEnd` 全量清扫后终态化；任何 TTL/时效降级仍被禁止。RAW-181 是该收敛合同的当前条款。
 - Claude 未读持久基线是 App Local Storage 中包含 Chromium string tag 的 `epitaxy-unread-v1` 精确键。EyPc 只在权限 `0700` 的完整 LevelDB 临时快照上用真实 reader 读取，复制前后源指纹一致才接纳并立即清理；失败返回 unknown。已门禁 App 的 exact live completion 与 `[CCD] LocalSessions.setFocusedSession` 另形成 process-private hot overlay：聚焦任务完成保持已读，非聚焦任务完成立即未读，聚焦到任务立即清除，新 running 清旧 completion hint。更新 hot edge 不被迟到 LevelDB true/false 回滚；只有先看到该会话的相反持久边缘、再由事件后的新鲜快照匹配，才确认追平，上一 completion 遗留的同值不算。cold replay 不从历史 completion/focus 伪造未读，同秒事件用单调 hint revision。目录首个不同指纹由进程 Node 原生回调立即通知，已登记目录/文件由一秒 StatWatcher 补漏；禁止持久回执、WAL/`.ldb` 字节扫描或写 App 未读。全局 focus 不能证明多窗格 visible-but-unfocused 已读，因此该边界不宣称原生未读完全等价。
 - Claude 功能启用期间由进程生命周期 Host 维护 `inventory / phase / unread / quota / appPresence` 物化视图；切页、Main/Float 显隐和快捷键复用同一缓存，重启后从真实来源冷启动且不持久化 live phase。五条 authority 独立增量更新；Hook/App state、已登记任务成员文件和 unread LevelDB 的首个完整文件事件在 Node 原生回调中立即 drain/read，不进入可被 `background-hidden` 节流的 JavaScript timer；部分任务元数据 JSON 保留最后可信成员关系，目录 `fs.watch` 为快路，已登记文件的 1 秒 `fs.watchFile` StatWatcher 只作漏通知恢复，Renderer Controller 不另设 phase 轮询。等价 reduced-state/package 指纹完整 no-op，不增加 revision 或推送；source generation、Kernel revision、Float applied revision 全链拒绝倒退。额度网络不得阻塞任务状态，watcher callback 延迟不得冒充最终 Float applied 延迟。
-- RAW-160 requires the current Claude `session.phase` evidence to outrank `previous.phase` whenever its causal event is newer；a delayed older inventory generation cannot regress a newer watcher/open-refresh event，and a membership mutation must not advance activity/interaction/unread lane generations。App state 固定语法当前仅门禁已核验的 Claude App `1.26832.0 / 1.28929.0 / 1.30096.5 / 1.34493.1 / 1.37937.0`，相邻未知版本 fail closed；日志冷重放的普通 running/waiting 不得推导 live activity。phase、phaseRevision、statusEnteredAt、unread and capabilities are accepted atomically through the same State Store。D′ archive success text is exactly split into EyPc convergence and native-sidebar capability：EyPc 已归档并移除；Claude 原生侧栏同步未确认，当前不受支持。Occasional native sidebar refresh is observation only，never a supported postcondition。
+- RAW-160 requires the current Claude `session.phase` evidence to outrank `previous.phase` whenever its causal event is newer；a delayed older inventory generation cannot regress a newer watcher/open-refresh event，and a membership mutation must not advance activity/interaction/unread lane generations。App state 固定语法当前仅门禁已核验的 Claude App `1.26832.0 / 1.28929.0 / 1.30096.5 / 1.34493.1 / 1.37937.0 / 1.40609.1`，相邻未知版本 fail closed；日志冷重放的普通 running/waiting 不得推导 live activity。phase、phaseRevision、statusEnteredAt、unread and capabilities are accepted atomically through the same State Store。D′ archive success text is exactly split into EyPc convergence and native-sidebar capability：EyPc 已归档并移除；Claude 原生侧栏同步未确认，当前不受支持。Occasional native sidebar refresh is observation only，never a supported postcondition。
 - Claude 与其它 Provider 的任务状态由 Host evidence 自动进入同一 Kernel；产品不提供来源专用“同步任务状态”动作，成功打开也不触发 Renderer 侧第二次状态归约。来源专用入口只可读取 quota、environment 或展示 metadata，不能拥有 phase、unread、Plan、count 或 jump 语义。
 - 本地置顶的语义是「移出当前工作流、暂存待查」：动态列表最顶部的置顶分组收录**任何相位的本地置顶根任务**；一条置顶任务只在该分组显示，不再同时出现在待输入、进行中、待继续、已完成未读或已完成分组。**活动时间窗对任何相位的本地置顶任务一律不适用**，窗口只淘汰未置顶工作。显示位置不改变状态权威：置顶的待输入、进行中、待继续、已完成未读仍按真实相位参与角标计数、「上一个/下一个」与专用入口；已完成已读和 `unknown` 本就没有状态入口，只由「已完成未读」专用入口在真实未读为空时按持久化置顶顺序独占兜底。由此确立两条不变式：**凡进入 `cycleKeys` 的任务必须在某个动态分组可见**，且**每个任务恰好出现在一个动态分组**。置顶项访问进度使用固定身份，不挂在成员聚合会重算的生命周期时间戳；metadata-only 重排只改变状态候选顺序，置顶分组与兜底始终复用持久化本地置顶顺序。取消置顶后任务恢复按真实状态分组，并重新受活动时间窗约束。置顶分组是位置而非角标，不新增状态计数。
 - 动态「置顶」分组可在当前 Float 会话内折叠；该状态不持久化，也不改变项目页项目折叠。展开时标题不占快捷编号，当前可见可执行任务行按顺序取得 `Alt+1…9/0`；折叠时全部置顶任务行隐藏，标题只占一个编号并且唯一行为是展开，后续可见任务从下一号连续编号。展开后立即按新可见顺序重算编号，不为隐藏任务保留空号；`Alt+F` 继续只标记真实任务行。
@@ -304,7 +304,7 @@ Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-globa
 - Easy Agent is not implemented yet. The interim adapter keeps two host channels: the local Codex App Server supplies quota, models, inventory, creation and verified persistent actions; a macOS Codex Desktop private-IPC companion bridge supplies live task/read authority and archive-refresh notification. The App Server connector is therefore still required in the current phase.
 - CLI startup is independently diagnosable: EyPc auto-discovers only controlled macOS/Windows candidates and may store one user-selected, validated executable location in local plugin storage. The UI exposes only safe source/availability labels, never the actual path. Without a manual location it falls back to automatic discovery plus the existing App Server connector and explicitly warns about connection delay; this fallback never turns local cache or App Server activity into Input, ongoing or completed-unread authority. Windows supports CLI discovery/validated shim handling, while the private Desktop live bridge remains a macOS canary.
 - Host Snapshot V2 reads the local Codex App Server plus an allowlisted native project registry. Ordinary inventory remains strictly read-only: the main `.codex-global-state.json` is authoritative and `.bak` is used only when the main file is missing/invalid. The sole write exception is an explicitly confirmed native project removal transaction; EyPc never scans Codex SQLite or LevelDB. A Codex Desktop full snapshot may be consumed transiently inside preload for live-state projection, but its bodies/items/raw identities never cross the bridge or persist.
-- CodexHost extra processes (Pi / Claude Code / Grok / OMP / DSH / Cursor harness threads) never appear in official `thread/list` or the Desktop unread atom. EyPc discovers them through the Host delegation CLI, including after plugin reload, for idle and completed rows — not only newly created or running ones. Host `creating`/`running` is 进行中 even before Desktop follow. When Host later reports `completed` with unread, EyPc must leave 进行中 and enter 已完成未读; a leftover Desktop live inProgress turn must not keep the row running. `attention=input` is 待输入; `attention=approval` is 待确认; `interrupted`/`failed` is 待继续. Codex APP 已读 is an unread event false or an EyPc jump; a Desktop snapshot false is not read. Official `notLoaded` is still not completion. RAW-190 / RAW-191 / RAW-193 / RAW-194 / RAW-195.
+- CodexHost extra processes (Pi / Claude Code / Grok / OMP / DSH / Cursor harness threads) never appear in official `thread/list` or the Desktop unread atom. EyPc discovers them through the Host delegation CLI, including after plugin reload, for idle and completed rows — not only newly created or running ones. Host `creating`/`running` is 进行中 even before Desktop follow. When Host later reports `completed` with unread, EyPc must leave 进行中 and enter 已完成未读; a leftover Desktop live inProgress turn must not keep the row running. `attention=input` is 待输入; `attention=approval` is 待确认; `interrupted`/`failed` is 待继续. Codex APP 已读 is an unread event false or an EyPc jump; a Desktop snapshot false is not read. Official `notLoaded` is still not completion. Archiving an extra process from EyPc goes through the Host delegation CLI (`thread read` preflight, `thread archive` write, live/archived `thread list` verification); the plugin's private official app-server never sees those ids, and the Host itself broadcasts `thread/archived` to Desktop. RAW-190 / RAW-191 / RAW-193 / RAW-194 / RAW-195 / RAW-199.
 - Every `archived=false` page is read to completion. Project ownership uses native thread assignment first, native projectless IDs as `Chats` second, deepest active project-root cwd match third; unmatched tasks are treated as removed/unregistered and excluded. Native state is fingerprinted before and after scanning and the entire scan retries once on change.
 - Each candidate must have a valid newest Turn `startedAt`; there is no `updatedAt`/recency fallback. A malformed cursor, page, project state or existing Turn without `startedAt` fails the whole scan. Controller retains an older verified snapshot as explicitly stale, or shows an error empty state when no verified snapshot exists.
 - A single otherwise-complete inventory that omits a published anonymous key is a transport-dropout candidate, not immediate deletion. Controller retains the previous projection and requests one Provider-only recheck. Reappearance, changed keys, failure, disablement or disposal resets the candidate. Codex explicit archive events bypass the ordinary hold only by starting/advancing task-scoped verification；local removal still requires native postconditions and Kernel commit. Verified project removal and existing Claude membership mutation retain their Provider-specific contracts. No task list or raw identity is persisted.

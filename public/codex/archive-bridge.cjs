@@ -84,6 +84,11 @@ function createCodexArchiveBridge(dependencies = {}) {
   const localArchiveRecoverySuppressions = dependencies.localArchiveRecoverySuppressions
   const activityKeyForArchivedThread = dependencies.activityKeyForArchivedThread
   const companionTaskKernel = dependencies.companionTaskKernel || null
+  // Which rows are CodexHost extra processes, and the Host CLI verbs for them.
+  // Optional: an entry without the discovery lane keeps the official path only.
+  const codexhostLane = typeof dependencies.codexhostDiscovery === 'function'
+    ? dependencies.codexhostDiscovery
+    : () => null
 
   if (typeof record !== 'function' || typeof timestampMs !== 'function' || typeof error !== 'function'
     || typeof threadKey !== 'function' || typeof validThreadId !== 'function' || !crypto
@@ -296,6 +301,13 @@ function createCodexArchiveBridge(dependencies = {}) {
       if (registry.fingerprint !== expectedSourceFingerprint || entry.sourceFingerprint !== expectedSourceFingerprint) {
         return retainCodexArchiveTask(context, 'failed', 'source-changed', 'Codex 项目状态已更新，未执行归档')
       }
+      // A CodexHost extra process never existed in the official app-server;
+      // thread/read there fails as protocol-error and the transaction used to
+      // die at this line six times a day. The Host CLI is its archive surface.
+      const hostLane = codexhostLane()
+      if (hostLane?.isExternalThreadId?.(entry.threadId) === true) {
+        return await archiveCodexhostThread(context, entry, evidence, hostLane, operationId)
+      }
       const [threadResult, turnPage] = await Promise.all([
         requestCodexRpc('thread/read', { threadId: entry.threadId, includeTurns: false }),
         requestCodexRpc('thread/turns/list', { threadId: entry.threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }, threadTurnStatusTimeoutMs)
@@ -439,6 +451,99 @@ function createCodexArchiveBridge(dependencies = {}) {
           localArchiveRecoverySuppressions.delete(context.threadId)
         }
       }
+    }
+  }
+
+  function codexhostErrorCode(code) {
+    return typeof code === 'string' && code
+      ? `codexhost-${code.toLowerCase().replace(/_/g, '-')}`
+      : 'codexhost-failed'
+  }
+
+  /**
+   * Archive of one CodexHost extra process. Same stage ladder and same retain
+   * rules as the official lane, with the Host CLI in every seat the official
+   * app-server held: `thread read` is the preflight, `thread archive` the
+   * provider write, and the live/archived `thread list` pair the two
+   * persistence verifications. There is no Desktop leg — the Host broadcasts
+   * `thread/archived` to Desktop itself, the same frame a sidebar archive
+   * produces — so the transaction never waits for a native ACK.
+   */
+  async function archiveCodexhostThread(context, entry, evidence, hostLane, operationId) {
+    const lane = { lane: 'codexhost' }
+    context.desktopBridgeState = 'host-owned'
+    const read = await hostLane.codexhostReadThread(entry.threadId)
+    if (!read.ok) {
+      return retainCodexArchiveTask(context, 'failed', codexhostErrorCode(read.code), 'CodexHost 未能读取该额外进程，任务已保留')
+    }
+    recordCodexArchiveStage('archive-preflight', 'observed', context, {
+      details: { ...lane, providerStatus: read.status, turnStatus: read.turnStatus }
+    })
+    if (read.status === 'running' || read.status === 'creating') {
+      return retainCodexArchiveTask(context, 'failed', 'active-task', '任务已恢复进行中，未执行归档')
+    }
+    const terminalMatches = evidence === 'completed'
+      ? read.status === 'completed'
+      : read.status === 'failed' || read.status === 'interrupted'
+    if (!terminalMatches) {
+      return retainCodexArchiveTask(context, 'failed', 'state-changed', '任务状态已更新，未执行归档')
+    }
+    context.archiveCapability = 'verified'
+    recordCodexArchiveStage('archive-preflight', 'verified', context, { details: lane })
+    localArchiveRecoverySuppressions.add(entry.threadId)
+    context.lastStage = 'archive-provider-write'
+    const written = await hostLane.codexhostArchiveThread(entry.threadId, true)
+    if (!written.ok) {
+      return retainCodexArchiveTask(
+        context,
+        'failed',
+        written.code === 'THREAD_BUSY' ? 'active-task' : codexhostErrorCode(written.code),
+        written.code === 'THREAD_BUSY' ? '任务已恢复进行中，未执行归档' : 'CodexHost 归档写入失败，任务已保留'
+      )
+    }
+    context.providerWriteOutcome = 'completed'
+    recordCodexArchiveStage('archive-provider-write', 'completed', context, { details: lane })
+
+    context.lastStage = 'archive-server-verify-1'
+    context.verificationAttempt = 1
+    const verify1 = await hostLane.codexhostArchiveState(entry.threadId)
+    if (!verify1.ok) {
+      return retainCodexArchiveTask(context, 'indeterminate', codexhostErrorCode(verify1.code), 'CodexHost 归档核验不可达，任务已保留')
+    }
+    Object.assign(context, { unarchivedPresent: verify1.unarchivedPresent, archivedPresent: verify1.archivedPresent })
+    if (verify1.unarchivedPresent || !verify1.archivedPresent) {
+      return retainCodexArchiveTask(context, 'indeterminate', 'archive-verify-1-failed', 'CodexHost 第一次归档核验未通过，任务已保留')
+    }
+    recordCodexArchiveStage('archive-server-verify-1', 'verified', context, { details: lane })
+
+    context.lastStage = 'archive-desktop-sync'
+    context.desktopSyncOutcome = 'host-broadcast'
+    context.nativeAckOutcome = 'not-required'
+    recordCodexArchiveStage('archive-desktop-sync', 'not-required', context, { details: lane })
+
+    await waitCodexArchiveVerificationDelay()
+    context.lastStage = 'archive-server-verify-2'
+    context.verificationAttempt = 2
+    const verify2 = await hostLane.codexhostArchiveState(entry.threadId)
+    if (!verify2.ok) {
+      return retainCodexArchiveTask(context, 'indeterminate', codexhostErrorCode(verify2.code), 'CodexHost 归档核验不可达，任务已保留')
+    }
+    Object.assign(context, { unarchivedPresent: verify2.unarchivedPresent, archivedPresent: verify2.archivedPresent })
+    if (verify2.unarchivedPresent || !verify2.archivedPresent) {
+      return retainCodexArchiveTask(context, 'indeterminate', 'archive-verify-2-failed', 'CodexHost 第二次归档核验未通过，任务已保留')
+    }
+    recordCodexArchiveStage('archive-server-verify-2', 'verified', context, { details: lane })
+
+    context.lastStage = 'archive-kernel-commit'
+    await commitVerifiedCodexArchive(context)
+    if (typeof hostLane.codexhostForgetThread === 'function') hostLane.codexhostForgetThread(entry.threadId)
+    context.finalOutcome = 'archived'
+    return {
+      outcome: 'archived',
+      operationId,
+      desktopSync: 'host-broadcast',
+      nativeAck: 'not-required',
+      message: `已确认 CodexHost 归档（操作 ${codexArchiveShortOperationId(operationId)}）`
     }
   }
 
