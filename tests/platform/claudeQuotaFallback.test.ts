@@ -289,6 +289,83 @@ describe('Claude App encrypted credential authority', () => {
     expect(authorization).toBe(`Bearer ${TOKEN}`)
   })
 
+  it('reads the organization from segment 2 of an `acct:` key so several profiles of one account stay one organization', async () => {
+    let authorization = ''
+    const fetchImpl = vi.fn(async (_url: string, init: { headers: Record<string, string> }) => {
+      authorization = init.headers.Authorization
+      return okResponse({ five_hour: { used_percentage: 10 } })
+    })
+    const ACCOUNT = '0b6d4b2c-1111-4c1e-9c2f-0a0a0a0a0a0a'
+    const ORG = '017abb76-2222-4b97-8010-0b0b0b0b0b0b'
+    const fallback = appFallback({
+      [`acct:${ACCOUNT}|profile-one:${ORG}:https://api.anthropic.com:user:inference user:profile user:sessions:claude_code`]: {
+        token: 'code-capable-secret', expiresAt: NOW + 60_000
+      },
+      [`acct:${ACCOUNT}|profile-two:${ORG}:https://api.anthropic.com:user:inference user:file_upload user:profile`]: {
+        token: 'upload-capable-secret', expiresAt: NOW + 60_000
+      },
+      [`acct:${ACCOUNT}|profile-one:${ORG}:https://api.anthropic.com:user:profile`]: {
+        token: TOKEN, expiresAt: NOW + 60_000
+      }
+    }, fetchImpl, { lastKnownAccountUuid: ACCOUNT })
+    await fallback.read({ enabled: true, now: NOW, primaryUpdatedAt: 0 })
+    expect(authorization).toBe(`Bearer ${TOKEN}`)
+    expect(quota.keyIdentity(`acct:${ACCOUNT}|profile-one:${ORG}:https://api.anthropic.com:user:profile`))
+      .toEqual({ accountId: ACCOUNT, organizationId: ORG })
+    expect(quota.keyIdentity('client:org-a:https://api.anthropic.com:user:profile'))
+      .toEqual({ accountId: '', organizationId: 'org-a' })
+  })
+
+  it('breaks a several-organization tie with the organization the App is metering, and still fails closed without it', async () => {
+    let authorization = ''
+    const fetchImpl = vi.fn(async (_url: string, init: { headers: Record<string, string> }) => {
+      authorization = init.headers.Authorization
+      return okResponse({ five_hour: { used_percentage: 10 } })
+    })
+    const cache = {
+      'client:org-a:https://api.anthropic.com:user:profile': { token: 'org-a-secret', expiresAt: NOW + 60_000 },
+      'client:org-b:https://api.anthropic.com:user:profile': { token: TOKEN, expiresAt: NOW + 60_000 }
+    }
+    const silent = appFallback(cache, fetchImpl)
+    expect(await silent.read({ enabled: true, now: NOW, primaryUpdatedAt: 0 })).toBeNull()
+    expect(fetchImpl).not.toHaveBeenCalled()
+
+    const root = mkdtempSync(join(tmpdir(), 'eypc-claude-app-quota-org-'))
+    const appRoot = join(root, 'Claude')
+    mkdirSync(appRoot, { recursive: true })
+    writeFileSync(join(appRoot, quota.CLAUDE_APP_CONFIG_NAME), JSON.stringify({
+      [quota.CLAUDE_APP_TOKEN_CACHE_KEY]: Buffer.from(JSON.stringify(cache)).toString('base64')
+    }))
+    writeFileSync(join(appRoot, 'plan-usage-history.json'), JSON.stringify({
+      version: 1,
+      samples: [
+        { t: NOW - 20 * 60_000, org: 'org-a', u: { fh: 1, sd: 1 } },
+        { t: NOW - 10 * 60_000, org: 'org-b', u: { fh: 2, sd: 2 } }
+      ]
+    }))
+    const metered = quota.createQuotaFallback({
+      fs,
+      path,
+      platform: 'linux',
+      claudeAppDataRoot: appRoot,
+      safeStorage: { decryptString: (value: Buffer) => value.toString('utf8') },
+      fetch: fetchImpl
+    })
+    expect(await metered.read({ enabled: true, now: NOW, primaryUpdatedAt: 0 })).not.toBeNull()
+    expect(authorization).toBe(`Bearer ${TOKEN}`)
+
+    // A metered organization that is not among the live tokens proves nothing.
+    const foreignFetch = vi.fn()
+    const foreign = quota.createQuotaFallback({
+      fs, path, platform: 'linux', claudeAppDataRoot: appRoot,
+      safeStorage: { decryptString: (value: Buffer) => value.toString('utf8') },
+      fetch: foreignFetch,
+      readPlanUsageOrganization: () => 'org-z'
+    })
+    expect(await foreign.read({ enabled: true, now: NOW, primaryUpdatedAt: 0 })).toBeNull()
+    expect(foreignFetch).not.toHaveBeenCalled()
+  })
+
   it('decrypts the Claude-specific macOS v10 cache with a bounded Keychain read', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-claude-app-quota-macos-'))
     const appRoot = join(root, 'Claude')
