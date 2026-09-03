@@ -108,7 +108,7 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L270)
 - Add（RAW-203）: discovery 线程记忆 `eypc/codex/codexhost-thread-memory/v1`（status / attention / firstSeenAt / statusChangedAt / Host unread / readAt / readStatusChangedAt，≤ 300 条），跨会合点丢失、`codexhostResetDiscovery` 与插件重载延续 `statusChangedAt`；EyPc 跳转记为持久已读，Host 状态变化或 Host unread `false → true` 边沿取代；归档删除。
 - Add（RAW-204）: `acct:<account>|<profile>:<org>:…` 键形组织取第 2 段；多组织平局用 App `plan-usage-history` 最新样本的 `org` 裁决；Claude 额度组 `note`；手动刷新回执 `companion.quotaRefreshReceipt` 与浮窗可见反馈。
 - Change: `compareHostDesktopUnread(known, { openedRead })`；`codexhostResetDiscovery({ forgetMemory })` 仅测试用。
-- Unchanged: RAW-186 球心顺序、RAW-177#3 深链不构成已读、RAW-190 Host 未读权威、RAW-019 退避序列。
+- Unchanged: RAW-186 球心顺序（用户 2026-09-03 裁决保持 `{Fable}/{普通}`）、RAW-177#3 深链不构成已读、RAW-190 Host 未读权威、RAW-019 退避序列。
 
 ## Design
 
@@ -130,9 +130,13 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L270)
 - #24 / #25（部分）：`mergeClaudePlanUsage` / `mergeClaudeQuotaWindows` / `staleClaudeQuota` 共用 `claudeQuotaWindowFreshness`、`claudeQuotaMergedStatus`、`markExpiredClaudeQuotaWindows`；`normalizeClaudeQuota` 对上游直出 payload 保留更严的 `plausibleResetAt` 规则（有意差异，已注释）。
 - 顺手：`codexForgetDesktopOpenedReadThread` 一行包装内联；入口棘轮 14288 → 实测值。
 
-判定为**有意差异**、不再列为冲突：#3 / #4（额外进程对 Desktop snapshot-false / event-true 不认，是 RAW-190 / RAW-193 的产品规则）、#26（水面 5h、球心与外圈周额度是各通道的产品含义）。
+第三轮再收敛 2 项：
 
-仍未动（需要更大范围裁决）：#1 / #2 discovery 内 `desktopAppRead` / persisted 回退与 entry 同形（注入会带来模块缺失时的降级问题）；#14 / #15 / #16 机器子跑与未读投影的三处重复；#17 / #18 Kernel `readAcknowledgements` 对 Codex 是死码、`confirmsRead: true` 被回执归一压回；#20 两层 unread 聚合；#30 / #31 标签与键词汇表的前后端重复。
+- #14 / #15：机器子跑（subagent / guardian）与已读确认的裁决只在 `codexDesktopUnreadObservation` 顶部各出现一次；Side Chat 库存证据只存原始官方未读成员关系（`unreadKnown = unreadIds instanceof Set`），分支投影先问观察层再回退到证据，不再各自重复机器子跑与 `openedRead` 判定。聚合前过滤机器子跑子项的 `codexDesktopAggregateUnread` 保留：它决定的是「子项是否参与父级合并」，与观察层「子项读作什么」不是同一判定。
+
+判定为**有意差异**、不再列为冲突：#3 / #4（额外进程对 Desktop snapshot-false / event-true 不认，是 RAW-190 / RAW-193 的产品规则）、#16（`sanitizeCodexThreads` 的原生分支写的是 Desktop 原始持久未读，供 `connectorHasUnreadTurn` 作为回退基线；若换成已解析的观察值，已读确认被新 Turn 清掉后回退会误读为已读）、#26（水面 5h、球心与外圈周额度是各通道的产品含义）。
+
+仍未动（需要更大范围裁决）：#1 / #2 discovery 内 `desktopAppRead` / persisted 回退与 entry 同形（注入会带来模块缺失时的降级问题）；#17 / #18 Kernel `readAcknowledgements` 对 Codex 是死码、`confirmsRead: true` 被回执归一压回；#20 两层 unread 聚合；#30 / #31 标签与键词汇表的前后端重复。
 
 ## Verification
 
