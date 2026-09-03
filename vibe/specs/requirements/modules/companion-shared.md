@@ -36,6 +36,7 @@
 - [RAW-201](../shared-raw-201.md#L1) — `active` · 额度读数块点击即强制刷新两个来源；Claude 额度车道每次读取写有界 `quota/claude-quota-read` 诊断
 - [RAW-202](../shared-raw-202.md#L1) — `active` · 跳转前确保目标应用已打开与 CodexHost 启动通路
 - [RAW-206](../shared-raw-206.md#L1) — `active` · Cursor Plan 模式会话纳入库存；阻塞待决展示为待输入并可一键跳转
+- [RAW-207](../shared-raw-207.md#L1) — `active` · 同一 Turn 仍 running 的精确提问/审批公开为待输入；Cursor kind 送进 Kernel
 
 
 ### 编号条款

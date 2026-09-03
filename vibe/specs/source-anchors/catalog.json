@@ -4,12 +4,12 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 50,
-    "ordered_anchors": 282,
-    "raw_parent_ordered": 156,
+    "source_documents": 51,
+    "ordered_anchors": 286,
+    "raw_parent_ordered": 160,
     "unparented_ordered": 126,
     "registered_requirements": 105,
-    "registry_review_required": 51,
+    "registry_review_required": 55,
     "source_addressable_not_registered": 126
   },
   "documents": [
@@ -511,6 +511,16 @@
       "raw_identity_count": 2,
       "ordered_anchor_count": 10,
       "raw_parent_ordered_count": 10,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260903/same-turn-waiting-input",
+      "source_path": "vibe/specs/260903/same-turn-waiting-input/raw-requirement.md",
+      "spec_id": "SPEC-260903-SAME-TURN-WAITING-INPUT",
+      "content_sha256": "3474bfe8a746f72c633215f8af4d7aa382b8ac26bae1b350f5b7ef8d96cf5960",
+      "raw_identity_count": 4,
+      "ordered_anchor_count": 4,
+      "raw_parent_ordered_count": 4,
       "unparented_ordered_count": 0
     }
   ],
@@ -6721,6 +6731,94 @@
       "parent_raw_id": "RAW-206",
       "qualified_source": "SPEC-260903-CURSOR-PLAN-MODE-SESSIONS::RAW-206#5",
       "clause_sha256": "02c92bdd435e59450fa44ef7ded2b286c5aff3f5d38a238a786bdbe389a141cb",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-7E0466E0621B29E711B5",
+      "source_task": "260903/same-turn-waiting-input",
+      "source_path": "vibe/specs/260903/same-turn-waiting-input/raw-requirement.md",
+      "line": 15,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-207：同一 Turn 仍进行中的精确提问公开为待输入",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "1",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-207",
+      "qualified_source": "SPEC-260903-SAME-TURN-WAITING-INPUT::RAW-207#1",
+      "clause_sha256": "0fd835686f7fb9ac18922e98f2c9f215ce191466cf5299c2b473af2c4ca51f9c",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-A48EDB925A3EC4FE2A57",
+      "source_task": "260903/same-turn-waiting-input",
+      "source_path": "vibe/specs/260903/same-turn-waiting-input/raw-requirement.md",
+      "line": 16,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-207：同一 Turn 仍进行中的精确提问公开为待输入",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "2",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-207",
+      "qualified_source": "SPEC-260903-SAME-TURN-WAITING-INPUT::RAW-207#2",
+      "clause_sha256": "55f7b3320d2ff0f0436bad88a760f90a25a54fc647d414841eccfc71cb800b02",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-6406A951D158F92753BB",
+      "source_task": "260903/same-turn-waiting-input",
+      "source_path": "vibe/specs/260903/same-turn-waiting-input/raw-requirement.md",
+      "line": 17,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-207：同一 Turn 仍进行中的精确提问公开为待输入",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "3",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-207",
+      "qualified_source": "SPEC-260903-SAME-TURN-WAITING-INPUT::RAW-207#3",
+      "clause_sha256": "c1c7537ec83e799d9f7a26a34487ea7d3caac4a2278e8f2282b9a14ee4adfbfa",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-245EBA8D850333992913",
+      "source_task": "260903/same-turn-waiting-input",
+      "source_path": "vibe/specs/260903/same-turn-waiting-input/raw-requirement.md",
+      "line": 18,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-207：同一 Turn 仍进行中的精确提问公开为待输入",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "4",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-207",
+      "qualified_source": "SPEC-260903-SAME-TURN-WAITING-INPUT::RAW-207#4",
+      "clause_sha256": "fa5366c88784ad92fc83c6019db7958647a82664c80c99c3fa10e656671a9dff",
       "classification": "raw-child-requirement",
       "disposition": "registry-review-required",
       "semantic_module": null,

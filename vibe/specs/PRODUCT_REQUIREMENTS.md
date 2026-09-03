@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 343 leaves / 6 modules / 319 active / 22 superseded / 2 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 108 scoped |
-| 原始来源 | 50 documents / 282 ordered / 156 RAW-parent / 126 source-only |
+| 需求登记 | 344 leaves / 6 modules / 320 active / 22 superseded / 2 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 111 scoped |
+| 原始来源 | 51 documents / 286 ordered / 160 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-c0d7c13a80cb6a32542f / renderer-0b32f58078b85ae25a7d` · `artifact-ready` |
-| 当前构建时间 | `2026/09/03 17:46:31`（`2026-09-03T09:46:31.375Z`） |
+| 当前构建产物 | `host-54f70c4e38b814975ea9 / renderer-b8d619d611e9d6704b97` · `artifact-ready` |
+| 当前构建时间 | `2026/09/03 20:29:31`（`2026-09-03T12:29:31.943Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,20 +34,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 343,
+    "leaves": 344,
     "modules": 6,
     "proposed": 2,
-    "active": 319,
+    "active": 320,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 108
+    "scoped_relations": 111
   },
   "source_anchor_catalog": {
-    "documents": 50,
-    "ordered_anchors": 282,
-    "raw_parent_ordered": 156,
+    "documents": 51,
+    "ordered_anchors": 286,
+    "raw_parent_ordered": 160,
     "registered_requirements": 105,
     "source_only": 126
   },
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-c0d7c13a80cb6a32542f",
-    "renderer_asset": "renderer-0b32f58078b85ae25a7d",
+    "host_asset": "host-54f70c4e38b814975ea9",
+    "renderer_asset": "renderer-b8d619d611e9d6704b97",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-03T09:46:31.375Z",
-    "built_at_local": "2026/09/03 17:46:31",
+    "built_at": "2026-09-03T12:29:31.943Z",
+    "built_at_local": "2026/09/03 20:29:31",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "2019fee4df03e2263f767a07ccc3c94d8c2464b163a071b4732acb84cf51016b",
-    "raw_sources": "9c6bfb0e9eb366552be1389de27f9636867d87b5bcc5e965751f9c1b629b3fc2",
-    "source_anchor_catalog": "d84bd94b4049c806b726a1184a95a5a1fc0cd6c27abf2632e0ad7ac27624f65a",
-    "product_body": "aa5646875b759bd7bac7d27cedc159e6b21b597a1d5f4af3bd8752ab911f5a8f",
-    "architecture": "831922ee670c96a8d57f5b6849228b15682f1e7a1c959af8356a430a2bcc305a",
-    "runtime_contract": "b12f24fe823494aa07247b3c7ff3961e5c912fd2cb624a901ea0f7dbb20f8c82"
+    "requirement_registry": "5f9fca8f25897e5c9f6f5afb60724add6e0085de11853cfa846af24b4c729fee",
+    "raw_sources": "fdbb8065ec550c7b987414ec762d533b85bbb251904cbf1f7b9b4a6492e1335b",
+    "source_anchor_catalog": "33a7e8f67b605d3fb523b2560ec2e3c5f605875e37815995900c16b65d2d647d",
+    "product_body": "b6aeae9e106310dbc68e34c1386b85ad9b91a1e96694bd7a0355236708c3585d",
+    "architecture": "3e12524483a1abcf245880997a9dc09102cb0c722fde133b8999899d56ce8ea0",
+    "runtime_contract": "fcd44c9808f3bf296a8e0c71f84017558a4b43916ab7ff5daeea0637dd72bea9"
   }
 }
 ```
@@ -257,7 +257,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - RAW-162 makes Codex Goal status the completion boundary whenever a long-running Goal exists. An active Goal may span any number of automatic Turns；`turn/completed` closes only one round and must not publish task completed。Current input/approval evidence remains higher priority；paused、blocked、usageLimited and budgetLimited reuse stopped/“待继续”；only Goal complete may finish。Goal unknown、malformed、timeout or transient read failure preserves the last stable non-terminal phase as verifying；only explicit Goal cleared/no Goal or App Server method-not-found falls back to the existing Turn lifecycle。Goal Evidence is process-private and contains only finite status、updatedAt、freshness and causal sequence；Goal-only changes join the same atomic Kernel package without a public field、phase、Tab or badge。
 - 每个卡片、角标、attention、循环和快捷键都只请求打开根任务，绝不直达子任务。OS/Deep Link 接受只返回 `dispatched/pending`，不建立 read acknowledgement；只有 Codex 原生可见且带匹配 Turn/read 证据的回执才可确认 `opened/read`。V1 不提供子任务标题、重命名或操作，只显示一张根卡、`+N 子任务` 和 `memberCount/liveCount/attentionCount/errorCount` 摘要。
 - 通用 Topology V2 只接纳 exact、同 Provider、同 family、父存在、非自身、无环且 generation 不倒退的关系，并把嵌套子任务解析至根；它不聚合状态。Codex 使用 App Server lineage；Cursor 使用 Hook 热关系与 inventory 冷复核；Claude 使用 `session_id + agent_id` 的 Subagent 生命周期。普通 ChatGPT 与 Claude Agent Teams 暂不生成关系。标题、路径、时间、模型和 UI 位置永远不能推断父子；无效关系只按 `standaloneEligible` 独立显示或匿名隔离。
-- Kernel V7 先做成员级因果归约，再按 `excluded → causally-current-running → exact-current-approval/input/Plan-interaction → terminal-unread → artifact-only stopped → completed-read → unknown` 的公开真值顺序聚合每个根任务，且每个根只属于一个分组。已完成任务上任何精确、当前、未解决的普通输入、审批、Plan 选择/实施 interaction 都先于 unread 显示为待输入/待确认，但 unread 继续作为潜在 lane 保留，interaction 因果关闭后若仍未读才回到已完成未读；进行中与等待之间不得发布 completed-unread 中间帧。已完成 Plan 之后的更新 default Turn 若出现结构化 `fileChange/patch_apply`，Adapter 必须写入单调 `execution-start` clear，使该 Turn 完成后按真实 unread 进入完成组而不被旧 artifact 覆盖为待继续；只有 task-started、AgentMessage、reasoning 或普通补充问答仍保留旧 Plan。RAW-164/165/166 的分支因果与 lane 正交规则继续作为 V7 基础，不再局限于 Codex Side Chat。
+- Kernel V7 先做成员级因果归约，再按 `excluded → exact-current-approval/input/Plan-interaction → causally-current-running → terminal-unread → artifact-only stopped → completed-read → unknown` 的公开真值顺序聚合每个根任务，且每个根只属于一个分组。已完成任务上任何精确、当前、未解决的普通输入、审批、Plan 选择/实施 interaction 都先于 unread 显示为待输入/待确认，但 unread 继续作为潜在 lane 保留，interaction 因果关闭后若仍未读才回到已完成未读；**同一 Turn 仍在进行中的精确当前 interaction（Codex Questions、Cursor AskQuestion、Claude AskUserQuestion、CodexHost `attention=input`）同样公开为待输入/待确认，不得留在进行中**；进行中与等待之间不得发布 completed-unread 中间帧。已完成 Plan 之后的更新 default Turn 若出现结构化 `fileChange/patch_apply`，Adapter 必须写入单调 `execution-start` clear，使该 Turn 完成后按真实 unread 进入完成组而不被旧 artifact 覆盖为待继续；只有 task-started、AgentMessage、reasoning 或普通补充问答仍保留旧 Plan。RAW-164/165/166 的分支因果与 lane 正交规则继续作为 V7 基础，不再局限于 Codex Side Chat。RAW-207。
 - RAW-165 separates transport observation from event-time causality. Inventory/read success never mints a newer terminal sequence；stable branch identity survives connector/Desktop/App Server lane changes，and the Kernel merges complete snapshots per branch using comparable Turn epochs so stale/inventory terminal cannot replace newer running or waiting。Parent attention priority is `waiting-approval > waiting-input/Plan > running > Goal > terminal`，Side live authority cannot leak into main，and Host push diagnostics call a proposal accepted only when the final canonical package matches；otherwise it is anonymously superseded。Claude exact completion/focus provides the hot unread edge described above。No new visible phase、60-second hold or higher polling frequency is introduced。
 - RAW-166 makes the same branch gate bidirectional and lane-orthogonal. A later transport batch containing an older live Turn cannot clear newer waiting or reopen a newer terminal；a genuine newer Turn still advances immediately。Phase、unread and Goal merge independently，then the Kernel recomputes all derived branch fields，so a phase event with no unread/Goal observation cannot erase those authorities。Evidence Adapter diagnostics are `state-proposal/proposed` only；Codex and Claude provider events may say `accepted` only after their proposed fields match the committed canonical package，otherwise they say `superseded`。
 - Codex 原生 completed-unread 变化属于进程 Host authority：目录 `fs.watch` 首回调立即读取，已登记状态文件和 rollout decision 文件由 1 秒 `fs.watchFile` StatWatcher 补漏，watcher error 自动重建；Renderer 不持有 phase-only 周期恢复。persisted unread false→true 且任务仍 active 时，对同一匿名 key 定向复核 latest Turn，即使旧证据为 exact active/turn-started 也不能跳过；未读不直接虚构 terminal，更新正向序号仍拒绝迟到终态。私有 Branch Evidence 与同源公开 draft 在 Kernel 一次语义事务中提交，一次 source 变化最多一次 package revision，同值恢复信号零推送。
