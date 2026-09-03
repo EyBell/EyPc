@@ -156,7 +156,10 @@ const BUDGET = Object.freeze({
   // patch), the codex adapter `setPin` wrap, and providerPin/providerPinOrder/
   // providerPinAuthority in the three provider metadata builders. The pin
   // logic itself lives in the module.
-  lines: 14357,
+  // 2026-09-03 (RAW-207): +3 -- companionCursorEvidenceV7 now forwards
+  // interactionKind / branchRef / turnEpoch into the synthetic bundle so a
+  // still-running Cursor AskQuestion reaches Kernel waiting-input.
+  lines: 14360,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

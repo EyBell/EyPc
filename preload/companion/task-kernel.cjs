@@ -77,9 +77,9 @@ const ACTIVITY_EVIDENCE_PHASE = Object.freeze({
 const PLAN_LIFECYCLE_STATES = new Set(['unknown', 'ready', 'cleared'])
 const PLAN_CLEAR_REASONS = new Set(['cancel', 'execution-start', 'archive', 'removal'])
 const AGGREGATE_LIVE_PHASE_PRIORITY = Object.freeze({
-  running: 3,
-  'waiting-approval': 2,
-  'waiting-input': 1
+  'waiting-approval': 3,
+  'waiting-input': 2,
+  running: 1
 })
 
 function providerSet(value) {
@@ -1139,35 +1139,34 @@ function createCompanionTaskKernel(dependencies = {}) {
   function applyInteractionProjection(task) {
     const basePhase = isKnownTaskPhase(task.activityPhase) ? task.activityPhase : task.phase
     const interactions = taskOpenInteractions(task)
-    // A real Turn still owns the live phase. Once it is terminal, however, any
-    // exact current interaction is the action the user can take now, so it owns
-    // presentation even while the completed Turn remains unread underneath.
-    // Completed-unread is a settled backlog state, never a transition frame
-    // between running and a current input/approval request.
-    if (basePhase === 'running') {
-      if (task.phase === basePhase && task.planImplementation !== true) return task
-      return finalizeCanonicalTask({ ...task, phase: basePhase, planImplementation: false })
-    }
-    if (!interactions.length) {
-      if (task.phase === basePhase && task.planImplementation !== true) return task
+    // Exact current input/approval owns presentation even while the Turn is
+    // still running (Codex Questions, Cursor AskQuestion). A newer running
+    // epoch without this instance clears the store first, so this cannot
+    // resurrect stale waiting. Completed-unread stays a settled backlog
+    // state, never a transition frame between running and waiting.
+    if (interactions.length) {
+      const approval = interactions.some((interaction) => interaction.kind === 'approval')
+      const planImplementation = !approval
+        && interactions.every((interaction) => interaction.kind === 'plan-choice' || interaction.kind === 'plan-implementation')
+      const phase = approval ? 'waiting-approval' : 'waiting-input'
+      const selectedSequence = Math.max(...interactions.map((interaction) => interaction.sequence))
+      const selectedTurnEpoch = Math.max(...interactions.map((interaction) => interaction.turnEpoch), 0)
+      if (task.phase === phase
+        && task.planImplementation === planImplementation
+        && finiteInteger(task.phaseRevision) >= selectedSequence) return task
       return finalizeCanonicalTask({
         ...task,
-        phase: basePhase,
-        planImplementation: false
+        phase,
+        phaseRevision: Math.max(finiteInteger(task.phaseRevision), selectedSequence),
+        statusEnteredAt: selectedTurnEpoch || finiteInteger(task.statusEnteredAt),
+        planImplementation
       })
     }
-    const approval = interactions.some((interaction) => interaction.kind === 'approval')
-    const planImplementation = !approval
-      && interactions.every((interaction) => interaction.kind === 'plan-choice' || interaction.kind === 'plan-implementation')
-    const phase = approval ? 'waiting-approval' : 'waiting-input'
-    const selectedSequence = Math.max(...interactions.map((interaction) => interaction.sequence))
-    const selectedTurnEpoch = Math.max(...interactions.map((interaction) => interaction.turnEpoch), 0)
+    if (task.phase === basePhase && task.planImplementation !== true) return task
     return finalizeCanonicalTask({
       ...task,
-      phase,
-      phaseRevision: Math.max(finiteInteger(task.phaseRevision), selectedSequence),
-      statusEnteredAt: selectedTurnEpoch || finiteInteger(task.statusEnteredAt),
-      planImplementation
+      phase: basePhase,
+      planImplementation: false
     })
   }
 

@@ -11767,8 +11767,11 @@ function companionCursorEvidenceV7(sessionValue, hookValue, input = {}) {
   const interactionBundle = companionSyntheticInteractionBundleV7({
     provider: 'cursor',
     taskKey: key,
-    sequence: observation.sequence,
-    requestSetRevision: observation.sequence,
+    branchRef: 'root',
+    kind: observation.interactionKind,
+    sequence: observation.interactionSequence || observation.sequence,
+    turnEpoch: observation.turnStartedAt,
+    requestSetRevision: observation.interactionSequence || observation.sequence,
     authority: input.authority || 'provider-snapshot',
     exact: observation.exact === true,
     complete: true

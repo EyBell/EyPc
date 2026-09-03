@@ -376,6 +376,17 @@ describe('CompanionTaskKernel', () => {
     expect(hostSource).not.toContain('return reduceClaudeTaskEvidenceV4({ phase: value, unread: unread === true })')
     expect([...hostSource.matchAll(/cycleTier:\s*([^,\n]+)/g)].map((match) => match[1].trim()).every((value) => value === "'none'")).toBe(true)
     expect([...hostSource.matchAll(/dynamicGroup:\s*([^,\n]+)/g)].map((match) => match[1].trim()).every((value) => value === "'none'")).toBe(true)
+
+    expect(kernelSource).not.toMatch(/if \(basePhase === 'running'\)/)
+    expect(kernelSource).toMatch(/'waiting-approval': 3/)
+    expect(kernelSource).toMatch(/'waiting-input': 2/)
+    expect(kernelSource).toMatch(/\n  running: 1\n/)
+    const cursorEvidence = hostSource.slice(
+      hostSource.indexOf('function companionCursorEvidenceV7'),
+      hostSource.indexOf('let companionPreflightDraftSequence')
+    )
+    expect(cursorEvidence).toContain('kind: observation.interactionKind')
+    expect(cursorEvidence).toContain("branchRef: 'root'")
   })
 
   it('keeps the Plan lifecycle across a supplementary default Turn, interruption and pause until an explicit execution-start edge', async () => {
@@ -672,6 +683,122 @@ describe('CompanionTaskKernel', () => {
       expect(publications.filter((entry) => entry.phase === 'completed' && entry.unread)).toEqual([])
       stop()
     }
+  })
+
+  it('lets an exact current interaction outrank a still-running Turn without a completed-unread frame', () => {
+    const cases = [
+      { kind: 'user-input' as const, expectedPhase: 'waiting-input', planImplementation: false, provider: 'codex', key: 'codex-a' },
+      { kind: 'approval' as const, expectedPhase: 'waiting-approval', planImplementation: false, provider: 'codex', key: 'codex-a' },
+      { kind: 'user-input' as const, expectedPhase: 'waiting-input', planImplementation: false, provider: 'cursor', key: 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' }
+    ]
+    for (const [index, scenario] of cases.entries()) {
+      const providers = scenario.provider === 'cursor'
+        ? { codex: false, claude: false, cursor: true }
+        : { codex: true, claude: false, cursor: false }
+      const kernel = createCompanionTaskKernel({
+        initialConfiguration: { enabled: true, providers }
+      })
+      const receipt = kernel.attach({ enabled: true, providers })
+      const publications: Array<{ phase: string; unread: boolean }> = []
+      const stop = kernel.onPackage((value: Record<string, any>) => {
+        const current = value.tasks[0]
+        if (current) publications.push({ phase: current.phase, unread: current.unread === true })
+      })
+      const sequence = 400 + index * 10
+      kernel.syncPackage({
+        lease: receipt.lease,
+        draft: draft([task({
+          key: scenario.key,
+          provider: scenario.provider,
+          kind: scenario.provider === 'cursor' ? 'cursor-session' : 'codex-thread',
+          actionAlias: scenario.provider === 'cursor' ? 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' : 'ct_codex_a_1234567890',
+          phase: 'running',
+          phaseRevision: sequence,
+          statusEnteredAt: sequence,
+          turnStartedAt: sequence,
+          unreadKnown: true,
+          unread: false
+        })], 1, { providers, sourceGenerations: { codex: scenario.provider === 'codex' ? 1 : 0, claude: 0, cursor: scenario.provider === 'cursor' ? 1 : 0 } })
+      })
+
+      const waiting = kernel.publishEvidence(draft([task({
+        key: scenario.key,
+        provider: scenario.provider,
+        kind: scenario.provider === 'cursor' ? 'cursor-session' : 'codex-thread',
+        actionAlias: scenario.provider === 'cursor' ? 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' : 'ct_codex_a_1234567890',
+        phase: 'running',
+        phaseRevision: sequence + 1,
+        statusEnteredAt: sequence + 1,
+        turnStartedAt: sequence,
+        unreadKnown: true,
+        unread: false
+      })], 2, {
+        providers,
+        sourceGenerations: { codex: scenario.provider === 'codex' ? 2 : 0, claude: 0, cursor: scenario.provider === 'cursor' ? 2 : 0 },
+        interactions: [interaction({
+          provider: scenario.provider,
+          taskKey: scenario.key,
+          interactionRef: `${String(index + 4).repeat(32)}`,
+          kind: scenario.kind,
+          sequence: sequence + 1,
+          turnEpoch: sequence,
+          requestSetRevision: sequence + 1
+        })]
+      }))
+      expect(waiting.tasks[0]).toMatchObject({
+        phase: scenario.expectedPhase,
+        unread: false,
+        planImplementation: scenario.planImplementation,
+        dynamicGroup: 'input'
+      })
+      expect(publications.filter((entry) => entry.phase === 'completed')).toEqual([])
+      stop()
+    }
+  })
+
+  it('lets a waiting-input member outrank a running sibling on the aggregate root', () => {
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+    const family = 'codex:family-running-wait'
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task({ key: 'root', family, role: 'root', phase: 'running', unreadKnown: true, unread: false }),
+        task({
+          key: 'child',
+          family,
+          role: 'child',
+          kind: 'topology-child',
+          phase: 'waiting-input',
+          actionAlias: '',
+          unreadKnown: true,
+          unread: false,
+          capabilities: { open: false, archive: false, pause: false, resume: false, executePlan: false }
+        })
+      ], 1, {
+        providers: { codex: true, claude: false, cursor: false },
+        relations: [{
+          childKey: 'child',
+          parentKey: 'root',
+          provider: 'codex',
+          family,
+          relation: 'subagent',
+          authority: 'test-exact-identity',
+          exact: true,
+          generation: 1
+        }]
+      })
+    })
+    expect(current.tasks).toHaveLength(1)
+    expect(current.tasks[0]).toMatchObject({
+      key: 'root',
+      phase: 'waiting-input',
+      dynamicGroup: 'input',
+      topology: { mode: 'aggregate', memberCount: 2, liveCount: 2, attentionCount: 1 }
+    })
   })
 
   it('projects a completed-read task with an exact current Plan implementation request as waiting-input', () => {
