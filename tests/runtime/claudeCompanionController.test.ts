@@ -883,4 +883,22 @@ describe('Claude quota lane diagnostics and manual refresh', () => {
     expect(context.fallbackCalls[0]).toMatchObject({ force: false })
     context.controller.dispose()
   })
+
+  it('publishes a bounded receipt of what the manual refresh did', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const context = quotaHarness(events)
+    context.controller.start()
+    await settle()
+    expect(context.controller.floatSnapshot().companion?.quotaRefreshReceipt).toBeUndefined()
+    const before = Date.now()
+    await expect(context.controller.refreshQuota()).resolves.toBe(true)
+    await settle()
+    const receipt = context.controller.floatSnapshot().companion?.quotaRefreshReceipt
+    expect(receipt?.at).toBeGreaterThanOrEqual(before)
+    expect(receipt?.codex).toEqual({ requested: true })
+    // The harness fallback answers without a diagnostics lane, so access stays `idle` here; a real bridge reports `ok`.
+    expect(receipt?.claude).toMatchObject({ changed: expect.any(Boolean), usageApi: 'accepted', accessStatus: 'idle', blockedBy: '', retryInMs: 0, windowCount: 2, scopedCount: 0 })
+    expect(JSON.stringify(receipt)).not.toMatch(/remainingPercent|used_percentage|resets_at|resetAt|token/i)
+    context.controller.dispose()
+  })
 })

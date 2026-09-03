@@ -1,6 +1,7 @@
 import type { CodexhostEnvironmentV1 } from './codex'
 import {
   claudePrimaryQuotaWindow,
+  type ClaudeQuotaAccessStatus,
   claudeScopedWeeklyQuotaWindow,
   isClaudeAvailable,
   type ClaudeEnvironmentSnapshot,
@@ -36,6 +37,82 @@ export interface CompanionSnapshotSlice {
   claudeQuotaAccess?: ClaudeQuotaAccessSnapshot
   claudeQuota: ClaudeQuotaSnapshot
   claudeEnvironment: ClaudeEnvironmentSnapshot
+  /** Outcome of the latest manual quota refresh, so the float can say what it did. */
+  quotaRefreshReceipt?: CompanionQuotaRefreshReceipt
+}
+
+/**
+ * What one manual quota refresh actually did, per lane. Enumerations, counts
+ * and waits only — never a percentage, reset moment or credential detail.
+ */
+export interface CompanionQuotaRefreshReceipt {
+  at: number
+  /** Claude lane result; absent when the Claude provider is off. */
+  claude?: {
+    /** Whether any Claude reading or access state changed in this read. */
+    changed: boolean
+    usageApi: 'disabled' | 'accepted' | 'skipped' | 'failed'
+    accessStatus: ClaudeQuotaAccessStatus
+    /** Why the usage API was skipped or is locked: interval | backoff | retry-after | credential. */
+    blockedBy: string
+    retryInMs: number
+    windowCount: number
+    scopedCount: number
+  }
+  /** Codex lane: the reading was re-requested; the row itself shows the value. */
+  codex?: { requested: boolean }
+}
+
+/** Whether the App usage API contributed at least one window under authorization. */
+export function claudeAppQuotaReadable(slice: Pick<CompanionSnapshotSlice, 'claudeAppQuotaAccess' | 'claudeQuota'>): boolean {
+  return slice.claudeAppQuotaAccess === true
+    && slice.claudeQuota.windows.some((window) => window.source === 'usage-api')
+}
+
+/** One staleness rule for every Claude reading surface: per-window freshness first, snapshot status as fallback. */
+export function claudeQuotaReadingStale(quota: { freshness?: 'fresh' | 'stale' | 'unknown'; status?: string } | null | undefined): boolean {
+  if (!quota) return false
+  return quota.freshness ? quota.freshness !== 'fresh' : quota.status === 'stale'
+}
+
+function claudeQuotaAccessNote(status: ClaudeQuotaAccessStatus): string {
+  return status === 'rate-limited'
+    ? 'Claude App 额度暂受限，将按 Retry-After 重试'
+    : status === 'credential-unavailable'
+      ? 'Claude App 额度凭据不可用，等待账号凭据更新'
+      : status === 'failed'
+        ? 'Claude App 额度暂不可用，保留最近成功值'
+        : ''
+}
+
+/**
+ * Human sentence for a refresh receipt. It names the lane outcome the chip row
+ * cannot show by itself: whether the App usage API answered, why it did not,
+ * and when it may next. Readings stay in the chips.
+ */
+export function companionQuotaRefreshReceiptText(receipt: CompanionQuotaRefreshReceipt | null | undefined): string {
+  if (!receipt) return ''
+  const parts: string[] = []
+  const claude = receipt.claude
+  if (claude) {
+    if (claude.usageApi === 'accepted') {
+      parts.push(claude.scopedCount > 0
+        ? `Claude 周额度已更新（含 ${claude.scopedCount} 个模型周窗口）`
+        : 'Claude 额度已从 App 更新')
+    } else if (claude.usageApi === 'disabled') {
+      parts.push('Claude 只读了本地缓存（未授权读取 Claude App 额度）')
+    } else {
+      const access = claudeQuotaAccessNote(claude.accessStatus)
+      const wait = claude.retryInMs > 0
+        ? `，${claude.retryInMs >= 60_000 ? `${Math.ceil(claude.retryInMs / 60_000)} 分钟` : `${Math.ceil(claude.retryInMs / 1000)} 秒`}后可再试`
+        : ''
+      parts.push(claude.usageApi === 'failed'
+        ? `Claude App 读取失败：${access || '未知原因'}${wait}`
+        : `Claude App 未读取（${claude.blockedBy === 'retry-after' ? 'Retry-After 限制' : claude.blockedBy === 'credential' ? '凭据被锁定' : access || '按节奏跳过'}）${wait}`)
+    }
+  }
+  if (receipt.codex?.requested) parts.push('Codex 额度已重新请求')
+  return parts.length ? `已刷新：${parts.join('；')}` : '已刷新'
 }
 
 export interface CompanionWaterBallPresentation {
@@ -85,8 +162,7 @@ export function resolveCompanionWaterBallPresentation(
   slice: CompanionSnapshotSlice | null | undefined
 ): CompanionWaterBallPresentation {
   if (!slice) return EMPTY_PRESENTATION
-  const appQuotaReadable = slice.claudeAppQuotaAccess === true
-    && slice.claudeQuota.windows.some((window) => window.source === 'usage-api')
+  const appQuotaReadable = claudeAppQuotaReadable(slice)
   const claudeLive = slice.providers.claude === true
     && (isClaudeAvailable(slice.claudeEnvironment) || appQuotaReadable)
   const mapping = resolveCompanionWaterBallMapping(slice.providers, { claude: claudeLive })
@@ -196,6 +272,8 @@ export interface CompanionQuotaSection {
   rows: CompanionQuotaRow[]
   /** Set when the provider is enabled but has nothing to show yet. */
   emptyReason: string
+  /** Access problem worth showing beside existing rows (App lane blocked while cache rows remain). */
+  note: string
 }
 
 /**
@@ -207,10 +285,9 @@ export function buildClaudeQuotaSection(
 ): CompanionQuotaSection | null {
   if (!slice || slice.providers.claude !== true) return null
   const label = COMPANION_PROVIDER_LABELS.claude
-  const appQuotaReadable = slice.claudeAppQuotaAccess === true
-    && slice.claudeQuota.windows.some((window) => window.source === 'usage-api')
+  const appQuotaReadable = claudeAppQuotaReadable(slice)
   if (!isClaudeAvailable(slice.claudeEnvironment) && !appQuotaReadable) {
-    return { provider: 'claude', label, rows: [], emptyReason: claudeSetupHint(slice.claudeEnvironment) }
+    return { provider: 'claude', label, rows: [], emptyReason: claudeSetupHint(slice.claudeEnvironment), note: '' }
   }
   // One row per window the payload actually declared, in the domain's display
   // order. Enumerating instead of picking two named fields is what lets an
@@ -227,11 +304,13 @@ export function buildClaudeQuotaSection(
     freshness: entry.freshness
   }))
   const accessStatus = slice.claudeQuotaAccess?.status || 'idle'
-  const unavailableReason = accessStatus === 'rate-limited'
-    ? 'Claude App 额度暂受限，将按 Retry-After 重试'
-    : accessStatus === 'credential-unavailable'
-      ? 'Claude App 额度凭据不可用，等待账号凭据更新'
-      : 'Claude App 额度暂不可用，保留最近成功值'
+  const unavailableReason = claudeQuotaAccessNote(accessStatus) || 'Claude App 额度暂不可用，保留最近成功值'
+  // Cache rows (statusline / plan history) keep the row populated while the
+  // App lane is blocked, which used to hide the block completely: the user saw
+  // one number and no reason why the per-model weekly never appeared.
+  const note = rows.length && slice.claudeAppQuotaAccess === true && accessStatus !== 'idle' && accessStatus !== 'ok'
+    ? unavailableReason
+    : ''
   return {
     provider: 'claude',
     label,
@@ -240,7 +319,8 @@ export function buildClaudeQuotaSection(
       ? ''
       : slice.claudeAppQuotaAccess
         ? unavailableReason
-        : '尚未读到额度；可授权只读 Claude App 额度'
+        : '尚未读到额度；可授权只读 Claude App 额度',
+    note
   }
 }
 
@@ -296,6 +376,8 @@ export interface CompanionQuotaGroup {
   chips: CompanionQuotaChip[]
   /** Set when the provider is enabled but has nothing to show yet. */
   emptyReason: string
+  /** Access problem shown under populated Claude chips; empty for Codex. */
+  note: string
 }
 
 export interface CompanionQuotaStrip {
@@ -338,7 +420,8 @@ export function buildCompanionQuotaStrip(
         remainingPercent: item.remainingPercent,
         resetAt: item.resetAt
       })),
-      emptyReason: codexWindows.length ? '' : (codexEmptyReason || '服务端未返回额度窗口')
+      emptyReason: codexWindows.length ? '' : (codexEmptyReason || '服务端未返回额度窗口'),
+      note: ''
     })
   }
 
@@ -357,14 +440,15 @@ export function buildCompanionQuotaStrip(
         source: row.source,
         updatedAt: row.updatedAt,
         freshness: row.freshness,
-        stale: row.freshness !== 'fresh',
+        stale: claudeQuotaReadingStale(row),
         tone: row.remainingPercent <= 10
           ? 'danger'
           : row.remainingPercent <= 20
             ? 'warning'
             : 'normal'
       })),
-      emptyReason: claudeSection.emptyReason
+      emptyReason: claudeSection.emptyReason,
+      note: claudeSection.note
     })
   }
 
@@ -486,9 +570,7 @@ export function companionQuotaFreshnessText(
   now: number
 ): string {
   if (!quota) return ''
-  const stale = quota.freshness
-    ? quota.freshness !== 'fresh'
-    : quota.status === 'stale'
+  const stale = claudeQuotaReadingStale(quota)
   const at = quota.updatedAt || 0
   if (at <= 0) return stale ? '读数可能已过期' : ''
   const minutes = Math.max(0, Math.round((now - at) / 60_000))

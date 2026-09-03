@@ -37,7 +37,7 @@ import {
   type ConversationSnapshotV1
 } from '../domain/codex'
 import { companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
-import type { CompanionSnapshotSlice } from '../domain/companionPresentation'
+import type { CompanionQuotaRefreshReceipt, CompanionSnapshotSlice } from '../domain/companionPresentation'
 import {
   emptyClaudeEnvironment,
   emptyClaudeQuota,
@@ -50,7 +50,9 @@ import {
   staleClaudeQuota,
   type ClaudeEnvironmentSnapshot,
   type ClaudeQuotaAccessSnapshot,
-  type ClaudeQuotaSnapshot
+  type ClaudeQuotaSnapshot,
+  claudePrimaryQuotaWindow,
+  withClaudeQuotaWindows
 } from '../domain/claude'
 import {
   claudeCodeCompletionEpoch,
@@ -442,6 +444,9 @@ export function createCodexController(options: CodexControllerOptions) {
   let lastClaudeTaskPublishRevision = 0
   let lastClaudeReadAt = 0
   let lastClaudeQuotaReadAt = 0
+  /** Lane facts of the latest Claude quota read; a manual refresh turns them into a float receipt. */
+  let lastClaudeQuotaRead: NonNullable<CompanionQuotaRefreshReceipt['claude']> | null = null
+  let quotaRefreshReceipt: CompanionQuotaRefreshReceipt | null = null
   let cursorSessions: CursorAgentObservation[] = []
   let cursorAvailable = false
   let cursorInventoryReason = ''
@@ -1361,14 +1366,11 @@ export function createCodexController(options: CodexControllerOptions) {
             const planPatched = mergeClaudePlanUsage(claudeQuota, sample, now)
             if (!appOwned.size) claudeQuota = planPatched
             else {
-              const windows = planPatched.windows.map((window) => appOwned.get(window.key) || window)
-              claudeQuota = {
-                ...planPatched,
-                windows,
-                short: windows.find((window) => window.kind === 'short' && !window.scope) || null,
-                weekly: windows.find((window) => window.kind === 'weekly' && !window.scope) || null,
-                source: claudeQuota.source
-              }
+              claudeQuota = withClaudeQuotaWindows(
+                planPatched,
+                planPatched.windows.map((window) => appOwned.get(window.key) || window),
+                { source: claudeQuota.source }
+              )
             }
           }
         } catch { /* independent best-effort freshness */ }
@@ -1397,13 +1399,10 @@ export function createCodexController(options: CodexControllerOptions) {
               now
             })
             const incomingKeys = new Set(appQuota.windows.map((window) => window.key))
-            const preservedWindows = claudeQuota.windows.filter((window) => !incomingKeys.has(window.key))
-            const preserved: ClaudeQuotaSnapshot = {
-              ...claudeQuota,
-              windows: preservedWindows,
-              short: preservedWindows.find((window) => window.kind === 'short' && !window.scope) || null,
-              weekly: preservedWindows.find((window) => window.kind === 'weekly' && !window.scope) || null
-            }
+            const preserved = withClaudeQuotaWindows(
+              claudeQuota,
+              claudeQuota.windows.filter((window) => !incomingKeys.has(window.key))
+            )
             claudeQuota = mergeClaudeQuotaWindows(preserved, appQuota, now)
             claudeAppQuotaKeys.clear()
             for (const key of incomingKeys) claudeAppQuotaKeys.add(key)
@@ -1438,20 +1437,30 @@ export function createCodexController(options: CodexControllerOptions) {
    * or credential state. Diagnostics never affect the lane itself.
    */
   function recordClaudeQuotaRead(trigger: ClaudeQuotaTrigger, lane: ClaudeQuotaLaneObservation, result: { now: number; startedAt: number; changed: boolean }) {
+    const windows = claudeQuota.windows
+    const access = lane.access || {}
+    const token = (value: unknown, max = 40) => typeof value === 'string' ? value.slice(0, max) : ''
+    const retryAt = Number(access.retryAt) || 0
+    // The receipt a manual refresh hands the float: the same bounded lane
+    // facts as the diagnostics line, never a reading.
+    lastClaudeQuotaRead = {
+      changed: result.changed,
+      usageApi: lane.usageApi,
+      accessStatus: claudeQuotaAccess.status,
+      blockedBy: token(access.blockedBy, 20),
+      retryInMs: retryAt > result.now ? retryAt - result.now : 0,
+      windowCount: windows.length,
+      scopedCount: windows.filter((window) => Boolean(window.scope)).length
+    }
     const record = options.platform.diagnostics?.record
     if (typeof record !== 'function') return
-    const windows = claudeQuota.windows
-    const primary = windows.find((window) => window.kind === 'weekly' && !window.scope)
-      || windows.find((window) => window.kind === 'short' && !window.scope)
-      || windows[0]
-      || null
+    // The same window the water ball centre reads; diverging here would let
+    // the diagnostics describe a lane the surface never shows.
+    const primary = claudePrimaryQuotaWindow(claudeQuota) as ClaudeQuotaSnapshot['windows'][number] | null
     const earliestReset = windows.reduce<number | null>((earliest, window) => (
       window.resetAt !== null && window.resetAt > result.now && (earliest === null || window.resetAt < earliest) ? window.resetAt : earliest
     ), null)
     const newestUsageApiAt = windows.reduce((newest, window) => window.source === 'usage-api' ? Math.max(newest, window.updatedAt || 0) : newest, 0)
-    const access = lane.access || {}
-    const token = (value: unknown, max = 40) => typeof value === 'string' ? value.slice(0, max) : ''
-    const retryAt = Number(access.retryAt) || 0
     const attempted = lane.usageApi === 'accepted' || lane.usageApi === 'failed'
     try {
       record({
@@ -3523,11 +3532,31 @@ export function createCodexController(options: CodexControllerOptions) {
     },
     syncActivation,
     refresh: () => refresh({ force: true }),
-    /** Manual refresh from a quota reading: both providers now, Claude bypassing its ordinary cadence. */
+    /**
+     * Manual refresh from a quota reading: both providers now, Claude bypassing
+     * its ordinary cadence. The Claude read is awaited so the receipt the float
+     * shows describes this read, not the previous one.
+     */
     async refreshQuota() {
       if (disposed || !started) return false
-      kickClaudeQuota(Date.now(), { reason: 'manual', force: true })
+      const now = Date.now()
+      const claudeEnabled = codexState().settings.providers.claude === true && Boolean(options.platform.claude)
+      let claudeReceipt: CompanionQuotaRefreshReceipt['claude'] | undefined
+      if (claudeEnabled) {
+        lastClaudeQuotaReadAt = now
+        lastClaudeQuotaRead = null
+        await refreshClaudeQuota(now, { reason: 'manual', force: true }).catch(() => false)
+        claudeReceipt = lastClaudeQuotaRead || undefined
+      }
       await refresh({ forceQuota: true, manualQuota: true })
+      if (disposed) return false
+      quotaRefreshReceipt = {
+        at: Date.now(),
+        ...(claudeReceipt ? { claude: claudeReceipt } : {}),
+        codex: { requested: true }
+      }
+      claudeControllerRevision += 1
+      options.notify()
       return true
     },
     /** Registers or removes the explicitly confirmed Claude hook/status line. */
@@ -3683,7 +3712,8 @@ export function createCodexController(options: CodexControllerOptions) {
         unreadGeneration: lastClaudeUnreadGeneration,
         claudeQuotaAccess,
         claudeQuota,
-        claudeEnvironment
+        claudeEnvironment,
+        ...(quotaRefreshReceipt ? { quotaRefreshReceipt } : {})
       },
         generatedAt: 0
       }

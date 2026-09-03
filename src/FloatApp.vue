@@ -41,7 +41,8 @@ import {
   placeFloatActionHint,
   resolveCompanionProjectMarker,
   resolveCompanionRowMarker,
-  resolveCompanionWaterBallPresentation
+  resolveCompanionWaterBallPresentation,
+  companionQuotaRefreshReceiptText
 } from './domain/companionPresentation'
 import type { CompanionProjectMarker, CompanionQuotaChip, CompanionRowMarker } from './domain/companionPresentation'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
@@ -52,7 +53,7 @@ import {
   resolveCodexExpandedCardTheme,
   resolveCodexSurfaceTheme
 } from './domain/codexAppearance'
-import { buildCodexCompactPresentation, codexBadgeText } from './domain/codexPresentation'
+import { buildCodexCompactPresentation, codexBadgeText, codexWeeklyReading } from './domain/codexPresentation'
 import { emptyCompanionTaskPackage, projectCompanionTaskSnapshot } from './domain/companionTaskPackage'
 import { moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, type QuickJumpDomTargetV7 } from './ui/quickJumpRegistry'
@@ -281,11 +282,7 @@ function projectMatchesProvider(project: CodexProjectCard) {
   return projectProviderFilter.value === 'all' || projectMarker(project).providers.includes(projectProviderFilter.value)
 }
 const primaryPercent = computed(() => compact.value.primary?.bucket.remainingPercent ?? 0)
-const selectedWeekly = computed(() => {
-  if (compact.value.primary?.kind === 'weekly') return compact.value.primary
-  if (compact.value.secondary?.kind === 'weekly') return compact.value.secondary
-  return null
-})
+const selectedWeekly = computed(() => codexWeeklyReading(compact.value.primary, compact.value.secondary))
 const compactSurfaceTheme = computed(() => resolveCodexSurfaceTheme(settings.value?.style || 'water', settings.value?.colors || fallbackColors, primaryPercent.value))
 const expandedSurfaceTheme = computed(() => resolveCodexExpandedCardTheme(
   settings.value?.colors || fallbackColors,
@@ -360,7 +357,28 @@ function quotaChipHint(chip: CompanionQuotaChip) {
 function refreshQuotaFromChip(chip: CompanionQuotaChip) {
   if (!action('codex.quota.refresh', { source: 'float-quota-chip', provider: chip.provider })) return
   liveMessage.value = '正在刷新额度读数'
+  quotaFeedback.value = '正在刷新额度读数…'
+  quotaFeedbackPending = true
 }
+/**
+ * Visible outcome of the last manual refresh (RAW-203). The receipt arrives
+ * with the next snapshot; the line stays a few seconds, long enough to read
+ * why the App lane did or did not answer, then yields the row back.
+ */
+const quotaFeedback = ref('')
+let quotaFeedbackPending = false
+let quotaFeedbackTimer: ReturnType<typeof setTimeout> | null = null
+watch(() => companionSlice.value?.quotaRefreshReceipt?.at ?? 0, (at) => {
+  if (!at) return
+  const receipt = companionSlice.value?.quotaRefreshReceipt
+  if (!receipt || !quotaFeedbackPending && Date.now() - at > 15_000) return
+  quotaFeedbackPending = false
+  const text = companionQuotaRefreshReceiptText(receipt)
+  quotaFeedback.value = text
+  liveMessage.value = text
+  if (quotaFeedbackTimer) clearTimeout(quotaFeedbackTimer)
+  quotaFeedbackTimer = setTimeout(() => { quotaFeedback.value = '' }, 8_000)
+})
 function quotaChipAria(chip: CompanionQuotaChip) {
   if (chip.provider === 'claude') {
     const now = Date.now()
@@ -3410,7 +3428,9 @@ onUnmounted(() => {
             <span aria-hidden="true">{{ chip.shortLabel }}</span><strong aria-hidden="true">{{ chip.remainingPercent }}%</strong>
           </div>
           <p v-if="group.emptyReason">{{ group.emptyReason }}</p>
+          <p v-else-if="group.note" class="float-quota-note" :title="group.note">{{ group.note }}</p>
         </div>
+        <p v-if="quotaFeedback" class="float-quota-feedback" role="status">{{ quotaFeedback }}</p>
       </section>
 
       <form v-if="aliasEditor" class="float-inline-editor" @submit.prevent="saveAlias">
