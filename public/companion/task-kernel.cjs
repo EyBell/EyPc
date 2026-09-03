@@ -109,6 +109,8 @@ const PROVIDER_TRAITS = Object.freeze({
     taskKind: 'codex-thread',
     planLifecycle: true,
     archiveNeedsVerifiedInventory: true,
+    // Codex read state is Provider-owned (preload acknowledgement map, Desktop
+    // read events, CodexHost thread memory); the Kernel only projects it.
     readAcknowledgements: false,
     keyPrefixActionAlias: false
   }),

@@ -149,7 +149,9 @@ const BUDGET = Object.freeze({
   // Side receipts, two dead opened-read branches removed, forget wrapper inlined.
   // 2026-09-03 (F-3 round 3): -2 -- machine-run and opened-read unread resolution
   // moved into codexDesktopUnreadObservation; side evidence keeps raw membership.
-  lines: 14282,
+  // 2026-09-03 (F-2-b): -5 -- Desktop read/unread evidence and the persisted
+  // connector fallback moved to desktop-unread-evidence.cjs (reached via shadow).
+  lines: 14277,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

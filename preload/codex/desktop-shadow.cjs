@@ -25,6 +25,8 @@ const { COMPANION_V7_REVISIONS } = require('../companion/contracts-v7.cjs')
  * entry's own delegation.
  */
 
+const { desktopReadEvidence, persistedConnectorUnread } = require('./desktop-unread-evidence.cjs')
+
 const CODEX_DESKTOP_SHADOW_REVISION = COMPANION_V7_REVISIONS.desktopShadow
 /** How many resolved request observations a waiting state remembers. */
 const CODEX_DESKTOP_WAITING_REQUEST_HISTORY_LIMIT = 400
@@ -301,7 +303,12 @@ function createCodexDesktopShadow(dependencies = {}) {
     codexDesktopShadowFromSnapshot,
     codexDesktopPatchIndex,
     codexApplyDesktopShadowPatch,
-    codexApplyNativeConnectorUnread
+    codexApplyNativeConnectorUnread,
+    // Re-exported so the entry reaches the shared evidence through the one
+    // shadow binding it already holds (entry budget), while the CodexHost
+    // lane requires the evidence module directly.
+    desktopReadEvidence,
+    persistedConnectorUnread
   }
 }
 

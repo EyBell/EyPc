@@ -26,6 +26,8 @@
  * included in diagnostics; records carry counts and ports only.
  */
 
+const { desktopReadEvidence, persistedConnectorUnread } = require('./desktop-unread-evidence.cjs')
+
 const CODEXHOST_DISCOVERY_REVISION = 'codexhost-discovery-v1'
 /** How long one thread-list snapshot serves scans before a refresh. */
 const CODEXHOST_LIST_TTL_MS = 12_000
@@ -151,19 +153,6 @@ function projectHostTurn(thread, at) {
   return { status: 'completed', startedAt: at, completedAt: at }
 }
 
-function desktopAppRead(input = {}) {
-  const live = input.connected === true || input.liveUnread?.ownerClientId === 'eypc-open'
-    ? input.liveUnread
-    : null
-  const shadow = input.shadow && typeof input.shadow === 'object' ? input.shadow : null
-  if (live?.ownerClientId === 'eypc-open' && live.hasUnreadTurn === false) return true
-  const exact = shadow?.unreadEvidence === 'event'
-    ? shadow
-    : live?.unreadEvidence === 'event' ? live : null
-  if (exact && exact.hasUnreadTurn === false) return true
-  return false
-}
-
 /**
  * Extra-process unread: Host `hasUnreadTurn` is real when present and is not
  * compared against Desktop unread-true. Codex APP 已读 is an unread *event*
@@ -173,16 +162,11 @@ function desktopAppRead(input = {}) {
 function compareHostDesktopUnread(known, input = {}) {
   // An EyPc jump remembered across reloads reads exactly like a live read
   // event: the row was opened, and only a newer Host completion supersedes it.
-  if (input.openedRead === true || desktopAppRead(input)) {
+  // Only `read` is honoured here: a Desktop unread-true never outranks the Host.
+  if (input.openedRead === true || desktopReadEvidence(input) === 'read') {
     return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
   }
-  if (known?.connectorUnreadAuthority === 'desktop-persisted') {
-    return {
-      hasUnreadTurn: known.connectorHasUnreadTurn === true,
-      unreadAuthority: 'desktop-persisted'
-    }
-  }
-  return { hasUnreadTurn: false, unreadAuthority: 'unavailable' }
+  return persistedConnectorUnread(known)
 }
 
 function createCodexhostDiscovery(dependencies = {}) {
@@ -628,12 +612,19 @@ function createCodexhostDiscovery(dependencies = {}) {
     return externalKeys.has(key)
   }
 
+  /**
+   * An EyPc jump into an extra process is a read. Codex read state is owned
+   * by the Provider (this preload): the acknowledgement map plus the memory
+   * above answer every later observation, so the receipt itself is returned
+   * unchanged — `confirmsRead` stays a Kernel-side hint that Codex never uses
+   * (`PROVIDER_TRAITS.codex.readAcknowledgements === false`).
+   */
   function honorExternalOpenRead(threadId, result, markRead) {
     if (!result || (result.outcome !== 'dispatched' && result.outcome !== 'opened')) return result
     if (isExternalThreadId(threadId) !== true) return result
     if (typeof markRead === 'function') markRead(threadId)
     rememberExternalOpenRead(threadId)
-    return { ...result, confirmsRead: true }
+    return result
   }
 
   function hostConnectorActivity(known) {
