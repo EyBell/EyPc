@@ -91,6 +91,11 @@ function createCompanionOpenReadiness(dependencies = {}) {
   async function launchAndWait(provider, strategy, request) {
     const label = typeof strategy.label === 'string' && strategy.label ? strategy.label : provider
     const startedAt = now()
+    // Recorded before the strategy runs so the log carries the moment the
+    // launch command was issued; `launch-started` below carries the launcher
+    // once the strategy has reported it (a CodexHost launch only returns
+    // after the launcher's `ready` line, several seconds later).
+    note('debug', 'launch-requested', provider, request, { probe: 'closed' })
     let launched = null
     try {
       launched = await strategy.launch()

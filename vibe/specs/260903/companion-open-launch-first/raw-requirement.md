@@ -29,7 +29,7 @@ spec_id: SPEC-260903-COMPANION-OPEN-LAUNCH-FIRST
 6. Cursor：`pgrep -x Cursor`；未运行 → `open -b com.todesktop.230313mzl4w4u92`，等进程与窗口再发 deeplink。
 7. 回执：启动过的打开在回执上附 `launch { outcome: 'launched', launcher, waitedMs }`，消息前缀「已启动 X，」；深链仍不构成已读。
 8. 非 darwin：能探则探，启动 `unsupported` 时放行（今天行为）。
-9. 诊断：`task-action / open-readiness`（launch-started / launched / launch-failed / launch-timeout / settle-timeout / probe-unknown / skipped）与 `task-action / codex-desktop-launch`，只含枚举、等待毫秒、来源与 operationId，不含路径、pid、令牌。
+9. 诊断：`task-action / open-readiness`（launch-requested 在发出启动命令时记录；launch-started 带 launcher；launched / launch-failed / launch-timeout / settle-timeout / probe-unknown / skipped）与 `task-action / codex-desktop-launch`，只含枚举、等待毫秒、来源与 operationId，不含路径、pid、令牌。
 
 ## 需求变更评审
 
