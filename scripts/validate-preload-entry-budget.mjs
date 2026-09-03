@@ -145,7 +145,9 @@ const BUDGET = Object.freeze({
   // 2026-09-03 (RAW-203/204): -7 -- the native connector unread applier moved
   // into desktop-shadow.cjs; the entry keeps the discovery storage injection
   // and the persisted jump-read lookups only.
-  lines: 14288,
+  // 2026-09-03 (F-3): -4 -- one acknowledgement-covers-turn rule for parent and
+  // Side receipts, two dead opened-read branches removed, forget wrapper inlined.
+  lines: 14284,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

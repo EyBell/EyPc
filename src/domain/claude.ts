@@ -89,6 +89,27 @@ export function claudeQuotaWindowExpired(
   return Boolean(window && window.resetAt !== null && now >= window.resetAt)
 }
 
+/** A merged window is fresh only while it still carries a future reset. */
+function claudeQuotaWindowFreshness(resetAt: number | null | undefined, now: number): 'fresh' | 'stale' {
+  return typeof resetAt === 'number' && resetAt > now ? 'fresh' : 'stale'
+}
+
+/**
+ * Snapshot status for a merged window list: any window without a live reset
+ * marks the whole reading stale. `normalizeClaudeQuota` keeps its own stricter
+ * plausibility rule for a payload straight from upstream; merges and the
+ * stale-marking pass share this one.
+ */
+function claudeQuotaMergedStatus(windows: readonly ClaudeQuotaWindowEntry[], now: number): ClaudeQuotaStatus {
+  return windows.some((entry) => !entry.resetAt || claudeQuotaWindowExpired(entry, now)) ? 'stale' : 'ok'
+}
+
+function markExpiredClaudeQuotaWindows(windows: readonly ClaudeQuotaWindowEntry[], now: number): ClaudeQuotaWindowEntry[] {
+  return windows.map((entry) => entry.resetAt !== null && entry.resetAt <= now
+    ? { ...entry, resetAt: null, freshness: 'stale' as const }
+    : entry)
+}
+
 interface ClaudeRateLimitWindowInput {
   used_percentage?: unknown
   resets_at?: unknown
@@ -265,7 +286,7 @@ export function mergeClaudePlanUsage(
       remainingPercent,
       source: 'plan-history',
       updatedAt: sample.at,
-      freshness: entry.resetAt && entry.resetAt > now ? 'fresh' : 'stale'
+      freshness: claudeQuotaWindowFreshness(entry.resetAt, now)
     }
   })
   const hasPlainShort = patched.some((entry) => entry.kind === 'short' && !entry.scope)
@@ -278,15 +299,11 @@ export function mergeClaudePlanUsage(
     .filter((entry): entry is ClaudeQuotaWindowEntry => entry !== null)
     .sort((left, right) => quotaWindowRank(left) - quotaWindowRank(right))
   if (!windows.length) return base
-  return {
-    version: 1,
-    status: windows.some((entry) => !entry.resetAt || claudeQuotaWindowExpired(entry, now)) ? 'stale' : 'ok',
-    windows,
-    short: plainWindow(windows, 'short'),
-    weekly: plainWindow(windows, 'weekly'),
+  return withClaudeQuotaWindows(base, windows, {
+    status: claudeQuotaMergedStatus(windows, now),
     source: patched.length ? base.source : 'plan-history',
     updatedAt: Math.max(base.updatedAt, sample.at)
-  }
+  })
 }
 
 /** A two-window sample cannot prove that no scoped weekly window exists. */
@@ -319,29 +336,25 @@ export function mergeClaudeQuotaWindows(
     const incomingWindowAt = entry.updatedAt || incoming.updatedAt
     const previousWindowAt = previous?.updatedAt || base.updatedAt
     if (!previous || incomingWindowAt >= previousWindowAt) {
+      // A percentage-only source may advance usage, but it cannot erase a
+      // still-valid reset moment from a complete earlier source.
+      const resetAt = entry.resetAt ?? (previous?.resetAt && previous.resetAt > now ? previous.resetAt : null)
       byKey.set(entry.key, {
         ...entry,
-        // A percentage-only source may advance usage, but it cannot erase a
-        // still-valid reset moment from a complete earlier source.
-        resetAt: entry.resetAt ?? (previous?.resetAt && previous.resetAt > now ? previous.resetAt : null),
-        freshness: entry.resetAt || previous?.resetAt && previous.resetAt > now ? 'fresh' : 'stale'
+        resetAt,
+        // An incoming reset counts as fresh even when it is already past: the
+        // expiry pass below turns it stale, exactly as before this helper.
+        freshness: entry.resetAt ? 'fresh' : claudeQuotaWindowFreshness(resetAt, now)
       })
     }
   }
-  const windows = [...byKey.values()]
-    .map((entry) => entry.resetAt !== null && entry.resetAt <= now
-      ? { ...entry, resetAt: null, freshness: 'stale' as const }
-      : entry)
+  const windows = markExpiredClaudeQuotaWindows([...byKey.values()], now)
     .sort((left, right) => quotaWindowRank(left) - quotaWindowRank(right))
-  return {
-    version: 1,
-    status: windows.some((entry) => !entry.resetAt || claudeQuotaWindowExpired(entry, now)) ? 'stale' : 'ok',
-    windows,
-    short: plainWindow(windows, 'short'),
-    weekly: plainWindow(windows, 'weekly'),
+  return withClaudeQuotaWindows(base, windows, {
+    status: claudeQuotaMergedStatus(windows, now),
     source: incoming.updatedAt >= base.updatedAt || base.source === 'none' ? incoming.source : base.source,
     updatedAt: Math.max(base.updatedAt, incoming.updatedAt)
-  }
+  })
 }
 
 export function staleClaudeQuota(
@@ -349,16 +362,7 @@ export function staleClaudeQuota(
   now: number = Date.now()
 ): ClaudeQuotaSnapshot {
   if (!previous?.windows.length) return { ...emptyClaudeQuota(), status: 'stale' }
-  const windows = previous.windows.map((entry) => entry.resetAt !== null && entry.resetAt <= now
-    ? { ...entry, resetAt: null, freshness: 'stale' as const }
-    : entry)
-  return {
-    ...previous,
-    status: 'stale',
-    windows,
-    short: plainWindow(windows, 'short'),
-    weekly: plainWindow(windows, 'weekly')
-  }
+  return withClaudeQuotaWindows(previous, markExpiredClaudeQuotaWindows(previous.windows, now), { status: 'stale' })
 }
 
 /**
