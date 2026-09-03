@@ -71,8 +71,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   },
   "content_digests": {
     "requirement_registry": "30f815a5115398b1730721d27a27ef9d3e9845d569ddb818ada2659ad4891f18",
-    "raw_sources": "8f8474d928cc1a422c790193e20d65adab06bee8243d46e34735b7840192910a",
-    "source_anchor_catalog": "4c75fdfa6fce3ffa4c373eed12ca1253b7dfb500f5c178ca82251da7730f0eb2",
+    "raw_sources": "899e33df7fd4b6e1bbbc4050830954b5e0912de30c92247c6f166103bcf4614f",
+    "source_anchor_catalog": "96c477a671f0a2a9f41c5ac761725a256c6684cbe83a64e8d77bf9f5e1e43fe4",
     "product_body": "98aa4c57d7a9a0b678cc80fe4993004b1c42496fe6d9d5fb9136e663ebdfdc4e",
     "architecture": "4a2f00213758ef4f7b6e370f90f46f7b183ff957ac9c72981815db863f0b0aff",
     "runtime_contract": "f394d6af372b30edb89e99a66ef6811b3c8f3cbf4687b81c230c59de4ae7198f"

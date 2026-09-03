@@ -2,7 +2,7 @@
 
 | Path | Core description |
 | --- | --- |
-| `preload/companion/open-readiness.cjs` | 新增：`companion-open-readiness-v1`，`ensure / wrapOpen` + `createDesktopAppStrategy`（pgrep 探测、`open -b` / `open -a` 启动、窗口或延迟 settle） |
+| `preload/companion/open-readiness.cjs` | 新增：`companion-open-readiness-v1`，`ensure / wrapOpen` + `createDesktopAppStrategy`（pgrep 探测、`open -b` / `open -a` 启动、窗口或延迟 settle）；`launch-requested` 在发出启动命令时先记（第二批） |
 | `preload/codex/desktop-launch.cjs` | 新增：Codex 探测 / 普通启动 / `codexhost launch` / CLI·描述符·运行中 Desktop 环境三证据检测 / Host 就绪 / codexhost 路径解析与手动偏好 / `inspect` / `strategy` |
 | `preload/index.js` | 接线：`CODEXHOST_PATH_STORAGE_KEY`、`companionOpenReadinessSettings`、两个守卫式加载、discovery `onCliPathObserved`、Claude `processRunning`、Registry 三处 `open` 包装、环境快照 `codexhost`、`setCodexhostPath / clearCodexhostPath` |
 | `preload/claude/open.cjs` | `processRunning` 回退：清单空 / 未知时以 `pgrep -x Claude` 为准；opener 仍不启动 |

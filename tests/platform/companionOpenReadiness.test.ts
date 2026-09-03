@@ -74,9 +74,28 @@ describe('companion open readiness', () => {
     })
     expect((result.launch as { waitedMs: number }).waitedMs).toBe(clock())
     expect(clock()).toBe(1500)
-    expect(records.map((entry) => entry.outcome)).toEqual(['launch-started', 'launched'])
+    expect(records.map((entry) => entry.outcome)).toEqual(['launch-requested', 'launch-started', 'launched'])
     expect(records.every((entry) => typeof entry.level === 'string' && entry.scope === 'task-action' && entry.event === 'open-readiness')).toBe(true)
-    expect(records[1]?.details).toMatchObject({ launcher: 'open-b', source: 'shortcut', operationId: 'op-1', waitedMs: 1500 })
+    expect(records[0]).toMatchObject({ level: 'debug', details: { probe: 'closed', source: 'shortcut', operationId: 'op-1' } })
+    expect(records[2]?.details).toMatchObject({ launcher: 'open-b', source: 'shortcut', operationId: 'op-1', waitedMs: 1500 })
+  })
+
+  it('records launch-requested before the strategy runs, so a slow launcher does not hide the issue time', async () => {
+    const open = vi.fn(async () => ({ outcome: 'dispatched', confirmsRead: false }))
+    let seenAtLaunch: unknown[] = []
+    const context = harness({
+      codex: {
+        label: 'Codex',
+        probe: closedThenRunning(1),
+        launch: async () => {
+          seenAtLaunch = context.records.map((entry) => entry.outcome)
+          return { ok: true, launcher: 'codexhost' }
+        }
+      }
+    })
+    await context.readiness.wrapOpen('codex', open)({ key: 'k' }, { source: 'card-click' })
+    expect(seenAtLaunch).toEqual(['launch-requested'])
+    expect(context.records.map((entry) => entry.outcome)).toEqual(['launch-requested', 'launch-started', 'launched'])
   })
 
   it('joins concurrent opens of one provider onto a single launch', async () => {
@@ -131,7 +150,7 @@ describe('companion open readiness', () => {
     const result = await readiness.wrapOpen('cursor', open)({ key: 'k' })
     expect(open).toHaveBeenCalledTimes(1)
     expect(result).toEqual({ outcome: 'dispatched', confirmsRead: false })
-    expect(records).toEqual([expect.objectContaining({ outcome: 'skipped' })])
+    expect(records.map((entry) => entry.outcome)).toEqual(['launch-requested', 'skipped'])
   })
 
   it('treats a missing codexhost CLI as unavailable and other launch failures as failed', async () => {
@@ -162,7 +181,7 @@ describe('companion open readiness', () => {
     const result = await readiness.wrapOpen('codex', open)({ key: 'k' })
     expect(result).toMatchObject({ launch: { outcome: 'launched', launcher: 'codexhost' } })
     expect(clock()).toBeGreaterThanOrEqual(2000)
-    expect(records.map((entry) => entry.outcome)).toEqual(['launch-started', 'settle-timeout', 'launched'])
+    expect(records.map((entry) => entry.outcome)).toEqual(['launch-requested', 'launch-started', 'settle-timeout', 'launched'])
   })
 })
 
