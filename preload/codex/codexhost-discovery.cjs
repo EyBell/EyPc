@@ -38,6 +38,15 @@ const CODEXHOST_RENDEZVOUS_TTL_MS = 60_000
 const CODEXHOST_CLI_TIMEOUT_MS = 8_000
 const CODEXHOST_MAX_ROOTS = 12
 const CODEXHOST_MAX_THREADS = 200
+/**
+ * Per-thread memory that outlives the roster: `statusChangedAt` continuity
+ * and the EyPc jump-read. Kept in plugin storage so a rendezvous hiccup, a
+ * session reset or a plugin reload cannot turn every completed extra process
+ * back into a "刚刚 · 未读" row. Ids, statuses and timestamps only — never a
+ * title, cwd, token or endpoint.
+ */
+const CODEXHOST_THREAD_MEMORY_STORAGE_KEY = 'eypc/codex/codexhost-thread-memory/v1'
+const CODEXHOST_THREAD_MEMORY_LIMIT = 300
 const THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const RUNTIME_COMMAND_PATTERN = /(^|\s)\S*\/bin\/node\s+\S*\/host-runtime\/dist\/main\.js\s/
 /** Compressed 2–3 letter harness prefixes for row titles (user-decided):
@@ -100,6 +109,12 @@ function codexhostExternalUnreadFields(hostUnread, desktopUnread, lastTurnComple
   return { hasUnreadTurn: false, unreadAuthority: 'unavailable' }
 }
 
+/**
+ * After an archive forgets an id, a Host list page can still carry it for a
+ * while (page cache, in-flight scan). Within this window only a list that no
+ * longer names the id releases it; a later list naming it again is an unarchive.
+ */
+const CODEXHOST_FORGET_SUPPRESS_MS = 30_000
 const HOST_STATUSES = new Set(['creating', 'running', 'completed', 'failed', 'interrupted'])
 
 function normalizeHostStatus(value) {
@@ -156,7 +171,9 @@ function desktopAppRead(input = {}) {
  * the missing official unread atom. Native Codex already uses Desktop unread.
  */
 function compareHostDesktopUnread(known, input = {}) {
-  if (desktopAppRead(input)) {
+  // An EyPc jump remembered across reloads reads exactly like a live read
+  // event: the row was opened, and only a newer Host completion supersedes it.
+  if (input.openedRead === true || desktopAppRead(input)) {
     return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
   }
   if (known?.connectorUnreadAuthority === 'desktop-persisted') {
@@ -172,22 +189,157 @@ function createCodexhostDiscovery(dependencies = {}) {
   const execFile = dependencies.execFile
   const recordDiagnostic = typeof dependencies.record === 'function' ? dependencies.record : () => {}
   const now = typeof dependencies.now === 'function' ? dependencies.now : Date.now
+  /** Lets the launch lane remember the CLI location while a Host is still around to tell us. */
+  const onCliPathObserved = typeof dependencies.onCliPathObserved === 'function' ? dependencies.onCliPathObserved : null
+  /** Injected, never read off `globalThis`: the entry runs inside VM sandboxes. */
+  const storage = typeof dependencies.storage === 'function' ? dependencies.storage : () => undefined
   if (typeof execFile !== 'function') {
     throw new TypeError('codexhost discovery requires execFile')
   }
 
   /** { endpoint, token, cliPath, resolvedAt } or null. */
   let rendezvous = null
-  /** Lets the launch lane remember the CLI location while a Host is still around to tell us. */
-  const onCliPathObserved = typeof dependencies.onCliPathObserved === 'function' ? dependencies.onCliPathObserved : null
   /** threadId -> { threadId, harnessId, status, cwd, title, firstSeenAt, statusChangedAt } */
   let externalThreads = new Map()
   let externalKeys = new Set()
   let listRefreshedAt = 0
   let refreshInFlight = null
   let lastDiagnosticLine = ''
+  /** threadId -> forgottenAt for rows an archive removed; see CODEXHOST_FORGET_SUPPRESS_MS. */
+  let forgottenThreadIds = new Map()
+  /** Ids a complete Host list no longer carries; the next scan drains them as removals. */
+  let removedThreadIds = new Set()
   /** The scan's thread-key function, kept so a forget can rebuild externalKeys. */
   let threadKeyFn = null
+  /**
+   * threadId -> { status, awaitingInput, awaitingApproval, firstSeenAt,
+   * statusChangedAt, hostUnread, readAt, readStatusChangedAt }. Survives a
+   * roster loss, `codexhostResetDiscovery` and (through storage) a reload.
+   */
+  let threadMemory = loadThreadMemory()
+
+  function memoryInteger(value) {
+    const number = Number(value)
+    return Number.isFinite(number) && number > 0 ? Math.round(number) : 0
+  }
+
+  function sanitizeMemoryEntry(value) {
+    const entry = record(value)
+    const statusChangedAt = memoryInteger(entry.statusChangedAt)
+    if (!HOST_STATUSES.has(entry.status) || !statusChangedAt) return null
+    return {
+      status: entry.status,
+      awaitingInput: entry.awaitingInput === true,
+      awaitingApproval: entry.awaitingApproval === true,
+      firstSeenAt: memoryInteger(entry.firstSeenAt) || statusChangedAt,
+      statusChangedAt,
+      hostUnread: typeof entry.hostUnread === 'boolean' ? entry.hostUnread : null,
+      readAt: memoryInteger(entry.readAt),
+      readStatusChangedAt: memoryInteger(entry.readStatusChangedAt)
+    }
+  }
+
+  function loadThreadMemory() {
+    const memory = new Map()
+    let stored
+    try { stored = storage()?.getItem?.(CODEXHOST_THREAD_MEMORY_STORAGE_KEY) } catch { stored = null }
+    const threads = record(record(stored).threads)
+    for (const [threadId, value] of Object.entries(threads)) {
+      const id = typeof threadId === 'string' ? threadId.toLowerCase() : ''
+      const entry = THREAD_ID_PATTERN.test(id) ? sanitizeMemoryEntry(value) : null
+      if (entry) memory.set(id, entry)
+    }
+    return memory
+  }
+
+  function persistThreadMemory() {
+    if (threadMemory.size > CODEXHOST_THREAD_MEMORY_LIMIT) {
+      const kept = [...threadMemory.entries()]
+        .sort((left, right) => right[1].statusChangedAt - left[1].statusChangedAt)
+        .slice(0, CODEXHOST_THREAD_MEMORY_LIMIT)
+      threadMemory = new Map(kept)
+    }
+    const threads = {}
+    for (const [threadId, entry] of threadMemory) threads[threadId] = entry
+    try { storage()?.setItem?.(CODEXHOST_THREAD_MEMORY_STORAGE_KEY, { version: 1, threads }) } catch {}
+  }
+
+  /** The live roster row when seated, else what memory last saw of the id. */
+  function rememberedThread(threadId) {
+    return externalThreads.get(threadId) || threadMemory.get(threadId) || null
+  }
+
+  function sameHostStatus(left, right) {
+    return Boolean(left) && Boolean(right)
+      && left.status === right.status
+      && left.awaitingInput === right.awaitingInput
+      && left.awaitingApproval === right.awaitingApproval
+  }
+
+  /**
+   * Seats one listed thread and settles its memory. `statusChangedAt` moves
+   * only on a real Host status/attention change; a Host unread edge false →
+   * true after the jump is a newer completion the remembered read no longer
+   * covers, even when the status string never visibly left `completed`.
+   */
+  function seatThread(thread) {
+    const previous = rememberedThread(thread.threadId)
+    const at = now()
+    const statusChangedAt = sameHostStatus(previous, thread) ? previous.statusChangedAt : at
+    const remembered = threadMemory.get(thread.threadId)
+    const supersededRead = remembered
+      && remembered.readAt > 0
+      && remembered.hostUnread === false
+      && thread.hasUnreadTurn === true
+    const entry = {
+      status: thread.status,
+      awaitingInput: thread.awaitingInput,
+      awaitingApproval: thread.awaitingApproval,
+      firstSeenAt: previous?.firstSeenAt || at,
+      statusChangedAt,
+      hostUnread: typeof thread.hasUnreadTurn === 'boolean' ? thread.hasUnreadTurn : remembered?.hostUnread ?? null,
+      readAt: supersededRead ? 0 : remembered?.readAt || 0,
+      readStatusChangedAt: supersededRead ? 0 : remembered?.readStatusChangedAt || 0
+    }
+    const changed = !remembered || Object.keys(entry).some((key) => remembered[key] !== entry[key])
+    threadMemory.set(thread.threadId, entry)
+    return { seated: { ...thread, firstSeenAt: entry.firstSeenAt, statusChangedAt }, changed }
+  }
+
+  /** Records the EyPc jump against the Host status it was made under. */
+  function rememberExternalOpenRead(threadId) {
+    const id = typeof threadId === 'string' ? threadId.toLowerCase() : ''
+    const current = rememberedThread(id)
+    if (!current) return false
+    const remembered = threadMemory.get(id)
+    threadMemory.set(id, {
+      status: current.status,
+      awaitingInput: current.awaitingInput === true,
+      awaitingApproval: current.awaitingApproval === true,
+      firstSeenAt: current.firstSeenAt,
+      statusChangedAt: current.statusChangedAt,
+      hostUnread: typeof current.hasUnreadTurn === 'boolean'
+        ? current.hasUnreadTurn
+        : remembered?.hostUnread ?? null,
+      readAt: now(),
+      readStatusChangedAt: current.statusChangedAt
+    })
+    persistThreadMemory()
+    return true
+  }
+
+  /**
+   * Whether an EyPc jump still covers the row's current Host status. True
+   * reads exactly like a Desktop read event; a later status change or a Host
+   * unread edge after the jump has already cleared the memory.
+   */
+  function isExternalOpenedRead(threadId) {
+    const id = typeof threadId === 'string' ? threadId.toLowerCase() : ''
+    const remembered = threadMemory.get(id)
+    if (!remembered || !remembered.readAt || !remembered.readStatusChangedAt) return false
+    const current = externalThreads.get(id) || remembered
+    return remembered.readStatusChangedAt === current.statusChangedAt
+  }
 
   function run(command, args, options = {}) {
     return new Promise((resolve) => {
@@ -237,6 +389,7 @@ function createCodexhostDiscovery(dependencies = {}) {
       if (!/^http:\/\/127\.0\.0\.1:\d{2,5}$/.test(endpoint) || !/^[0-9a-f]{32,128}$/i.test(token)) continue
       if (!cliPath || !cliPath.startsWith('/')) continue
       rendezvous = { endpoint, token, cliPath, resolvedAt: now() }
+      if (onCliPathObserved) { try { onCliPathObserved(cliPath) } catch {} }
       return rendezvous
     }
     return null
@@ -247,7 +400,6 @@ function createCodexhostDiscovery(dependencies = {}) {
     const threadId = typeof thread.threadId === 'string' ? thread.threadId.toLowerCase() : ''
     const harnessId = typeof thread.harnessId === 'string' ? thread.harnessId.slice(0, 40) : ''
     if (!THREAD_ID_PATTERN.test(threadId) || !harnessId) return null
-      if (onCliPathObserved) { try { onCliPathObserved(cliPath) } catch {} }
     // Native codex threads are already in the official inventory; hosting them
     // twice would duplicate every task the plugin already tracks.
     if (harnessId === 'codex') return null
@@ -349,24 +501,37 @@ function createCodexhostDiscovery(dependencies = {}) {
       noteDiagnostic('partial', externalThreads.size, uniqueRoots.length)
       return true
     }
+    const listedIds = new Set()
+    let memoryChanged = false
     for (const page of pages) {
       for (const value of page.threads) {
         const thread = normalizeThread(value)
         if (!thread || nextThreads.has(thread.threadId)) continue
-        const previous = externalThreads.get(thread.threadId)
-        nextThreads.set(thread.threadId, {
-          ...thread,
-          firstSeenAt: previous?.firstSeenAt || now(),
-          statusChangedAt: previous
-            && previous.status === thread.status
-            && previous.awaitingInput === thread.awaitingInput
-            && previous.awaitingApproval === thread.awaitingApproval
-            ? previous.statusChangedAt
-            : now()
-        })
+        listedIds.add(thread.threadId)
+        const forgottenAt = forgottenThreadIds.get(thread.threadId)
+        if (forgottenAt !== undefined) {
+          // A Desktop/CLI archive already removed this row. A list page that
+          // still names it inside the window is the Host lagging that archive,
+          // not the row coming back; seating it again resurrects an archived task.
+          if (now() - forgottenAt < CODEXHOST_FORGET_SUPPRESS_MS) continue
+          forgottenThreadIds.delete(thread.threadId)
+        }
+        const seat = seatThread(thread)
+        memoryChanged = memoryChanged || seat.changed
+        nextThreads.set(thread.threadId, seat.seated)
         if (nextThreads.size >= CODEXHOST_MAX_THREADS) break
       }
     }
+    if (memoryChanged) persistThreadMemory()
+    // A complete list that lost an id is the Host saying the row is gone
+    // (archived from the Desktop or by another agent, or deleted). Report it
+    // once so the scan can retire the task instead of waiting for the next
+    // full membership publish; a degraded pass proves nothing and reports nothing.
+    if (listFailures === 0) {
+      for (const threadId of externalThreads.keys()) if (!nextThreads.has(threadId)) removedThreadIds.add(threadId)
+      for (const threadId of forgottenThreadIds.keys()) if (!listedIds.has(threadId)) forgottenThreadIds.delete(threadId)
+    }
+    for (const threadId of removedThreadIds) if (nextThreads.has(threadId)) removedThreadIds.delete(threadId)
     externalThreads = nextThreads
     if (typeof threadKey === 'function') threadKeyFn = threadKey
     externalKeys = new Set(typeof threadKey === 'function'
@@ -467,6 +632,7 @@ function createCodexhostDiscovery(dependencies = {}) {
     if (!result || (result.outcome !== 'dispatched' && result.outcome !== 'opened')) return result
     if (isExternalThreadId(threadId) !== true) return result
     if (typeof markRead === 'function') markRead(threadId)
+    rememberExternalOpenRead(threadId)
     return { ...result, confirmsRead: true }
   }
 
@@ -669,7 +835,10 @@ function createCodexhostDiscovery(dependencies = {}) {
   /** Drops a just-archived row so the next scan does not wait a TTL for it. */
   function codexhostForgetThread(threadId) {
     const id = String(threadId || '').toLowerCase()
+    if (threadMemory.delete(id)) persistThreadMemory()
     if (!externalThreads.delete(id)) return false
+    forgottenThreadIds.set(id, now())
+    removedThreadIds.delete(id)
     externalKeys = new Set(typeof threadKeyFn === 'function'
       ? [...externalThreads.keys()].map((known) => threadKeyFn(known))
       : [])
@@ -677,12 +846,30 @@ function createCodexhostDiscovery(dependencies = {}) {
     return true
   }
 
-  function codexhostResetDiscovery() {
+  /** Ids a complete Host list dropped since the last drain; each id is reported once. */
+  function codexhostTakeRemovedThreadIds() {
+    const ids = [...removedThreadIds]
+    removedThreadIds = new Set()
+    return ids
+  }
+
+  /**
+   * Drops the runtime roster. Thread memory is persisted truth, not a cache:
+   * it stays unless a test asks for `forgetMemory`, so the next roster seats
+   * every remembered id with its original `statusChangedAt` and jump-read.
+   */
+  function codexhostResetDiscovery(options = {}) {
     rendezvous = null
     externalThreads = new Map()
     externalKeys = new Set()
+    forgottenThreadIds = new Map()
+    removedThreadIds = new Set()
     listRefreshedAt = 0
     lastDiagnosticLine = ''
+    if (options.forgetMemory === true) {
+      threadMemory = new Map()
+      persistThreadMemory()
+    }
   }
 
   return {
@@ -694,18 +881,23 @@ function createCodexhostDiscovery(dependencies = {}) {
     isExternalThreadKey,
     honorExternalProjection,
     honorExternalOpenRead,
+    isExternalOpenedRead,
     externalGoalEvidence,
     compareHostDesktopUnread,
     codexhostReadThread,
     codexhostArchiveThread,
     codexhostArchiveState,
     codexhostForgetThread,
+    codexhostTakeRemovedThreadIds,
     codexhostResetDiscovery
   }
 }
 
 module.exports = {
   CODEXHOST_DISCOVERY_REVISION,
+  CODEXHOST_FORGET_SUPPRESS_MS,
+  CODEXHOST_THREAD_MEMORY_STORAGE_KEY,
+  CODEXHOST_THREAD_MEMORY_LIMIT,
   CODEXHOST_LIST_TTL_MS,
   CODEXHOST_RUNNING_LIST_TTL_MS,
   CODEXHOST_RENDEZVOUS_TTL_MS,

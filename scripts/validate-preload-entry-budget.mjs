@@ -142,7 +142,10 @@ const BUDGET = Object.freeze({
   // guarded loaders, the strategy table, the adapter `open` wraps, the Claude
   // process-probe dependency, the CodexHost environment field and the
   // codexhost path surface (setCodexhostPath / clearCodexhostPath).
-  lines: 14290,
+  // 2026-09-03 (RAW-203/204): -7 -- the native connector unread applier moved
+  // into desktop-shadow.cjs; the entry keeps the discovery storage injection
+  // and the persisted jump-read lookups only.
+  lines: 14288,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
