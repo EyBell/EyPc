@@ -728,6 +728,17 @@ describe('Code-mode inventory and correlation', () => {
     })
   })
 
+  it('carries the App sidebar star as isStarred and still drops every non-whitelisted field', () => {
+    const home = makeHome()
+    writeMetadata(home.codeDirectory, metadata(LOCAL_A, CLI_A, { isStarred: true, completedTurns: 1 }))
+    const row = makeBridge(home).readCodeSnapshot({ now: Date.now() }).sessions[0]
+    expect(row).toMatchObject({ sessionId: LOCAL_A, isStarred: true })
+    expect(JSON.stringify(row)).not.toContain('must never leave metadata reader')
+    // Absent or non-boolean star reads as unstarred, never as unknown.
+    writeMetadata(home.codeDirectory, metadata(LOCAL_A, CLI_A, { completedTurns: 1 }))
+    expect(makeBridge(home).readCodeSnapshot({ now: Date.now() }).sessions[0]).toMatchObject({ isStarred: false })
+  })
+
   it('restores a no-Hook historical App row from completedTurns', () => {
     const home = makeHome()
     writeMetadata(home.codeDirectory, metadata(LOCAL_A, CLI_A, { completedTurns: 3 }))

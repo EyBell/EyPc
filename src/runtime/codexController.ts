@@ -2500,16 +2500,61 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     const identity = `${kind}:${key}`
     const pins = codexState().localPins
-    const pinned = pins.some((pin) => `${pin.kind}:${pin.key}` === identity)
-    if (task && !commitCompanionLocalPin(task, !pinned)) {
+    const localPinned = pins.some((pin) => `${pin.kind}:${pin.key}` === identity)
+    const kernelSnapshotTask = kind === 'task' && companionKernel
+      ? companionKernel.getLatest().tasks.find((item) => item.key === key)
+      : undefined
+    // A provider that accepts the pin write (Codex app-server, CodexHost) is
+    // the pin's single source: EyPc writes there and shows what it reads
+    // back, so the two sides cannot drift. A failed write falls back to the
+    // local pin so the gesture is never lost; unpinning always clears both.
+    const providerCapable = kernelSnapshotTask?.capabilities.pin === true
+      || (presentationTask?.companionCapabilities?.pin === true)
+    const providerPinned = kernelSnapshotTask
+      ? kernelSnapshotTask.providerPin === true
+      : presentationTask?.pinSource === 'native'
+    if (task && providerCapable) {
+      const nextPinned = !(localPinned || providerPinned)
+      if (localPinned) {
+        if (!commitCompanionLocalPin(task, false)) {
+          options.setMessage('任务状态已更新，请确认最新状态后再置顶')
+          return false
+        }
+        codexState().localPins = pins.filter((pin) => `${pin.kind}:${pin.key}` !== identity)
+        republishAfterReceiptChange()
+      }
+      void commitCompanionProviderPin(task, nextPinned).then((outcome) => {
+        if (disposed) return
+        if (outcome === 'updated' || outcome === 'unchanged') {
+          // Codex publishes no section notification: the Desktop sidebar
+          // repaints on its next window focus (real-host result, 2026-09-03).
+          options.setMessage(nextPinned ? '已置顶并同步到 Codex；侧栏切窗后刷新' : '已取消置顶并同步到 Codex；侧栏切窗后刷新')
+          options.notify()
+          return
+        }
+        if (nextPinned && commitCompanionLocalPin(task, true)) {
+          const current = codexState().localPins
+          if (!current.some((pin) => `${pin.kind}:${pin.key}` === identity)) {
+            codexState().localPins = [...current, { kind, key }].slice(-500)
+          }
+          republishAfterReceiptChange()
+          options.setMessage(outcome === 'indeterminate' ? '已在 EyPc 置顶；Codex 同步待确认' : '已在 EyPc 置顶；Codex 同步失败')
+        } else {
+          options.setMessage(outcome === 'indeterminate' ? 'Codex 取消置顶待确认' : 'Codex 取消置顶失败')
+        }
+        options.notify()
+      })
+      return true
+    }
+    if (task && !commitCompanionLocalPin(task, !localPinned)) {
       options.setMessage('任务状态已更新，请确认最新状态后再置顶')
       return false
     }
-    codexState().localPins = pinned
+    codexState().localPins = localPinned
       ? pins.filter((pin) => `${pin.kind}:${pin.key}` !== identity)
       : [...pins, { kind, key }].slice(-500)
     republishAfterReceiptChange()
-    options.setMessage(pinned ? '已取消 EyPc 置顶' : '已在 EyPc 内置顶')
+    options.setMessage(localPinned ? '已取消 EyPc 置顶' : '已在 EyPc 内置顶')
     return true
   }
 
@@ -3287,6 +3332,32 @@ export function createCodexController(options: CodexControllerOptions) {
       }
     })
     return true
+  }
+
+  /** Provider-side pin write through the Kernel; resolves to the command outcome. */
+  async function commitCompanionProviderPin(task: CodexTaskCard, pinned: boolean): Promise<string> {
+    let gate = companionCommandGate(task.key)
+    if (gate === 'lease-missing' || gate === 'task-unowned') {
+      syncCompanionTaskAuthority()
+      gate = companionCommandGate(task.key)
+    }
+    if (gate) {
+      options.platform.diagnostics?.record?.({
+        level: 'error',
+        scope: 'task-action',
+        event: 'set-provider-pin-gate',
+        outcome: 'blocked',
+        code: gate,
+        provider: 'codex',
+        taskRef: task.key
+      })
+      return 'failed'
+    }
+    const result = await dispatchCompanionCommand('set-provider-pin', { key: task.key }, 'task-pin', {
+      pinned,
+      revisionAt: task.revisionAt
+    })
+    return typeof result?.outcome === 'string' ? result.outcome : 'failed'
   }
 
   function hide(key: string, recency?: number) {

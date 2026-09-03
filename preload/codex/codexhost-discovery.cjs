@@ -219,7 +219,10 @@ function createCodexhostDiscovery(dependencies = {}) {
       statusChangedAt,
       hostUnread: typeof entry.hostUnread === 'boolean' ? entry.hostUnread : null,
       readAt: memoryInteger(entry.readAt),
-      readStatusChangedAt: memoryInteger(entry.readStatusChangedAt)
+      readStatusChangedAt: memoryInteger(entry.readStatusChangedAt),
+      // Host-owned Desktop pin (codexhost `thread list` `pinned`); `null` when
+      // the Host predates the field so the consumer keeps "no pin lane".
+      pinned: typeof entry.pinned === 'boolean' ? entry.pinned : null
     }
   }
 
@@ -283,7 +286,8 @@ function createCodexhostDiscovery(dependencies = {}) {
       statusChangedAt,
       hostUnread: typeof thread.hasUnreadTurn === 'boolean' ? thread.hasUnreadTurn : remembered?.hostUnread ?? null,
       readAt: supersededRead ? 0 : remembered?.readAt || 0,
-      readStatusChangedAt: supersededRead ? 0 : remembered?.readStatusChangedAt || 0
+      readStatusChangedAt: supersededRead ? 0 : remembered?.readStatusChangedAt || 0,
+      pinned: typeof thread.pinned === 'boolean' ? thread.pinned : remembered?.pinned ?? null
     }
     const changed = !remembered || Object.keys(entry).some((key) => remembered[key] !== entry[key])
     threadMemory.set(thread.threadId, entry)
@@ -399,7 +403,10 @@ function createCodexhostDiscovery(dependencies = {}) {
       // Desktop question/prompt (Claude AskUserQuestion, Pi user_question, …)
       // is Host attention=input. Tool/permission approvals stay attention=approval.
       awaitingInput: thread.attention === 'input',
-      awaitingApproval: thread.attention === 'approval'
+      awaitingApproval: thread.attention === 'approval',
+      // Host-persisted Desktop pin (codexhost >= thread-list-pinned); older
+      // Hosts omit it and the row reports "no pin lane" rather than unpinned.
+      pinned: typeof thread.pinned === 'boolean' ? thread.pinned : null
     }
   }
 
@@ -596,7 +603,8 @@ function createCodexhostDiscovery(dependencies = {}) {
         recencyAt: thread.statusChangedAt,
         codexhostExternal: true,
         codexhostHarnessId: thread.harnessId,
-        ...(typeof thread.hasUnreadTurn === 'boolean' ? { codexhostHasUnreadTurn: thread.hasUnreadTurn } : {})
+        ...(typeof thread.hasUnreadTurn === 'boolean' ? { codexhostHasUnreadTurn: thread.hasUnreadTurn } : {}),
+        ...(typeof thread.pinned === 'boolean' ? { codexhostPinned: thread.pinned } : {})
       })
       turns.set(thread.threadId, projectHostTurn(thread, thread.statusChangedAt))
     }
@@ -823,6 +831,47 @@ function createCodexhostDiscovery(dependencies = {}) {
     return { ok: true, unarchivedPresent: has(live), archivedPresent: has(archived) }
   }
 
+  /**
+   * Host `thread pin|unpin` (codexhost >= thread-pin). The Host moves the
+   * extra process into / out of the Desktop Pinned section and persists
+   * `pinned`; Desktop learns it on its next `thread/list`, so the verdict
+   * below is the Host list, never a Desktop receipt.
+   */
+  async function codexhostPinThread(threadId, pinned = true) {
+    const verb = pinned === false ? 'unpin' : 'pin'
+    const result = await codexhostCommand(verb, ['thread', verb, String(threadId)])
+    if (!result.ok) return result
+    const value = record(result.value)
+    const id = String(threadId || '').toLowerCase()
+    const current = externalThreads.get(id)
+    if (current && typeof value.pinned === 'boolean') {
+      // Keep the roster and its memory ahead of the next Host list refresh so
+      // the pin does not flash back on an intermediate scan.
+      const seated = seatThread({ ...current, pinned: value.pinned })
+      externalThreads.set(id, seated.seated)
+      if (seated.changed) persistThreadMemory()
+    }
+    return {
+      ok: true,
+      threadId: typeof value.threadId === 'string' ? value.threadId : String(threadId),
+      pinned: value.pinned === true
+    }
+  }
+
+  /** Pin verdict from the Host live list: `pinned` of the row, `null` when the Host omits it. */
+  async function codexhostPinState(threadId) {
+    const id = String(threadId || '').toLowerCase()
+    const cwd = externalThreads.get(id)?.cwd || ''
+    const scope = cwd ? ['--cwd', cwd] : ['--all', 'true']
+    const page = await codexhostCommand('list', ['thread', 'list', '--limit', '100', '--sort', 'updated-desc', ...scope])
+    if (!page.ok) return { ok: false, code: page.code, message: page.message }
+    const row = (Array.isArray(record(page.value).threads) ? page.value.threads : [])
+      .map(record)
+      .find((thread) => typeof thread.threadId === 'string' && thread.threadId.toLowerCase() === id)
+    if (!row) return { ok: false, code: 'THREAD_NOT_FOUND', message: 'Host live list no longer carries the thread' }
+    return { ok: true, pinned: typeof row.pinned === 'boolean' ? row.pinned : null }
+  }
+
   /** Drops a just-archived row so the next scan does not wait a TTL for it. */
   function codexhostForgetThread(threadId) {
     const id = String(threadId || '').toLowerCase()
@@ -878,6 +927,8 @@ function createCodexhostDiscovery(dependencies = {}) {
     codexhostReadThread,
     codexhostArchiveThread,
     codexhostArchiveState,
+    codexhostPinThread,
+    codexhostPinState,
     codexhostForgetThread,
     codexhostTakeRemovedThreadIds,
     codexhostResetDiscovery

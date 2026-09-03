@@ -151,7 +151,12 @@ const BUDGET = Object.freeze({
   // moved into codexDesktopUnreadObservation; side evidence keeps raw membership.
   // 2026-09-03 (F-2-b): -5 -- Desktop read/unread evidence and the persisted
   // connector fallback moved to desktop-unread-evidence.cjs (reached via shadow).
-  lines: 14277,
+  // 2026-09-03 (RAW-205 pin sync): +80 -- guarded loader and construction of
+  // preload/codex/pin-bridge.cjs (section read, outbound write, verified-cache
+  // patch), the codex adapter `setPin` wrap, and providerPin/providerPinOrder/
+  // providerPinAuthority in the three provider metadata builders. The pin
+  // logic itself lives in the module.
+  lines: 14357,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
@@ -163,7 +168,8 @@ const BUDGET = Object.freeze({
   // rewrite has to either move or inject, so they measure coupling rather than
   // volume.
   // 2026-09-03: +2 guarded module slots, codexDesktopLaunch and companionOpenReadiness.
-  mutableBindings: 155
+  // 2026-09-03 (RAW-205): +2 guarded module slots, codexPinBridgeModule and codexPinBridge.
+  mutableBindings: 157
 })
 
 const root = resolve(import.meta.dirname, '..')
