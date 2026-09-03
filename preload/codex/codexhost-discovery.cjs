@@ -178,6 +178,8 @@ function createCodexhostDiscovery(dependencies = {}) {
 
   /** { endpoint, token, cliPath, resolvedAt } or null. */
   let rendezvous = null
+  /** Lets the launch lane remember the CLI location while a Host is still around to tell us. */
+  const onCliPathObserved = typeof dependencies.onCliPathObserved === 'function' ? dependencies.onCliPathObserved : null
   /** threadId -> { threadId, harnessId, status, cwd, title, firstSeenAt, statusChangedAt } */
   let externalThreads = new Map()
   let externalKeys = new Set()
@@ -245,6 +247,7 @@ function createCodexhostDiscovery(dependencies = {}) {
     const threadId = typeof thread.threadId === 'string' ? thread.threadId.toLowerCase() : ''
     const harnessId = typeof thread.harnessId === 'string' ? thread.harnessId.slice(0, 40) : ''
     if (!THREAD_ID_PATTERN.test(threadId) || !harnessId) return null
+      if (onCliPathObserved) { try { onCliPathObserved(cliPath) } catch {} }
     // Native codex threads are already in the official inventory; hosting them
     // twice would duplicate every task the plugin already tracks.
     if (harnessId === 'codex') return null

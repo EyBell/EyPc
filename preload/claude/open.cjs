@@ -72,6 +72,7 @@ function createOpener(dependencies) {
   const execFile = dependencies.execFile || null
   const execFileSync = dependencies.execFileSync || null
   const processApi = dependencies.process || (typeof process === 'object' ? process : null)
+  const processRunning = typeof dependencies.processRunning === 'function' ? dependencies.processRunning : null
   const now = typeof dependencies.now === 'function' ? dependencies.now : Date.now
   const setTimer = dependencies.setTimeout || setTimeout
   const clearTimer = dependencies.clearTimeout || clearTimeout
@@ -125,9 +126,12 @@ function createOpener(dependencies) {
   /**
    * Is the desktop app up?
    *
-   * Only a readable inventory can answer that. A denied accessibility
-   * permission produces exactly the same empty list as a closed app. The route
-   * must not auto-launch Claude, so unknown fails closed rather than dispatching.
+   * The window inventory answers first; a denied accessibility permission
+   * produces exactly the same empty list as a closed app, so when it says
+   * `closed` or `unknown` the injected exact-process probe (`pgrep -x Claude`)
+   * gets the final word. This route still never launches Claude itself --
+   * launching is the open-readiness step's job -- so an unproven presence
+   * fails closed rather than dispatching.
    */
   function processStartToken(pid) {
     if (!Number.isInteger(pid) || pid <= 0 || typeof execFileSync !== 'function') return ''
@@ -165,21 +169,38 @@ function createOpener(dependencies) {
     return ''
   }
 
+  /** Exact-process verdict when the inventory could not prove presence; '' when no probe is injected. */
+  async function probeDesktopProcess() {
+    if (!processRunning) return ''
+    try {
+      if (await processRunning()) {
+        presence = { status: 'running', pid: 0, appId: '', instanceId: '', startToken: '', verifiedAt: now() }
+        return 'running'
+      }
+      presence = null
+      return 'closed'
+    } catch {
+      return ''
+    }
+  }
+
   async function probeDesktopRunningState() {
     const cached = cachedRunningState()
     if (cached) return cached
-    if (windowsUnavailable()) return 'unknown'
+    if (windowsUnavailable()) return (await probeDesktopProcess()) || 'unknown'
     let listed = null
     try {
       listed = await boundedWindowRows()
     } catch {
-      return 'unknown'
+      return (await probeDesktopProcess()) || 'unknown'
     }
-    if (!listed) return 'unknown'
-    if (inventoryBlockReason(listed.capability)) return 'unknown'
+    if (!listed) return (await probeDesktopProcess()) || 'unknown'
+    if (inventoryBlockReason(listed.capability)) return (await probeDesktopProcess()) || 'unknown'
     const running = listed.rows.find((row) => isClaudeDesktopWindow(row)
       && row.relationship !== 'child')
     if (!running) {
+      const process = await probeDesktopProcess()
+      if (process) return process
       presence = null
       return 'closed'
     }

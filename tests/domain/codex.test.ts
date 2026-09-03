@@ -110,6 +110,16 @@ describe('Codex domain', () => {
     expect(normalizeCodexSettings({ claudeAppQuotaAccess: true, claudeQuotaFallback: false }).claudeAppQuotaAccess).toBe(true)
   })
 
+  it('defaults launch-first jumps on for every profile and the CodexHost launch mode to auto-detect', () => {
+    expect(defaultCodexSettings()).toMatchObject({ openLaunchesTarget: true, codexhostLaunch: 'auto' })
+    expect(normalizeCodexSettings({})).toMatchObject({ openLaunchesTarget: true, codexhostLaunch: 'auto' })
+    expect(normalizeCodexSettings({ openLaunchesTarget: false }).openLaunchesTarget).toBe(false)
+    expect(normalizeCodexSettings({ openLaunchesTarget: 'no' }).openLaunchesTarget).toBe(true)
+    expect(normalizeCodexSettings({ codexhostLaunch: 'on' }).codexhostLaunch).toBe('on')
+    expect(normalizeCodexSettings({ codexhostLaunch: 'off' }).codexhostLaunch).toBe('off')
+    expect(normalizeCodexSettings({ codexhostLaunch: true }).codexhostLaunch).toBe('auto')
+  })
+
   it('defaults the dynamic task window to 24 hours and bounds persisted edits', () => {
     expect(defaultCodexSettings().dynamicTaskWindowHours).toBe(24)
     expect(normalizeCodexSettings({ dynamicTaskWindowHours: 0 }).dynamicTaskWindowHours).toBe(1)

@@ -72,6 +72,7 @@ function normalizeHostChildEnvelopeV7(value, surfaceId, channel) {
 
 const STORAGE_KEY = 'eypc/state/v1'
 const CODEX_LAUNCH_PATH_STORAGE_KEY = 'eypc/codex/launch-path/v1'
+const CODEXHOST_PATH_STORAGE_KEY = 'eypc/codex/codexhost-path/v1'
 const CODEX_DESKTOP_SIDE_RELATION_STORAGE_KEY = 'eypc/codex/desktop-side-relations/v1'
 const MQTT_ARCHIVE_STORAGE_KEY = 'eypc/mqtt/archive/v1'
 const MQTT_SECRETS_LOCAL_STORAGE_KEY = 'eypc/mqtt/secrets-local/v1'
@@ -217,6 +218,11 @@ try {
     resourcesPath: typeof process.resourcesPath === 'string' ? process.resourcesPath : '',
     safeStorage: getElectronSafeStorage(),
     dataDirectory: resolveClaudeDataDirectory(),
+    // Exact-process presence for the jump: `pgrep -x Claude` answers when the
+    // window inventory cannot (accessibility denied, or Claude just launched).
+    processRunning: () => process.platform === 'win32'
+      ? Promise.resolve(false)
+      : codexProbeExactProcess('/usr/bin/pgrep', ['-x', 'Claude']),
     windows: {
       list: (...args) => windowSubsystem ? windowSubsystem.list(...args) : Promise.resolve({ windows: [] }),
       activate: (...args) => windowSubsystem ? windowSubsystem.activate(...args) : Promise.resolve({ outcome: 'unsupported' })
@@ -1070,6 +1076,54 @@ try {
   }
 } catch { codexDesktopProcessProbe = null }
 
+// Settings read for the open-readiness step, at action time and defensively:
+// launch-first defaults on, the CodexHost mode defaults to auto-detect.
+const companionOpenReadinessSettings = () => {
+  const settings = codexRecord(codexRecord(codexRecord(readState()).codex).settings)
+  return {
+    openLaunchesTarget: settings.openLaunchesTarget !== false,
+    codexhostLaunch: settings.codexhostLaunch === 'on' || settings.codexhostLaunch === 'off' ? settings.codexhostLaunch : 'auto'
+  }
+}
+
+// A failed load leaves task jumps exactly as they were: the deep link goes
+// out without a probe or a launch. Launching is additive to that path.
+let codexDesktopLaunch = null
+try {
+  let desktopLaunchModule = null
+  try {
+    desktopLaunchModule = require('./codex/desktop-launch.cjs')
+  } catch {}
+  if (!desktopLaunchModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        desktopLaunchModule = require(path.join(base, 'codex', 'desktop-launch.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof desktopLaunchModule?.createCodexDesktopLaunch === 'function') {
+    codexDesktopLaunch = desktopLaunchModule.createCodexDesktopLaunch({
+      fs,
+      os,
+      path,
+      process,
+      execFile,
+      spawn,
+      run,
+      utools: typeof globalThis !== 'undefined' ? globalThis.utools : null,
+      storageKey: CODEXHOST_PATH_STORAGE_KEY,
+      record: (entry) => recordCompanionDiagnosticEvent(entry),
+      probeExactProcess: (...args) => codexProbeExactProcess(...args),
+      desktopIpcEndpoint: () => codexDesktopIpcEndpoint()
+    })
+  }
+} catch { codexDesktopLaunch = null }
+
 // A failed load can no longer resolve anything under $CODEX_HOME: paths
 // degrade to empty strings (callers already treat an empty path as "nothing
 // found" rather than a claimed location), the roots list degrades to empty,
@@ -1229,7 +1283,9 @@ try {
   if (typeof codexhostDiscoveryModule?.createCodexhostDiscovery === 'function') {
     codexhostDiscovery = codexhostDiscoveryModule.createCodexhostDiscovery({
       execFile,
-      record: (entry) => recordCompanionDiagnosticEvent(entry)
+      record: (entry) => recordCompanionDiagnosticEvent(entry),
+      // The launch lane learns the CLI location while a Host is around to tell it.
+      onCliPathObserved: (cliPath) => { codexDesktopLaunch?.rememberObservedCliPath(cliPath) }
     })
   }
 } catch { codexhostDiscovery = null }
@@ -3841,6 +3897,7 @@ async function inspectCodexEnvironment() {
     statusFeedMode: desktopBridgeState === 'connected'
       ? 'desktop-live'
       : platform === 'unsupported' ? 'unavailable' : 'connector-fallback',
+    ...(codexDesktopLaunch ? { codexhost: await codexDesktopLaunch.inspect(companionOpenReadinessSettings) } : {}),
     checkedAt: Date.now(),
     ...(launch.invalid ? { errorCode: 'runtime-unavailable' } : {})
   }
@@ -3858,6 +3915,25 @@ async function setCodexLaunchPath(pathValue) {
 
 async function clearCodexLaunchPath() {
   if (!writeCodexLaunchPathPreference('')) throw codexError('unavailable', '无法清除手动 Codex CLI 位置')
+  return inspectCodexEnvironment()
+}
+
+async function setCodexhostPath(pathValue) {
+  if (!codexDesktopLaunch) throw codexError('unavailable', '当前运行时不支持设置 codexhost 位置')
+  if (!codexDesktopLaunch.writeCodexhostManualPath(pathValue)) {
+    throw codexError('runtime-unavailable', '请输入 codexhost 可执行文件的完整绝对路径')
+  }
+  if (codexDesktopLaunch.resolveCodexhostCliPath().state !== 'manual-valid') {
+    codexDesktopLaunch.clearCodexhostManualPath()
+    throw codexError('runtime-unavailable', '所选 codexhost 路径不可用，请选择可执行文件本身')
+  }
+  return inspectCodexEnvironment()
+}
+
+async function clearCodexhostPath() {
+  if (!codexDesktopLaunch || !codexDesktopLaunch.clearCodexhostManualPath()) {
+    throw codexError('unavailable', '无法清除手动 codexhost 位置')
+  }
   return inspectCodexEnvironment()
 }
 
@@ -11917,8 +11993,61 @@ async function preflightCompanionTaskPackageV7(input = {}) {
 const companionHostRegistry = createCompanionHostRegistry?.({
   codex: {
     inspect: inspectCodexEnvironment,
-    open: openCompanionCodexTarget,
+    open: companionOpenReadiness ? companionOpenReadiness.wrapOpen('codex', openCompanionCodexTarget) : openCompanionCodexTarget,
     executePlan: executeCompanionCodexPlan,
+// Open readiness: probe, launch and wait before any provider opener runs. A
+// failed load keeps today's direct dispatch for every provider.
+let companionOpenReadiness = null
+try {
+  let openReadinessModule = null
+  try {
+    openReadinessModule = require('./companion/open-readiness.cjs')
+  } catch {}
+  if (!openReadinessModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        openReadinessModule = require(path.join(base, 'companion', 'open-readiness.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof openReadinessModule?.createCompanionOpenReadiness === 'function') {
+    const desktopAppStrategy = (options) => openReadinessModule.createDesktopAppStrategy({
+      ...options,
+      probeExactProcess: (...args) => codexProbeExactProcess(...args),
+      execFile,
+      run,
+      process,
+      windowsList: () => windowSubsystem ? windowSubsystem.list() : Promise.resolve({ windows: [] })
+    })
+    companionOpenReadiness = openReadinessModule.createCompanionOpenReadiness({
+      record: (entry) => recordCompanionDiagnosticEvent(entry),
+      readSettings: companionOpenReadinessSettings,
+      strategies: {
+        ...(codexDesktopLaunch ? { codex: codexDesktopLaunch.strategy(companionOpenReadinessSettings) } : {}),
+        claude: desktopAppStrategy({
+          label: 'Claude',
+          executables: ['Claude'],
+          bundleId: 'com.anthropic.claudefordesktop',
+          appName: 'Claude',
+          windowAppIdPrefix: 'com.anthropic.claude'
+        }),
+        cursor: desktopAppStrategy({
+          label: 'Cursor',
+          executables: ['Cursor'],
+          bundleId: 'com.todesktop.230313mzl4w4u92',
+          appName: 'Cursor',
+          windowAppIdPrefix: 'com.todesktop.'
+        })
+      }
+    })
+  }
+} catch { companionOpenReadiness = null }
+
     // `codexArchiveBridge` is constructed further below, after the Kernel --
     // a genuine bidirectional dependency (the bridge's own
     // `commitVerifiedCodexArchive` calls back into
@@ -11938,7 +12067,7 @@ const companionHostRegistry = createCompanionHostRegistry?.({
   },
   claude: {
     inspect: () => claudeBridge ? claudeBridge.inspect() : claudeUnavailable('environment'),
-    open: openCompanionClaudeTarget,
+    open: companionOpenReadiness ? companionOpenReadiness.wrapOpen('claude', openCompanionClaudeTarget) : openCompanionClaudeTarget,
     archive: (target) => claudeBridge
       ? claudeBridge.archiveCodeSession(target.actionAlias)
       : Promise.resolve(claudeUnavailable('archive')),
@@ -11946,7 +12075,7 @@ const companionHostRegistry = createCompanionHostRegistry?.({
   },
   cursor: {
     inspect: () => cursorBridge ? cursorBridge.inspect() : cursorUnavailable('environment'),
-    open: openCompanionCursorTarget,
+    open: companionOpenReadiness ? companionOpenReadiness.wrapOpen('cursor', openCompanionCursorTarget) : openCompanionCursorTarget,
     archive: (target) => cursorBridge
       ? cursorBridge.archiveTask(String(target.actionAlias
         || (typeof target.key === 'string' && target.key.startsWith('cursor:') ? target.key.slice('cursor:'.length) : '')))
@@ -14051,6 +14180,8 @@ window.eypcPlatform = {
     onActivityChanged(listener) {
       if (typeof listener !== 'function') return () => {}
       codexActivityListeners.add(listener)
+    setCodexhostPath,
+    clearCodexhostPath,
       return () => codexActivityListeners.delete(listener)
     },
     openThread: (...args) => runtimeIdentityCompatible ? openCodexThread(...args) : Promise.resolve(runtimeIdentityTaskFailure()),

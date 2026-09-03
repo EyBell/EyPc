@@ -33,7 +33,7 @@ import {
   shouldInlineCodexEnvironmentDetail,
   visibleCodexEnvironmentRows
 } from '../domain/codexEnvironmentPresentation'
-import { claudeRegistrationRows, claudeSourceStatusText, cursorRegistrationRows, cursorSourceStatusText, resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
+import { claudeRegistrationRows, claudeSourceStatusText, cursorRegistrationRows, cursorSourceStatusText, resolveCompanionWaterBallPresentation, codexhostSourceStatusText } from '../domain/companionPresentation'
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
   CODEX_MAX_QUOTA_REFRESH_SECONDS,
@@ -47,8 +47,7 @@ import type {
   CodexExpandedCardAppearanceSettings,
   CodexSettings,
   CodexSavedThemePreset,
-  CodexWaterAppearanceSettings
-} from '../domain/codex'
+  CodexWaterAppearanceSettings, CodexhostLaunchMode } from '../domain/codex'
 import type { RuntimeDiagnosticsLevel } from '../domain/types'
 import type { CodexRuntimeView } from '../runtime/codexController'
 
@@ -57,6 +56,8 @@ const emit = defineEmits<{ dispatch: [actionId: string, args?: Record<string, un
 const themePresetError = ref('')
 const manualLaunchPath = ref('')
 const launchPathError = ref('')
+const manualCodexhostPath = ref('')
+const codexhostPathError = ref('')
 const THEME_PRESET_BUILTIN_PREFIX = 'builtin:'
 const THEME_PRESET_SAVED_PREFIX = 'saved:'
 const THEME_PRESET_CUSTOM = 'custom'
@@ -272,6 +273,28 @@ function clearLaunchPath() {
   manualLaunchPath.value = ''
   emit('dispatch', 'codex.clear-launch-path')
 }
+
+function saveCodexhostPath() {
+  const candidate = manualCodexhostPath.value.trim()
+  if (!candidate) {
+    codexhostPathError.value = '请输入 codexhost 可执行文件的完整绝对路径'
+    return
+  }
+  codexhostPathError.value = ''
+  emit('dispatch', 'codex.set-codexhost-path', { path: candidate })
+}
+
+function clearCodexhostPath() {
+  codexhostPathError.value = ''
+  manualCodexhostPath.value = ''
+  emit('dispatch', 'codex.clear-codexhost-path')
+}
+
+const codexhostStatusText = computed(() => codexhostSourceStatusText(props.snapshot.environment.codexhost))
+const codexhostManualConfigured = computed(() => {
+  const state = props.snapshot.environment.codexhost?.cliState
+  return state === 'manual-valid' || state === 'manual-invalid'
+})
 
 function update(patch: Partial<CodexSettings>) {
   emit('dispatch', 'codex.settings.update', { settings: patch })
@@ -989,6 +1012,72 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             data-tip="Codex、Claude Code 与 Cursor Agent 是独立来源，可分别开关。关闭的来源完全不读取。Cursor 只列本机 Agent 卡片，不读额度；点卡片经官方 deeplink 跳到该对话。"
           >i</button>
         </div>
+        <label class="codex-switch-row">
+          <span>
+            <strong>跳转前确保目标应用已打开</strong>
+            <small>未运行时先启动 Codex / Claude / Cursor，确认进程后再打开任务；最长等待 25 秒</small>
+          </span>
+          <input
+            type="checkbox"
+            :checked="snapshot.settings.openLaunchesTarget"
+            data-operation-tooltip="跳转前确保目标应用已打开"
+            data-operation-description="开启后，点击任务或用快捷键跳转时先探测目标应用是否在运行；未运行则先启动，确认进程（Claude、Cursor 还会等窗口）后再发送打开请求，最长等待 25 秒，超时不跳转、不清未读。关闭后只发送深链，由系统决定是否启动。"
+            @change="update({ openLaunchesTarget: ($event.target as HTMLInputElement).checked })"
+          />
+          <i />
+        </label>
+        <label v-if="snapshot.settings.providers.codex" class="codex-switch-row codex-select-row">
+          <span>
+            <strong>通过 CodexHost 打开 Codex</strong>
+            <small>{{ codexhostStatusText }}</small>
+          </span>
+          <select
+            class="codex-select"
+            :value="snapshot.settings.codexhostLaunch"
+            data-operation-tooltip="通过 CodexHost 打开 Codex"
+            data-operation-description="CodexHost 只在用 codexhost launch 启动 Codex 时接管它；用 Dock 或深链冷启动的 Codex 不经 CodexHost，之后 codexhost launch 会拒绝接管。「自动检测」在找到 codexhost 命令、Host 正在运行或当前 Codex 已经 CodexHost 启动时，经 codexhost launch 启动并等 Host 就绪再打开任务；「开」总是如此，找不到 codexhost 命令时拦下不启动；「关」用普通方式启动。Codex 已在运行时直接打开任务。"
+            @change="update({ codexhostLaunch: ($event.target as HTMLSelectElement).value as CodexhostLaunchMode })"
+          >
+            <option value="auto">自动检测</option>
+            <option value="on">开</option>
+            <option value="off">关</option>
+          </select>
+        </label>
+        <form v-if="snapshot.settings.providers.codex" class="codex-launch-config" @submit.prevent="saveCodexhostPath">
+          <div class="codex-launch-row">
+            <button
+              type="button"
+              class="codex-tip"
+              aria-label="codexhost 位置说明"
+              data-operation-tooltip="codexhost 位置说明"
+              data-operation-description="手动位置只保存在本机插件存储，页面不会回显完整路径；未设置时按上次会合点观察到的位置、用户目录、Homebrew、Cargo、Volta、Bun、NVM 与系统 PATH 自动查找。"
+              data-tip="手动位置只保存在本机插件存储，页面不会回显完整路径；未设置时按上次会合点观察到的位置、用户目录、Homebrew、Cargo、Volta、Bun、NVM 与系统 PATH 自动查找。"
+            >i</button>
+            <label class="codex-launch-field" for="codex-codexhost-path">
+              <span class="codex-sr-only">手动指定 codexhost 命令位置（可选）</span>
+              <input
+                id="codex-codexhost-path"
+                v-model="manualCodexhostPath"
+                class="codex-input codex-launch-path-input"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                :aria-invalid="codexhostPathError ? 'true' : undefined"
+                :aria-describedby="codexhostPathError ? 'codex-codexhost-path-error' : undefined"
+                placeholder="手动指定 codexhost 命令位置（可选）"
+              />
+            </label>
+            <button type="button" class="secondary" :disabled="snapshot.refreshing" @click="$emit('dispatch', 'codex.pick-codexhost-path')">从磁盘选择</button>
+            <button type="submit" class="secondary" :disabled="snapshot.refreshing">使用此位置</button>
+            <button
+              type="button"
+              class="secondary"
+              :disabled="snapshot.refreshing || !codexhostManualConfigured"
+              @click="clearCodexhostPath"
+            >恢复自动查找</button>
+          </div>
+          <p v-if="codexhostPathError" id="codex-codexhost-path-error" class="codex-launch-error" role="alert">{{ codexhostPathError }}</p>
+        </form>
         <label class="codex-switch-row">
           <span>
             <strong>接入 Claude Code</strong>

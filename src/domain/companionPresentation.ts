@@ -1,3 +1,4 @@
+import type { CodexhostEnvironmentV1 } from './codex'
 import {
   claudePrimaryQuotaWindow,
   claudeScopedWeeklyQuotaWindow,
@@ -684,6 +685,54 @@ export function claudeSourceStatusText(input: ClaudeSourceStatusInput): string {
   const version = input.environment?.cliVersion || ''
   const base = hint || (version ? `已连接 Claude Code ${version}` : '已连接 Claude Code')
   return count > 0 ? `${base} · App Code ${count} 个会话` : base
+}
+
+const CODEXHOST_CLI_SOURCE_LABELS: Record<CodexhostEnvironmentV1['cliSource'], string> = {
+  manual: '手动位置',
+  observed: '上次会合点',
+  configured: '环境变量',
+  local: '用户目录',
+  homebrew: 'Homebrew',
+  cargo: 'Cargo',
+  volta: 'Volta',
+  bun: 'Bun',
+  nvm: 'NVM',
+  app: '应用包内',
+  path: '系统 PATH',
+  unknown: '未识别位置'
+}
+
+/** One line under the CodexHost launch switch: detection, CLI source and Host state. */
+export function codexhostSourceStatusText(environment: CodexhostEnvironmentV1 | undefined): string {
+  if (!environment) return '插件运行时未提供 CodexHost 检测'
+  const parts: string[] = [
+    environment.desktop === 'managed'
+      ? 'Codex 当前经 CodexHost 启动'
+      : environment.desktop === 'plain'
+        ? 'Codex 当前未经 CodexHost 启动'
+        : environment.desktop === 'closed' ? 'Codex 未运行' : 'Codex 运行状态未知'
+  ]
+  switch (environment.cliState) {
+    case 'manual-valid':
+      parts.push('codexhost 命令来自手动位置')
+      break
+    case 'manual-invalid':
+      parts.push('手动 codexhost 位置无效')
+      break
+    case 'observed':
+    case 'discovered':
+      parts.push(`codexhost 命令来自${CODEXHOST_CLI_SOURCE_LABELS[environment.cliSource]}`)
+      break
+    case 'missing':
+      parts.push('未找到 codexhost 命令')
+      break
+    default:
+      parts.push('当前系统不支持 codexhost 启动')
+  }
+  if (environment.runtimeState === 'running') parts.push('Host 运行中')
+  else if (environment.runtimeState === 'not-running') parts.push('Host 未运行')
+  parts.push(environment.effective ? '当前生效：经 CodexHost 启动' : '当前生效：普通启动')
+  return parts.join(' · ')
 }
 
 export function cursorSourceStatusText(input: {

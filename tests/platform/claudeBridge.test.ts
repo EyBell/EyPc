@@ -943,7 +943,7 @@ describe('quota supplement facade', () => {
 })
 
 describe('exact App-history jump', () => {
-  function opener(options: { rows?: unknown[]; capability?: unknown; execError?: Error; withWindows?: boolean } = {}) {
+  function opener(options: { rows?: unknown[]; capability?: unknown; execError?: Error; withWindows?: boolean; processRunning?: () => Promise<boolean> } = {}) {
     const calls: Array<{ file: string; args: string[] }> = []
     let listCalls = 0
     const dependencies: Record<string, unknown> = {
@@ -951,7 +951,8 @@ describe('exact App-history jump', () => {
       execFile: (file: string, args: string[], _settings: unknown, done: (error?: Error | null) => void) => {
         calls.push({ file, args })
         done(options.execError || null)
-      }
+      },
+      ...(options.processRunning ? { processRunning: options.processRunning } : {})
     }
     if (options.withWindows !== false) {
       dependencies.windows = {
@@ -1015,7 +1016,7 @@ describe('exact App-history jump', () => {
     expect(context.calls).toEqual([])
   })
 
-  it('does not auto-launch when Claude is closed or running proof is unavailable', async () => {
+  it('never launches by itself: without a process probe a closed or unproven inventory fails closed', async () => {
     const closed = opener({ rows: [] })
     expect((await closed.value.openTask(LOCAL_A)).outcome).toBe('unavailable')
     expect(closed.calls).toEqual([])
@@ -1024,10 +1025,39 @@ describe('exact App-history jump', () => {
     expect(unknown.calls).toEqual([])
   })
 
-  it('fails closed when window permission is unavailable', async () => {
+  it('fails closed when window permission is unavailable and no process probe is injected', async () => {
     const context = opener({ rows: [], capability: { supported: true, permission: 'required', canList: false } })
     expect((await context.value.openTask(LOCAL_A)).outcome).toBe('unavailable')
     expect(context.calls).toEqual([])
+  })
+
+  it('lets an exact-process probe prove presence when the inventory is empty or blocked', async () => {
+    const empty = opener({ rows: [], processRunning: async () => true })
+    expect((await empty.value.openTask(LOCAL_A)).outcome).toBe('dispatched')
+    expect(empty.calls).toEqual([{ file: 'open', args: [`claude://claude.ai/epitaxy/${LOCAL_A}`] }])
+    const blocked = opener({
+      rows: [],
+      capability: { supported: true, permission: 'required', canList: false },
+      processRunning: async () => true
+    })
+    expect((await blocked.value.openTask(LOCAL_A)).outcome).toBe('dispatched')
+    const noWindows = opener({ withWindows: false, processRunning: async () => true })
+    expect((await noWindows.value.openTask(LOCAL_A)).outcome).toBe('dispatched')
+    expect((await noWindows.value.readPresence()).status).toBe('running')
+  })
+
+  it('keeps a negative process probe closed and treats a probe failure as unproven', async () => {
+    const closed = opener({ rows: [], processRunning: async () => false })
+    expect(await closed.value.openTask(LOCAL_A)).toMatchObject({ outcome: 'unavailable', message: 'Claude 桌面端未在运行' })
+    expect(closed.calls).toEqual([])
+    const broken = opener({ rows: [], processRunning: async () => { throw new Error('pgrep missing') } })
+    expect(await broken.value.openTask(LOCAL_A)).toMatchObject({ outcome: 'unavailable', message: 'Claude 桌面端未在运行' })
+    const brokenBlocked = opener({
+      rows: [],
+      capability: { supported: true, permission: 'required', canList: false },
+      processRunning: async () => { throw new Error('pgrep missing') }
+    })
+    expect(await brokenBlocked.value.openTask(LOCAL_A)).toMatchObject({ outcome: 'unavailable', message: '无法确认 Claude 桌面端正在运行' })
   })
 
   it('fails closed within the cold presence budget when window discovery never returns', async () => {

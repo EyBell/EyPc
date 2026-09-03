@@ -9495,6 +9495,21 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return true
     } })
     actions.register({ id: 'codex.clear-launch-path', title: '恢复 Codex CLI 自动发现', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => { void codexController.clearLaunchPath(); return true } })
+    actions.register({ id: 'codex.set-codexhost-path', title: '设置 codexhost 命令位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+      const value = args?.path
+      if (typeof value !== 'string' || !value.trim()) return false
+      void codexController.setCodexhostPath(value)
+      return true
+    } })
+    actions.register({ id: 'codex.pick-codexhost-path', title: '从磁盘选择 codexhost 命令', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => {
+      void (async () => {
+        const picked = await platform.files.pickFavorite?.()
+        if (!picked) return
+        await codexController.setCodexhostPath(picked.path)
+      })()
+      return true
+    } })
+    actions.register({ id: 'codex.clear-codexhost-path', title: '恢复 codexhost 自动查找', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => { void codexController.clearCodexhostPath(); return true } })
     actions.register({ id: 'codex.settings.open', title: '打开 Codex 配置', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => { setTab('codex'); return true } })
     actions.register({ id: 'codex.quickJump.activate', title: '执行 Quick Jump 目标', group: 'Codex', risk: 'normal', scope: 'global', priority: 1, when: () => true, run: () => true })
     actions.registerHandler({ commandId: 'codex.thread.createFocused', scope: 'global', priority: 99, when: () => true, run: () => {

@@ -132,17 +132,29 @@ const BUDGET = Object.freeze({
   // official app-server cannot see those ids; every archive of one died at
   // the thread/read preflight as protocol-error. Shape lives in
   // archive-bridge.cjs and codexhost-discovery.cjs.
-  lines: 14159,
+  // 2026-09-02: +5 lines — a Desktop archive of an extra process forgets its
+  // Host roster entry, the scan drains ids a complete Host list dropped as
+  // removals, and rows the roster no longer holds are filtered right before
+  // publish. Window/drain state lives in preload/codex/codexhost-discovery.cjs.
+  // 2026-09-03: open readiness (launch-first task jumps) is two extracted
+  // modules -- preload/companion/open-readiness.cjs and
+  // preload/codex/desktop-launch.cjs -- and the entry only carries their
+  // guarded loaders, the strategy table, the adapter `open` wraps, the Claude
+  // process-probe dependency, the CodexHost environment field and the
+  // codexhost path surface (setCodexhostPath / clearCodexhostPath).
+  lines: 14290,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
   // silently undercounts them by more than half.
-  codexFunctions: 276,
+  // 2026-09-03: +2 for setCodexhostPath / clearCodexhostPath (manual codexhost location).
+  codexFunctions: 278,
   // Module-level mutable state: top-level `let`/`var` plus top-level `const`
   // bindings holding a fresh `Map`/`Set`. These are the bindings a closure
   // rewrite has to either move or inject, so they measure coupling rather than
   // volume.
-  mutableBindings: 153
+  // 2026-09-03: +2 guarded module slots, codexDesktopLaunch and companionOpenReadiness.
+  mutableBindings: 155
 })
 
 const root = resolve(import.meta.dirname, '..')

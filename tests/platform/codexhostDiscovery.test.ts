@@ -214,7 +214,9 @@ describe('codexhost external conversation discovery', () => {
     let clock = 1_000_000
     const discovery = discoveryModule.createCodexhostDiscovery({
       execFile: fakeExecFile(calls),
-      now: () => clock
+    const observedCliPaths: string[] = []
+      now: () => clock,
+      onCliPathObserved: (cliPath: string) => { observedCliPaths.push(cliPath) }
     })
     const result = await discovery.codexhostRowsForScan({
       roots: ['/repo/gonavi'],
@@ -226,6 +228,8 @@ describe('codexhost external conversation discovery', () => {
 
     // Native codex threads and invalid ids are excluded; harness rows remain.
     expect(result.rows.map((row) => row.id).sort()).toEqual([NATIVE_ID < PI_ID ? PI_ID : PI_ID, CLAUDE_ID].sort())
+    // The launch lane learns the CLI location while a Host is around to tell it.
+    expect(observedCliPaths).toEqual([CLI])
     const claudeRow = result.rows.find((row) => row.id === CLAUDE_ID)!
     expect(claudeRow).toMatchObject({
       name: 'cc · 260901-供应商调优',

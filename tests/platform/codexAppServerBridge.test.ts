@@ -823,6 +823,12 @@ function loadCodexBridge(
         : codexhost, ''))
       return
     }
+    if (command === '/usr/bin/pgrep' && args[0] === '-x') {
+      // Every desktop app is "running" in this sandbox, so the open-readiness
+      // step passes straight through and the opener behaves as before.
+      queueMicrotask(() => callback(null, '4242\n', ''))
+      return
+    }
     if (command !== '/usr/sbin/lsof') {
       noSystemProxyExecFile(command, args, options, callback)
       return

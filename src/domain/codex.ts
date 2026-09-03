@@ -189,12 +189,33 @@ export interface CodexEnvironmentSnapshotV1 {
   launchCandidates?: CodexLaunchCandidate[]
   /** Plain connector activity grants no authority; verified finite persisted decisions may still project Input. */
   statusFeedMode?: CodexStatusFeedMode
+  /** Present once the preload can inspect the CodexHost launch lane. */
+  codexhost?: CodexhostEnvironmentV1
 }
 
 export interface CodexLaunchCandidate {
   source: CodexRuntimeSource
   label: string
   state: 'available' | 'unusable'
+}
+
+/** How a closed Codex is launched before a task jump: `auto` detects the codexhost CLI, a running Host or a Host-launched Desktop. */
+export type CodexhostLaunchMode = 'auto' | 'on' | 'off'
+export type CodexhostCliState = 'manual-valid' | 'manual-invalid' | 'observed' | 'discovered' | 'missing' | 'unavailable'
+export type CodexhostCliSource = 'manual' | 'observed' | 'configured' | 'local' | 'homebrew' | 'cargo' | 'volta' | 'bun' | 'nvm' | 'app' | 'path' | 'unknown'
+/** Whether the running Codex Desktop carries CodexHost's launch environment. */
+export type CodexhostDesktopMode = 'managed' | 'plain' | 'closed' | 'unknown'
+
+/** Privacy-safe CodexHost launch readiness: labels only, never paths, pids or tokens. */
+export interface CodexhostEnvironmentV1 {
+  mode: CodexhostLaunchMode
+  /** Whether a closed Codex would be launched through CodexHost right now. */
+  effective: boolean
+  /** `managed` = the running Desktop was launched by CodexHost; `plain` = running without it. */
+  desktop: CodexhostDesktopMode
+  cliState: CodexhostCliState
+  cliSource: CodexhostCliSource
+  runtimeState: 'running' | 'not-running' | 'unknown'
 }
 
 export type CodexThreadStatus = 'active' | 'idle' | 'notLoaded' | 'systemError'
@@ -696,6 +717,14 @@ export interface CodexSettings {
   claudeAppQuotaAccess: boolean
   /** @deprecated One-release storage compatibility for pre-access-gate profiles. */
   claudeQuotaFallback: boolean
+  /**
+   * Jump readiness: probe the target app before a task jump and launch it when
+   * it is closed. Absent normalizes to on — launch-first is the intended
+   * default for every profile, old or new.
+   */
+  openLaunchesTarget: boolean
+  /** Whether a closed Codex is launched through CodexHost; `auto` follows detection. */
+  codexhostLaunch: CodexhostLaunchMode
   compactFields: CodexCompactField[]
   expandedFields: CodexExpandedField[]
   colors: CodexColorSettings
@@ -1363,6 +1392,8 @@ export function defaultCodexSettings(): CodexSettings {
     providers: { ...DEFAULT_COMPANION_ENABLEMENT },
     claudeAppQuotaAccess: false,
     claudeQuotaFallback: false,
+    openLaunchesTarget: true,
+    codexhostLaunch: 'auto',
     compactFields: [...COMPACT_FIELDS],
     expandedFields: [...EXPANDED_FIELDS],
     colors,
@@ -1416,6 +1447,8 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
     providers: normalizeCompanionEnablement(source.providers),
     claudeAppQuotaAccess: source.claudeAppQuotaAccess === true || source.claudeQuotaFallback === true,
     claudeQuotaFallback: source.claudeQuotaFallback === true,
+    openLaunchesTarget: source.openLaunchesTarget !== false,
+    codexhostLaunch: enumValue(source.codexhostLaunch, ['auto', 'on', 'off'] as const, fallback.codexhostLaunch),
     compactFields: orderedFields(source.compactFields, COMPACT_FIELDS, fallback.compactFields),
     expandedFields: orderedFields(source.expandedFields, EXPANDED_FIELDS, fallback.expandedFields),
     colors,
@@ -1493,6 +1526,18 @@ export function normalizeCodexConfig(value: unknown): CodexConfigSnapshotV1 {
   }
 }
 
+export function normalizeCodexhostEnvironment(value: unknown): CodexhostEnvironmentV1 {
+  const source = record(value)
+  return {
+    mode: enumValue(source.mode, ['auto', 'on', 'off'] as const, 'auto'),
+    effective: source.effective === true,
+    desktop: enumValue(source.desktop, ['managed', 'plain', 'closed', 'unknown'] as const, 'unknown'),
+    cliState: enumValue(source.cliState, ['manual-valid', 'manual-invalid', 'observed', 'discovered', 'missing', 'unavailable'] as const, 'unavailable'),
+    cliSource: enumValue(source.cliSource, ['manual', 'observed', 'configured', 'local', 'homebrew', 'cargo', 'volta', 'bun', 'nvm', 'app', 'path', 'unknown'] as const, 'unknown'),
+    runtimeState: enumValue(source.runtimeState, ['running', 'not-running', 'unknown'] as const, 'unknown')
+  }
+}
+
 export function normalizeCodexEnvironment(value: unknown): CodexEnvironmentSnapshotV1 {
   const source = record(value)
   const launchCandidates = Array.isArray(source.launchCandidates)
@@ -1519,6 +1564,7 @@ export function normalizeCodexEnvironment(value: unknown): CodexEnvironmentSnaps
     launchCandidates,
     statusFeedMode: enumValue(source.statusFeedMode, ['desktop-live', 'connector-fallback', 'unavailable'] as const, 'unavailable'),
     checkedAt: numberValue(source.checkedAt, 0),
+    ...(source.codexhost && typeof source.codexhost === 'object' ? { codexhost: normalizeCodexhostEnvironment(source.codexhost) } : {}),
     ...(typeof source.errorCode === 'string' ? { errorCode: enumValue(source.errorCode, ['unsupported', 'unavailable', 'runtime-unavailable', 'not-authenticated', 'timeout', 'protocol-error', 'process-exited', 'open-failed'] as const, 'unavailable') } : {})
   }
 }

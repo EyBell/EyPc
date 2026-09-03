@@ -1776,7 +1776,7 @@ describe('Codex Companion V4 UI contract', () => {
     await chips[0].trigger('pointerenter')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.float-action-hint').text()).toBe('5 小时限额 · 1 小时后重置')
+    expect(wrapper.get('.float-action-hint').text()).toBe('5 小时限额 · 1 小时后重置 · 点击立即刷新')
 
     await chips[0].trigger('pointerleave')
     await wrapper.vm.$nextTick()
