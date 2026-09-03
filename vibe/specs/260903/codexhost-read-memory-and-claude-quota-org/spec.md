@@ -106,7 +106,8 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L270)
 ## Requirement Delta
 
 - Add（RAW-203）: discovery 线程记忆 `eypc/codex/codexhost-thread-memory/v1`（status / attention / firstSeenAt / statusChangedAt / Host unread / readAt / readStatusChangedAt，≤ 300 条），跨会合点丢失、`codexhostResetDiscovery` 与插件重载延续 `statusChangedAt`；EyPc 跳转记为持久已读，Host 状态变化或 Host unread `false → true` 边沿取代；归档删除。
-- Add（RAW-204）: `acct:<account>|<profile>:<org>:…` 键形组织取第 2 段；多组织平局用 App `plan-usage-history` 最新样本的 `org` 裁决；Claude 额度组 `note`；手动刷新回执 `companion.quotaRefreshReceipt` 与浮窗可见反馈。
+- Add（RAW-204）: `acct:<account>|<profile>:<org>:…` 键形组织取第 2 段；多组织平局用 App `plan-usage-history` 最新样本的 `org` 裁决；Claude 额度组 `note`（真机复核后改为行内「!」标记 + 悬停提示，回执改为覆盖同一行，额度区保持一行）；手动刷新回执 `companion.quotaRefreshReceipt` 与浮窗可见反馈。
+- Add（RAW-204 真机补丁）: usage API 成功后的下一次调用下限 60 秒（`MIN_USAGE_API_INTERVAL_MS`）；用户把「额度刷新（秒）」设为 10 秒后接口连续 10 秒一读，第 5 次起 429，卡片出现「暂受限」。手动刷新仍绕过该下限。
 - Change: `compareHostDesktopUnread(known, { openedRead })`；`codexhostResetDiscovery({ forgetMemory })` 仅测试用。
 - Unchanged: RAW-186 球心顺序（用户 2026-09-03 裁决保持 `{Fable}/{普通}`）、RAW-177#3 深链不构成已读、RAW-190 Host 未读权威、RAW-019 退避序列。
 
@@ -117,7 +118,7 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L270)
 - [quota.cjs](../../../../preload/claude/quota.cjs#L82)：`keyIdentity` 解析两种键形；`readClaudeAppUsageOrganizationHint` 经 [plan-usage.cjs](../../../../preload/claude/plan-usage.cjs#L52) `readOrganization()` 取平局提示。
 - [companionPresentation.ts](../../../../src/domain/companionPresentation.ts#L48)：`CompanionQuotaRefreshReceipt`、`companionQuotaRefreshReceiptText`、`claudeAppQuotaReadable`、`claudeQuotaReadingStale`、组 `note`。
 - [codexController.ts](../../../../src/runtime/codexController.ts#L3540)：`refreshQuota()` 等待 Claude 读取，写 `quotaRefreshReceipt` 进 Float `companion` 切片并 bump revision；`recordClaudeQuotaRead` 同步产出回执车道事实。
-- [FloatApp.vue](../../../../src/FloatApp.vue#L368)：`quotaFeedback` 监听回执 `at`，额度行下方 `.float-quota-feedback` 显示 8 秒；组 `note` 以 `.float-quota-note` 显示。
+- [FloatApp.vue](../../../../src/FloatApp.vue#L366-L384)：`quotaFeedback` 监听回执 `at`，8 秒后清空；模板 [L3474-L3475](../../../../src/FloatApp.vue#L3474-L3475) 以 `.float-quota-feedback` 覆盖同一行；组 `note` 为 `.float-quota-note` 「!」标记。
 - 收敛：[claude.ts](../../../../src/domain/claude.ts#L181) `withClaudeQuotaWindows`；[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L36) `codexWeeklyReading`；[open-handoff.cjs](../../../../preload/companion/open-handoff.cjs#L66) `normalizeOpenResult` / `normalizeOpenLaunch`；[desktop-shadow.cjs](../../../../preload/codex/desktop-shadow.cjs#L51) `codexApplyNativeConnectorUnread`。
 
 ## 重复判定收敛台账（审计 31 项）
@@ -150,6 +151,6 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L270)
 
 ## Verification
 
-- 聚焦 vitest：`codexhostDiscovery`（+3 例）、`claudeQuotaFallback`（+2 例）、`companionPresentation`（+2 例）、`codexPresentation`（+1 例）、`claudeCompanionController`（+1 例）；`tests/domain` 全部 + 平台桥 + Kernel + UI 共 43 文件 979 例通过。
+- 聚焦 vitest：`codexhostDiscovery`（+3 例）、`claudeQuotaFallback`（+3 例）、`companionPresentation`（+2 例）、`codexPresentation`（+1 例）、`claudeCompanionController`（+1 例）；`tests/domain` 全部 + 平台桥 + Kernel + UI 共 43 文件 979 例通过。
 - `pnpm run typecheck`、`sync:preloads`、`build`、`validate:mirrors`、`validate:entry-budget`（棘轮 14295 → 14288 行，函数 278 不变）、`validate:requirements`、`validate:error-memory` 通过。
 - 真机：本机 `withAccessToken` 实测由 `null` 变为有令牌；宿主重载后水球并列读数、凭据行、刷新回执与额外进程已读稳定性待用户验收。

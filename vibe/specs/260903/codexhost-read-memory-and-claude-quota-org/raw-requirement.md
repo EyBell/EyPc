@@ -52,9 +52,10 @@ spec_id: SPEC-260903-CODEXHOST-READ-MEMORY-AND-CLAUDE-QUOTA-ORG
 
 1. `acct:<account>|<profile>:<org>:…` 键形：组织取第 2 段，账号取第 1 段 `|` 前；旧 `<client>:<org>:…` 键形不变。
 2. 多个组织同时有效且缓存无显式 activeOrganization 时，用 Claude App `plan-usage-history.json` 最新样本的 `org` 做唯一平局裁决；提示命中不了任何候选仍 fail-closed。
-3. 展开卡 Claude 额度组在「已授权且 usage API 被挡（凭据不可用 / Retry-After / 失败）」时，即使已有缓存行，也在行内显示原因（`note`）。
-4. 手动刷新（读数块点击）等待 Claude 读取完成后发布有界回执 `companion.quotaRefreshReceipt`（`at`、Claude 车道 `changed / usageApi / accessStatus / blockedBy / retryInMs / windowCount / scopedCount`、Codex `requested`），浮窗在额度行下方可见显示 8 秒并同步播报；回执不含读数。
-5. 工程收敛：`withClaudeQuotaWindows` 取代两处手写 short/weekly 重算；诊断主读数改用 `claudePrimaryQuotaWindow`；`codexWeeklyReading` 取代三处「取周读数」；`claudeAppQuotaReadable` / `claudeQuotaReadingStale` 各一处定义；`normalizeOpenResult` / `normalizeOpenLaunch` 收进 `open-handoff.cjs`；官方未读原子写入连接器改为 `codexApplyNativeConnectorUnread` 一处。
+3. 展开卡 Claude 额度组在「已授权且 usage API 被挡（凭据不可用 / Retry-After / 失败）」时，即使已有缓存行，也在行内显示「!」标记，原因放在 200ms 悬停提示与可访问名称（`note`）。
+4. 手动刷新（读数块点击）等待 Claude 读取完成后发布有界回执 `companion.quotaRefreshReceipt`（`at`、Claude 车道 `changed / usageApi / accessStatus / blockedBy / retryInMs / windowCount / scopedCount`、Codex `requested`），浮窗在同一额度行上覆盖显示 8 秒并同步播报，额度区始终保持一行；回执不含读数。
+5. usage API 成功后的下一次调用不早于 60 秒；「额度刷新（秒）」低于 60 只加快本地缓存车道，手动刷新仍绕过该下限。
+6. 工程收敛：`withClaudeQuotaWindows` 取代两处手写 short/weekly 重算；诊断主读数改用 `claudePrimaryQuotaWindow`；`codexWeeklyReading` 取代三处「取周读数」；`claudeAppQuotaReadable` / `claudeQuotaReadingStale` 各一处定义；`normalizeOpenResult` / `normalizeOpenLaunch` 收进 `open-handoff.cjs`；官方未读原子写入连接器改为 `codexApplyNativeConnectorUnread` 一处。
 
 ## 需求变更评审
 

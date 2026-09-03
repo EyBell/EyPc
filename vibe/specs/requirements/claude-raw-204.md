@@ -18,4 +18,4 @@ scoped_relations:
 
 > 正文由来源任务保存，此处只登记身份、状态与关系：[原始记录](../260903/codexhost-read-memory-and-claude-quota-org/raw-requirement.md#L1)。
 
-Claude App 令牌缓存 `acct:` 键形的组织取第 2 段；多组织有效时用 `plan-usage-history` 最新样本的 `org` 裁决，否则 fail-closed。展开卡 Claude 额度组在已授权但 usage API 被挡时在缓存行旁显示原因；手动刷新等待 Claude 读取完成后发布有界回执 `companion.quotaRefreshReceipt` 并在浮窗额度行下可见 8 秒。
+Claude App 令牌缓存 `acct:` 键形的组织取第 2 段；多组织有效时用 `plan-usage-history` 最新样本的 `org` 裁决，否则 fail-closed。展开卡 Claude 额度组在已授权但 usage API 被挡时在缓存行旁显示「!」标记（原因在悬停提示与可访问名称）；手动刷新等待 Claude 读取完成后发布有界回执 `companion.quotaRefreshReceipt` 并在同一额度行上覆盖 8 秒；usage API 成功后间隔下限 60 秒，手动刷新仍可提前。

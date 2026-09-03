@@ -713,6 +713,7 @@ button.float-search-glyph { cursor: pointer; }
    window title and reset time are deliberately not in the row: they are in the
    shared 200ms child hint and in each chip's screen-reader text. */
 .float-quota-text {
+  position: relative;
   display: flex;
   min-height: 30px;
   flex: none;
@@ -738,9 +739,35 @@ button.float-search-glyph { cursor: pointer; }
   white-space: nowrap;
 }
 .float-quota-group > p { margin: 0; overflow: hidden; color: var(--codex-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-/* App-lane block shown beside populated Claude chips; the refresh receipt sits under the row for a few seconds. */
-.float-quota-note { color: var(--codex-warning, #b8860b); }
-.float-quota-feedback { flex-basis: 100%; margin: 2px 0 0; overflow: hidden; color: var(--codex-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+/* App-lane block beside populated Claude chips: a compact marker, reason in the hint / accessible name. */
+.float-quota-note {
+  display: inline-grid;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--codex-warning, #b8860b) 22%, transparent);
+  color: var(--codex-warning, #b8860b);
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: help;
+}
+/* Refresh receipt: overlays the same row for a few seconds, so the area never grows a second line. */
+.float-quota-feedback {
+  position: absolute;
+  inset: 2px 12px 4px;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  overflow: hidden;
+  background: var(--codex-surface);
+  color: var(--codex-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .float-quota-chip { display: flex; min-width: 0; align-items: baseline; gap: 3px; white-space: nowrap; cursor: pointer; }
 /* A reading is also its own refresh trigger; the press feedback stays inside the chip. */
 .float-quota-chip:active strong { opacity: .55; }

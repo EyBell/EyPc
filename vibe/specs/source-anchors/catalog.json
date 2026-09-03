@@ -5,12 +5,12 @@
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
     "source_documents": 50,
-    "ordered_anchors": 281,
+    "ordered_anchors": 282,
     "raw_parent_ordered": 156,
-    "unparented_ordered": 125,
+    "unparented_ordered": 126,
     "registered_requirements": 105,
     "registry_review_required": 51,
-    "source_addressable_not_registered": 125
+    "source_addressable_not_registered": 126
   },
   "documents": [
     {
@@ -477,11 +477,11 @@
       "source_task": "260903/codexhost-read-memory-and-claude-quota-org",
       "source_path": "vibe/specs/260903/codexhost-read-memory-and-claude-quota-org/raw-requirement.md",
       "spec_id": "SPEC-260903-CODEXHOST-READ-MEMORY-AND-CLAUDE-QUOTA-ORG",
-      "content_sha256": "275f54c4312c80716badb2944c3c8abf66190068788c85a8ea7dc40f02de358a",
+      "content_sha256": "79fdad82857992209766da0e016c67e9634317fe2b33cc45e8052be18586de3e",
       "raw_identity_count": 9,
-      "ordered_anchor_count": 20,
+      "ordered_anchor_count": 21,
       "raw_parent_ordered_count": 0,
-      "unparented_ordered_count": 20
+      "unparented_ordered_count": 21
     },
     {
       "source_task": "260903/companion-open-launch-first",
@@ -6052,7 +6052,7 @@
       "marker_occurrence": 2,
       "parent_raw_id": null,
       "qualified_source": null,
-      "clause_sha256": "1896ff066f5e08a039aad1bb6c31d71c05f19547d03f4a6691a81ebdd6334872",
+      "clause_sha256": "3b464b59ed957ea346084cc49fc61a082d8b97101d5b6125f90c1a547f500811",
       "classification": "source-addressable-candidate",
       "disposition": "source-addressable-not-registered",
       "semantic_module": null,
@@ -6074,7 +6074,7 @@
       "marker_occurrence": 2,
       "parent_raw_id": null,
       "qualified_source": null,
-      "clause_sha256": "22cbaadcc97c0e915a064f5df5b13a8479428302608ac7376578d6acf1cb8ee6",
+      "clause_sha256": "3de1f7333735970155adda5aba83b1174133df08c206d077ed8f527719c6bf62",
       "classification": "source-addressable-candidate",
       "disposition": "source-addressable-not-registered",
       "semantic_module": null,
@@ -6096,7 +6096,29 @@
       "marker_occurrence": 2,
       "parent_raw_id": null,
       "qualified_source": null,
-      "clause_sha256": "67790066985123d4f8cc884037bd0a747700b829cf3169ee7a26a5a2d8f6f164",
+      "clause_sha256": "35c4c205017fa087c12514405451108fc40d3600aa52d443d733644dc9307095",
+      "classification": "source-addressable-candidate",
+      "disposition": "source-addressable-not-registered",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-outside-fenced-content-without-raw-parent"
+    },
+    {
+      "source_id": "SA-72607B3AE6B74AD6C31F",
+      "source_task": "260903/codexhost-read-memory-and-claude-quota-org",
+      "source_path": "vibe/specs/260903/codexhost-read-memory-and-claude-quota-org/raw-requirement.md",
+      "line": 58,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-203 / RAW-204：额外进程已读记忆与 Claude App 额度组织仲裁",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "6",
+      "marker_occurrence": 1,
+      "parent_raw_id": null,
+      "qualified_source": null,
+      "clause_sha256": "36fb9c97c885b0d05cd6aae84c04b20a0c039830d5c8d65c6d0366c776f4f0de",
       "classification": "source-addressable-candidate",
       "disposition": "source-addressable-not-registered",
       "semantic_module": null,

@@ -24,8 +24,15 @@ const MAX_RESPONSE_BYTES = 1024 * 1024
 
 /** Minimum age of the primary reading before the fallback is worth attempting. */
 const DEFAULT_MIN_STALE_MS = 10 * 60 * 1000
-/** Never call more often than this, whatever the caller asks for. */
+/** Default post-success cadence when the caller names none. */
 const MIN_CALL_INTERVAL_MS = 5 * 60 * 1000
+/**
+ * Hard floor for the configured cadence. The quota-refresh knob goes down to
+ * a few seconds for the local cache lanes, but the usage endpoint answered
+ * 429 after a handful of 10-second reads (2026-09-03); the remote lane never
+ * follows the knob below one minute. A manual refresh still bypasses this.
+ */
+const MIN_USAGE_API_INTERVAL_MS = 60 * 1000
 const FAILURE_RETRY_DELAYS_MS = [60 * 1000, 5 * 60 * 1000, 15 * 60 * 1000]
 const FAILURE_COOLDOWN_MS = 60 * 60 * 1000
 const CLAUDE_APP_TOKEN_CACHE_KEY = 'oauth:tokenCacheV2'
@@ -505,7 +512,7 @@ function createQuotaFallback(dependencies) {
     if (result) {
       consecutiveFailures = 0
       const refreshIntervalMs = Number.isFinite(settings.refreshIntervalMs) && settings.refreshIntervalMs > 0
-        ? Math.max(1000, settings.refreshIntervalMs)
+        ? Math.max(MIN_USAGE_API_INTERVAL_MS, settings.refreshIntervalMs)
         : MIN_CALL_INTERVAL_MS
       nextAllowedAt = now + refreshIntervalMs
       nextAllowedReason = 'interval'
@@ -545,6 +552,7 @@ module.exports = {
   CLAUDE_APP_SAFE_STORAGE_ACCOUNT,
   DEFAULT_MIN_STALE_MS,
   MIN_CALL_INTERVAL_MS,
+  MIN_USAGE_API_INTERVAL_MS,
   FAILURE_RETRY_DELAYS_MS,
   FAILURE_COOLDOWN_MS,
   MAX_RESPONSE_BYTES,
