@@ -67,4 +67,4 @@ spec_id: SPEC-260903-CODEXHOST-READ-MEMORY-AND-CLAUDE-QUOTA-ORG
 | unchanged | 球心 `{scoped}/{plain}` 顺序（RAW-186） | 用户本轮举例顺序相反，未作为变更请求处理，待用户确认 |
 | unchanged | 深链不构成已读（RAW-177#3）、Host 未读权威（RAW-190） | 原样 |
 
-`conflict_candidates`：RAW-186 顺序（举例 vs 裁决）。`decision_status`：`explicit-current-request`（顺序条款除外，`pending-user-confirmation`）。
+`conflict_candidates`：RAW-186 顺序（举例 vs 裁决）——用户 2026-09-03 裁决「保持当前顺序」，`{Fable}/{普通}` 不变，举例顺序不构成变更。`decision_status`：`explicit-current-request`。

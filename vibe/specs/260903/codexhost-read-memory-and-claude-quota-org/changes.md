@@ -24,6 +24,7 @@
 | `scripts/validate-preload-entry-budget.mjs` | 行数棘轮 14295 → 14288，F-3 再按实测下调（带日期注释） |
 | `preload/index.js`（F-3） | `codexAcknowledgementCoversTurn` 单一覆盖规则；Side 路径改用；扫描传 `lastTurnId`；删两处死分支；内联 forget 包装 |
 | `src/domain/claude.ts`（F-3） | `claudeQuotaWindowFreshness` / `claudeQuotaMergedStatus` / `markExpiredClaudeQuotaWindows`，三处合并/过期路径共用 |
+| `preload/index.js`（F-3 第三轮） | 机器子跑与已读确认裁决只在 `codexDesktopUnreadObservation` 顶部；Side 库存证据只存原始成员关系；分支投影去掉重复守卫；棘轮 14284 → 14282 |
 | `vibe/knowledge/error-memory/modules/codexhost-external-processes.md` + `README.md` + `companion-task-state.md` | task-state 模块到 30 条上限，按自适应阈值拆出 CodexHost 额外进程模块（3 条主记录迁入，含前一会话未登记的 archived-row 记录） |
 | `vibe/knowledge/error-memory/codexhost-jump-read-lost-with-roster-timestamp.md` / `claude-app-token-cache-acct-key-organization-segment.md` | 两条错误记忆（verified） |
 
