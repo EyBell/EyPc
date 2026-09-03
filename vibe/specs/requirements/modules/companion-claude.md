@@ -51,6 +51,7 @@ Claude Code 库存、App 相位、原生未读、打开与归档权威，以及 
 - [RAW-186](../claude-raw-186.md#L1) — `active`
 - [RAW-197](../claude-raw-197.md#L1) — `proposed` · `agent-transcribed`
 - [RAW-198](../claude-raw-198.md#L1) — `proposed` · `agent-transcribed`
+- [RAW-204](../claude-raw-204.md#L1) — `active`
 
 ### 编号条款
 
