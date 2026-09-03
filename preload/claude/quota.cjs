@@ -67,20 +67,56 @@ function nonEmptyId(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : ''
 }
 
+/**
+ * Identity segments of one Claude App token-cache key.
+ *
+ * Two shapes exist side by side in the same cache:
+ *  - v2:      `${clientId}:${orgId}:${apiHost}:${scope}`
+ *  - `acct:`  `acct:${accountId}|${profileId}:${orgId}:${apiHost}:${scope}`
+ *
+ * The `acct:` shape (Claude App ≥ 2026-08) moves the organization to segment
+ * 2 and puts an account-scoped identity in segment 1. Reading segment 1 as the
+ * organization made one account with several profiles look like several
+ * organizations, and the arbitration below failed closed on every read.
+ */
+function keyIdentity(key) {
+  const segments = String(key || '').split(':')
+  if (segments[0] === 'acct' && segments.length >= 3 && segments[1].includes('|')) {
+    const [accountId] = segments[1].split('|')
+    return { accountId: nonEmptyId(accountId), organizationId: nonEmptyId(segments[2]) }
+  }
+  return { accountId: '', organizationId: segments.length >= 2 ? nonEmptyId(segments[1]) : '' }
+}
+
 function candidateOrganizationId(key, record) {
   const explicit = nonEmptyId(record.organizationId) || nonEmptyId(record.organizationUuid)
     || nonEmptyId(record.orgId) || nonEmptyId(record.orgUuid)
   if (explicit) return explicit
-  // Claude App v2 keys are `${clientId}:${orgId}:${apiHost}:${scope}`. The
-  // apiHost may itself contain colons, but the organization is always segment 2.
-  const segments = String(key || '').split(':')
-  return segments.length >= 2 ? nonEmptyId(segments[1]) : ''
+  return keyIdentity(key).organizationId
 }
 
-function candidateAccountIds(record) {
-  return [record.accountId, record.accountUuid, record.account_id, record.account_uuid]
+function candidateAccountIds(record, key = '') {
+  const fromKey = keyIdentity(key).accountId
+  return [record.accountId, record.accountUuid, record.account_id, record.account_uuid, fromKey]
     .map(nonEmptyId)
-    .filter(Boolean)
+    .filter((value, index, all) => Boolean(value) && all.indexOf(value) === index)
+}
+
+/**
+ * The organization Claude App itself is metering: the newest plan-usage sample
+ * names it. It only breaks a tie between several live organizations and never
+ * overrides an explicit active-organization field in the cache.
+ */
+function readClaudeAppUsageOrganizationHint(dependencies) {
+  if (typeof dependencies.readPlanUsageOrganization === 'function') {
+    try { return nonEmptyId(dependencies.readPlanUsageOrganization()) } catch { return '' }
+  }
+  try {
+    const { createPlanUsageReader } = require('./plan-usage.cjs')
+    return nonEmptyId(createPlanUsageReader(dependencies).readOrganization())
+  } catch {
+    return ''
+  }
 }
 
 function decryptClaudeAppTokenCache(dependencies, encrypted) {
@@ -180,7 +216,7 @@ function readClaudeAppAccessToken(dependencies, now = Date.now()) {
     candidates.push({
       token,
       organizationId: candidateOrganizationId(key, record),
-      accountIds: candidateAccountIds(record),
+      accountIds: candidateAccountIds(record, key),
       // All candidates are identity-filtered first. If an organization has
       // several valid scopes, choose the unique least-privileged token; the
       // current App endpoint accepts the profile-only scope.
@@ -199,8 +235,15 @@ function readClaudeAppAccessToken(dependencies, now = Date.now()) {
     matching = matching.filter((candidate) => candidate.organizationId === activeOrganizationHint)
     if (!matching.length) return ''
   } else {
-    const organizations = [...new Set(matching.map((candidate) => candidate.organizationId).filter(Boolean))]
-    if (organizations.length > 1) return ''
+    let organizations = [...new Set(matching.map((candidate) => candidate.organizationId).filter(Boolean))]
+    if (organizations.length > 1) {
+      // Several organizations are live: the one Claude App meters wins. A hint
+      // that names none of them proves nothing and the read still fails closed.
+      const usageOrganization = readClaudeAppUsageOrganizationHint(dependencies)
+      if (!usageOrganization || !organizations.includes(usageOrganization)) return ''
+      matching = matching.filter((candidate) => candidate.organizationId === usageOrganization)
+      organizations = [usageOrganization]
+    }
     if (organizations.length === 1 && matching.some((candidate) => !candidate.organizationId)) return ''
   }
   const unique = [...new Set(matching.map((candidate) => candidate.token))]
@@ -506,6 +549,7 @@ module.exports = {
   toRateLimits,
   appTokenCachePath,
   readClaudeAppCredentialFingerprint,
+  keyIdentity,
   decryptClaudeAppTokenCache,
   createNodeHttpsFetch,
   withAccessToken,
