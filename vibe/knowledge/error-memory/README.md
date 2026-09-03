@@ -21,6 +21,7 @@
 | --- | --- |
 | [Companion Task State](modules/companion-task-state.md#L1) | phase、Turn/Goal 因果、root/Side、unread、membership、Kernel package 与推送 |
 | [Claude Companion](modules/claude-companion.md#L1) | Claude inventory、App phase、原生 unread、open 与 archive authority |
+| [CodexHost External Processes](modules/codexhost-external-processes.md#L1) | CodexHost 额外进程发现、Host 未读与跳转已读记忆、roster 生命周期、Host 委派写入 |
 | [Companion Actions And Presentation](modules/companion-actions-and-presentation.md#L1) | task actions、archive guard、标签、选中、主题与外部写入 |
 | [Window Jump And Native Host](modules/window-jump-and-native-host.md#L1) | 原生窗口身份、Space、root/member、槽位与激活 |
 | [Interaction And Favorites](modules/interaction-and-favorites.md#L1) | command target、focus、keyboard、tooltip 与 favorites |

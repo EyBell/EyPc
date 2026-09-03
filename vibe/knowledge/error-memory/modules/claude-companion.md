@@ -15,6 +15,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 
 ## Primary Error Records
 
+- [Claude App `acct:` token-cache key: segment 1 is account|profile, not the organization](../claude-app-token-cache-acct-key-organization-segment.md#L1)
 - [Capability gap asserted without shipped-App evidence (superseded)](../capability-gap-asserted-without-reading-the-shipped-app.md#L1)
 - [Generic session end must not overwrite completion](../claude-generic-session-end-must-not-overwrite-completion.md#L1)
 - [StopFailure must not close a continuing parent turn](../claude-stop-failure-must-not-close-continuing-parent-turn.md#L1)
