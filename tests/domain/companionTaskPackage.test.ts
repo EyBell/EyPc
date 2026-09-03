@@ -104,7 +104,7 @@ function packageFor(task: CompanionCanonicalTaskV4 | null, revision: number): Co
   const phase = task?.phase
   // Mirrors the Kernel rule: a pinned, finished, already-read root is placed in
   // the dedicated pinned group rather than the window-bounded completed one.
-  const group = phase === 'running' ? 'active' : phase === 'stopped' ? 'stopped' : phase === 'completed' ? task?.unread ? 'unread' : task?.localPin ? 'pinned' : 'completed' : null
+  const group = phase === 'running' ? 'active' : phase === 'stopped' ? 'stopped' : phase === 'completed' ? task?.unread ? 'unread' : (task?.localPin || task?.providerPin === true) ? 'pinned' : 'completed' : null
   return {
     schema: COMPANION_TASK_PACKAGE_REVISION,
     kernelRevision: COMPANION_TASK_KERNEL_REVISION,
@@ -203,6 +203,49 @@ describe('canonical Companion task projection', () => {
     expect(state.conversations.all).toEqual([])
     expect(state.conversations.ongoingCount).toBe(0)
     expect(state.dynamic.tasks).toEqual([])
+  })
+
+  it('shows a provider-side pin as a native pin and keeps a local pin as the control identity', () => {
+    const source = emptyConversationSnapshot()
+    const initialCard = card()
+    source.stopped = [initialCard]
+    source.all = [initialCard]
+    source.stoppedCount = 1
+    source.sourceFingerprint = 'a'.repeat(64)
+    let state = buildCodexTaskStatePackage(source, { sourceRevision: CODEX_TASK_STATE_REVISION, now: 1_000 })
+
+    state = applyCompanionTaskPackageViews(state, packageFor(canonical({
+      unread: false,
+      dynamicGroup: 'pinned',
+      providerPin: true,
+      providerPinAuthority: 'app-server',
+      capabilities: { open: true, archive: true, pause: false, resume: false, executePlan: false, pin: true }
+    }), 1))
+    expect(state.conversations.all[0]).toMatchObject({ pinSource: 'native', companionCapabilities: { pin: true } })
+    expect(state.dynamic.groups.pinned.map((task) => task.key)).toEqual([key])
+    expect(state.conversations.projectSections.find((section) => section.id === 'pinned')?.entries).toEqual([
+      expect.objectContaining({ kind: 'task', pinSource: 'native' })
+    ])
+
+    state = applyCompanionTaskPackageViews(state, packageFor(canonical({
+      unread: false,
+      dynamicGroup: 'pinned',
+      localPin: true,
+      providerPin: true,
+      revisionAt: 300,
+      visibilityRevision: 300
+    }), 2))
+    expect(state.conversations.all[0].pinSource).toBe('local')
+
+    state = applyCompanionTaskPackageViews(state, packageFor(canonical({
+      unread: false,
+      dynamicGroup: 'completed',
+      providerPin: false,
+      revisionAt: 400,
+      visibilityRevision: 400
+    }), 3))
+    expect(state.conversations.all[0].pinSource).toBeUndefined()
+    expect(state.dynamic.groups.pinned).toEqual([])
   })
 
   it('fails closed on an incomplete configuration barrier instead of reviving inventory state', () => {

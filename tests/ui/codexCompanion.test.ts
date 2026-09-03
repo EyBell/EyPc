@@ -914,7 +914,8 @@ describe('Codex Companion V4 UI contract', () => {
     const nativePin = wrapper.get(`[data-focus-key="task:${TASK_ACTIVE}"] .action-pin`)
     const plainPin = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"] .action-pin`)
     expect(localPin.attributes('aria-label')).toContain('来源：EyPc 本地置顶 · 点击取消')
-    expect(nativePin.attributes('aria-label')).toContain('来源：Codex 原生置顶 · 顺序只读')
+    // A native pin without the provider write capability stays read-only.
+    expect(nativePin.attributes('aria-label')).toContain('来源：Codex 置顶 · 只读，请在应用内取消')
     expect(nativePin.attributes('aria-disabled')).toBe('true')
     expect(nativePin.attributes('disabled')).toBeUndefined()
     expect(plainPin.attributes('aria-label')).toContain('未置顶 · 点击后由 EyPc 本地置顶')

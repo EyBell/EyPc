@@ -73,6 +73,21 @@ function normalizeArchiveResult(value, target) {
   }
 }
 
+function normalizePinResult(value, target) {
+  const source = value && typeof value === 'object' ? value : {}
+  const outcome = ['completed', 'failed', 'indeterminate'].includes(source.outcome) ? source.outcome : 'failed'
+  return {
+    outcome,
+    provider: target.provider,
+    key: target.key,
+    ...(typeof source.providerPin === 'boolean' ? { providerPin: source.providerPin } : {}),
+    ...(typeof source.method === 'string' ? { method: source.method.slice(0, 80) } : {}),
+    ...(typeof source.operationId === 'string' ? { operationId: source.operationId.slice(0, 160) } : {}),
+    ...(typeof source.errorCode === 'string' && source.errorCode ? { errorCode: source.errorCode.slice(0, 80) } : {}),
+    ...(typeof source.message === 'string' && source.message ? { message: source.message.slice(0, 240) } : {})
+  }
+}
+
 function normalizeExecuteResult(value, target) {
   const source = value && typeof value === 'object' ? value : {}
   const outcome = ['executed', 'failed', 'indeterminate'].includes(source.outcome) ? source.outcome : 'failed'
@@ -101,6 +116,7 @@ function createCompanionTaskActions(dependencies = {}) {
   let confirmation = null
   let disposed = false
   const archiveInFlight = new Map()
+  const pinInFlight = new Map()
   const executeInFlight = new Map()
   let lastSyncFingerprint = ''
   let syncNoopCount = 0
@@ -381,6 +397,59 @@ function createCompanionTaskActions(dependencies = {}) {
     return operation
   }
 
+  /**
+   * Provider pin write. No confirmation and no phase gate: a pin is a display
+   * placement, so the only preconditions are a live target and an adapter
+   * that declared the `pin` capability. Serialized per task like archive.
+   */
+  function setPin(input = {}) {
+    const startedAt = now()
+    const currentOperationId = operationId(input, 'pin')
+    const pinned = input.pinned === true
+    if (disposed || !enabled || !ready) {
+      const result = { outcome: 'failed', errorCode: 'inventory-not-ready', message: '任务缓存尚未就绪' }
+      trace('pin-intent', result.outcome, null, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source })
+      return Promise.resolve({ ...result, operationId: currentOperationId })
+    }
+    const target = resolveTarget(input)
+    if (!target) {
+      const result = { outcome: 'failed', errorCode: 'stale-target', message: '任务身份已失效，请刷新后重试' }
+      trace('pin-intent', result.outcome, null, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source, details: { requestedKey: typeof input.key === 'string' ? input.key : '' } })
+      return Promise.resolve({ ...result, operationId: currentOperationId })
+    }
+    const adapter = adapters[target.provider]
+    if (!adapter || typeof adapter.setPin !== 'function') {
+      const result = { outcome: 'failed', provider: target.provider, key: target.key, errorCode: 'unsupported', message: '当前 Provider 不支持同步置顶' }
+      trace('pin-intent', result.outcome, target, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source })
+      return Promise.resolve({ ...result, operationId: currentOperationId })
+    }
+    const inFlightKey = `${target.provider}:${target.key}`
+    const existing = pinInFlight.get(inFlightKey)
+    if (existing) {
+      trace('pin-intent', 'reused-in-flight', target, startedAt, { operationId: currentOperationId, debug: true, source: input.source })
+      return existing
+    }
+    trace('pin-intent', 'started', target, startedAt, { operationId: currentOperationId, source: input.source, details: { pinned } })
+    const operation = Promise.resolve()
+      .then(() => adapter.setPin(target, { ...input, pinned, operationId: currentOperationId }))
+      .then((result) => {
+        const normalized = normalizePinResult(result, target)
+        trace('pin-result', normalized.outcome, target, startedAt, { operationId: currentOperationId, errorCode: normalized.errorCode, source: input.source, details: { pinned, method: normalized.method || '' } })
+        return { ...normalized, operationId: normalized.operationId || currentOperationId }
+      })
+      .catch(() => {
+        try { onProviderFailure(target.provider, 'pin-failed') } catch {}
+        const result = { outcome: 'failed', provider: target.provider, key: target.key, errorCode: 'pin-failed', message: '置顶同步失败' }
+        trace('pin-result', result.outcome, target, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source })
+        return { ...result, operationId: currentOperationId }
+      })
+      .finally(() => {
+        if (pinInFlight.get(inFlightKey) === operation) pinInFlight.delete(inFlightKey)
+      })
+    pinInFlight.set(inFlightKey, operation)
+    return operation
+  }
+
   function archiveTargetIdentity(target) {
     const terminalEpoch = Number(target.archiveRequest?.expectedRevisionAt) || 0
     return `${target.provider}|${target.key}|${target.phase}|${terminalEpoch}`
@@ -530,7 +599,7 @@ function createCompanionTaskActions(dependencies = {}) {
     }
   }
 
-  return { revision: COMPANION_TASK_ACTIONS_REVISION, sync, inspect, open, archive, executePlan, shortcutArchive, handleEnter, diagnostics, close }
+  return { revision: COMPANION_TASK_ACTIONS_REVISION, sync, inspect, open, archive, setPin, executePlan, shortcutArchive, handleEnter, diagnostics, close }
 }
 
 module.exports = {

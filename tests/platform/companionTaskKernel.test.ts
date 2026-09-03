@@ -992,6 +992,84 @@ describe('CompanionTaskKernel', () => {
     expect(preflight.mock.calls.length).toBe(readsBefore)
   })
 
+  it('parks a provider-pinned root in the pin group like a local pin, ordered after EyPc pins', () => {
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: true, cursor: true } }
+    })
+    kernel.attach({ enabled: true, providers: { codex: true, claude: true, cursor: true } })
+    kernel.publishEvidence(draft([
+      task({ key: 'codex-native-pin', phase: 'completed', unread: false, dynamicEligible: false, providerPin: true, providerPinOrder: 2, providerPinAuthority: 'app-server', lastQuestionAt: 50 }),
+      task({ key: 'codex-native-pin-first', phase: 'running', providerPin: true, providerPinOrder: 0, providerPinAuthority: 'app-server', lastQuestionAt: 40 }),
+      task({ key: 'codex-local-pin', kind: 'local-pin', phase: 'completed', unread: false, dynamicEligible: false, localPin: true, displayOrder: 5, lastQuestionAt: 30 }),
+      task({ key: 'claude-star', provider: 'claude', kind: 'claude-session', phase: 'completed', unread: false, dynamicEligible: false, providerPin: true, providerPinOrder: 1, providerPinAuthority: 'claude-metadata', lastQuestionAt: 60 }),
+      task({ key: 'codex-unpinned', phase: 'completed', unread: false, dynamicEligible: false, providerPin: false, providerPinAuthority: 'app-server', lastQuestionAt: 70 }),
+      task({ key: 'codex-no-lane', phase: 'running', providerPin: null, lastQuestionAt: 80 })
+    ], 1, { providers: { codex: true, claude: true, cursor: true } }))
+    const latest = kernel.getLatest()
+    const byKey = new Map(latest.tasks.map((value: any) => [value.key, value]))
+    // Local pins keep EyPc order first; provider pins follow in the provider's order.
+    expect(latest.views.groups.pinned).toEqual(['codex-local-pin', 'codex-native-pin-first', 'claude-star', 'codex-native-pin'])
+    expect(byKey.get('codex-native-pin')).toMatchObject({ dynamicGroup: 'pinned', cycleTier: 'none', providerPin: true, providerPinOrder: 2, providerPinAuthority: 'app-server', localPin: false })
+    // A running provider pin keeps its state-earned ring tier; only parked pins take the fallback.
+    expect(byKey.get('codex-native-pin-first')).toMatchObject({ dynamicGroup: 'pinned', cycleTier: 'active', providerPin: true })
+    expect(byKey.get('claude-star')).toMatchObject({ dynamicGroup: 'pinned', providerPinAuthority: 'claude-metadata' })
+    // Unpinned and lane-less rows keep their state-earned groups.
+    expect(byKey.get('codex-unpinned')).toMatchObject({ dynamicGroup: 'completed', providerPin: false })
+    expect(byKey.get('codex-no-lane')).toMatchObject({ dynamicGroup: 'active', providerPin: null, providerPinAuthority: '' })
+    // A running provider pin is still counted as active and reachable by the ring.
+    expect(latest.views.counts.active).toBe(2)
+    expect(latest.views.cycleKeys).toContain('codex-native-pin-first')
+    // Parked provider pins share the completed-unread fallback with local pins.
+    expect(latest.views.attentionKeys.completedUnread).toEqual(['codex-local-pin', 'claude-star', 'codex-native-pin'])
+  })
+
+  it('writes a provider pin through the adapter and commits only a verified result', async () => {
+    const setPin = vi.fn(async (_target: Record<string, unknown>, request: Record<string, unknown>) => ({
+      outcome: request.pinned ? 'completed' : 'failed',
+      providerPin: request.pinned === true,
+      method: 'thread/section/move',
+      ...(request.pinned ? {} : { errorCode: 'section-mismatch', message: '回读不一致' })
+    }))
+    const diagnostics: Array<Record<string, any>> = []
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      adapters: { codex: { open: vi.fn(async () => nativeOpened()), setPin } },
+      record: (entry: Record<string, any>) => diagnostics.push(entry),
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([
+      task({ key: 'codex-a', phase: 'completed', unread: false, providerPin: false, providerPinAuthority: 'app-server', capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false, pin: true } }),
+      task({ key: 'codex-b', phase: 'completed', unread: false, providerPin: false, providerPinAuthority: 'app-server' })
+    ], 1, { providers: { codex: true, claude: false } }) })
+
+    await expect(kernel.dispatch({ action: 'set-provider-pin', key: 'codex-a', pinned: true, source: 'task-pin' }))
+      .resolves.toMatchObject({ outcome: 'updated', key: 'codex-a', providerPin: true, method: 'thread/section/move' })
+    expect(setPin).toHaveBeenCalledTimes(1)
+    expect(setPin.mock.calls[0][0]).toMatchObject({ key: 'codex-a', provider: 'codex' })
+    expect(setPin.mock.calls[0][1]).toMatchObject({ pinned: true })
+    let pinned = kernel.getLatest().tasks.find((value: any) => value.key === 'codex-a')
+    expect(pinned).toMatchObject({ providerPin: true, localPin: false, dynamicGroup: 'pinned' })
+
+    // Same value again is a no-op that never reaches the provider.
+    await expect(kernel.dispatch({ action: 'set-provider-pin', key: 'codex-a', pinned: true, source: 'task-pin' }))
+      .resolves.toMatchObject({ outcome: 'unchanged', providerPin: true })
+    expect(setPin).toHaveBeenCalledTimes(1)
+
+    // A failed write leaves the task exactly as it was.
+    await expect(kernel.dispatch({ action: 'set-provider-pin', key: 'codex-a', pinned: false, source: 'task-pin' }))
+      .resolves.toMatchObject({ outcome: 'failed', errorCode: 'section-mismatch' })
+    pinned = kernel.getLatest().tasks.find((value: any) => value.key === 'codex-a')
+    expect(pinned).toMatchObject({ providerPin: true, dynamicGroup: 'pinned' })
+
+    // No capability, no write.
+    await expect(kernel.dispatch({ action: 'set-provider-pin', key: 'codex-b', pinned: true, source: 'task-pin' }))
+      .resolves.toMatchObject({ outcome: 'failed', errorCode: 'unsupported' })
+    expect(setPin).toHaveBeenCalledTimes(2)
+    expect(diagnostics.filter((entry) => entry.event === 'set-provider-pin').map((entry) => entry.outcome)).toEqual(['pinned', 'failed'])
+  })
+
   it('rejects a stale, unleased or Plan-owned visibility mutation', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }

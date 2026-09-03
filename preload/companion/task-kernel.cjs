@@ -63,6 +63,7 @@ const CYCLE_TIER_ORDER = ['attention', 'plan', 'active', 'unread', 'fallback']
  * bucket nothing may read.
  */
 const DYNAMIC_GROUPS = ['pinned', 'input', 'active', 'stopped', 'unread', 'completed']
+const PROVIDER_PIN_AUTHORITIES = new Set(['app-server', 'codexhost', 'claude-metadata', 'cursor-workspace'])
 const GROUPS = [...DYNAMIC_GROUPS, 'none']
 const DRAFT_PRODUCERS = ['renderer', 'host-preflight', 'host-evidence']
 const SOURCE_LANES = [...COMPANION_EVIDENCE_CHANNELS_V7]
@@ -275,6 +276,12 @@ function normalizeTask(value, enabledProviders) {
     turnMode: value.turnMode === 'plan' || value.turnMode === 'default' ? value.turnMode : 'unknown',
     idleConfirmed: value.idleConfirmed === true,
     localPin: value.localPin === true,
+    // Provider-side pin (Codex Pinned section, CodexHost `pinned`, Claude
+    // `isStarred`, Cursor `pinnedComposers`). `null` means the provider has no
+    // pin lane for this row, which is not the same as "unpinned".
+    providerPin: value.providerPin === true ? true : value.providerPin === false ? false : null,
+    providerPinOrder: finiteInteger(value.providerPinOrder),
+    providerPinAuthority: PROVIDER_PIN_AUTHORITIES.has(value.providerPinAuthority) ? value.providerPinAuthority : '',
     manualPhase: isManualTaskPhase(value.manualPhase) ? value.manualPhase : '',
     manualPhaseSetAt: finiteInteger(value.manualPhaseSetAt),
     dynamicEligible: value.dynamicEligible === true,
@@ -285,14 +292,16 @@ function normalizeTask(value, enabledProviders) {
       archive: capabilities.archive === true,
       pause: capabilities.pause === true,
       resume: capabilities.resume === true,
-      executePlan: capabilities.executePlan === true
+      executePlan: capabilities.executePlan === true,
+      pin: capabilities.pin === true
     },
     providerCapabilities: {
       open: capabilities.open === true,
       archive: capabilities.archive === true,
       pause: capabilities.pause === true,
       resume: capabilities.resume === true,
-      executePlan: capabilities.executePlan === true
+      executePlan: capabilities.executePlan === true,
+      pin: capabilities.pin === true
     },
     family: typeof value.family === 'string' && value.family
       ? value.family.slice(0, 256)
@@ -449,7 +458,8 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
       archive: capabilityNames.has('archive'),
       pause: capabilityNames.has('pause'),
       resume: capabilityNames.has('resume'),
-      executePlan: capabilityNames.has('execute-plan') || capabilityNames.has('executePlan')
+      executePlan: capabilityNames.has('execute-plan') || capabilityNames.has('executePlan'),
+      pin: capabilityNames.has('pin')
     }
   }, enabledProviders)
 }
@@ -589,8 +599,24 @@ function compareByLatestQuestion(left, right) {
     || left.key.localeCompare(right.key)
 }
 
+/**
+ * One pin predicate for every display decision. An EyPc-local pin and a
+ * provider-side pin (Codex Pinned section, Claude star, Cursor pinned agent)
+ * park the row the same way; which one it is only matters to the control
+ * that toggles it.
+ */
+function taskPinned(task) {
+  return task.localPin === true || task.providerPin === true
+}
+
+/** EyPc-ordered local pins first, then provider pins in the provider's order. */
 function compareByPinnedOrder(left, right) {
-  return finiteInteger(left.displayOrder) - finiteInteger(right.displayOrder)
+  const leftLocal = left.localPin === true ? 0 : 1
+  const rightLocal = right.localPin === true ? 0 : 1
+  if (leftLocal !== rightLocal) return leftLocal - rightLocal
+  const leftOrder = leftLocal === 0 ? finiteInteger(left.displayOrder) : finiteInteger(left.providerPinOrder)
+  const rightOrder = rightLocal === 0 ? finiteInteger(right.displayOrder) : finiteInteger(right.providerPinOrder)
+  return leftOrder - rightOrder
     || compareByLatestQuestion(left, right)
 }
 
@@ -637,7 +663,7 @@ function derivedCycleTier(task) {
   // must not also ride the ring. A pin whose state is still continuable
   // (stopped without a Plan, a retired running task) keeps the fallback tier
   // so the ring can reach it; the two sets never overlap.
-  if (task.localPin) {
+  if (taskPinned(task)) {
     return task.phase === 'completed' || task.phase === 'unknown' ? 'none' : 'fallback'
   }
   return 'none'
@@ -651,7 +677,7 @@ function derivedDynamicGroup(task) {
   // that immediately reverted). State-earned reachability — badges, attention
   // walks, the ring — stays with `derivedAttentionState`/`derivedCycleTier`,
   // so a pinned waiting-input task still answers the 待输入 shortcut.
-  if (task.localPin) return 'pinned'
+  if (taskPinned(task)) return 'pinned'
   // Attention survives the ordinary activity window. A long-waiting prompt or
   // unread completion must remain reachable until the user handles it.
   if (isAttentionTaskPhase(task.phase)) return 'input'
@@ -760,6 +786,9 @@ function semanticTask(task) {
     turnMode: task.turnMode,
     idleConfirmed: task.idleConfirmed,
     localPin: task.localPin,
+    providerPin: task.providerPin,
+    providerPinOrder: task.providerPinOrder,
+    providerPinAuthority: task.providerPinAuthority,
     manualPhase: task.manualPhase,
     manualPhaseSetAt: task.manualPhaseSetAt,
     dynamicEligible: task.dynamicEligible,
@@ -800,7 +829,7 @@ function buildViews(tasks) {
   const countable = visible.filter((task) => task.capabilities.open)
   views.counts.input = countable.filter((task) => derivedAttentionState(task) === 'input').length
   views.counts.active = countable.filter((task) => (
-    task.phase === 'running' && (task.dynamicEligible || task.localPin)
+    task.phase === 'running' && (task.dynamicEligible || taskPinned(task))
   )).length
   views.counts.unread = countable.filter((task) => derivedAttentionState(task) === 'unread').length
 
@@ -830,7 +859,7 @@ function buildViews(tasks) {
     .filter((task) => task.capabilities.open && derivedAttentionState(task) === 'unread')
   const pinnedOrder = new Map(views.groups.pinned.map((key, index) => [key, index]))
   const pinnedAttention = attention
-    .filter((task) => task.capabilities.open && task.localPin && task.cycleTier === 'none')
+    .filter((task) => task.capabilities.open && taskPinned(task) && task.cycleTier === 'none')
     .sort((left, right) => (pinnedOrder.get(left.key) ?? 0) - (pinnedOrder.get(right.key) ?? 0))
   views.attentionKeys.completedUnread = (unreadAttention.length > 0 ? unreadAttention : pinnedAttention)
     .map((task) => task.key)
@@ -1277,7 +1306,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     for (const task of currentPackage.tasks) {
       // A pin is exempt from the window, so the moment it would have expired is
       // no longer a visibility transition worth waking up for.
-      if (!task.dynamicEligible || task.hidden || task.paused || task.localPin || (task.phase === 'stopped' && task.planReady)) continue
+      if (!task.dynamicEligible || task.hidden || task.paused || taskPinned(task) || (task.phase === 'stopped' && task.planReady)) continue
       const candidate = visibilityAnchor(task) + dynamicWindowMs
       if (candidate <= currentTime || (dueAt && candidate >= dueAt)) continue
       dueAt = candidate
@@ -1814,6 +1843,9 @@ function createCompanionTaskKernel(dependencies = {}) {
         createdAt: incoming.createdAt,
         hidden: incoming.hidden,
         localPin: incoming.localPin,
+        providerPin: incoming.providerPin,
+        providerPinOrder: incoming.providerPinOrder,
+        providerPinAuthority: incoming.providerPinAuthority,
         manualPhase: incoming.manualPhase,
         manualPhaseSetAt: incoming.manualPhaseSetAt,
         dynamicEligible: incoming.dynamicEligible,
@@ -2881,6 +2913,42 @@ function createCompanionTaskKernel(dependencies = {}) {
         })
       }
       return { outcome: 'updated', key }
+    }
+    /**
+     * Provider pin write. The Provider Adapter performs and verifies the
+     * write; only a verified result patches `providerPin`, so a failed or
+     * indeterminate write never shows a pin the provider does not hold. The
+     * next evidence rebuild re-reads the provider and confirms or corrects it.
+     */
+    if (command.command === 'set-provider-pin') {
+      const task = taskForKey(key)
+      if (!task) return { outcome: 'failed', errorCode: 'stale-target', message: '任务身份已失效' }
+      if (!task.capabilities.pin) return { outcome: 'failed', errorCode: 'unsupported', message: '该任务的来源不支持同步置顶' }
+      const pinned = command.payload?.pinned === true
+      if (task.providerPin === pinned) return { outcome: 'unchanged', key, providerPin: pinned }
+      const result = await actions.setPin({
+        key: task.key,
+        pinned,
+        source: command.source,
+        operationId: command.operationId,
+        target: actionTargetForTask(task)
+      })
+      if (result?.outcome === 'completed') {
+        commitLocalTaskState(task, { providerPin: pinned }, 'set-provider-pin')
+      }
+      record({
+        level: result?.outcome === 'completed' ? 'info' : 'warn',
+        scope: 'task-kernel',
+        event: 'set-provider-pin',
+        outcome: result?.outcome === 'completed' ? (pinned ? 'pinned' : 'unpinned') : result?.outcome || 'failed',
+        taskRef: key,
+        source: command.source,
+        ...(result?.errorCode ? { code: result.errorCode } : {}),
+        packageRevision: currentPackage.packageRevision
+      })
+      return result?.outcome === 'completed'
+        ? { outcome: 'updated', key, providerPin: pinned, ...(result.method ? { method: result.method } : {}) }
+        : { outcome: result?.outcome || 'failed', key, ...(result?.errorCode ? { errorCode: result.errorCode } : {}), ...(result?.message ? { message: result.message } : {}) }
     }
     /**
      * The hand-set phase is a local preference that also participates in

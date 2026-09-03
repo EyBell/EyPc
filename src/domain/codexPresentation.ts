@@ -165,7 +165,7 @@ export function projectCodexDynamicStatus(
     ...visibleUnread,
     ...conversations.completed
   ].filter((task, index, list) => !task.isHidden
-    && task.pinSource === 'local'
+    && Boolean(task.pinSource)
     && list.findIndex((candidate) => candidate.key === task.key) === index)
   const pinnedKeys = new Set(visiblePinned.map((task) => task.key))
   const recent = [

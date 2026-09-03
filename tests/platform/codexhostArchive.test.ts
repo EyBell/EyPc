@@ -11,6 +11,8 @@ const discoveryModule = require('../../preload/codex/codexhost-discovery.cjs') a
     codexhostReadThread(threadId: string): Promise<Record<string, any>>
     codexhostArchiveThread(threadId: string, archived?: boolean): Promise<Record<string, any>>
     codexhostArchiveState(threadId: string): Promise<Record<string, any>>
+    codexhostPinThread(threadId: string, pinned?: boolean): Promise<Record<string, any>>
+    codexhostPinState(threadId: string): Promise<Record<string, any>>
     codexhostForgetThread(threadId: string): boolean
   }
 }
@@ -37,6 +39,7 @@ interface HostState {
   archivedRows: Array<Record<string, unknown>>
   read: Record<string, unknown>
   archiveError?: { code: string; message: string }
+  pinError?: { code: string; message: string }
 }
 
 function hostState(): HostState {
@@ -67,6 +70,15 @@ function fakeExecFile(calls: ExecCall[], state: HostState) {
         return done(null, JSON.stringify({ threads: rows, nextCursor: null }))
       }
       if (verb === 'read') return done(null, JSON.stringify(state.read))
+      if (verb === 'pin' || verb === 'unpin') {
+        if (state.pinError) {
+          return done(Object.assign(new Error('exit 1'), { code: 1 }), '', JSON.stringify({ error: state.pinError }))
+        }
+        const threadId = args[2]
+        const pinned = verb === 'pin'
+        state.liveRows = state.liveRows.map((row) => row.threadId === threadId ? { ...row, pinned } : row)
+        return done(null, JSON.stringify({ threadId, pinned }))
+      }
       if (verb === 'archive') {
         if (state.archiveError) {
           // The CLI prints its error envelope to stderr and exits 1.
@@ -290,5 +302,47 @@ describe('codexhost archive lane · archive bridge', () => {
     expect(result.outcome).toBe('failed')
     expect(harness.requestCodexRpc).toHaveBeenCalled()
     expect(harness.lane.codexhostReadThread).not.toHaveBeenCalled()
+  })
+})
+
+describe('codexhost pin lane · discovery', () => {
+  it('lists the Host pinned field, pins through the CLI and keeps the roster ahead of the next list', async () => {
+    const state = hostState()
+    state.liveRows[0] = { ...state.liveRows[0], pinned: false }
+    const diagnostics: Array<Record<string, any>> = []
+    const { discovery, calls } = await loadedDiscovery(state, diagnostics)
+    const before = await discovery.codexhostRowsForScan({ roots: ['/repo/eypc'], threadKey: THREAD_KEY })
+    expect(before.rows.find((row) => row.id === EXT_ID)).toMatchObject({ codexhostPinned: false })
+
+    await expect(discovery.codexhostPinThread(EXT_ID, true)).resolves.toEqual({ ok: true, threadId: EXT_ID, pinned: true })
+    const pinCall = calls.find((call) => call.command === CLI && call.args[1] === 'pin')
+    expect(pinCall?.args).toEqual(['thread', 'pin', EXT_ID])
+    expect(pinCall?.env?.CODEXHOST_RUNTIME_TOKEN).toBe(TOKEN)
+    // The roster reflects the verified value before any Host list refresh.
+    const after = await discovery.codexhostRowsForScan({ roots: ['/repo/eypc'], threadKey: THREAD_KEY })
+    expect(after.rows.find((row) => row.id === EXT_ID)).toMatchObject({ codexhostPinned: true })
+    await expect(discovery.codexhostPinState(EXT_ID)).resolves.toEqual({ ok: true, pinned: true })
+
+    await expect(discovery.codexhostPinThread(EXT_ID, false)).resolves.toEqual({ ok: true, threadId: EXT_ID, pinned: false })
+    expect(calls.filter((call) => call.command === CLI).map((call) => call.args[1])).toEqual(expect.arrayContaining(['pin', 'unpin']))
+    expect(JSON.stringify(diagnostics)).not.toContain(TOKEN)
+  })
+
+  it('surfaces the Host error envelope for a pin and leaves the roster untouched', async () => {
+    const state = hostState()
+    state.liveRows[0] = { ...state.liveRows[0], pinned: false }
+    state.pinError = { code: 'THREAD_NOT_FOUND', message: 'gone' }
+    const { discovery } = await loadedDiscovery(state)
+    await expect(discovery.codexhostPinThread(EXT_ID, true)).resolves.toEqual({ ok: false, code: 'THREAD_NOT_FOUND', message: 'gone' })
+    const rows = await discovery.codexhostRowsForScan({ roots: ['/repo/eypc'], threadKey: THREAD_KEY })
+    expect(rows.rows.find((row) => row.id === EXT_ID)).toMatchObject({ codexhostPinned: false })
+  })
+
+  it('reports no pin lane for a Host that predates the field', async () => {
+    const state = hostState()
+    const { discovery } = await loadedDiscovery(state)
+    const rows = await discovery.codexhostRowsForScan({ roots: ['/repo/eypc'], threadKey: THREAD_KEY })
+    expect(rows.rows.find((row) => row.id === EXT_ID)).not.toHaveProperty('codexhostPinned')
+    await expect(discovery.codexhostPinState(EXT_ID)).resolves.toEqual({ ok: true, pinned: null })
   })
 })

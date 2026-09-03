@@ -857,6 +857,8 @@ export interface CodexTaskCard {
     pause: boolean
     resume: boolean
     executePlan: boolean
+    /** The provider accepts an EyPc pin/unpin write (Codex app-server, CodexHost). */
+    pin?: boolean
   }
   /** Root-only topology summary; child identities never enter Renderer state. */
   companionTopology?: CompanionTaskTopologySummaryV1

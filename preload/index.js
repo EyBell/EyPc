@@ -1294,6 +1294,29 @@ try {
   }
 } catch { codexhostDiscovery = null }
 
+// Pin lane (Codex Pinned section + CodexHost `pinned`). A failed load keeps
+// the legacy global-state mirror as the only native pin source and disables
+// the outbound pin write, which is the pre-lane baseline.
+let codexPinBridgeModule = null
+try {
+  try {
+    codexPinBridgeModule = require('./codex/pin-bridge.cjs')
+  } catch {}
+  if (!codexPinBridgeModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        codexPinBridgeModule = require(path.join(base, 'codex', 'pin-bridge.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof codexPinBridgeModule?.codexThreadNativePinFields !== 'function') codexPinBridgeModule = null
+} catch { codexPinBridgeModule = null }
+
 
 // A failed load degrades to the bare minimum safe fields (`key` plus an
 // `unavailable` unread authority) rather than a partial passthrough: this is
@@ -9626,8 +9649,15 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       projectKey: project.key,
       projectName: project.name,
       projectKind: project.kind === 'chats' ? 'chats' : 'project',
-      nativePinned: registry.pinnedThreadOrder.has(thread.id),
-      ...(registry.pinnedThreadOrder.has(thread.id) ? { nativePinnedOrder: registry.pinnedThreadOrder.get(thread.id) } : {})
+      // Pin authority is the app-server section (CodexHost `pinned` for extra
+      // processes); the global-state mirror only answers rows without one.
+      ...(codexPinBridgeModule
+        ? codexPinBridgeModule.codexThreadNativePinFields(thread, registry.pinnedThreadOrder)
+        : {
+            nativePinned: registry.pinnedThreadOrder.has(thread.id),
+            nativePinLane: 'mirror',
+            ...(registry.pinnedThreadOrder.has(thread.id) ? { nativePinnedOrder: registry.pinnedThreadOrder.get(thread.id) } : {})
+          })
     })
   }
   return threads
@@ -11062,6 +11092,9 @@ function companionProviderMetadataV7(input = {}) {
     turnMode: source.turnMode === 'plan' || source.turnMode === 'default' ? source.turnMode : 'unknown',
     idleConfirmed: source.idleConfirmed === true,
     localPin: source.localPin === true,
+    providerPin: source.providerPin === true ? true : source.providerPin === false ? false : null,
+    providerPinOrder: companionEvidenceSequenceV7(source.providerPinOrder),
+    providerPinAuthority: typeof source.providerPinAuthority === 'string' ? source.providerPinAuthority : '',
     manualPhase: isManualTaskPhase(source.manualPhase) ? source.manualPhase : '',
     manualPhaseSetAt: companionEvidenceSequenceV7(source.manualPhaseSetAt),
     dynamicEligible: source.dynamicEligible === true,
@@ -11285,11 +11318,18 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
           evidence: rootSource.lastTurnStatus === 'completed' ? 'completed' : 'stopped'
         }
       : undefined
+    // The pin write needs a lane that can also read the result back: the
+    // app-server section or the Host `pinned` field. A mirror-only row (an
+    // app-server without `section`) stays read-only.
+    const pinLane = isRoot && (rootSource.nativePinLane === 'app-server' || rootSource.nativePinLane === 'codexhost')
+      ? rootSource.nativePinLane
+      : isRoot && rootSource.nativePinLane === 'mirror' ? 'app-server' : ''
     const capabilities = isRoot
       ? [
           ...(rootActionAlias ? ['open'] : []),
           ...(terminalCandidate ? ['archive'] : []),
-          ...(observation.planState === 'available' ? ['pause', 'resume', 'execute-plan'] : [])
+          ...(observation.planState === 'available' ? ['pause', 'resume', 'execute-plan'] : []),
+          ...(rootActionAlias && (rootSource.nativePinLane === 'app-server' || rootSource.nativePinLane === 'codexhost') ? ['pin'] : [])
         ]
       : []
     const metadata = companionProviderMetadataV7({
@@ -11309,6 +11349,9 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       turnMode: isRoot ? rootSource.turnMode : 'unknown',
       idleConfirmed: !(observation.candidates || []).some((candidate) => candidate.kind === 'turn-running'),
       localPin,
+      providerPin: pinLane ? rootSource.nativePinned === true : null,
+      providerPinOrder: Number.isInteger(rootSource.nativePinnedOrder) ? rootSource.nativePinnedOrder : order,
+      providerPinAuthority: pinLane,
       // Only a root row carries a hand-set phase: a topology child has its own
       // evidence and must not inherit the parent's stand-in.
       manualPhase: isRoot ? manualPhaseEntry?.phase || '' : '',
@@ -11482,6 +11525,10 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
       hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
       idleConfirmed: terminal,
       localPin,
+      // The App's sidebar star is its pin. Read-only: it is server-synced.
+      providerPin: session.isStarred === true,
+      providerPinOrder: input.order,
+      providerPinAuthority: 'claude-metadata',
       manualPhase: manualPhaseEntry?.phase || '',
       manualPhaseSetAt: manualPhaseEntry?.setAt || 0,
       dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.turnStartedAt, session.lastActivityAt) >= input.dynamicCutoff,
@@ -11631,6 +11678,10 @@ function companionCursorEvidenceV7(sessionValue, hookValue, input = {}) {
       hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
       idleConfirmed: terminal,
       localPin,
+      // Workspace-store sidebar pin. Read-only: VS Code caches that table.
+      providerPin: typeof session.pinned === 'boolean' ? session.pinned : null,
+      providerPinOrder: Number.isInteger(session.pinnedOrder) ? session.pinnedOrder : input.order,
+      providerPinAuthority: typeof session.pinned === 'boolean' ? 'cursor-workspace' : '',
       dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.lastUpdatedAt, session.unfinishedRunAt) >= input.dynamicCutoff,
       displayName: alias || originalTitle,
       originalTitle,
@@ -12050,6 +12101,10 @@ const companionHostRegistry = createCompanionHostRegistry?.({
       intentRecorded: request?.intentRecorded === true,
       confirmationRecorded: request?.confirmationRecorded === true
     }) : Promise.resolve({ outcome: 'failed', errorCode: 'archive-unavailable', message: '归档服务不可用，任务已保留' }),
+    // Same late-binding shape as archive: the pin bridge is constructed below.
+    setPin: (target, request) => codexPinBridge
+      ? codexPinBridge.setCompanionPin(target.actionAlias, { pinned: request?.pinned === true, source: request?.source, taskRef: target.key })
+      : Promise.resolve({ outcome: 'failed', errorCode: 'pin-unavailable', message: '置顶同步服务不可用' }),
     close: () => undefined
   },
   claude: {
@@ -12165,6 +12220,31 @@ try {
     })
   }
 } catch { codexArchiveBridge = null }
+
+// Outbound pin lane. Built after the alias table and the Host lane exist; a
+// verified write patches the 500ms verified-snapshot cache so a draft
+// rebuild between two scans cannot flash the pre-write pin back.
+let codexPinBridge = null
+try {
+  if (codexPinBridgeModule && typeof codexPinBridgeModule.createCodexPinBridge === 'function') {
+    codexPinBridge = codexPinBridgeModule.createCodexPinBridge({
+      requestCodexRpc,
+      record: (entry) => recordCompanionDiagnosticEvent(entry),
+      codexhostDiscovery,
+      threadActions: codexThreadActions,
+      onProviderPinVerified: (threadId, pinned, lane) => {
+        const cached = companionCodexVerifiedSnapshotCacheV7?.result?.value?.threads
+        if (!Array.isArray(cached)) return
+        for (const thread of cached) {
+          const row = codexRecord(thread)
+          if (codexThreadActions.get(row.actionAlias)?.threadId !== threadId) continue
+          row.nativePinned = pinned
+          row.nativePinLane = lane
+        }
+      }
+    })
+  }
+} catch { codexPinBridge = null }
 
 
 // route-3 (RAW-169) closure rewrite: the entire Float subsystem lives behind

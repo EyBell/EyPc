@@ -1359,7 +1359,7 @@ const drawerActions = computed<DrawerAction[]>(() => {
       { id: 'task-new-thread-model', label: '选择模型新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project, true) },
       { id: 'task-detail', label: '查看详情', run: () => openDetailPanel(item) },
       { id: 'task-alias', label: '编辑别名', run: () => editAlias(item) },
-      { id: 'task-pin', label: item.task.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.task.pinSource === 'native', disabledReason: '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
+      { id: 'task-pin', label: pinMenuLabel(item), disabled: pinIsReadOnly(item), disabledReason: `${pinProviderLabel(item)}只读，请在应用内取消`, run: () => togglePin(item) },
       ...manualPhaseActions,
       ...planActions,
       { id: 'task-archive', label: '真实归档', danger: true, disabled: !item.task.canArchive, disabledReason: taskArchiveBlockedReason(item.task), run: requestTaskArchive }
@@ -1613,13 +1613,38 @@ function isProjectCollapsed(project: CodexProjectCard) {
     : project.collapsed
 }
 
+/** Task rows whose provider accepts the EyPc pin write (Codex app-server, CodexHost). */
+function pinProviderWritable(item: FocusItem) {
+  return item.kind === 'task' && item.task.companionCapabilities?.pin === true
+}
+
+function pinProviderLabel(item: FocusItem) {
+  const provider = item.kind === 'task' ? companionTaskProvider(item.task) : 'codex'
+  return provider === 'claude' ? 'Claude App 星标' : provider === 'cursor' ? 'Cursor 置顶' : 'Codex 置顶'
+}
+
 function pinSourceHint(item: FocusItem) {
   if (item.kind === 'project' && item.project.kind === 'chats') return 'Chats 分组不可置顶'
   if (item.kind === 'project' && item.marker.claudeOnly) return projectActionBlockedReason(item.marker, '项目置顶')
   const source = item.kind === 'task' ? item.task.pinSource : item.project.pinSource
-  if (source === 'native') return '来源：Codex 原生置顶 · 顺序只读'
-  if (source === 'local') return '来源：EyPc 本地置顶 · 点击取消'
-  return '未置顶 · 点击后由 EyPc 本地置顶'
+  if (source === 'native') {
+    return pinProviderWritable(item)
+      ? `来源：${pinProviderLabel(item)} · 点击取消并同步`
+      : item.kind === 'task'
+        ? `来源：${pinProviderLabel(item)} · 只读，请在应用内取消`
+        : '来源：Codex 原生置顶 · 顺序只读'
+  }
+  if (source === 'local') {
+    return pinProviderWritable(item) ? '来源：EyPc 本地置顶（Codex 未同步） · 点击取消' : '来源：EyPc 本地置顶 · 点击取消'
+  }
+  return pinProviderWritable(item) ? '未置顶 · 点击后同步置顶到 Codex' : '未置顶 · 点击后由 EyPc 本地置顶'
+}
+
+function pinMenuLabel(item: FocusItem) {
+  const source = item.kind === 'task' ? item.task.pinSource : item.project.pinSource
+  if (pinProviderWritable(item)) return source ? '取消置顶（同步 Codex）' : '置顶（同步 Codex）'
+  if (source === 'native') return `${pinProviderLabel(item)}（只读）`
+  return source === 'local' ? '取消本地置顶' : '本地置顶'
 }
 
 function pinSourceValue(item: FocusItem) {
@@ -1629,7 +1654,8 @@ function pinSourceValue(item: FocusItem) {
 
 function pinIsReadOnly(item: FocusItem) {
   const source = pinSourceValue(item)
-  return source === 'native' || source === 'blocked'
+  if (source === 'native') return !pinProviderWritable(item)
+  return source === 'blocked'
 }
 
 function togglePin(item: FocusItem) {

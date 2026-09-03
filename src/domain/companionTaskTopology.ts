@@ -133,6 +133,7 @@ export type CompanionTaskCommandNameV1 =
   | 'set-alias'
   | 'set-visibility'
   | 'set-pin'
+  | 'set-provider-pin'
   | 'set-collapse'
   | 'set-manual-phase'
 

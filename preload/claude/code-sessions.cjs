@@ -96,6 +96,9 @@ function normalizeMetadata(parsed, stat, expectedSessionId) {
     lastFocusedAt: numberOf(parsed.lastFocusedAt),
     model: textOf(parsed.model),
     isArchived: parsed.isArchived === true,
+    // The App's own sidebar pin (it calls the flag "starred"). Read-only for
+    // EyPc: star state is server-synced, so it is never written from here.
+    isStarred: parsed.isStarred === true,
     // Durable App metadata. It proves at least one historical turn completed;
     // it never outranks a newer live App-log/Hook event.
     completedTurns: nonNegativeInteger(parsed.completedTurns),

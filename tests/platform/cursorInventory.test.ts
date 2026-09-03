@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { createRequire } from 'node:module'
 import { DatabaseSync } from 'node:sqlite'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import fs, { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 const require_ = createRequire(import.meta.url)
 const inventoryModule = require_(resolve(process.cwd(), 'preload/cursor/inventory.cjs'))
@@ -175,6 +175,58 @@ describe('cursor inventory reader', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  it('reads the sidebar pin list from every workspace store and joins it by composer id', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-pinned-'))
+    const dbPath = join(root, 'User', 'globalStorage', 'state.vscdb')
+    mkdirSync(dirname(dbPath), { recursive: true })
+    writeFixture(dbPath)
+    const workspaceA = join(root, 'User', 'workspaceStorage', 'empty-window')
+    const workspaceB = join(root, 'User', 'workspaceStorage', 'other')
+    mkdirSync(workspaceA, { recursive: true })
+    mkdirSync(workspaceB, { recursive: true })
+    const writePins = (dir: string, ids: string[]) => {
+      const db = new DatabaseSync(join(dir, 'state.vscdb'))
+      db.exec('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)')
+      db.prepare('INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)').run('cursor/pinnedComposers', JSON.stringify(ids))
+      db.close()
+    }
+    writePins(workspaceA, [NONE_WITH_HEADERS.toUpperCase(), `bc-${LOCAL}`])
+    writePins(workspaceB, [LOCAL, NONE_WITH_HEADERS])
+    try {
+      const reader = inventoryModule.createInventoryReader({
+        fs,
+        path: { join, dirname },
+        os: { homedir: () => root },
+        platform: 'darwin',
+        env: {},
+        stateDbPath: dbPath,
+        DatabaseSync
+      })
+      const snapshot = reader.readInventory()
+      expect(snapshot.pinnedAvailable).toBe(true)
+      expect(snapshot.pinnedStoreCount).toBe(2)
+      const byId = new Map(snapshot.sessions.map((session: { composerId: string }) => [session.composerId, session]))
+      // Pinned in two windows: the lowest position wins; case is normalized.
+      expect(byId.get(NONE_WITH_HEADERS)).toMatchObject({ pinned: true, pinnedOrder: 0 })
+      expect(byId.get(LOCAL)).toMatchObject({ pinned: true, pinnedOrder: 0 })
+      // A store that unpins is re-read on its next signature; an unchanged one is served from cache.
+      writePins(workspaceB, [])
+      const unpinned = reader.readInventory()
+      expect(unpinned.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)).toMatchObject({ pinned: false })
+      expect(unpinned.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)).not.toHaveProperty('pinnedOrder')
+      expect(unpinned.sessions.find((session: { composerId: string }) => session.composerId === NONE_WITH_HEADERS)).toMatchObject({ pinned: true, pinnedOrder: 0 })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('parses the pin list defensively', () => {
+    expect(inventoryModule.parsePinnedComposers([{ value: JSON.stringify([LOCAL, LOCAL, 7, '']) }])).toEqual([LOCAL])
+    expect(inventoryModule.parsePinnedComposers([{ value: 'not json' }])).toEqual([])
+    expect(inventoryModule.parsePinnedComposers([{ value: JSON.stringify({ a: 1 }) }])).toEqual([])
+    expect(inventoryModule.parsePinnedComposers([])).toEqual([])
   })
 
   it('degrades when the database is missing', () => {

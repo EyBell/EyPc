@@ -31,6 +31,7 @@ export const COMPANION_TASK_KERNEL_REVISION = COMPANION_V7_REVISIONS.kernel
 export const COMPANION_TASK_PACKAGE_REVISION = COMPANION_V7_REVISIONS.snapshot
 
 export type CompanionTaskKind = 'codex-thread' | 'claude-session' | 'cursor-session' | 'topology-child' | 'local-pin'
+export type CompanionProviderPinAuthority = 'app-server' | 'codexhost' | 'claude-metadata' | 'cursor-workspace'
 export type CompanionTaskPhase = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
 export type CompanionTaskEvidencePhaseV4 = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'interrupted' | 'failed' | 'unknown'
 export type CompanionTaskFreshnessV4 = 'fresh' | 'verifying'
@@ -120,6 +121,10 @@ export interface CompanionCanonicalTaskV4 {
   turnMode: 'plan' | 'default' | 'unknown'
   idleConfirmed: boolean
   localPin: boolean
+  /** Provider-side pin; `null` when the provider has no pin lane for this row. */
+  providerPin?: boolean | null
+  providerPinOrder?: number
+  providerPinAuthority?: CompanionProviderPinAuthority | ''
   manualPhase?: string
   dynamicEligible: boolean
   capabilities: {
@@ -128,6 +133,8 @@ export interface CompanionCanonicalTaskV4 {
     pause: boolean
     resume: boolean
     executePlan: boolean
+    /** The provider accepts an EyPc pin/unpin write (Codex app-server, CodexHost). */
+    pin?: boolean
   }
   archiveRequest?: CompanionTaskArchiveRequestV3
   displayName?: string
@@ -405,7 +412,13 @@ function projectCanonicalCard(
     hasCurrentActivity: live,
     canArchive: archiveCapability === 'allowed'
   }
+  // A local pin wins the control's identity; a provider pin alone shows as
+  // native (Codex Pinned section, Claude star, Cursor pinned agent).
   if (task.localPin) next.pinSource = 'local'
+  else if (task.providerPin === true) next.pinSource = 'native'
+  else if (task.providerPin === false) delete next.pinSource
+  // Provider pin unknown (a Host without the lane): keep the legacy inventory
+  // native marker, only never a stale local one.
   else if (next.pinSource === 'local') delete next.pinSource
   if (task.phase === 'waiting-input') next.activeFlags = ['waitingOnUserInput']
   else if (task.phase === 'waiting-approval') next.activeFlags = ['waitingOnApproval']
@@ -548,7 +561,7 @@ function projectConversationSnapshot(
   const representedTasks = new Set(projectedSections.flatMap((section) => section.entries
     .filter((entry) => entry.kind === 'task')
     .map((entry) => entry.task.key)))
-  const pinnedTasks = visible.filter((task) => task.pinSource === 'local' && !representedTasks.has(task.key))
+  const pinnedTasks = visible.filter((task) => Boolean(task.pinSource) && !representedTasks.has(task.key))
   const missingProjects = projects.filter((project) => !representedProjects.has(project.key))
   const sectionById = new Map(projectedSections.map((section) => [section.id, section]))
   const ensureSection = (id: CodexProjectSection['id'], title: CodexProjectSection['title']) => {
@@ -559,7 +572,7 @@ function projectConversationSnapshot(
     sectionById.set(id, section)
     return section
   }
-  ensureSection('pinned', 'Pinned').entries.push(...pinnedTasks.map((task) => ({ kind: 'task' as const, task, pinSource: 'local' as const })))
+  ensureSection('pinned', 'Pinned').entries.push(...pinnedTasks.map((task) => ({ kind: 'task' as const, task, pinSource: task.pinSource === 'native' ? 'native' as const : 'local' as const })))
   for (const project of missingProjects) {
     ensureSection(project.kind === 'chats' ? 'chats' : 'projects', project.kind === 'chats' ? 'Chats' : 'Projects')
       .entries.push({ kind: 'project', project })

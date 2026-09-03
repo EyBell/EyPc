@@ -16,7 +16,7 @@
  * nested forks still attach to the root conversation the App shows.
  */
 
-const CURSOR_INVENTORY_REVISION = 'cursor-agent-inventory-v4'
+const CURSOR_INVENTORY_REVISION = 'cursor-agent-inventory-v5'
 const SQLITE_QUERY_TIMEOUT_MS = 20_000
 const SQLITE_QUERY_MAX_BUFFER = 8 * 1024 * 1024
 const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
@@ -30,6 +30,18 @@ const MAX_ROWS = 500
 /** Fork ids may be prefixed (`task-<uuid>`), so only sanity-bound them. */
 const SUBAGENT_ID_MAX_LENGTH = 128
 const MAX_SUBAGENTS_PER_PARENT = 24
+/**
+ * Cursor keeps the sidebar pin list per workspace window, not in the global
+ * store: `workspaceStorage/<ws>/state.vscdb` `ItemTable` key
+ * `cursor/pinnedComposers` is an ordered JSON string[] (composer ids, at most
+ * 50, possibly a background-composer alias beside the id). Read-only: that
+ * table is VS Code's in-memory StorageService, so an external write would be
+ * clobbered on the next flush.
+ */
+const PINNED_COMPOSERS_KEY = 'cursor/pinnedComposers'
+const PINNED_SQL = `SELECT value AS value FROM ItemTable WHERE key = '${PINNED_COMPOSERS_KEY}'`
+const MAX_WORKSPACE_DBS = 200
+const MAX_PINNED_PER_WORKSPACE = 50
 
 const INVENTORY_SQL = `
 SELECT
@@ -156,9 +168,15 @@ function collectSubagentsByParent(rows) {
   return { byParent, truncated }
 }
 
-function projectRow(row, subagents) {
+function projectRow(row, subagents, pinnedOrder) {
+  const composerId = textOf(row.composerId).trim()
+  const order = pinnedOrder instanceof Map ? pinnedOrder.get(composerId.toLowerCase()) : undefined
   return {
-    composerId: textOf(row.composerId).trim(),
+    composerId,
+    // Sidebar pin from workspace storage. `pinned` is always a boolean once a
+    // pin scan ran; the reader's `pinnedAvailable` says whether it did.
+    pinned: Number.isInteger(order),
+    ...(Number.isInteger(order) ? { pinnedOrder: order } : {}),
     workspaceIdentifier: textOf(row.workspaceIdentifier).trim() || textOf(row.workspaceId).trim(),
     name: textOf(row.name).trim(),
     subtitle: textOf(row.subtitle).trim(),
@@ -195,17 +213,17 @@ function sqliteUri(dbPath) {
   return `file:${normalized}?mode=ro`
 }
 
-function queryWithDatabaseSync(DatabaseSync, dbPath) {
+function queryWithDatabaseSync(DatabaseSync, dbPath, sql = INVENTORY_SQL) {
   const database = new DatabaseSync(dbPath, { readOnly: true })
   try {
-    return database.prepare(INVENTORY_SQL).all()
+    return database.prepare(sql).all()
   } finally {
     try { if (typeof database.close === 'function') database.close() } catch {}
   }
 }
 
-function queryWithCli(execFileSync, bin, dbPath) {
-  const raw = execFileSync(bin, ['-readonly', '-json', sqliteUri(dbPath), INVENTORY_SQL], {
+function queryWithCli(execFileSync, bin, dbPath, sql = INVENTORY_SQL) {
+  const raw = execFileSync(bin, ['-readonly', '-json', sqliteUri(dbPath), sql], {
     encoding: 'utf8',
     timeout: SQLITE_QUERY_TIMEOUT_MS,
     maxBuffer: SQLITE_QUERY_MAX_BUFFER
@@ -215,32 +233,58 @@ function queryWithCli(execFileSync, bin, dbPath) {
   return parsed
 }
 
-function queryWithBuiltinSqlite(dbPath) {
+function queryWithBuiltinSqlite(dbPath, sql = INVENTORY_SQL) {
   let sqlite
   try { sqlite = require('node:sqlite') } catch { throw sqliteUnavailable('node-sqlite-unavailable') }
   if (!sqlite || typeof sqlite.DatabaseSync !== 'function') throw sqliteUnavailable('node-sqlite-unavailable')
-  return queryWithDatabaseSync(sqlite.DatabaseSync, dbPath)
+  return queryWithDatabaseSync(sqlite.DatabaseSync, dbPath, sql)
 }
 
-function queryInventoryRows(dependencies, dbPath) {
+function queryRows(dependencies, dbPath, sql) {
   const DatabaseSync = dependencies.DatabaseSync
-  if (typeof DatabaseSync === 'function') return queryWithDatabaseSync(DatabaseSync, dbPath)
+  if (typeof DatabaseSync === 'function') return queryWithDatabaseSync(DatabaseSync, dbPath, sql)
   const execFileSync = dependencies.execFileSync
   const bin = resolveSqliteBin(dependencies.fs, dependencies.sqliteBin)
   if (bin && typeof execFileSync === 'function') {
     try {
-      return queryWithCli(execFileSync, bin, dbPath)
+      return queryWithCli(execFileSync, bin, dbPath, sql)
     } catch (error) {
       if (error && error.code === 'sqlite-unavailable') throw error
       if (dependencies.allowBuiltinSqlite === false) throw error
-      try { return queryWithBuiltinSqlite(dbPath) } catch (fallback) {
+      try { return queryWithBuiltinSqlite(dbPath, sql) } catch (fallback) {
         if (fallback && fallback.code === 'sqlite-unavailable') throw error
         throw fallback
       }
     }
   }
   if (dependencies.allowBuiltinSqlite === false) throw sqliteUnavailable('sqlite-unavailable')
-  return queryWithBuiltinSqlite(dbPath)
+  return queryWithBuiltinSqlite(dbPath, sql)
+}
+
+function queryInventoryRows(dependencies, dbPath) {
+  return queryRows(dependencies, dbPath, INVENTORY_SQL)
+}
+
+/** Ordered composer ids from one workspace store; `[]` when the key is absent. */
+function parsePinnedComposers(rows) {
+  const first = Array.isArray(rows) && rows.length ? rows[0] : null
+  const raw = first && typeof first === 'object' ? first.value : first
+  if (typeof raw !== 'string' || !raw) return []
+  let parsed
+  try { parsed = JSON.parse(raw) } catch { return [] }
+  if (!Array.isArray(parsed)) return []
+  const ids = []
+  for (const value of parsed) {
+    const id = textOf(value).trim().toLowerCase()
+    if (id && id.length <= SUBAGENT_ID_MAX_LENGTH && !ids.includes(id)) ids.push(id)
+    if (ids.length >= MAX_PINNED_PER_WORKSPACE) break
+  }
+  return ids
+}
+
+function workspaceStorageDir(pathModule, dbPath) {
+  const dirname = typeof pathModule.dirname === 'function' ? pathModule.dirname : (value) => String(value).replace(/[/\\][^/\\]+$/, '')
+  return pathModule.join(dirname(dirname(dbPath)), 'workspaceStorage')
 }
 
 function createInventoryReader(dependencies) {
@@ -256,6 +300,60 @@ function createInventoryReader(dependencies) {
 
   function resolveDbPath() {
     return textOf(dependencies.stateDbPath) || defaultStateDbPath(os, path, platform, env)
+  }
+
+  function resolveWorkspaceStorageDir() {
+    return textOf(dependencies.workspaceStorageDir) || workspaceStorageDir(path, resolveDbPath())
+  }
+
+  /** workspace db path -> { signature, ids } so an unchanged store is never re-queried. */
+  const pinnedCache = new Map()
+
+  function listWorkspaceDbs() {
+    const root = resolveWorkspaceStorageDir()
+    let names = []
+    try { names = fs.readdirSync(root) } catch { return [] }
+    const paths = []
+    for (const name of names) {
+      if (paths.length >= MAX_WORKSPACE_DBS) break
+      const candidate = path.join(root, String(name), 'state.vscdb')
+      if (typeof fs.existsSync === 'function' && !fs.existsSync(candidate)) continue
+      paths.push(candidate)
+    }
+    return paths
+  }
+
+  /**
+   * composerId -> order across every workspace store. An id pinned in two
+   * windows keeps its lowest position. A store that cannot be read keeps its
+   * last known ids, so a transient lock never reads as "everything unpinned".
+   */
+  function readPinnedComposers() {
+    const order = new Map()
+    const dbs = listWorkspaceDbs()
+    const seen = new Set(dbs)
+    for (const key of [...pinnedCache.keys()]) if (!seen.has(key)) pinnedCache.delete(key)
+    let available = dbs.length > 0
+    let scanned = 0
+    for (const dbPath of dbs) {
+      const signature = dbSignature(dbPath)
+      const cached = pinnedCache.get(dbPath)
+      let ids = cached ? cached.ids : []
+      if (!cached || cached.signature !== signature) {
+        try {
+          ids = parsePinnedComposers(queryRows(dependencies, dbPath, PINNED_SQL))
+          pinnedCache.set(dbPath, { signature, ids })
+          scanned += 1
+        } catch {
+          if (!cached) available = false
+        }
+      }
+      ids.forEach((id, index) => {
+        const existing = order.get(id)
+        if (existing === undefined || index < existing) order.set(id, index)
+      })
+    }
+    return { order, available, scanned, storeCount: dbs.length }
   }
 
   function readInventory() {
@@ -276,10 +374,11 @@ function createInventoryReader(dependencies) {
       const rows = queryInventoryRows(dependencies, dbPath)
       const allRows = Array.isArray(rows) ? rows : []
       const topology = collectSubagentsByParent(allRows)
+      const pinned = readPinnedComposers()
       const sessions = []
       for (const row of allRows) {
         if (!isInventoryRow(row)) continue
-        sessions.push(projectRow(row, topology.byParent.get(textOf(row.composerId).trim().toLowerCase())))
+        sessions.push(projectRow(row, topology.byParent.get(textOf(row.composerId).trim().toLowerCase()), pinned.order))
         if (sessions.length >= MAX_ROWS) break
       }
       return {
@@ -289,6 +388,8 @@ function createInventoryReader(dependencies) {
         sessions,
         truncated: rows.length > sessions.length && sessions.length >= MAX_ROWS,
         topologyComplete: topology.truncated !== true,
+        pinnedAvailable: pinned.available,
+        pinnedStoreCount: pinned.storeCount,
         readAt: Date.now()
       }
     } catch (error) {
@@ -325,10 +426,14 @@ function createInventoryReader(dependencies) {
     const recovery = []
     let disposed = false
     let scheduled = false
-    let lastSignature = targets.map(dbSignature).join('|')
+    // Workspace pin stores change without touching the global db, so their
+    // signatures join the change detector and a recursive watch covers them.
+    const workspaceRoot = resolveWorkspaceStorageDir()
+    const signatureOf = () => [...targets, ...listWorkspaceDbs()].map(dbSignature).join('|')
+    let lastSignature = signatureOf()
     const notify = () => {
       if (disposed) return
-      const next = targets.map(dbSignature).join('|')
+      const next = signatureOf()
       if (next === lastSignature) return
       lastSignature = next
       try { listener() } catch { /* consumer's problem */ }
@@ -354,6 +459,19 @@ function createInventoryReader(dependencies) {
       }
       watchers.push(dirWatcher)
     } catch { /* directory watch is the fast path; file watches remain */ }
+    try {
+      const workspaceWatcher = fs.watch(workspaceRoot, { persistent: false, recursive: true }, (_event, filename) => {
+        const name = basename(String(filename || ''))
+        if (name !== 'state.vscdb' && name !== 'state.vscdb-wal') return
+        requestNotify()
+      })
+      if (workspaceWatcher && typeof workspaceWatcher.on === 'function') {
+        workspaceWatcher.on('error', () => {
+          try { if (typeof workspaceWatcher.close === 'function') workspaceWatcher.close() } catch { /* already gone */ }
+        })
+      }
+      watchers.push(workspaceWatcher)
+    } catch { /* recursive watch is best effort; the next inventory read still scans */ }
     for (const filePath of targets) {
       try {
         const watcher = fs.watch(filePath, { persistent: false }, () => requestNotify())
@@ -394,5 +512,7 @@ function createInventoryReader(dependencies) {
 
 module.exports = {
   CURSOR_INVENTORY_REVISION,
+  PINNED_COMPOSERS_KEY,
+  parsePinnedComposers,
   createInventoryReader
 }
