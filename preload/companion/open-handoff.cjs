@@ -48,8 +48,44 @@ function normalizeCompanionOpenReceipt(value) {
   }
 }
 
+/** Bounded readiness note: what the open-readiness step did before the opener ran. */
+function normalizeOpenLaunch(value) {
+  if (!value || typeof value !== 'object') return null
+  const outcome = value.outcome === 'launched' ? 'launched' : value.outcome === 'ready' ? 'ready' : ''
+  if (!outcome) return null
+  const launcher = ['none', 'open-b', 'open-a', 'codexhost', 'unsupported'].includes(value.launcher) ? value.launcher : 'none'
+  const waitedMs = Number.isFinite(Number(value.waitedMs)) ? Math.max(0, Math.trunc(Number(value.waitedMs))) : 0
+  return { outcome, launcher, waitedMs }
+}
+
+/**
+ * One open result shape for the Kernel and the navigation lane. Both used to
+ * carry a verbatim copy of this normalizer; a field added on one side was
+ * silently dropped on the other.
+ */
+function normalizeOpenResult(value, target) {
+  const source = value && typeof value === 'object' ? value : {}
+  const receipt = normalizeCompanionOpenReceipt(source)
+  const launch = normalizeOpenLaunch(source.launch)
+  return {
+    outcome: receipt.outcome,
+    provider: target.provider,
+    key: target.key,
+    ...(typeof source.operationId === 'string' ? { operationId: source.operationId.slice(0, 160) } : {}),
+    ...(typeof source.errorCode === 'string' && source.errorCode ? { errorCode: source.errorCode.slice(0, 80) } : {}),
+    ...(typeof source.message === 'string' && source.message
+      ? { message: source.message.slice(0, 240) }
+      : receipt.downgraded ? { message: '打开请求已发送，等待原生确认' } : {}),
+    confirmsRead: receipt.confirmsRead,
+    ...(receipt.handoff ? { handoff: receipt.handoff } : {}),
+    ...(launch ? { launch } : {})
+  }
+}
+
 module.exports = {
   COMPANION_OPEN_HANDOFF_REVISION,
   normalizeCompanionOpenHandoff,
-  normalizeCompanionOpenReceipt
+  normalizeCompanionOpenReceipt,
+  normalizeOpenLaunch,
+  normalizeOpenResult
 }

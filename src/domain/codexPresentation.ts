@@ -28,6 +28,20 @@ export interface CodexQuotaReading {
   limitName: string
 }
 
+/**
+ * The weekly reading among a compact pair, whichever slot carries it. The
+ * float card, the water ball ring and the settings preview all ask the same
+ * question; one answer keeps them from drifting apart.
+ */
+export function codexWeeklyReading(
+  primary: CodexQuotaReading | null | undefined,
+  secondary: CodexQuotaReading | null | undefined
+): CodexQuotaReading | null {
+  if (primary?.kind === 'weekly') return primary
+  if (secondary?.kind === 'weekly') return secondary
+  return null
+}
+
 export interface CodexCompactPresentation {
   primary: CodexQuotaReading | null
   secondary: CodexQuotaReading | null

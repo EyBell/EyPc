@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { CodexColorSettings, CodexWaterAppearanceSettings } from '../domain/codex'
 import { codexWaterAppearanceCssVars } from '../domain/codexAppearance'
-import type { CodexQuotaReading } from '../domain/codexPresentation'
+import { codexWeeklyReading, type CodexQuotaReading } from '../domain/codexPresentation'
 
 const props = withDefaults(defineProps<{
   primary: CodexQuotaReading | null
@@ -49,7 +49,7 @@ const dualReading = computed(() => hasPercentOverride.value
   && Number.isFinite(props.scopedPercent)
   ? { scoped: props.scopedPercent as number, primary: props.percentOverride as number }
   : null)
-const weekly = computed(() => props.primary?.kind === 'weekly' ? props.primary : props.secondary?.kind === 'weekly' ? props.secondary : null)
+const weekly = computed(() => codexWeeklyReading(props.primary, props.secondary))
 const weeklyPercent = computed(() => weekly.value?.bucket.remainingPercent ?? 0)
 const activeWeeklySegments = computed(() => Math.ceil(weeklyPercent.value / 5))
 const wavePath = 'M0 12 C12.5 0 37.5 0 50 12 S87.5 24 100 12 C112.5 0 137.5 0 150 12 S187.5 24 200 12 L200 24 L0 24 Z'

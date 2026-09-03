@@ -26,7 +26,7 @@ import {
   quotaStatusColor,
   resolveCodexExpandedCardTheme
 } from '../domain/codexAppearance'
-import { buildCodexCompactPresentation, codexBadgeText } from '../domain/codexPresentation'
+import { buildCodexCompactPresentation, codexBadgeText, codexWeeklyReading } from '../domain/codexPresentation'
 import {
   buildCodexEnvironmentPresentation,
   codexConnectionStatusLabel,
@@ -143,9 +143,7 @@ const companionPreview = computed(() => resolveCompanionWaterBallPresentation({
 const waterPreviewStyle = computed<Record<string, string>>(() => {
   const { inner, outer } = waterDraft.value
   const colors = props.snapshot.settings.colors
-  const weekly = waterPreview.value.primary?.kind === 'weekly'
-    ? waterPreview.value.primary
-    : waterPreview.value.secondary?.kind === 'weekly' ? waterPreview.value.secondary : null
+  const weekly = codexWeeklyReading(waterPreview.value.primary, waterPreview.value.secondary)
   const ringPercent = weekly?.bucket.remainingPercent ?? waterPreview.value.primary?.bucket.remainingPercent ?? 100
   return {
     '--appearance-water-base': colors.water,
