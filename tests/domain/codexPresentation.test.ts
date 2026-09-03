@@ -4,7 +4,8 @@ import {
   buildCodexCompactPresentation,
   CODEX_DYNAMIC_TASK_WINDOW_MS,
   normalizeCodexTaskStatePackage,
-  projectCodexDynamicStatus
+  projectCodexDynamicStatus,
+  codexWeeklyReading
 } from '../../src/domain/codexPresentation'
 import { CODEX_TASK_STATE_REVISION, emptyConversationSnapshot, type CodexCompactField, type CodexQuotaSnapshotV1, type CodexTaskCard } from '../../src/domain/codex'
 
@@ -52,6 +53,17 @@ function task(key: string, overrides: Partial<CodexTaskCard> = {}): CodexTaskCar
     ...overrides
   }
 }
+
+describe('codexWeeklyReading', () => {
+  it('returns the weekly reading from whichever slot carries it', () => {
+    const weekly = { kind: 'weekly', family: 'normal', label: 'Weekly', longLabel: '周限额', bucket: { remainingPercent: 40, resetAt: null, windowMinutes: 7 * 24 * 60 }, limitName: 'Codex' } as const
+    const short = { ...weekly, kind: 'short', label: '5h', longLabel: '5 小时限额' } as const
+    expect(codexWeeklyReading(weekly, null)).toBe(weekly)
+    expect(codexWeeklyReading(short, weekly)).toBe(weekly)
+    expect(codexWeeklyReading(short, null)).toBeNull()
+    expect(codexWeeklyReading(null, undefined)).toBeNull()
+  })
+})
 
 describe('Codex compact presentation', () => {
   it('projects both quotas as 5h primary and Weekly secondary', () => {

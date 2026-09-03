@@ -1,6 +1,6 @@
 'use strict'
 
-const { normalizeCompanionOpenReceipt } = require('./open-handoff.cjs')
+const { normalizeOpenResult } = require('./open-handoff.cjs')
 
 const { PROVIDERS } = require('./provider-registry.cjs')
 const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v3'
@@ -54,34 +54,6 @@ function normalizeTarget(value, enabledProviders) {
     canResume: value.canResume === true,
     canExecutePlan: value.canExecutePlan === true,
     archiveRequest
-  }
-}
-
-/** Bounded readiness note: what the open-readiness step did before the opener ran. */
-function normalizeOpenLaunch(value) {
-  if (!value || typeof value !== 'object') return null
-  const outcome = value.outcome === 'launched' ? 'launched' : value.outcome === 'ready' ? 'ready' : ''
-  if (!outcome) return null
-  const launcher = ['none', 'open-b', 'open-a', 'codexhost', 'unsupported'].includes(value.launcher) ? value.launcher : 'none'
-  const waitedMs = Number.isFinite(Number(value.waitedMs)) ? Math.max(0, Math.trunc(Number(value.waitedMs))) : 0
-  return { outcome, launcher, waitedMs }
-}
-
-function normalizeOpenResult(value, target) {
-  const source = value && typeof value === 'object' ? value : {}
-  const receipt = normalizeCompanionOpenReceipt(source)
-  return {
-    outcome: receipt.outcome,
-    provider: target.provider,
-    key: target.key,
-    ...(typeof source.operationId === 'string' ? { operationId: source.operationId.slice(0, 160) } : {}),
-    ...(typeof source.errorCode === 'string' && source.errorCode ? { errorCode: source.errorCode.slice(0, 80) } : {}),
-    ...(typeof source.message === 'string' && source.message
-      ? { message: source.message.slice(0, 240) }
-      : receipt.downgraded ? { message: '打开请求已发送，等待原生确认' } : {}),
-    confirmsRead: receipt.confirmsRead,
-    ...(receipt.handoff ? { handoff: receipt.handoff } : {}),
-    ...(normalizeOpenLaunch(source.launch) ? { launch: normalizeOpenLaunch(source.launch) } : {})
   }
 }
 
