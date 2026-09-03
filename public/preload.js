@@ -4334,21 +4334,29 @@ function codexRememberDesktopOpenedRead(threadId, parentThreadId, known) {
   return true
 }
 
-function codexDesktopOpenedReadCoversCompletion(parentThreadId, known) {
-  const acknowledgement = codexDesktopOpenedReadAcknowledgements.get(parentThreadId)
-  if (!acknowledgement || acknowledgement.parentThreadId !== parentThreadId) return false
-  const currentStartedAt = codexTimestampMs(known?.lastTurnStartedAt)
-  if (!acknowledgement.turnStartedAt || !currentStartedAt) return false
+// The one rule for "does this opened-read acknowledgement still cover that
+// Turn": Turn id first; else an older/equal start is covered, and on an equal
+// start a completedAt merely filled in later is enrichment, not a new completion.
+function codexAcknowledgementCoversTurn(acknowledgement, turn) {
+  const currentStartedAt = codexTimestampMs(turn?.startedAt)
+  if (!acknowledgement?.turnStartedAt || !currentStartedAt) return false
   const acknowledgementTurnId = typeof acknowledgement.turnId === 'string' ? acknowledgement.turnId : ''
-  const currentTurnId = typeof known?.lastTurnId === 'string' ? known.lastTurnId : ''
-  // Turn identity is the stable epoch key. completedAt may be filled in or
-  // corrected after the task was opened; treating that enrichment as a new
-  // completion makes an already-read card recur as unread.
+  const currentTurnId = typeof turn?.id === 'string' ? turn.id : ''
   if (acknowledgementTurnId && currentTurnId) return acknowledgementTurnId === currentTurnId
   if (currentStartedAt < acknowledgement.turnStartedAt) return true
   if (currentStartedAt > acknowledgement.turnStartedAt) return false
-  const currentCompletedAt = codexTimestampMs(known?.lastTurnCompletedAt)
+  const currentCompletedAt = codexTimestampMs(turn?.completedAt)
   return !acknowledgement.turnCompletedAt || currentCompletedAt <= acknowledgement.turnCompletedAt
+}
+
+function codexDesktopOpenedReadCoversCompletion(parentThreadId, known) {
+  const acknowledgement = codexDesktopOpenedReadAcknowledgements.get(parentThreadId)
+  if (!acknowledgement || acknowledgement.parentThreadId !== parentThreadId) return false
+  return codexAcknowledgementCoversTurn(acknowledgement, {
+    id: known?.lastTurnId,
+    startedAt: known?.lastTurnStartedAt,
+    completedAt: known?.lastTurnCompletedAt
+  })
 }
 
 function codexClearDesktopOpenedRead(bridge, parentThreadId) {
@@ -4385,20 +4393,10 @@ function codexReconcileDesktopOpenedReadWithTurn(bridge, parentThreadId, turn) {
 function codexReconcileInventorySideOpenedReadWithTurn(threadId, parentThreadId, turn) {
   const acknowledgement = codexDesktopOpenedReadAcknowledgements.get(threadId)
   if (!acknowledgement || acknowledgement.parentThreadId !== parentThreadId) return false
-  const turnStartedAt = codexTimestampMs(turn?.startedAt)
-  if (!turn?.status || !turnStartedAt) return false
-  const acknowledgementTurnId = typeof acknowledgement.turnId === 'string' ? acknowledgement.turnId : ''
-  const turnId = typeof turn.id === 'string' ? turn.id : ''
-  const sameTurn = acknowledgementTurnId && turnId
-    ? acknowledgementTurnId === turnId
-    : turnStartedAt <= acknowledgement.turnStartedAt
-  if (turn.status === 'completed' && sameTurn) return false
+  if (!turn?.status || !codexTimestampMs(turn.startedAt)) return false
+  if (turn.status === 'completed' && codexAcknowledgementCoversTurn(acknowledgement, turn)) return false
   codexDesktopOpenedReadAcknowledgements.delete(threadId)
   return true
-}
-
-function codexForgetDesktopOpenedReadThread(threadId) {
-  codexDesktopOpenedReadAcknowledgements.delete(threadId)
 }
 
 // A failed load returns null: the shadow build downstream already treats a
@@ -5947,7 +5945,7 @@ class CodexDesktopCompanionBridge {
         const sideShadow = this.sideShadows.get(params.conversationId)
         if (message.method === 'thread-archived') {
           if (sideShadow || codexSideParentThreadId(params.conversationId)) {
-            codexForgetDesktopOpenedReadThread(params.conversationId)
+            codexDesktopOpenedReadAcknowledgements.delete(params.conversationId)
             this.forgetWaitingState(params.conversationId)
             codexForgetDesktopSideRelation(params.conversationId)
             codexForgetInventorySideRelation(params.conversationId)
@@ -7235,7 +7233,7 @@ function codexForgetExternallyArchivedThread(threadId, expectedKey = '') {
   const bridge = codexDesktopBridge
   const sideShadow = bridge?.sideShadows?.get(threadId)
   if (sideShadow || codexSideParentThreadId(threadId)) {
-    codexForgetDesktopOpenedReadThread(threadId)
+    codexDesktopOpenedReadAcknowledgements.delete(threadId)
     bridge?.forgetWaitingState?.(threadId)
     codexForgetDesktopSideRelation(threadId)
     codexForgetInventorySideRelation(threadId)
@@ -8407,12 +8405,11 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
     // The machine-run guard must sit above the desktop observation: the
     // parsed native unread set answers for any id, and a subagent/guardian
     // child the user never opens stays in it forever.
+    // An opened-read acknowledgement is already answered by the observation above.
     const unread = codexSubagentDiscovery?.codexIsMachineRunThread?.(row.threadId) === true
       ? { hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' }
       : desktopUnread.unreadAuthority !== 'unavailable'
       ? desktopUnread
-      : codexDesktopOpenedReadAcknowledgements.has(row.threadId)
-        ? { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
       : row.inventoryEvidence?.unreadKnown === true
         ? {
             hasUnreadTurn: row.inventoryEvidence.hasUnreadTurn === true,
@@ -8452,14 +8449,13 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       && activeSequence > 0
       && Number(terminal.terminalEvidenceSequence) > activeSequence
     const goalEvidence = codexPrivateThreadGoalEvidence(row.threadId)
-    const openedRead = codexDesktopOpenedReadAcknowledgements.has(row.threadId)
     return {
       ref: codexPrivateBranchRef(parentThreadId, row.threadId),
       branchKind: row.threadId === parentThreadId ? 'main' : 'side',
       topologyExact: row.threadId === parentThreadId
         || codexInventorySideRelations.get(row.threadId) === parentThreadId,
-      unreadKnown: openedRead || unread.unreadAuthority !== 'unavailable',
-      hasUnreadTurn: openedRead ? false : unread.hasUnreadTurn === true,
+      unreadKnown: unread.unreadAuthority !== 'unavailable',
+      hasUnreadTurn: unread.hasUnreadTurn === true,
       status: row.activity?.status || 'notLoaded',
       statusAuthority: row.authority,
       activityEvidence: row.shadow?.activityEvidence === 'activity-event'
@@ -9618,7 +9614,7 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
           thread.codexhostHasUnreadTurn,
           unreadIds ? unreadIds.has(thread.id) : null,
           lastTurn.status === 'completed',
-          codexDesktopOpenedReadCoversCompletion(thread.id, { lastTurnStartedAt: lastTurn.startedAt, lastTurnCompletedAt: lastTurn.completedAt })
+          codexDesktopOpenedReadCoversCompletion(thread.id, { lastTurnId: lastTurn.id, lastTurnStartedAt: lastTurn.startedAt, lastTurnCompletedAt: lastTurn.completedAt })
             || codexhostDiscovery.isExternalOpenedRead?.(thread.id) === true)
         : {
           hasUnreadTurn: unreadIds ? unreadIds.has(thread.id) : false,
