@@ -126,6 +126,14 @@ describe('cursor hook reducer', () => {
     })
   })
 
+  it('keeps plan-mode events and still drops ask/edit', () => {
+    const plan = events.normalizeQueueEntry({ s: SESSION, e: 'beforeSubmitPrompt', t: 1000, p: 1, m: 'plan' })
+    expect(plan).toMatchObject({ sessionId: SESSION, event: 'prompt-submit', mode: 'plan' })
+    expect(events.reduceQueueEntry(events.emptyHookState(), plan!)).toMatchObject({ turnOpen: true, phase: 'running' })
+    expect(events.normalizeQueueEntry({ s: SESSION, e: 'beforeSubmitPrompt', t: 1000, p: 1, m: 'ask' })).toBeNull()
+    expect(events.normalizeQueueEntry({ s: SESSION, e: 'beforeSubmitPrompt', t: 1000, p: 1, m: 'edit' })).toBeNull()
+  })
+
   it('opens a turn on beforeSubmitPrompt and never invents waiting-approval', () => {
     const running = events.reduceQueueEntry(events.emptyHookState(), {
       sessionId: SESSION,
