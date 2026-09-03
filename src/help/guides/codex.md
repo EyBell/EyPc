@@ -20,7 +20,7 @@
 2. **任务** — 任务列表展示相关选项（滚动窗口天数、动态小时数与默认 Action 项目等）
 3. **水球** — 紧凑悬浮球外观与读数
 4. **卡片** — 展开面板主题（与水球配色独立）
-5. **运行** — 环境诊断、连接状态、额度自动刷新秒数、明文运行诊断日志，以及 **接入来源**（Claude Code 开关、事件钩子注册、Claude App 额度只读授权、Cursor Agent 冷库存开关）。事件钩子注册一次即可，关掉或重开插件不会卸掉；配置页会在启动时回读，不必每次再点注册。
+5. **运行** — 环境诊断、连接状态、额度自动刷新秒数、明文运行诊断日志，以及 **接入来源**（跳转前确保目标应用已打开、通过 CodexHost 打开 Codex 与 codexhost 命令位置、Claude Code 开关、事件钩子注册、Claude App 额度只读授权、Cursor Agent 冷库存开关）。事件钩子注册一次即可，关掉或重开插件不会卸掉；配置页会在启动时回读，不必每次再点注册。
 
 运行分区顶部在正常就绪时只显示一行诊断标题、可聚焦的「i」和「重新检测」；健康状态下的系统/进程等噪声项默认隐藏，CLI 路径与操作按钮同一行。自动刷新或重新检测若已有成功结果，顶部连接药丸和诊断文案保持上次稳定状态，只在按钮/药丸上表示忙碌，不会闪成「正在读取 / 正在核查」。异常（失败、超时、桌面未运行）仍会立即改写文案，并展开详情与全部分项。其余分区说明仍用可聚焦的「i」，提示走主窗口不透明顶层气泡。
 
@@ -43,6 +43,7 @@
   - 点击任一读数块立即强制刷新两个来源的额度（Claude 块也可用 Enter / Space），不必等「额度刷新（秒）」的自动周期；Claude 侧仍遵守 429 Retry-After 与凭据锁。提示末尾的「点击立即刷新」就是这个入口，刷新后提示会变成「读数刚刚更新」
 - 点击其它位置、指针/焦点离开时约 220ms 自动收回水球；编辑器、详情/抽屉、Quick Jump、预览或调整尺寸期间会暂缓
 - 外观：内置多套主题；水球与展开卡片可分别配置；对比度不合法的配色会被限制
+- 启动通路：CodexHost 只在用 `codexhost launch` 启动 Codex 时接管它（以专用环境打开 Desktop）；用 Dock 或深链冷启动的 Codex 不经 CodexHost，额外进程不出现，之后 `codexhost launch` 会拒绝接管。「运行」页的「通过 CodexHost 打开 Codex」为自动检测或开时，EyPc 先经 `codexhost launch` 启动，等 Host 描述符与桌面端 IPC 就绪，再打开任务；找不到 codexhost 命令时拦下不启动，可在同一页填写 codexhost 位置或从磁盘选择。自动检测看三件事：找得到 codexhost 命令、Host 正在运行、当前 Codex 已经 CodexHost 启动。Codex 已在运行时直接打开任务。
 - 通过 CodexHost 拉起的额外进程（Pi、Claude Code、OMP、Cursor 等）会出现在同一张任务列表里，重载插件后也会重新读到已有会话，不必等新建或再次跑起来。正在跑或刚创建显示「进行中」；跑完后会进「已完成未读」，不会一直停在进行中。提问/提示显示「待输入」；权限/工具审批显示「待确认」；中断或失败显示「待继续」。这些会话的未读以 Host 为准；你在 Codex 里打开过，或用快捷键跳进 Codex，这里就记为已读。官方未读小点仍然管不到这些会话。对这些会话点「归档」会直接走 CodexHost 归档，Codex 侧栏同步收起；正在跑的会话仍然不能归档
 
 ## 快速任务查看
@@ -97,7 +98,7 @@
 - **Plan 暂停与执行：** 已完成且可执行的 Plan 是独立 artifact，已读且没有当前 interaction 时显示“待继续”；没有当前 Plan interaction 时，原生未读显示“已完成未读”。若存在精确当前 Plan 选择/实施 interaction，则先显示“待输入”并保留未读；interaction 关闭后按剩余证据回到已完成未读或待继续。暂停后进入“已隐藏”页顶部“已暂停”，并从角标和所有快捷循环移除，刷新、重启或重新关注都不会自动恢复。回复 Plan 选项会关闭当前 interaction：若新 Turn 已开始则立即“进行中”，否则仍有 artifact 就“待继续”，artifact 已取消/移除则“已完成”。更新 default Turn 一旦出现结构化文件变更，就会把旧 Plan 标为已开始执行；该 Turn 完成后按真实未读显示“已完成未读”或“已完成”，不会再被旧 Plan 拉回“待继续”。纯解释、追问或没有文件变更的补充 Turn 仍保留 Plan。取消整个 Plan 必须同时有 interaction 关闭和 artifact `cancelled/removed` 两类证据；request 从数组消失本身不能推断 interaction 已关闭或 artifact 已取消。行级只显示上下文主操作、置顶和 More，暂停、归档与危险操作进入 More/右键菜单；所有入口调用同一个 Command。执行仍需 5 秒内二次确认，Host 会精确预检活动、当前 interaction、任务身份和 artifact revision；模型或原生能力未知只决定执行路线，不单独禁用动作。alias 过期只续签同一匿名 key，超时不自动重发。
 - **待输入热同步：** 请求出现、匹配的 `serverRequest/resolved`、回答后的 matching output、用户继续和新 Turn 都走同一个双向状态通路。普通输入、审批与 Plan 请求都在当前 interaction 出现时直接从进行中/终态切到待输入或待确认，关闭时直接恢复进行中或真实终态，不发布临时“已完成未读”。对当前 Plan 选择/实施请求，Desktop 只把 requests 数组暂时变成空不算解除；匹配 resolved/cancelled/execution-started、新 Turn 或明确 plain-active runtime 才是关闭证据。新用户补充、thinking/generating、active 或 Turn-started 会立即清除它之前的等待并显示进行中，不需要等到产生实际回复；当因果更新的 App Server running 已胜出时，较旧 Desktop refollow/sticky waiting 不能再次把它拉回待输入。首次出现的 `进行中 + 新请求` 仍是待输入。旧快照、已读变化、重新订阅或 rollout 重放不能把已解除状态重新放回。解除后真正出现的新请求仍会立即进入待输入。未匹配的 resolved 只复核这一条任务，不会误清并发审批。自动化锁定 Kernel 热发布小于 50ms；统一打开路径 P95 小于 200ms。漏一次 Activity 或 rollout 文件通知时才由 1 秒 watchdog 在 1.25 秒内补回。Float 是否真正显示以 applied ACK 为准；revision/owner/载荷缺口只重订该任务，失败时保持现状并提示降级，不按超时猜测已解除。
 - **状态时机：** 新 membership 先建立最小成员，再由 V7 Kernel 在同一语义事务里更新根卡、Float、全局角标与循环队列。Topology V2 只提供 root/member 关系；Kernel 独占成员因果、activity、interaction、三态 unread、plan-artifact、能力、分组和计数。公开判定固定为：归档/移除排除 → 因果当前真实运行 → 精确当前审批/普通输入/Plan 选择与实施 interaction → 终止未读 → 仅 Plan artifact 的待继续 → 终止已读 → unknown。任一精确成员仍活动，根任务就不能结束；任何精确当前 interaction 都可在 terminal 上先显示待输入/待确认并保留潜在未读，关闭后才重新显露未读。旧 generation、旧 terminal、旧 running、旧 refollow waiting 或已越过 clear/tombstone 的 interaction 都不能覆盖更新证据；同 revision 冲突会隔离诊断，不按最后到达者覆盖。一次语义变化只增加一次 Snapshot revision，Main、Float、角标和前后切换都消费同一 revision。
-- **切换任务：** 点击、Enter、紧凑角标、全局快捷键和上一个/下一个都提交同一种 `open` Command；Kernel 从当前 Snapshot 解析原根任务，再让对应 Provider Adapter 打开。切换只改变选择，不刷新或修改 phase；打开失败不清 unread。拓扑 revision 已变化时只重校验原任务键，绝不替换成邻近任务。Adapter 失败只降级对应 Provider，不会让其它来源或插件进程崩溃。
+- **切换任务：** 点击、Enter、紧凑角标、全局快捷键和上一个/下一个都提交同一种 `open` Command；Kernel 从当前 Snapshot 解析原根任务，再让对应 Provider Adapter 打开。切换只改变选择，不刷新或修改 phase；打开失败不清 unread。拓扑 revision 已变化时只重校验原任务键，绝不替换成邻近任务。Adapter 失败只降级对应 Provider，不会让其它来源或插件进程崩溃。打开前先经就绪层：目标应用未运行时先启动（Codex 按「通过 CodexHost 打开 Codex」决定经 codexhost launch 还是普通启动；Claude、Cursor 用 `open -b` 起应用），确认进程后再派发，最长等待 25 秒，超时不跳转也不清未读；「跳转前确保目标应用已打开」关闭时回到只发深链。
 - **任务拓扑与诊断：** 只有 exact、同 Provider、同 family、父存在、非自身、无环且 generation 不倒退的关系才会聚合，嵌套子任务统一归到根。禁止按标题、路径、时间、模型或界面位置猜关系；无效关系独立显示或匿名隔离。V1 只显示一张根卡、`+N 子任务` 与活动/注意/异常数量，不展示子任务标题、正文或 transcript，也不提供子任务操作。匿名诊断只记录聚合计数、结果枚举、operationId 与会话期 taskRef，不记录原始父子身份或内容。
 - **悬浮窗自恢复：** Main 每 2 秒检查 Float 心跳；连续超过 6 秒无响应时，只在 60 秒冷却外且确认旧窗口 10 秒恢复观察仍失败后受控重建。任务 Snapshot 的 applied ACK 超时只重发一次并记录诊断；健康心跳下缺 ACK 不再销毁或重建窗口，避免快速前后切换时把慢渲染表现成“崩溃”。每次交互都有匿名 interaction id，10 秒无活动、失焦或生命周期结束会清理，避免拖动/展开锁长期卡死。
 - **版本提示：** 当前为 `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2`。Runtime Identity 同时验证 Registry、Topology、Snapshot、Command、Subscribe 与 ACK；旧 Host、缺方法或任一身份不一致都返回 `reload-required`，不静默降级。
@@ -142,7 +143,7 @@
 
 ## 接入 Cursor Agent（可选）
 
-Cursor Agent 是第三个独立来源，**默认关闭**。开启后插件只读本机 Cursor `composerHeaders` 白名单与磁盘 `status`，把本机 Agent 会话列进同一任务清单。磁盘 `status=none` 且没有会话头的空壳不进清单。归档双向跟随 App 的 `isArchived`：App 里归档的会话不进清单；在插件里对待继续/已完成会话点“归”，会在写前重验无进行中证据后翻转同一个 `isArchived` 对，App 归档列表同步可见。uTools 自带 Node 读不了这份库，插件改用本机 `sqlite3` 只跑白名单查询。进行中状态需要你在设置页确认后，才会把观察脚本加法写入用户级 `~/.cursor/hooks.json`（可随时移除，失败开放）。注册一次后关掉或重开插件仍保留，配置页会回读，不必每次再点注册。脚本只读 stdin 前 32KB 白名单字段；库存文件一变就补读未读/已读，不再等几秒轮询。若这份文件里已有钩子写了非法的 `loop_limit: 0`，Cursor 会拒收整份配置、热路径不会点火；重新注册会把该值收成 `1`。不做额度。点卡片会通过 Cursor 官方 deeplink（`agent?id=会话id`）唤起 Cursor 并切到该对话（Cursor 3.17.8 实测；Cursor 未运行时会先启动它）。这只是「已派发」：插件不能确认对话真的展示成功，也不会把它标成已读。
+Cursor Agent 是第三个独立来源，**默认关闭**。开启后插件只读本机 Cursor `composerHeaders` 白名单与磁盘 `status`，把本机 Agent 会话列进同一任务清单。磁盘 `status=none` 且没有会话头的空壳不进清单。归档双向跟随 App 的 `isArchived`：App 里归档的会话不进清单；在插件里对待继续/已完成会话点“归”，会在写前重验无进行中证据后翻转同一个 `isArchived` 对，App 归档列表同步可见。uTools 自带 Node 读不了这份库，插件改用本机 `sqlite3` 只跑白名单查询。进行中状态需要你在设置页确认后，才会把观察脚本加法写入用户级 `~/.cursor/hooks.json`（可随时移除，失败开放）。注册一次后关掉或重开插件仍保留，配置页会回读，不必每次再点注册。脚本只读 stdin 前 32KB 白名单字段；库存文件一变就补读未读/已读，不再等几秒轮询。若这份文件里已有钩子写了非法的 `loop_limit: 0`，Cursor 会拒收整份配置、热路径不会点火；重新注册会把该值收成 `1`。不做额度。点卡片会通过 Cursor 官方 deeplink（`agent?id=会话id`）唤起 Cursor 并切到该对话（Cursor 3.17.8 实测；Cursor Cursor 未运行时由就绪层先 `open -b` 启动并等到进程与窗口出现，再发送深链）。这只是「已派发」：插件不能确认对话真的展示成功，也不会把它标成已读。
 
 Cursor 的 `conversation_id / subagent_id / parent_conversation_id` Hook 事件形成热拓扑，`composerHeaders` inventory 提供冷启动复核；两者都只提交白名单身份、有限状态与 generation。精确子任务进入同一 V6 根卡，不再通过 Auxiliary 候选、Controller Cursor 直调或包生成后的二次折叠。Hooks/库存不能建立精确关系时保持独立或隔离，不按标题、路径或时间猜父子。
 
@@ -163,7 +164,7 @@ Claude Code 是独立 Provider，可与 Codex/Cursor 各自开关并共享同一
 - **完成/焦点热未读 + 持久恢复**：已门禁 Claude App 的精确完成与当前聚焦会话事件会立即更新 EyPc：聚焦任务完成保持已读，非聚焦任务完成进入已完成未读，聚焦到该任务立即清除；新一轮运行可再次未读。App Local Storage 的 exact `epitaxy-unread-v1` LevelDB 快照继续用于冷启动与漏事件恢复，迟到持久值不会推翻更新的热事件。EyPc 不写 Claude App，也不持久化这层热提示。Claude 的全局聚焦事件无法判断“多窗格可见但未聚焦”是否已阅读，因此这个场景不承诺与原生小点完全同步。
 - **全局热缓存**：Claude 启用后，库存、状态、未读、额度和 App presence 跨页面/悬浮窗持续更新且相互隔离；Hook/App-log、已登记会话文件与未读 LevelDB 的首事件都由进程 Node 原生回调即时读取，目录通知遗漏才由 1 秒 StatWatcher 补回，不依赖隐藏 Renderer 的 timer。部分会话 JSON 写入保留最后可信卡片，同值未读指纹不通知。两轮连续失败会从进行中降为未知，旧 generation/revision 不会覆盖新状态；语义不变不增加 revision 或重复推送。精确会话文件变化只重读已登记目标并直接发布 membership delta；额度或完整库存请求卡住不会拖慢任务状态/归档移除。插件重启重新读取真实来源，不恢复旧 live phase。
 - **统一实时状态**：Claude 状态与未读只由 Host 适配器提交给 V7 Kernel；Renderer 不再注册 Claude 任务 watcher、提供来源专用“同步状态”动作或维护第二套计数。打开请求只走统一 Command，`dispatched` 不等于原生已打开/已读；没有匹配 native receipt 时 Provider unread 保持不变。
-- **只打开仍有效的原历史且连续按键收敛**：缓存已运行 App 的进程代次，上一个/下一个直接从全局缓存选取，连续操作只派发最终 Epitaxy 目标；打开前重新确认唯一目标仍存在且未归档，已归档/缺失/歧义时不会再 Deep Link；不使用 `resume/import`、CLI、标题点击、自动启动或未读写入。
+- **只打开仍有效的原历史且连续按键收敛**：缓存已运行 App 的进程代次，上一个/下一个直接从全局缓存选取，连续操作只派发最终 Epitaxy 目标；打开前重新确认唯一目标仍存在且未归档，已归档/缺失/歧义时不会再 Deep Link；不使用 `resume/import`、CLI、标题点击或未读写入；Claude 未运行时由就绪层先启动再派发，在运行判定以 `pgrep -x Claude` 为准，不再依赖辅助功能权限。
 - **重复行不擅自清理**：App 已有多少 Code 行就展示多少；共享 CLI id 且无法唯一关联时只把状态标为未知。
 - **额度显示全部窗口**：在「运行」显式开启“允许读取 Claude App 额度”后，只读 App 加密缓存；5 小时、全模型周、Fable/Fable 5 或未来模型周限额按上游动态展示，两窗口补充样本不能抹掉 scoped/reset。401/403 等待凭据变化，429 遵循 Retry-After，其它失败按 1m/5m/15m/每小时退避；旧值保留但标为可能过期，200ms 提示展示绝对/相对 reset 和新鲜度。令牌不会进入界面、诊断或持久化。
 - **虚拟项目与归属**：EyPc 不改 Codex/Claude 原生项目；相同路径优先合并，只有双方名称都唯一时才按名称合并，歧义重名分开。Claude-only 项目会进入项目区，共享项目在“全部”只出现一次。所有行显示“归属 Codex/Claude/共享”，并有轻量来源背景。Claude completed/stopped 的任务级静默归档仅在上述 App 版本与唯一文件门禁下可用；Claude 项目级归档、移除和移动仍禁用并说明。

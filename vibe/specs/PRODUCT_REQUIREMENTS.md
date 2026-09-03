@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 337 leaves / 6 modules / 313 active / 22 superseded / 2 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 100 scoped |
-| 原始来源 | 46 documents / 234 ordered / 129 RAW-parent / 105 source-only |
+| 需求登记 | 338 leaves / 6 modules / 314 active / 22 superseded / 2 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 101 scoped |
+| 原始来源 | 47 documents / 243 ordered / 138 RAW-parent / 105 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-59baecc4efb844fcf235 / renderer-76cc83562a56945a6196` · `artifact-ready` |
-| 当前构建时间 | `2026/09/02 18:46:58`（`2026-09-02T10:46:58.292Z`） |
+| 当前构建产物 | `host-aed5a0a68f96f9eebe77 / renderer-c2c0dc40e2f6a393ac87` · `artifact-ready` |
+| 当前构建时间 | `2026/09/03 14:24:32`（`2026-09-03T06:24:32.189Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,20 +34,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 337,
+    "leaves": 338,
     "modules": 6,
     "proposed": 2,
-    "active": 313,
+    "active": 314,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 100
+    "scoped_relations": 101
   },
   "source_anchor_catalog": {
-    "documents": 46,
-    "ordered_anchors": 234,
-    "raw_parent_ordered": 129,
+    "documents": 47,
+    "ordered_anchors": 243,
+    "raw_parent_ordered": 138,
     "registered_requirements": 105,
     "source_only": 105
   },
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-59baecc4efb844fcf235",
-    "renderer_asset": "renderer-76cc83562a56945a6196",
+    "host_asset": "host-aed5a0a68f96f9eebe77",
+    "renderer_asset": "renderer-c2c0dc40e2f6a393ac87",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-02T10:46:58.292Z",
-    "built_at_local": "2026/09/02 18:46:58",
+    "built_at": "2026-09-03T06:24:32.189Z",
+    "built_at_local": "2026/09/03 14:24:32",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "e1426b273d726633f2c10166e6a2d4760f62d591f6a020aa244d6bcd2259f534",
-    "raw_sources": "24100016c15191fc0442cec069127f3627a847e3f186c1b17b1806e1deb963c8",
-    "source_anchor_catalog": "45fad5315246daba3b42ef0dd7c578bfab11bc6caef68be8effc0f0d96951057",
-    "product_body": "38fb700247bfadd1ed6fe835db4b9c562e64fea6976d2f0d705278be85230ff0",
-    "architecture": "e582f13fea69fa6a2977aafdfc61d1a0091446d322164d7b414da72487eb1279",
-    "runtime_contract": "725bf40217d69b91dd71364ba76004f69d7453927b3db3bd6d25bb5f11f9c06f"
+    "requirement_registry": "cbd77851331fe559ad565c6942406c4f30ccc0dcdd68a1b8d784b7e9ef9d2307",
+    "raw_sources": "e0222b027baa7a2fbacb9df25eb5dab0581f76a49f795a732d80e7c3d3168d26",
+    "source_anchor_catalog": "6a7355b1586b9d31d567013e97274cb0b5b8d00d4a94461dcf9e719d942f1b99",
+    "product_body": "1b3f8803317f8dc870e9ac5419ec4ce67e3807fd652db0cd3d3b028a686e79b5",
+    "architecture": "df06af5fc160d270de61074e44298ce7d8cbe12c2458d2c66b2da13e5f3de532",
+    "runtime_contract": "3befa4974efb6d2cfe0164116275e7eb6cb8f945ad74669572b1c3e95a9e3207"
   }
 }
 ```
@@ -251,7 +251,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 动态「置顶」分组可在当前 Float 会话内折叠；该状态不持久化，也不改变项目页项目折叠。展开时标题不占快捷编号，当前可见可执行任务行按顺序取得 `Alt+1…9/0`；折叠时全部置顶任务行隐藏，标题只占一个编号并且唯一行为是展开，后续可见任务从下一号连续编号。展开后立即按新可见顺序重算编号，不为隐藏任务保留空号；`Alt+F` 继续只标记真实任务行。
 - 「上一个/下一个」通用任务循环按 current interaction attention → artifact-only Plan → active → completed-unread → local pin 的层序拼接成一个环：层序表达优先级但**不排他**，各层按序全部进入 `cycleKeys`，层内跨来源按最近提问时间倒序，创建时间与匿名 key 只用于稳定并列；Provider 与置顶不改变顺序。冷游标下第一次按键仍落在最紧急的一条，其余任务不因某一层非空而不可达。已完成未读根任务是可循环层。置顶行统一显示在置顶分组，但循环仍按真实状态入层；**已完成且已读或 `unknown`** 没有状态层级，不进入通用循环，由置顶兜底；普通 stopped 等不属于前四层但仍可继续的置顶任务进入 `local pin` 层。一次连续 walk 持有它开始时的环 `CYCLE_WALK_HOLD_MS`（按键续期），期间的发布重排不改变正在遍历的环；walk 失效后下一次按键采纳最新环，代价是 walk 进行中新到达的任务要等下一轮才入环。候选只来自进程 V7 Snapshot 的根任务 `cycleKeys`，子任务不参与；热且可信时直接派发，只有冷启动、重连或明确成员缺口才等待所需 Provider 的 tasks-only 盘点，不得从部分集合跳转。第一下立即派发；打开仍在执行时，后续每一次按键都在**逻辑游标**上继续推进，只有最后一个目标真正派发——N 次连按前进 N 格并落在最终尾随目标，而不是重复选中正在打开的那一条；若推进后回到正在打开的目标（例如环只有一条），则不再重复调用 Provider。逻辑游标只在本次 walk 的请求全部落定前有效，之后回到已确认游标。进程游标由任意一次确认打开的 `cycleKeys` 成员提交，不再为循环按键独占：卡片点击、快速跳转与 attention 入口都让位置移到用户当前所见任务；落在 `cycleKeys` 之外的打开不提交游标。游标所指任务因层变化离开循环时，按旧次序就近改锚到幸存邻居。待输入与已完成未读专用入口的独立未打开进度（`attentionSeen`）不受游标提交影响。
 - 每个任务行和项目行固定显示一个明显的文本化来源标记；即使只启用单一来源也不得省略，且图标与可访问名称必须同步表达来源。
-- 所有打开由 `CompanionTaskCommandV1` 进入同一个 Command Gateway：Kernel 在命令所见 Snapshot 上解析原根任务，再由 Provider Adapter 执行 Codex 深链、Claude Epitaxy deep link 或 Cursor deeplink。手动点击、Enter、角标、attention、快捷键和循环之间没有第二条效果通路；选择/打开不刷新或改写 phase，失败不清 unread。第一下循环立即派发；仅当打开仍在执行时，后续按键合并成一个最终 trailing 目标；全部 Provider 最大打开并发为 1。打开回执统一携带 `companion-open-handoff-v1`：当前外部链接最多证明 `requested/dispatched`，只有未来真实原生回执才能进入 `native-confirmed/applied`。
+- 所有打开由 `CompanionTaskCommandV1` 进入同一个 Command Gateway：Kernel 在命令所见 Snapshot 上解析原根任务，再由 Provider Adapter 执行 Codex 深链、Claude Epitaxy deep link 或 Cursor deeplink。手动点击、Enter、角标、attention、快捷键和循环之间没有第二条效果通路；选择/打开不刷新或改写 phase，失败不清 unread。第一下循环立即派发；仅当打开仍在执行时，后续按键合并成一个最终 trailing 目标；全部 Provider 最大打开并发为 1。打开回执统一携带 `companion-open-handoff-v1`：当前外部链接最多证明 `requested/dispatched`，只有未来真实原生回执才能进入 `native-confirmed/applied`。打开前先经就绪层（`companion-open-readiness-v1`）：目标应用未运行时先启动（Codex 按「通过 CodexHost 打开 Codex」的有效模式决定经 `codexhost launch` 还是 `open -b`；Claude / Cursor 用 `open -b`），每 500 ms 轮询至进程出现（≤ 25 秒）并软等待就绪（≤ 8 秒）后才派发；超时或启动失败 fail-closed，不派发、不清 unread；探测未知时不启动。「跳转前确保目标应用已打开」默认开，关闭时回到只发深链。CodexHost 有效（`on`，或 `auto` 找到 codexhost 命令 / Host 描述符存活 / 当前 Desktop 环境带 CodexHost 启动变量）但找不到 codexhost 命令时拦下不启动；Claude 的在运行判定以 `pgrep -x Claude` 为准，不再要求辅助功能权限。RAW-202。
 - `operationId` 负责幂等，命令按任务串行；`expectedRevision` 或 topology revision 变化时只重校验原任务键，绝不替换成邻近任务。Provider Adapter 的异常转换为该来源 `degraded + command failed`，不能使 Kernel、其它 Provider 或插件进程崩溃。Archive 不合并、不乐观移除，活动成员存在时必须拒绝。
 - 当前唯一身份链是 `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2`。Topology 只派生 membership/root；Kernel 单独归约成员因果、三态 unread、Interaction、Plan Artifact、Goal、可见性、分组/计数/角标、attention/cycle/focus 与能力；Host Adapter、Controller、Renderer 和 Float 不重做 reducer。公开 projector 的 `unknown` 固定为 alias-free 中立不可操作状态，inventory 只能补项目/标题/时间 metadata，不能恢复旧 phase、unread 或 capability。旧 Host 或任一身份/能力缺失统一返回 `reload-required`，不允许可选方法静默降级。
 - RAW-162 makes Codex Goal status the completion boundary whenever a long-running Goal exists. An active Goal may span any number of automatic Turns；`turn/completed` closes only one round and must not publish task completed。Current input/approval evidence remains higher priority；paused、blocked、usageLimited and budgetLimited reuse stopped/“待继续”；only Goal complete may finish。Goal unknown、malformed、timeout or transient read failure preserves the last stable non-terminal phase as verifying；only explicit Goal cleared/no Goal or App Server method-not-found falls back to the existing Turn lifecycle。Goal Evidence is process-private and contains only finite status、updatedAt、freshness and causal sequence；Goal-only changes join the same atomic Kernel package without a public field、phase、Tab or badge。

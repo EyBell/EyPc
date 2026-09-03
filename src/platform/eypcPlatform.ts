@@ -614,6 +614,8 @@ export interface EypcPlatformApi {
     inspectEnvironment(): Promise<CodexEnvironmentSnapshotV1>
     setLaunchPath?(path: string): Promise<CodexEnvironmentSnapshotV1>
     clearLaunchPath?(): Promise<CodexEnvironmentSnapshotV1>
+    setCodexhostPath?(path: string): Promise<CodexEnvironmentSnapshotV1>
+    clearCodexhostPath?(): Promise<CodexEnvironmentSnapshotV1>
     readSnapshot(options?: CodexReadOptions): Promise<CodexBridgeResult<CodexHostSnapshot>>
     readActivitySnapshot?(options?: { phaseOnly?: boolean }): Promise<CodexBridgeResult<CodexActivityDelta>>
     onActivityChanged?(listener: (delta: CodexActivityDelta) => void): () => void
@@ -1357,6 +1359,8 @@ export function getPlatform(): EypcPlatformApi {
           : unsupportedCodexEnvironment()),
         setLaunchPath: hostCodex?.setLaunchPath,
         clearLaunchPath: hostCodex?.clearLaunchPath,
+        setCodexhostPath: hostCodex?.setCodexhostPath,
+        clearCodexhostPath: hostCodex?.clearCodexhostPath,
         readSnapshot: hostCodex?.readSnapshot || (async () => ({ ok: false, error: { code: 'unsupported', message: 'Codex App Server unavailable in this host' }, receivedAt: Date.now() })),
         readActivitySnapshot: hostCodex?.readActivitySnapshot,
         onActivityChanged: hostCodex?.onActivityChanged,
@@ -1495,6 +1499,8 @@ export function getPlatform(): EypcPlatformApi {
       inspectEnvironment: async () => unsupportedCodexEnvironment(),
       setLaunchPath: undefined,
       clearLaunchPath: undefined,
+      setCodexhostPath: undefined,
+      clearCodexhostPath: undefined,
       readSnapshot: async () => ({ ok: false, error: { code: 'unsupported', message: 'Codex App Server unavailable in browser' }, receivedAt: Date.now() }),
       readActivitySnapshot: undefined,
       onActivityChanged: undefined,

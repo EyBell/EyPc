@@ -317,12 +317,21 @@ export interface CompanionArchiveResultV2 {
   alreadyArchived?: boolean
 }
 
+/** What the open-readiness step did before the provider opener ran. */
+export interface CompanionOpenLaunchV1 {
+  outcome: 'ready' | 'launched'
+  launcher: 'none' | 'open-b' | 'open-a' | 'codexhost' | 'unsupported'
+  waitedMs: number
+}
+
 export interface CompanionOpenResultV2 {
   outcome: CompanionOpenOutcome
   /** Read may change only after a native-confirmed/applied handoff explicitly confirms it. */
   confirmsRead: boolean
   handoff?: CompanionOpenHandoffV1
   message?: string
+  /** Present only when the readiness step launched the target app first. */
+  launch?: CompanionOpenLaunchV1
 }
 
 export interface CompanionExecutePlanResultV2 {

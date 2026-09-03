@@ -199,6 +199,16 @@ function rowsFor(
     { label: 'App Server', value: connection, prominence: 'always' },
     { label: '桌面实时桥', value: desktopBridge, prominence: 'always' },
     { label: '状态来源', value: STATUS_FEED_LABELS[statusFeed], prominence: statusFeed === 'desktop-live' ? 'healthy-hidden' : 'always' },
+    ...(environment.codexhost
+      ? [{
+          label: 'CodexHost',
+          value: codexhostRowValue(environment.codexhost),
+          prominence: (environment.codexhost.cliState === 'manual-invalid'
+            || (environment.codexhost.effective && environment.codexhost.desktop === 'plain')
+            ? 'always'
+            : 'healthy-hidden') as CodexEnvironmentRowProminence
+        }]
+      : []),
     {
       label: '状态裁决',
       value: `保护 ${protectionCount} · 周期 ${decisions.liveEpochOpened}`,
@@ -206,6 +216,22 @@ function rowsFor(
       prominence: protectionCount > 0 || decisions.liveEpochOpened > 0 ? 'always' : 'healthy-hidden'
     }
   ]
+}
+
+function codexhostRowValue(environment: NonNullable<CodexEnvironmentSnapshotV1['codexhost']>): string {
+  const launch = environment.effective ? '经 CodexHost 启动' : '普通启动'
+  const cli = environment.cliState === 'manual-valid'
+    ? '手动位置'
+    : environment.cliState === 'manual-invalid'
+      ? '手动位置不可用'
+      : environment.cliState === 'missing'
+        ? '未找到命令'
+        : environment.cliState === 'unavailable' ? '不支持' : '已找到命令'
+  const host = environment.runtimeState === 'running' ? 'Host 运行中' : environment.runtimeState === 'not-running' ? 'Host 未运行' : 'Host 未知'
+  const desktop = environment.desktop === 'managed'
+    ? 'Codex 经 CodexHost 启动'
+    : environment.desktop === 'plain' ? 'Codex 未经 CodexHost 启动' : environment.desktop === 'closed' ? 'Codex 未运行' : 'Codex 状态未知'
+  return `${launch} · ${cli} · ${host} · ${desktop}`
 }
 
 export function shouldInlineCodexEnvironmentDetail(tone: CodexEnvironmentDiagnosticTone): boolean {

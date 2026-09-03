@@ -2253,6 +2253,36 @@ export function createCodexController(options: CodexControllerOptions) {
     )
   }
 
+  async function setCodexhostPath(pathValue: string) {
+    const path = pathValue.trim()
+    if (!path) {
+      options.setMessage('请输入 codexhost 可执行文件的完整路径')
+      options.notify()
+      return false
+    }
+    const change = options.platform.codex.setCodexhostPath
+    return applyLaunchPathChange(
+      typeof change === 'function' ? () => change(path) : undefined,
+      {
+        unsupported: '当前宿主不支持手动设置 codexhost 位置，请更新插件 preload 后重试',
+        success: '已保存手动 codexhost 位置；下次需要启动 Codex 时使用该位置',
+        failure: '手动 codexhost 位置不可用'
+      }
+    )
+  }
+
+  function clearCodexhostPath() {
+    const change = options.platform.codex.clearCodexhostPath
+    return applyLaunchPathChange(
+      typeof change === 'function' ? () => change() : undefined,
+      {
+        unsupported: '当前宿主不支持恢复 codexhost 自动查找，请更新插件 preload 后重试',
+        success: '已恢复 codexhost 自动查找',
+        failure: '无法恢复 codexhost 自动查找'
+      }
+    )
+  }
+
   function republishAfterReceiptChange() {
     publishConversationProjection({ receivedAt: rawConversations.updatedAt || Date.now(), advanceScan: false, status: rawConversations.status })
     options.save()
@@ -3536,6 +3566,8 @@ export function createCodexController(options: CodexControllerOptions) {
     inspectEnvironment: () => inspectEnvironment(true),
     setLaunchPath,
     clearLaunchPath,
+    setCodexhostPath,
+    clearCodexhostPath,
     updateSettings,
     dismiss,
     hide,

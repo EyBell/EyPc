@@ -57,6 +57,16 @@ function normalizeTarget(value, enabledProviders) {
   }
 }
 
+/** Bounded readiness note: what the open-readiness step did before the opener ran. */
+function normalizeOpenLaunch(value) {
+  if (!value || typeof value !== 'object') return null
+  const outcome = value.outcome === 'launched' ? 'launched' : value.outcome === 'ready' ? 'ready' : ''
+  if (!outcome) return null
+  const launcher = ['none', 'open-b', 'open-a', 'codexhost', 'unsupported'].includes(value.launcher) ? value.launcher : 'none'
+  const waitedMs = Number.isFinite(Number(value.waitedMs)) ? Math.max(0, Math.trunc(Number(value.waitedMs))) : 0
+  return { outcome, launcher, waitedMs }
+}
+
 function normalizeOpenResult(value, target) {
   const source = value && typeof value === 'object' ? value : {}
   const receipt = normalizeCompanionOpenReceipt(source)
@@ -70,7 +80,8 @@ function normalizeOpenResult(value, target) {
       ? { message: source.message.slice(0, 240) }
       : receipt.downgraded ? { message: '打开请求已发送，等待原生确认' } : {}),
     confirmsRead: receipt.confirmsRead,
-    ...(receipt.handoff ? { handoff: receipt.handoff } : {})
+    ...(receipt.handoff ? { handoff: receipt.handoff } : {}),
+    ...(normalizeOpenLaunch(source.launch) ? { launch: normalizeOpenLaunch(source.launch) } : {})
   }
 }
 
