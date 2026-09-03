@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 48 documents / 263 ordered / 138 RAW-parent / 125 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-ece2b01627ea5b3f2902 / renderer-bca18bfd50c9ff4a1153` · `artifact-ready` |
-| 当前构建时间 | `2026/09/03 15:08:36`（`2026-09-03T07:08:36.924Z`） |
+| 当前构建产物 | `host-fdf7e21b1ce78712225e / renderer-c6d4020a5dd88480ea04` · `artifact-ready` |
+| 当前构建时间 | `2026/09/03 16:10:51`（`2026-09-03T08:10:51.291Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-ece2b01627ea5b3f2902",
-    "renderer_asset": "renderer-bca18bfd50c9ff4a1153",
+    "host_asset": "host-fdf7e21b1ce78712225e",
+    "renderer_asset": "renderer-c6d4020a5dd88480ea04",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-03T07:08:36.924Z",
-    "built_at_local": "2026/09/03 15:08:36",
+    "built_at": "2026-09-03T08:10:51.291Z",
+    "built_at_local": "2026/09/03 16:10:51",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "30f815a5115398b1730721d27a27ef9d3e9845d569ddb818ada2659ad4891f18",
+    "requirement_registry": "68794bcd08081af4e6c1ffaef053140b3c334792aa967683307d43cfeea3000c",
     "raw_sources": "899e33df7fd4b6e1bbbc4050830954b5e0912de30c92247c6f166103bcf4614f",
     "source_anchor_catalog": "96c477a671f0a2a9f41c5ac761725a256c6684cbe83a64e8d77bf9f5e1e43fe4",
-    "product_body": "98aa4c57d7a9a0b678cc80fe4993004b1c42496fe6d9d5fb9136e663ebdfdc4e",
-    "architecture": "4a2f00213758ef4f7b6e370f90f46f7b183ff957ac9c72981815db863f0b0aff",
-    "runtime_contract": "f394d6af372b30edb89e99a66ef6811b3c8f3cbf4687b81c230c59de4ae7198f"
+    "product_body": "2cf0f954aa08a6b45ed5f0c0897082f2f025f920c78fddfae661dd237e1da460",
+    "architecture": "9045ec0c94ae6c608b72ff01f406f83d3c90463f45a2607492837858f6598a16",
+    "runtime_contract": "3c0c76707767d7b3d388a5f86a3b5b226f90015cdafb3aec20d50b8f6f9337d4"
   }
 }
 ```
@@ -304,7 +304,7 @@ Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-globa
 - Easy Agent is not implemented yet. The interim adapter keeps two host channels: the local Codex App Server supplies quota, models, inventory, creation and verified persistent actions; a macOS Codex Desktop private-IPC companion bridge supplies live task/read authority and archive-refresh notification. The App Server connector is therefore still required in the current phase.
 - CLI startup is independently diagnosable: EyPc auto-discovers only controlled macOS/Windows candidates and may store one user-selected, validated executable location in local plugin storage. The UI exposes only safe source/availability labels, never the actual path. Without a manual location it falls back to automatic discovery plus the existing App Server connector and explicitly warns about connection delay; this fallback never turns local cache or App Server activity into Input, ongoing or completed-unread authority. Windows supports CLI discovery/validated shim handling, while the private Desktop live bridge remains a macOS canary.
 - Host Snapshot V2 reads the local Codex App Server plus an allowlisted native project registry. Ordinary inventory remains strictly read-only: the main `.codex-global-state.json` is authoritative and `.bak` is used only when the main file is missing/invalid. The sole write exception is an explicitly confirmed native project removal transaction; EyPc never scans Codex SQLite or LevelDB. A Codex Desktop full snapshot may be consumed transiently inside preload for live-state projection, but its bodies/items/raw identities never cross the bridge or persist.
-- CodexHost extra processes (Pi / Claude Code / Grok / OMP / DSH / Cursor harness threads) never appear in official `thread/list` or the Desktop unread atom. EyPc discovers them through the Host delegation CLI, including after plugin reload, for idle and completed rows — not only newly created or running ones. Host `creating`/`running` is 进行中 even before Desktop follow. When Host later reports `completed` with unread, EyPc must leave 进行中 and enter 已完成未读; a leftover Desktop live inProgress turn must not keep the row running. `attention=input` is 待输入; `attention=approval` is 待确认; `interrupted`/`failed` is 待继续. Codex APP 已读 is an unread event false or an EyPc jump; a Desktop snapshot false is not read. The EyPc jump and each row's `statusChangedAt` are remembered in plugin storage (`eypc/codex/codexhost-thread-memory/v1`): a rendezvous loss, a session reset or a plugin reload never turns a read completed row back into 刚刚 · 未读; the remembered read is superseded only by a Host status / attention change or a Host unread `false → true` edge, and an archive forgets it (RAW-203). Official `notLoaded` is still not completion. Archiving an extra process from EyPc goes through the Host delegation CLI (`thread read` preflight, `thread archive` write, live/archived `thread list` verification); the plugin's private official app-server never sees those ids, and the Host itself broadcasts `thread/archived` to Desktop. A side chat (the Host's ephemeral fork of an extra process, hidden from every listing) counts toward its source: while it runs the Host list reports the source as running, so EyPc shows 进行中 rather than 已完成未读, and archiving the source in Codex or through the CLI archives its side chats too. RAW-190 / RAW-191 / RAW-193 / RAW-194 / RAW-195 / RAW-199 / RAW-200 / RAW-203.
+- CodexHost extra processes (Pi / Claude Code / Grok / OMP / DSH / Cursor harness threads) never appear in official `thread/list` or the Desktop unread atom. EyPc discovers them through the Host delegation CLI, including after plugin reload, for idle and completed rows — not only newly created or running ones. Host `creating`/`running` is 进行中 even before Desktop follow. When Host later reports `completed` with unread, EyPc must leave 进行中 and enter 已完成未读; a leftover Desktop live inProgress turn must not keep the row running. `attention=input` is 待输入; `attention=approval` is 待确认; `interrupted`/`failed` is 待继续. Codex APP 已读 is an unread event false or an EyPc jump; a Desktop snapshot false is not read. Codex read state is Provider-owned: the preload decides it from Desktop read events, its opened-read acknowledgements and the CodexHost thread memory, and the Kernel only projects and merges members (RAW-193 ownership, 2026-09-03). The EyPc jump and each row's `statusChangedAt` are remembered in plugin storage (`eypc/codex/codexhost-thread-memory/v1`): a rendezvous loss, a session reset or a plugin reload never turns a read completed row back into 刚刚 · 未读; the remembered read is superseded only by a Host status / attention change or a Host unread `false → true` edge, and an archive forgets it (RAW-203). Official `notLoaded` is still not completion. Archiving an extra process from EyPc goes through the Host delegation CLI (`thread read` preflight, `thread archive` write, live/archived `thread list` verification); the plugin's private official app-server never sees those ids, and the Host itself broadcasts `thread/archived` to Desktop. A side chat (the Host's ephemeral fork of an extra process, hidden from every listing) counts toward its source: while it runs the Host list reports the source as running, so EyPc shows 进行中 rather than 已完成未读, and archiving the source in Codex or through the CLI archives its side chats too. RAW-190 / RAW-191 / RAW-193 / RAW-194 / RAW-195 / RAW-199 / RAW-200 / RAW-203.
 - Every `archived=false` page is read to completion. Project ownership uses native thread assignment first, native projectless IDs as `Chats` second, deepest active project-root cwd match third; unmatched tasks are treated as removed/unregistered and excluded. Native state is fingerprinted before and after scanning and the entire scan retries once on change.
 - Each candidate must have a valid newest Turn `startedAt`; there is no `updatedAt`/recency fallback. A malformed cursor, page, project state or existing Turn without `startedAt` fails the whole scan. Controller retains an older verified snapshot as explicitly stale, or shows an error empty state when no verified snapshot exists.
 - A single otherwise-complete inventory that omits a published anonymous key is a transport-dropout candidate, not immediate deletion. Controller retains the previous projection and requests one Provider-only recheck. Reappearance, changed keys, failure, disablement or disposal resets the candidate. Codex explicit archive events bypass the ordinary hold only by starting/advancing task-scoped verification；local removal still requires native postconditions and Kernel commit. Verified project removal and existing Claude membership mutation retain their Provider-specific contracts. No task list or raw identity is persisted.

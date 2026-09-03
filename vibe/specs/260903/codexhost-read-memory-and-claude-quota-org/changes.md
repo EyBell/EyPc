@@ -25,6 +25,10 @@
 | `preload/index.js`（F-3） | `codexAcknowledgementCoversTurn` 单一覆盖规则；Side 路径改用；扫描传 `lastTurnId`；删两处死分支；内联 forget 包装 |
 | `src/domain/claude.ts`（F-3） | `claudeQuotaWindowFreshness` / `claudeQuotaMergedStatus` / `markExpiredClaudeQuotaWindows`，三处合并/过期路径共用 |
 | `preload/index.js`（F-3 第三轮） | 机器子跑与已读确认裁决只在 `codexDesktopUnreadObservation` 顶部；Side 库存证据只存原始成员关系；分支投影去掉重复守卫；棘轮 14284 → 14282 |
+| `preload/codex/codexhost-discovery.cjs` / `preload/companion/task-kernel.cjs`（F-1-b） | `honorExternalOpenRead` 不再写 `confirmsRead: true`；Kernel `PROVIDER_TRAITS.codex` 注明已读由 Provider 持有 |
+| `preload/index.js`（F-2-a） | 根观察只在无成员时取线程级未读；有成员时 Kernel 唯一合并 |
+| `contracts/claude-quota-vocabulary.json` + `scripts/generate-companion-contracts.mjs` + `preload/claude/quota-vocabulary.cjs` + `src/domain/generated/claudeQuotaVocabulary.ts`（F-2-b 第二项） | 额度窗口词汇表单一来源与两侧生成镜像；`quota.cjs` / `claude.ts` / `companionPresentation.ts` / `FloatApp.vue` 改引 |
+| `preload/codex/desktop-unread-evidence.cjs`（F-2-b 第一项，新增） | `desktopReadEvidence` 三态与 `persistedConnectorUnread`，入口经 `desktop-shadow` 再导出取用，discovery 直接 require；`utools-preload-assets` 登记；棘轮 14282 → 14277 |
 | `vibe/knowledge/error-memory/modules/codexhost-external-processes.md` + `README.md` + `companion-task-state.md` | task-state 模块到 30 条上限，按自适应阈值拆出 CodexHost 额外进程模块（3 条主记录迁入，含前一会话未登记的 archived-row 记录） |
 | `vibe/knowledge/error-memory/codexhost-jump-read-lost-with-roster-timestamp.md` / `claude-app-token-cache-acct-key-organization-segment.md` | 两条错误记忆（verified） |
 

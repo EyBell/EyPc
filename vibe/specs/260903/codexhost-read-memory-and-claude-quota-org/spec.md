@@ -136,7 +136,17 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L270)
 
 判定为**有意差异**、不再列为冲突：#3 / #4（额外进程对 Desktop snapshot-false / event-true 不认，是 RAW-190 / RAW-193 的产品规则）、#16（`sanitizeCodexThreads` 的原生分支写的是 Desktop 原始持久未读，供 `connectorHasUnreadTurn` 作为回退基线；若换成已解析的观察值，已读确认被新 Turn 清掉后回退会误读为已读）、#26（水面 5h、球心与外圈周额度是各通道的产品含义）。
 
-仍未动（需要更大范围裁决）：#1 / #2 discovery 内 `desktopAppRead` / persisted 回退与 entry 同形（注入会带来模块缺失时的降级问题）；#17 / #18 Kernel `readAcknowledgements` 对 Codex 是死码、`confirmsRead: true` 被回执归一压回；#20 两层 unread 聚合；#30 / #31 标签与键词汇表的前后端重复。
+第四轮（F-2-b，用户确认接受模块缺失降级）再收敛 2 项：
+
+- #1 / #2：新增 [desktop-unread-evidence.cjs](../../../../preload/codex/desktop-unread-evidence.cjs#L1)（`desktopReadEvidence` 三态 `read | unread | null`、`persistedConnectorUnread`）。入口的 `codexDesktopUnreadObservation` 经既有 `codexDesktopShadow` 绑定取用并认两种极性；CodexHost lane 直接 require 且只认 `read`（Desktop unread-true 不压过 Host）。discovery 的 `desktopAppRead` 与内联持久回退删除；入口棘轮 14282 → 14277。
+
+第五轮（用户裁决 F-1-b、F-2-a、F-2-b）再收敛 4 项：
+
+- #17 / #18（F-1-b）：正式声明 Codex 已读由 Provider（preload）持有——Desktop 读事件、EyPc 跳转确认表、CodexHost 线程记忆都在 preload 裁决，Kernel 只投影；`honorExternalOpenRead` 不再写从未到达 Kernel 的 `confirmsRead: true`，Kernel 特性表旁注明来源。RAW-193 归属随之明确。
+- #20（F-2-a）：根观察只在**没有成员**时取线程级值（此时它就是根自身的读数）；有 Side Chat 成员时根观察只带主分支自身未读，成员作为节点发布，Kernel `aggregateMemberUnread` 是唯一合并点。入口的 `codexDesktopAggregateUnread` 保留为 preload 内部调度启发（完成后是否补读未读、是否跳过重复完成）并在无私有证据时供回退分支使用，不再是发布状态的第二个合并层。
+- #30 / #31（F-2-b）：新增 [contracts/claude-quota-vocabulary.json](../../../../contracts/claude-quota-vocabulary.json#L1)，由 `generate-companion-contracts` 同时生成 [quota-vocabulary.cjs](../../../../preload/claude/quota-vocabulary.cjs#L1) 与 [claudeQuotaVocabulary.ts](../../../../src/domain/generated/claudeQuotaVocabulary.ts#L1)：`five_hour / seven_day` 基键、别名、scoped 键正则、窗口分钟数与 `5h / 周` 长短标签只写一次；preload 归一器、domain 描述器、展开卡短标与紧凑卡 `5h` 全部改引。
+
+仍未动：无——审计 31 项全部处置（收敛 19 项、有意差异 4 项、其余为同一项的重复登记）。
 
 ## Verification
 

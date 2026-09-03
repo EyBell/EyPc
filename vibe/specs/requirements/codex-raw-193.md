@@ -4,7 +4,7 @@ qualified_source: SPEC-260901-CODEXHOST-EXTERNAL-COMPLETION::RAW-193
 status: active
 domain: companion-codex
 authority: user-stated
-source_annotations: "implementation-landed / focused-automated-verified / host-pending"
+source_annotations: "implementation-landed / focused-automated-verified / host-pending / provider-owned-read-state (2026-09-03: Codex 已读由 preload 持有，Kernel readAcknowledgements 对 Codex 保持关闭，RAW-203 线程记忆是其持久层)"
 scoped_relations:
   - kind: refines
     target: eypc-req-codex-raw-190
