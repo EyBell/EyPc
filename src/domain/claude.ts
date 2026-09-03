@@ -173,6 +173,25 @@ function plainWindow(
   return windows.find((entry) => entry.kind === kind && !entry.scope) || null
 }
 
+/**
+ * Rebuilds a snapshot around a replaced window list. The plain `short` /
+ * `weekly` fields are projections of `windows`, so every caller that swaps the
+ * list goes through here instead of re-deriving them by hand.
+ */
+export function withClaudeQuotaWindows(
+  base: ClaudeQuotaSnapshot,
+  windows: readonly ClaudeQuotaWindowEntry[],
+  patch: Partial<Pick<ClaudeQuotaSnapshot, 'status' | 'source' | 'updatedAt'>> = {}
+): ClaudeQuotaSnapshot {
+  return {
+    ...base,
+    ...patch,
+    windows: [...windows],
+    short: plainWindow(windows, 'short'),
+    weekly: plainWindow(windows, 'weekly')
+  }
+}
+
 /** Keeps all declared windows; model names are data, never an allowlist. */
 export function normalizeClaudeQuota(
   input: ClaudeRateLimitsInput | null | undefined,

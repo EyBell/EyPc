@@ -23,7 +23,8 @@ import {
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation,
   type CompanionCodexQuotaWindow,
-  type CompanionSnapshotSlice
+  type CompanionSnapshotSlice,
+  companionQuotaRefreshReceiptText
 } from '../../src/domain/companionPresentation'
 import { emptyClaudeEnvironment, emptyClaudeQuota, normalizeClaudeQuota } from '../../src/domain/claude'
 
@@ -269,6 +270,46 @@ describe('claude quota section', () => {
     const section = buildClaudeQuotaSection(slice({ claudeQuota: emptyClaudeQuota() }))
     expect(section?.rows).toEqual([])
     expect(section?.emptyReason).toContain('尚未读到额度')
+  })
+
+  it('keeps cache rows and adds an access note while the App lane is blocked', () => {
+    const blocked = buildClaudeQuotaSection(slice({
+      claudeAppQuotaAccess: true,
+      claudeQuotaAccess: { status: 'credential-unavailable', lastAttemptAt: 1, retryAt: 0 }
+    }))
+    expect(blocked?.rows).toHaveLength(2)
+    expect(blocked?.emptyReason).toBe('')
+    expect(blocked?.note).toBe('Claude App 额度凭据不可用，等待账号凭据更新')
+    const strip = buildCompanionQuotaStrip([], slice({
+      claudeAppQuotaAccess: true,
+      claudeQuotaAccess: { status: 'rate-limited', lastAttemptAt: 1, retryAt: 0 }
+    }))
+    expect(strip.groups.find((group) => group.provider === 'claude')?.note).toContain('Retry-After')
+    expect(strip.groups.find((group) => group.provider === 'codex')?.note).toBe('')
+    // Healthy or unauthorized lanes carry no note beside their rows.
+    expect(buildClaudeQuotaSection(slice({ claudeAppQuotaAccess: true, claudeQuotaAccess: { status: 'ok', lastAttemptAt: 1, retryAt: 0 } }))?.note).toBe('')
+    expect(buildClaudeQuotaSection(slice({ claudeAppQuotaAccess: false, claudeQuotaAccess: { status: 'credential-unavailable', lastAttemptAt: 1, retryAt: 0 } }))?.note).toBe('')
+  })
+
+  it('states what a manual refresh did without leaking a reading', () => {
+    expect(companionQuotaRefreshReceiptText(null)).toBe('')
+    expect(companionQuotaRefreshReceiptText({
+      at: 1,
+      claude: { changed: true, usageApi: 'accepted', accessStatus: 'ok', blockedBy: '', retryInMs: 0, windowCount: 3, scopedCount: 1 },
+      codex: { requested: true }
+    })).toBe('已刷新：Claude 周额度已更新（含 1 个模型周窗口）；Codex 额度已重新请求')
+    expect(companionQuotaRefreshReceiptText({
+      at: 1,
+      claude: { changed: false, usageApi: 'failed', accessStatus: 'credential-unavailable', blockedBy: 'backoff', retryInMs: 900_000, windowCount: 2, scopedCount: 0 }
+    })).toBe('已刷新：Claude App 读取失败：Claude App 额度凭据不可用，等待账号凭据更新，15 分钟后可再试')
+    expect(companionQuotaRefreshReceiptText({
+      at: 1,
+      claude: { changed: false, usageApi: 'skipped', accessStatus: 'rate-limited', blockedBy: 'retry-after', retryInMs: 30_000, windowCount: 2, scopedCount: 0 },
+      codex: { requested: true }
+    })).toBe('已刷新：Claude App 未读取（Retry-After 限制），30 秒后可再试；Codex 额度已重新请求')
+    expect(companionQuotaRefreshReceiptText({ at: 1, claude: { changed: false, usageApi: 'disabled', accessStatus: 'idle', blockedBy: '', retryInMs: 0, windowCount: 2, scopedCount: 0 } }))
+      .toBe('已刷新：Claude 只读了本地缓存（未授权读取 Claude App 额度）')
+    expect(companionQuotaRefreshReceiptText({ at: 1, codex: { requested: true } })).toBe('已刷新：Codex 额度已重新请求')
   })
 
   it('distinguishes credential and Retry-After failures without exposing identities', () => {
