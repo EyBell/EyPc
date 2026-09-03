@@ -128,6 +128,9 @@ export function cursorSubagentsRunning(observation: CursorAgentObservation): boo
  * fork outranks the parent's own terminal hook phase but not its waiting-input.
  */
 export function resolveCursorAgentPhase(observation: CursorAgentObservation): ClaudeCodePhase {
+  // Cursor's blocking user decision (AskQuestion / plan question / terminal
+  // approval) is 待输入 and outranks an open Turn, like Claude's waiting-input.
+  if (observation.hasBlockingPendingActions) return 'waiting-input'
   if (observation.hookTurnOpen) return 'running'
   if (observation.hasPendingPlan) return 'waiting-input'
   if (cursorSubagentsRunning(observation)) return 'running'
@@ -135,7 +138,6 @@ export function resolveCursorAgentPhase(observation: CursorAgentObservation): Cl
     return observation.hookPhase
   }
   if (observation.unfinishedRunAt > 0) return 'running'
-  if (observation.hasBlockingPendingActions) return 'unknown'
   if (observation.hasUnreadMessages) return 'completed'
   if (observation.diskStatus === 'completed') return 'completed'
   if (observation.diskStatus === 'aborted') return 'stopped'
