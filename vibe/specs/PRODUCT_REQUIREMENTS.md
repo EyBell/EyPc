@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 341 leaves / 6 modules / 317 active / 22 superseded / 2 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 106 scoped |
-| 原始来源 | 48 documents / 263 ordered / 138 RAW-parent / 125 source-only |
+| 需求登记 | 342 leaves / 6 modules / 318 active / 22 superseded / 2 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 108 scoped |
+| 原始来源 | 49 documents / 271 ordered / 146 RAW-parent / 125 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-fdf7e21b1ce78712225e / renderer-c6d4020a5dd88480ea04` · `artifact-ready` |
-| 当前构建时间 | `2026/09/03 16:10:51`（`2026-09-03T08:10:51.291Z`） |
+| 当前构建产物 | `host-2867967cf02a11b5c102 / renderer-a13c33a2eded94204d24` · `artifact-ready` |
+| 当前构建时间 | `2026/09/03 17:24:14`（`2026-09-03T09:24:14.372Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,20 +34,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 341,
+    "leaves": 342,
     "modules": 6,
     "proposed": 2,
-    "active": 317,
+    "active": 318,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 106
+    "scoped_relations": 108
   },
   "source_anchor_catalog": {
-    "documents": 48,
-    "ordered_anchors": 263,
-    "raw_parent_ordered": 138,
+    "documents": 49,
+    "ordered_anchors": 271,
+    "raw_parent_ordered": 146,
     "registered_requirements": 105,
     "source_only": 125
   },
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-fdf7e21b1ce78712225e",
-    "renderer_asset": "renderer-c6d4020a5dd88480ea04",
+    "host_asset": "host-2867967cf02a11b5c102",
+    "renderer_asset": "renderer-a13c33a2eded94204d24",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-03T08:10:51.291Z",
-    "built_at_local": "2026/09/03 16:10:51",
+    "built_at": "2026-09-03T09:24:14.372Z",
+    "built_at_local": "2026/09/03 17:24:14",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "68794bcd08081af4e6c1ffaef053140b3c334792aa967683307d43cfeea3000c",
-    "raw_sources": "899e33df7fd4b6e1bbbc4050830954b5e0912de30c92247c6f166103bcf4614f",
-    "source_anchor_catalog": "96c477a671f0a2a9f41c5ac761725a256c6684cbe83a64e8d77bf9f5e1e43fe4",
-    "product_body": "2cf0f954aa08a6b45ed5f0c0897082f2f025f920c78fddfae661dd237e1da460",
-    "architecture": "9045ec0c94ae6c608b72ff01f406f83d3c90463f45a2607492837858f6598a16",
-    "runtime_contract": "3c0c76707767d7b3d388a5f86a3b5b226f90015cdafb3aec20d50b8f6f9337d4"
+    "requirement_registry": "cd523158dd05e8e96a5d8445d1f8f2750dd4ab18e1f42922e544c269d6203522",
+    "raw_sources": "1373596982e37bae69e7851961bce37ed1702b83bc63e6baad3599583a6ea2a5",
+    "source_anchor_catalog": "f48c31e104b72f99c2d357670cc0c7bf1d6c3ac5e2b416b7f1cdd82b976c42c2",
+    "product_body": "4da4c9c2c176d8d202cc62314dce751616b0df3771b8a48133903a9b703b0d7f",
+    "architecture": "bcad9740fd8927d646772b1ed755de8190e01b0ee7ad97021b7b10ca07117ff0",
+    "runtime_contract": "59b4ac66c395ee087be46924434bf476073a001bc80097f0073dd99718477d50"
   }
 }
 ```
@@ -247,7 +247,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - Claude 功能启用期间由进程生命周期 Host 维护 `inventory / phase / unread / quota / appPresence` 物化视图；切页、Main/Float 显隐和快捷键复用同一缓存，重启后从真实来源冷启动且不持久化 live phase。五条 authority 独立增量更新；Hook/App state、已登记任务成员文件和 unread LevelDB 的首个完整文件事件在 Node 原生回调中立即 drain/read，不进入可被 `background-hidden` 节流的 JavaScript timer；部分任务元数据 JSON 保留最后可信成员关系，目录 `fs.watch` 为快路，已登记文件的 1 秒 `fs.watchFile` StatWatcher 只作漏通知恢复，Renderer Controller 不另设 phase 轮询。等价 reduced-state/package 指纹完整 no-op，不增加 revision 或推送；source generation、Kernel revision、Float applied revision 全链拒绝倒退。额度网络不得阻塞任务状态，watcher callback 延迟不得冒充最终 Float applied 延迟。
 - RAW-160 requires the current Claude `session.phase` evidence to outrank `previous.phase` whenever its causal event is newer；a delayed older inventory generation cannot regress a newer watcher/open-refresh event，and a membership mutation must not advance activity/interaction/unread lane generations。App state 固定语法当前仅门禁已核验的 Claude App `1.26832.0 / 1.28929.0 / 1.30096.5 / 1.34493.1 / 1.37937.0 / 1.40609.1`，相邻未知版本 fail closed；日志冷重放的普通 running/waiting 不得推导 live activity。phase、phaseRevision、statusEnteredAt、unread and capabilities are accepted atomically through the same State Store。D′ archive success text is exactly split into EyPc convergence and native-sidebar capability：EyPc 已归档并移除；Claude 原生侧栏同步未确认，当前不受支持。Occasional native sidebar refresh is observation only，never a supported postcondition。
 - Claude 与其它 Provider 的任务状态由 Host evidence 自动进入同一 Kernel；产品不提供来源专用“同步任务状态”动作，成功打开也不触发 Renderer 侧第二次状态归约。来源专用入口只可读取 quota、environment 或展示 metadata，不能拥有 phase、unread、Plan、count 或 jump 语义。
-- 本地置顶的语义是「移出当前工作流、暂存待查」：动态列表最顶部的置顶分组收录**任何相位的本地置顶根任务**；一条置顶任务只在该分组显示，不再同时出现在待输入、进行中、待继续、已完成未读或已完成分组。**活动时间窗对任何相位的本地置顶任务一律不适用**，窗口只淘汰未置顶工作。显示位置不改变状态权威：置顶的待输入、进行中、待继续、已完成未读仍按真实相位参与角标计数、「上一个/下一个」与专用入口；已完成已读和 `unknown` 本就没有状态入口，只由「已完成未读」专用入口在真实未读为空时按持久化置顶顺序独占兜底。由此确立两条不变式：**凡进入 `cycleKeys` 的任务必须在某个动态分组可见**，且**每个任务恰好出现在一个动态分组**。置顶项访问进度使用固定身份，不挂在成员聚合会重算的生命周期时间戳；metadata-only 重排只改变状态候选顺序，置顶分组与兜底始终复用持久化本地置顶顺序。取消置顶后任务恢复按真实状态分组，并重新受活动时间窗约束。置顶分组是位置而非角标，不新增状态计数。
+- 本地置顶的语义是「移出当前工作流、暂存待查」：动态列表最顶部的置顶分组收录**任何相位的本地置顶根任务**；RAW-205 起 Provider 原生置顶（Codex Desktop Pinned 分区、CodexHost 额外进程 Host `pinned`、Claude App `isStarred`、Cursor workspace `cursor/pinnedComposers`）以 Kernel `providerPin` 进入同一谓词（`localPin || providerPin`），同样落到该分组并共享下述全部不变式；分组内 EyPc 本地置顶按本地顺序在前，Provider 置顶按 Provider 顺序在后。一条置顶任务只在该分组显示，不再同时出现在待输入、进行中、待继续、已完成未读或已完成分组。**活动时间窗对任何相位的本地置顶任务一律不适用**，窗口只淘汰未置顶工作。显示位置不改变状态权威：置顶的待输入、进行中、待继续、已完成未读仍按真实相位参与角标计数、「上一个/下一个」与专用入口；已完成已读和 `unknown` 本就没有状态入口，只由「已完成未读」专用入口在真实未读为空时按持久化置顶顺序独占兜底。由此确立两条不变式：**凡进入 `cycleKeys` 的任务必须在某个动态分组可见**，且**每个任务恰好出现在一个动态分组**。置顶项访问进度使用固定身份，不挂在成员聚合会重算的生命周期时间戳；metadata-only 重排只改变状态候选顺序，置顶分组与兜底始终复用持久化本地置顶顺序。取消置顶后任务恢复按真实状态分组，并重新受活动时间窗约束。置顶分组是位置而非角标，不新增状态计数。
 - 动态「置顶」分组可在当前 Float 会话内折叠；该状态不持久化，也不改变项目页项目折叠。展开时标题不占快捷编号，当前可见可执行任务行按顺序取得 `Alt+1…9/0`；折叠时全部置顶任务行隐藏，标题只占一个编号并且唯一行为是展开，后续可见任务从下一号连续编号。展开后立即按新可见顺序重算编号，不为隐藏任务保留空号；`Alt+F` 继续只标记真实任务行。
 - 「上一个/下一个」通用任务循环按 current interaction attention → artifact-only Plan → active → completed-unread → local pin 的层序拼接成一个环：层序表达优先级但**不排他**，各层按序全部进入 `cycleKeys`，层内跨来源按最近提问时间倒序，创建时间与匿名 key 只用于稳定并列；Provider 与置顶不改变顺序。冷游标下第一次按键仍落在最紧急的一条，其余任务不因某一层非空而不可达。已完成未读根任务是可循环层。置顶行统一显示在置顶分组，但循环仍按真实状态入层；**已完成且已读或 `unknown`** 没有状态层级，不进入通用循环，由置顶兜底；普通 stopped 等不属于前四层但仍可继续的置顶任务进入 `local pin` 层。一次连续 walk 持有它开始时的环 `CYCLE_WALK_HOLD_MS`（按键续期），期间的发布重排不改变正在遍历的环；walk 失效后下一次按键采纳最新环，代价是 walk 进行中新到达的任务要等下一轮才入环。候选只来自进程 V7 Snapshot 的根任务 `cycleKeys`，子任务不参与；热且可信时直接派发，只有冷启动、重连或明确成员缺口才等待所需 Provider 的 tasks-only 盘点，不得从部分集合跳转。第一下立即派发；打开仍在执行时，后续每一次按键都在**逻辑游标**上继续推进，只有最后一个目标真正派发——N 次连按前进 N 格并落在最终尾随目标，而不是重复选中正在打开的那一条；若推进后回到正在打开的目标（例如环只有一条），则不再重复调用 Provider。逻辑游标只在本次 walk 的请求全部落定前有效，之后回到已确认游标。进程游标由任意一次确认打开的 `cycleKeys` 成员提交，不再为循环按键独占：卡片点击、快速跳转与 attention 入口都让位置移到用户当前所见任务；落在 `cycleKeys` 之外的打开不提交游标。游标所指任务因层变化离开循环时，按旧次序就近改锚到幸存邻居。待输入与已完成未读专用入口的独立未打开进度（`attentionSeen`）不受游标提交影响。
 - 每个任务行和项目行固定显示一个明显的文本化来源标记；即使只启用单一来源也不得省略，且图标与可访问名称必须同步表达来源。
@@ -265,7 +265,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 明确 waiting/active/completed/interrupted 不得被 debounce、quota、环境、完整库存或非任务 unread 阻塞；同 tick 只做 microtask 合并并在下一帧原子展示。Provider observation → Kernel canonical P95 ≤50ms、最大 ≤200ms，Kernel → Main accepted ≤50ms，Kernel → Float applied ACK P95 ≤250ms，回复/取消/执行 → Float 最终状态 P95 ≤300ms。unknown 保持中立并只做有界核验；无法确认的 interrupted/failed 不猜测 waiting。Codex 冷启动/重连冲突只对该任务 single-flight 精读一次 latest Turn。phase 与 unread 独立；同一 completion epoch 的 unread 保留到明确 read receipt 或新 Turn。Main 与 Float 必须应用同一 package revision。
 - 任务库存与所有消费者不得使用产品级固定条数上限：Claude inventory、Kernel、操作、导航、mutation、批量归档均处理完整已接纳集合；Codex `thread/list limit=100` 仅为协议页大小，必须遍历至 cursor 结束并拒绝 cursor loop。数量增长只能影响分页和性能，不得改变卡片、Tab、角标或动作资格。
 - 每次生产/uTools 构建生成确定性 `hostAssetId / rendererAssetId`，并同时验证 Registry、Topology、Snapshot、Command、Subscribe 与 ACK 能力/版本。Main UI、Main Preload、Float UI、Float Preload 任一身份缺失或不一致时必须显示 `reload-required` 并停止任务动作，不得表现为无响应或继续运行旧逻辑。构建只表示 `artifact-ready`；只有真实 uTools 重新接入/安装产物并完成全链握手才表示 `host-loaded`。产品不调用私有 uTools API，也不自动结束插件后台进程。
-- EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶、隐藏、折叠偏好、alias 与**状态未知任务的手动指定相位**是唯一可持久化的任务侧本地配置；手动相位仅对 `unknown` 行开放（已有真实证据的行拒绝指定，不允许伪造状态），且只在设定时所处的那一段未知内有效——任务离开 `unknown` 再回来即自动失效，不复活旧答案。覆盖落在 Kernel 单点，使相位、分组、cycle 层级与计数读同一个值；`canonicalPhase` 保存证据原值，一切关于证据的判断（首推 unknown 宽限窗）读它而非被用户偏好回答。其余的 live phase、unread 与 cycle 位置只在进程内，topology 仅 RAW-181 的有界 Side→parent 恢复提示（ID+observedAt）可持久化且不携带任何状态。
+- EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶是唯一回写 Provider 的本地偏好（RAW-205）：Codex 原生线程走 app-server `thread/section/move`（方法缺失回退 `thread/metadata/update`）并以 `thread/read` 回读核验，CodexHost 额外进程走 Host CLI `thread pin|unpin` 并以 Host 列表核验；可写 Provider 是该任务置顶的单一来源，EyPc 只显示回读值，写失败或不确定才回退本地置顶并提示；Claude App 与 Cursor 的原生置顶只读入不回写（前者服务端同步、后者 VS Code 内存缓存表），EyPc 取消只清本地置顶。Codex 无 section 变更通知，Desktop 侧栏在窗口重新获得焦点时才重拉列表（2026-09-03 真机），成功提示固定写明「侧栏切窗后刷新」，不得声称侧栏已同步。置顶、隐藏、折叠偏好、alias 与**状态未知任务的手动指定相位**是唯一可持久化的任务侧本地配置；手动相位仅对 `unknown` 行开放（已有真实证据的行拒绝指定，不允许伪造状态），且只在设定时所处的那一段未知内有效——任务离开 `unknown` 再回来即自动失效，不复活旧答案。覆盖落在 Kernel 单点，使相位、分组、cycle 层级与计数读同一个值；`canonicalPhase` 保存证据原值，一切关于证据的判断（首推 unknown 宽限窗）读它而非被用户偏好回答。其余的 live phase、unread 与 cycle 位置只在进程内，topology 仅 RAW-181 的有界 Side→parent 恢复提示（ID+observedAt）可持久化且不携带任何状态。
 - 水球额度映射随启用组合变化：仅 Codex 时与旧版完全一致；仅 Claude 时 Claude 独占整个水球；两者同时启用时外圈进度表示 Codex、球心百分比表示 Claude 并标注来源，Claude 未连接或无读数时百分比回退为 Codex 原样。球心那个 Claude 读数以**无 scope 的普通周限额**（`weekly_all`）为基准：它是真正约束一周节奏的那条线，5 小时窗口摆动过快，不适合当常驻状态数字。账号同时上报按模型的 scoped 周限额时，球心并列读作 `{scoped}/{plain}`（scoped 优先取 Fable，在前）且**不带百分号**——两个百分号在球体里放不下；scoped 侧仍不得冒充普通周限额，也不得在没有普通周窗口时单独占据球心。并列字号取用户设定 `percentSize` 的 `.7` 与球体尺寸 `.165` 的较小值，使 32px 设置下最宽的 `100/100` 仍在圈内、12px 设置仍被尊重；球心读数使用 `tabular-nums lining-nums`，避免就地刷新时中心左右跳动。账号只有普通周窗口时球心是单值 `{plain}%`；确实没有普通周窗口时才依次回退到 5 小时窗口、其它已上报窗口，只为不让球心空着。展开卡额度区仍逐窗口显示全部窗口，不受球心选择影响。
 - 展开卡额度区按来源分区展示；Claude 分区在授权关闭、凭据不可用、Retry-After 或其它失败时显示对应安全原因，已有值保留但标为可能过期。展开卡额度行的每个读数块都是刷新触发器：点击（Claude 块亦可 Enter / Space，以 button 角色播报）立即强制刷新两个来源的额度，Claude usage API 借此绕过普通 cadence 与通用退避，但 429 Retry-After 与 401/403 凭据锁不变；每次 Claude 额度读取记录一条有界 `quota / claude-quota-read` 诊断（触发原因、各车道读数年龄、usage API 结果与阻塞原因、Retry 与 reset 距离、窗口计数与主读数来源，不含百分比、reset 时刻或身份）。RAW-201。手动刷新等待 Claude 读取完成后发布有界回执 `companion.quotaRefreshReceipt`（Claude 车道 `changed / usageApi / accessStatus / blockedBy / retryInMs / windowCount / scopedCount`，Codex `requested`），浮窗在额度行下方可见显示 8 秒并同步播报；已授权但 usage API 被挡（凭据不可用 / Retry-After / 失败）时，即使已有缓存行也在行内显示原因。RAW-204。
 - 新设置 `claudeAppQuotaAccess` 默认关闭，旧已授权 quota fallback 配置迁移为开启。授权后 macOS 只读 Claude App `oauth:tokenCacheV2` 并以内存方式使用 Claude 专属 Safe Storage Keychain 项；账号/组织无法唯一仲裁时失败关闭，密钥、令牌和缓存明文不进入诊断/Renderer/持久化。缓存键 `acct:<account>|<profile>:<org>:<apiHost>:<scopes>` 的组织取第 2 段、账号取第 1 段 `|` 前（旧 `<client>:<org>:…` 键形不变）；多组织同时有效且无显式 activeOrganization 时，以 Claude App `plan-usage-history` 最新样本的 `org` 裁决，提示命中不了任何候选仍失败关闭。RAW-204。
@@ -334,7 +334,7 @@ Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-globa
 - A compatible Desktop `thread-archived` broadcast or App Server `thread/archived` notification can cross preload only as an already-published anonymous key. The Controller immediately removes that exact key and queues an urgent verified inventory read; unmapped, unarchive, delete and malformed events cannot remove a task, and normal inventory omissions continue through the dropout quarantine.
 - When the conversation snapshot is verified or retained as stale, the expanded-card search field shows `最近 N 天的 M 条` right-aligned inside the input. The ordinary left placeholder is `别名|任务|项目`. Stale/error/degraded/Claude-gap alerts replace the search glyph with `!` and use the child-owned 200ms hint; they do not occupy a full status row. If the left placeholder would overlap the count, it hides and the same left glyph hover exposes it. Raw-source and registered-source counts remain diagnostics, not user-facing float text. **This supersedes the earlier full-line `float-source-status` placement, including the 1046 hooks-gap append to that row; the gap note itself still comes from `claudeRealtimeGapNote`.** See [RAW-173](260817/0859-float-search-status-compact/spec.md#L1). **RAW-173's leftover confirm-row exception is superseded by [RAW-175](260817/1618-float-action-hint-popover/spec.md#L1): confirmation copy never reinserts that row.**
 - The project Tab mirrors native `Pinned / Projects / Chats`: native pinned conversations/projects first, then clearly marked EyPc local pins; remaining native projects follow project order and include empty projects; Chats contains only native projectless tasks. No task appears twice. A project-name search match shows all its in-window tasks, otherwise only matching tasks remain.
-- Task and project aliases are display/search metadata only; a list row shows the alias when present and otherwise the original name, never a placeholder caused by a missing display field. The original name remains searchable and appears in detail/Shift preview when an alias exists. Original identity still governs ownership and archive. Native order is read-only. EyPc local pins can be reordered with `Alt+↑/↓`; task pins immediately move the row into the pinned partition of the current task/status view, while project pins enter `Pinned`. Pin source is expressed by the fixed `顶` control and its 200ms help, never by row-tail “本地顶” text: local uses warning color, native/Chats remain focusable with `aria-disabled` and every input route shares the read-only gate. Project-page `隐/显` is reversible local grouping visibility and never removes its tasks from other Tabs or counts. Project `移` is a fail-closed native Codex sidebar-removal transaction and never deletes the directory, assignments or conversations.
+- Task and project aliases are display/search metadata only; a list row shows the alias when present and otherwise the original name, never a placeholder caused by a missing display field. The original name remains searchable and appears in detail/Shift preview when an alias exists. Original identity still governs ownership and archive. Native order is read-only. EyPc local pins can be reordered with `Alt+↑/↓`; task pins immediately move the row into the pinned partition of the current task/status view, while project pins enter `Pinned`. Pin source is expressed by the fixed `顶` control and its 200ms help, never by row-tail “本地顶” text: local uses warning color; a native task pin whose provider accepts the EyPc write (Codex app-server, CodexHost — `companionCapabilities.pin`) toggles and syncs, while Claude/Cursor native pins, native project pins and Chats remain focusable with `aria-disabled` and every input route shares that read-only gate (RAW-205). Project-page `隐/显` is reversible local grouping visibility and never removes its tasks from other Tabs or counts. Project `移` is a fail-closed native Codex sidebar-removal transaction and never deletes the directory, assignments or conversations.
 - First use defaults to `动态` while retaining `ongoing` as its stable persisted ID. Last Tab, project collapse, aliases, local pin order, local project-hide set, full-inventory day window, dynamic activity hours and display geometry persist. Legacy local-remove sets are discarded on migration without changing Codex. Search, selection, focus and confirmation do not persist. Storage uses hashed task keys and stable project fingerprints; raw IDs, paths, action aliases and task lists remain memory-only.
 - Task rows use “contextual primary action + necessary visible state toggle + More”。Current interaction shows open/reply；artifact-only stopped shows execute/resume；running/completed shows open；pin may remain a visible toggle。Pause、archive、remove and dangerous operations live in More/context menu with explicit confirmation。Opaque `24px` is the compact minimum，default and comfortable densities use 28px/32px；single-character `顶/暂/归/执/移/确` buttons are removed in favor of existing Lucide icons、tooltip and accessible name。Projected ongoing tasks keep archive disabled；stopped archive retains Provider-specific preflight。Only `archived` removes；failed/indeterminate retain the row and target reconciliation。The 已隐藏 tab renders 已暂停 before ordinary hidden，and migration from hidden Plan commits pause before clearing hidden。
 - The Codex floating child does not mount the main product Tooltip layer and never uses native `title`. The compact quota surface has no explanatory bubble. Privacy-safe task detail appears in an opaque card after 500ms, while task status and short-character action explanations use a child-owned opaque hint after 200ms. Full action access remains available through the drawer, pure-Shift preview, ARIA and Quick Jump; other main-app surfaces continue using the shared Tooltip owner.

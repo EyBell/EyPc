@@ -32,6 +32,7 @@
 - [RAW-187](../shared-raw-187.md#L1) — `active` · 状态未知任务可手动指定正常状态：episode 退休、canonicalPhase 保值、Cmd/Ctrl 手势
 - [RAW-188](../shared-raw-188.md#L1) — `active` · 已完成未读与置顶互斥，并为 input/completedUnread 保持一轮稳定的实例顺序
 - [RAW-189](../shared-raw-189.md#L1) — `active` · 置顶显式稳定顺序与折叠编号；所有精确当前 interaction 的直接切换、App Server running 因果优先、旧 Plan 结构化消费及当前宿主构建身份可见性
+- [RAW-205](../shared-raw-205.md#L1) — `active` · 原生置顶（Codex 分区 / Host pinned / Claude 星标 / Cursor 置顶）进入 Kernel providerPin；置顶只回写 Codex 与 CodexHost，Claude/Cursor 只读
 - [RAW-201](../shared-raw-201.md#L1) — `active` · 额度读数块点击即强制刷新两个来源；Claude 额度车道每次读取写有界 `quota/claude-quota-read` 诊断
 - [RAW-202](../shared-raw-202.md#L1) — `active` · 跳转前确保目标应用已打开与 CodexHost 启动通路
 
