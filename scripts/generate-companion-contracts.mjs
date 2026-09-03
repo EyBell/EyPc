@@ -313,9 +313,44 @@ module.exports = {
 }
 `
 
+// Claude quota window vocabulary: one JSON source, one CJS mirror for the
+// preload normalizer and one TS mirror for the domain describer, so a new
+// upstream alias or label is added exactly once.
+const vocabularyPath = path.join(root, 'contracts', 'claude-quota-vocabulary.json')
+const vocabulary = JSON.parse(fs.readFileSync(vocabularyPath, 'utf8'))
+const vocabularyBanner = '// Generated from contracts/claude-quota-vocabulary.json. Do not edit by hand.\n'
+const vocabularyBody = `const CLAUDE_QUOTA_VOCABULARY_REVISION = ${JSON.stringify(vocabulary.revision)}
+const CLAUDE_QUOTA_BASE_KEYS = ${JSON.stringify(vocabulary.baseKeys, null, 2)}
+const CLAUDE_QUOTA_KEY_ALIASES = ${JSON.stringify(vocabulary.aliases, null, 2)}
+const CLAUDE_QUOTA_UPSTREAM_TYPES = ${JSON.stringify(vocabulary.upstreamTypes, null, 2)}
+const CLAUDE_QUOTA_WINDOW_MINUTES = ${JSON.stringify(vocabulary.windowMinutes, null, 2)}
+const CLAUDE_QUOTA_WINDOW_LABELS = ${JSON.stringify(vocabulary.labels, null, 2)}
+/** \`five_hour\`, \`seven_day\` or a scoped \`five_hour_<scope>\` / \`seven_day-<scope>\` key. */
+const CLAUDE_QUOTA_KEY_PATTERN = /^(five_hour|seven_day)(?:[_-](.+))?$/
+`
+const vocabularyTs = `${vocabularyBanner}
+${vocabularyBody.replace(/(^|\n)const /g, '$1export const ')}
+export type ClaudeQuotaWindowFamily = keyof typeof CLAUDE_QUOTA_BASE_KEYS
+`
+const vocabularyCjs = `'use strict'
+${vocabularyBanner}
+${vocabularyBody}
+module.exports = {
+  CLAUDE_QUOTA_VOCABULARY_REVISION,
+  CLAUDE_QUOTA_BASE_KEYS,
+  CLAUDE_QUOTA_KEY_ALIASES,
+  CLAUDE_QUOTA_UPSTREAM_TYPES,
+  CLAUDE_QUOTA_WINDOW_MINUTES,
+  CLAUDE_QUOTA_WINDOW_LABELS,
+  CLAUDE_QUOTA_KEY_PATTERN
+}
+`
+
 const outputs = [
   [path.join(root, 'src', 'domain', 'generated', 'companionContractsV7.ts'), ts],
-  [path.join(root, 'preload', 'companion', 'contracts-v7.cjs'), cjs]
+  [path.join(root, 'preload', 'companion', 'contracts-v7.cjs'), cjs],
+  [path.join(root, 'src', 'domain', 'generated', 'claudeQuotaVocabulary.ts'), vocabularyTs],
+  [path.join(root, 'preload', 'claude', 'quota-vocabulary.cjs'), vocabularyCjs]
 ]
 
 if (process.argv.includes('--check')) {

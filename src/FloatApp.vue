@@ -54,6 +54,7 @@ import {
   resolveCodexSurfaceTheme
 } from './domain/codexAppearance'
 import { buildCodexCompactPresentation, codexBadgeText, codexWeeklyReading } from './domain/codexPresentation'
+import { CLAUDE_QUOTA_WINDOW_LABELS } from './domain/generated/claudeQuotaVocabulary'
 import { emptyCompanionTaskPackage, projectCompanionTaskSnapshot } from './domain/companionTaskPackage'
 import { moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, type QuickJumpDomTargetV7 } from './ui/quickJumpRegistry'
@@ -283,6 +284,8 @@ function projectMatchesProvider(project: CodexProjectCard) {
 }
 const primaryPercent = computed(() => compact.value.primary?.bucket.remainingPercent ?? 0)
 const selectedWeekly = computed(() => codexWeeklyReading(compact.value.primary, compact.value.secondary))
+/** Window family short labels come from the shared vocabulary; the card must not author `5h` on its own. */
+const windowShortLabels = { short: CLAUDE_QUOTA_WINDOW_LABELS.short.short, weekly: CLAUDE_QUOTA_WINDOW_LABELS.weekly.short }
 const compactSurfaceTheme = computed(() => resolveCodexSurfaceTheme(settings.value?.style || 'water', settings.value?.colors || fallbackColors, primaryPercent.value))
 const expandedSurfaceTheme = computed(() => resolveCodexExpandedCardTheme(
   settings.value?.colors || fallbackColors,
@@ -3295,7 +3298,7 @@ onUnmounted(() => {
             <span>{{ compact.primary?.longLabel || 'Codex' }}</span>
             <b v-if="compact.primary?.family === 'spark'" class="float-card-spark" aria-label="Spark 额度">S</b>
             <strong>{{ compact.primary ? `${compact.primary.bucket.remainingPercent}%` : compact.stateLabel }}</strong>
-            <small v-if="compact.primary?.kind === 'short'">5h</small>
+            <small v-if="compact.primary?.kind === 'short'">{{ windowShortLabels.short }}</small>
           </div>
           <div v-if="selectedWeekly" class="float-card-detail">
             <div class="card-weekly-head"><span>{{ selectedWeekly.longLabel }}</span><strong>{{ selectedWeekly.bucket.remainingPercent }}%</strong></div>

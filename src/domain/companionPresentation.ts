@@ -1,4 +1,5 @@
 import type { CodexhostEnvironmentV1 } from './codex'
+import { CLAUDE_QUOTA_WINDOW_LABELS } from './generated/claudeQuotaVocabulary'
 import {
   claudePrimaryQuotaWindow,
   type ClaudeQuotaAccessStatus,
@@ -386,9 +387,9 @@ export interface CompanionQuotaStrip {
   multiProvider: boolean
 }
 
-/** `S` is the established Spark marker; short/weekly keep the row scannable. */
+/** `S` is the established Spark marker; the window family labels come from the shared vocabulary. */
 function shortWindowLabel(window: CompanionQuotaWindow, spark: boolean): string {
-  return `${spark ? 'S' : ''}${window === 'short' ? '5h' : '周'}`
+  return `${spark ? 'S' : ''}${CLAUDE_QUOTA_WINDOW_LABELS[window].short}`
 }
 
 /**

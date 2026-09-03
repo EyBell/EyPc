@@ -48,7 +48,7 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
       'scripts.cjs',
       'environment.cjs',
       'open.cjs',
-      'quota.cjs'
+      'quota.cjs', 'quota-vocabulary.cjs'
     ]
   },
   {
