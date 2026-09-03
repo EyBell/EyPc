@@ -1,0 +1,18 @@
+{
+  "$comment": "Claude quota window vocabulary shared by the preload usage-API normalizer and the domain describer. Regenerate both mirrors with `pnpm run generate:contracts`.",
+  "revision": "claude-quota-vocabulary-v1",
+  "baseKeys": { "short": "five_hour", "weekly": "seven_day" },
+  "aliases": {
+    "fiveHour": "five_hour",
+    "session": "five_hour",
+    "sevenDay": "seven_day",
+    "weekly": "seven_day",
+    "weekly_all": "seven_day"
+  },
+  "upstreamTypes": { "session": "five_hour", "weekly_all": "seven_day", "weekly_scoped": "seven_day" },
+  "windowMinutes": { "short": 300, "weekly": 10080 },
+  "labels": {
+    "short": { "long": "5 小时限额", "short": "5h" },
+    "weekly": { "long": "周限额", "short": "周" }
+  }
+}

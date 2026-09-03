@@ -1,3 +1,10 @@
+import {
+  CLAUDE_QUOTA_BASE_KEYS,
+  CLAUDE_QUOTA_KEY_PATTERN,
+  CLAUDE_QUOTA_WINDOW_LABELS,
+  CLAUDE_QUOTA_WINDOW_MINUTES
+} from './generated/claudeQuotaVocabulary'
+
 /** Pure quota and registration-readiness domain for the Claude provider. */
 
 export type ClaudeQuotaStatus = 'idle' | 'loading' | 'ok' | 'stale' | 'error'
@@ -58,8 +65,8 @@ export interface ClaudeQuotaSnapshot {
   updatedAt: number
 }
 
-export const CLAUDE_SHORT_WINDOW_MINUTES = 5 * 60
-export const CLAUDE_WEEKLY_WINDOW_MINUTES = 7 * 24 * 60
+export const CLAUDE_SHORT_WINDOW_MINUTES = CLAUDE_QUOTA_WINDOW_MINUTES.short
+export const CLAUDE_WEEKLY_WINDOW_MINUTES = CLAUDE_QUOTA_WINDOW_MINUTES.weekly
 
 export function emptyClaudeQuota(): ClaudeQuotaSnapshot {
   return { version: 1, status: 'idle', windows: [], short: null, weekly: null, source: 'none', updatedAt: 0 }
@@ -130,16 +137,16 @@ function titleCaseScope(value: string): string {
 }
 
 function describeQuotaKey(key: string): { kind: ClaudeQuotaWindowKind; scope: string; windowMinutes: number } {
-  const match = /^(five_hour|seven_day)(?:[_-](.+))?$/.exec(key)
+  const match = CLAUDE_QUOTA_KEY_PATTERN.exec(key)
   const scope = titleCaseScope(match?.[2] || '')
-  if (match?.[1] === 'five_hour') return { kind: 'short', scope, windowMinutes: CLAUDE_SHORT_WINDOW_MINUTES }
-  if (match?.[1] === 'seven_day') return { kind: 'weekly', scope, windowMinutes: CLAUDE_WEEKLY_WINDOW_MINUTES }
+  if (match?.[1] === CLAUDE_QUOTA_BASE_KEYS.short) return { kind: 'short', scope, windowMinutes: CLAUDE_SHORT_WINDOW_MINUTES }
+  if (match?.[1] === CLAUDE_QUOTA_BASE_KEYS.weekly) return { kind: 'weekly', scope, windowMinutes: CLAUDE_WEEKLY_WINDOW_MINUTES }
   return { kind: 'other', scope: titleCaseScope(key), windowMinutes: 0 }
 }
 
 function quotaWindowLabels(kind: ClaudeQuotaWindowKind, scope: string): { label: string; shortLabel: string } {
-  const base = kind === 'short' ? '5 小时限额' : kind === 'weekly' ? '周限额' : scope || '限额'
-  const shortBase = kind === 'short' ? '5h' : kind === 'weekly' ? '周' : (scope || '限额').slice(0, 4)
+  const base = kind === 'short' || kind === 'weekly' ? CLAUDE_QUOTA_WINDOW_LABELS[kind].long : scope || '限额'
+  const shortBase = kind === 'short' || kind === 'weekly' ? CLAUDE_QUOTA_WINDOW_LABELS[kind].short : (scope || '限额').slice(0, 4)
   if (!scope || kind === 'other') return { label: base, shortLabel: shortBase }
   return { label: `${base} · ${scope}`, shortLabel: `${shortBase}·${scope}` }
 }

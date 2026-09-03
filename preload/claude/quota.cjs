@@ -37,6 +37,11 @@ const SAFE_STORAGE_SALT = 'saltysalt'
 const SAFE_STORAGE_ITERATIONS = 1003
 
 const { claudeAppDataRoot } = require('./app-paths.cjs')
+const {
+  CLAUDE_QUOTA_BASE_KEYS,
+  CLAUDE_QUOTA_KEY_ALIASES,
+  CLAUDE_QUOTA_KEY_PATTERN
+} = require('./quota-vocabulary.cjs')
 
 /**
  * Runs `use` with the access token and then drops the reference. The token is
@@ -288,15 +293,12 @@ function toRateLimits(payload) {
     return window
   }
   const result = {}
-  const aliases = {
-    fiveHour: 'five_hour', session: 'five_hour',
-    sevenDay: 'seven_day', weekly: 'seven_day', weekly_all: 'seven_day'
-  }
+  const aliases = CLAUDE_QUOTA_KEY_ALIASES
   for (const [rawKey, rawValue] of Object.entries(source)) {
     if (rawKey === 'limits') continue
     const key = aliases[rawKey] || rawKey
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(key)) continue
-    if (key !== 'five_hour' && key !== 'seven_day' && !/^(five_hour|seven_day)[_-].+/.test(key)) continue
+    if (!CLAUDE_QUOTA_KEY_PATTERN.test(key)) continue
     const window = pick(rawValue)
     if (window) result[key] = window
   }
@@ -333,7 +335,7 @@ function toRateLimits(payload) {
     if (upstreamType === 'weekly_scoped') {
       const scopeKey = safeScope(displayName || limit.model?.name || limit.scope?.model?.name || limit.scope)
       if (!scopeKey) continue
-      key = `seven_day_${scopeKey}`
+      key = `${CLAUDE_QUOTA_BASE_KEYS.weekly}_${scopeKey}`
     }
     if (!/^[A-Za-z0-9_-]{1,80}$/.test(key)) continue
     const window = pick(limit)
