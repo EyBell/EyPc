@@ -4086,6 +4086,11 @@ function honorHostExternalOpenRead(threadId, result) {
 }
 
 function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persistedUnreadIds) {
+  // A machine sub-run (subagent/guardian review) is never user-read: it sits in
+  // the native unread set forever, so it answers read before any other source.
+  if (codexSubagentDiscovery?.codexIsMachineRunThread?.(threadId) === true) {
+    return { hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' }
+  }
   if (codexDesktopOpenedReadAcknowledgements.has(threadId)) {
     return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
   }
@@ -8267,11 +8272,9 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
     codexInventorySideRelations.set(threadId, parentThreadId)
     if (turnLive) codexForgetPrivateBranchTerminal(parentThreadId, threadId)
     const terminal = codexReadPrivateBranchTerminal(parentThreadId, threadId)
-    const openedRead = codexDesktopOpenedReadAcknowledgements.has(threadId)
-    // A machine sub-run (subagent/guardian review) is never user-read, so its
-    // permanent desktop unread entry must not pin the parent completed-unread.
-    const machineRun = codexSubagentDiscovery?.codexIsMachineRunThread?.(threadId) === true
-    const unreadKnown = machineRun || openedRead || unreadIds instanceof Set
+    // Raw native membership only; machine-run and opened-read resolution live
+    // in codexDesktopUnreadObservation, which the branch projection asks first.
+    const unreadKnown = unreadIds instanceof Set
     const evidence = {
       parentThreadId,
       status: turnLive || persistedWaiting ? 'active' : connectorStatus,
@@ -8280,7 +8283,7 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
       activityEvidence: turnLive ? 'activity-event' : 'initial-snapshot',
       activeEvidenceSequence,
       unreadKnown,
-      hasUnreadTurn: machineRun || openedRead ? false : unreadKnown && unreadIds.has(threadId),
+      hasUnreadTurn: unreadKnown && unreadIds.has(threadId),
       turnId: typeof turn?.id === 'string' ? turn.id : '',
       turnStartedAt: codexTimestampMs(turn?.startedAt),
       lastTurnStatus: turn?.status || terminal?.lastTurnStatus || '',
@@ -8402,13 +8405,8 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       row.threadId,
       row.shadow
     )
-    // The machine-run guard must sit above the desktop observation: the
-    // parsed native unread set answers for any id, and a subagent/guardian
-    // child the user never opens stays in it forever.
-    // An opened-read acknowledgement is already answered by the observation above.
-    const unread = codexSubagentDiscovery?.codexIsMachineRunThread?.(row.threadId) === true
-      ? { hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' }
-      : desktopUnread.unreadAuthority !== 'unavailable'
+    // Machine-run and opened-read are already answered by the observation above.
+    const unread = desktopUnread.unreadAuthority !== 'unavailable'
       ? desktopUnread
       : row.inventoryEvidence?.unreadKnown === true
         ? {
