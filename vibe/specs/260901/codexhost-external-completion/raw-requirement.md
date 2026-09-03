@@ -85,3 +85,18 @@ clarification_at: 2026-09-02
 clarification: >
 
   用户选择 D-1：打通 Host 通道——codex-host 委派 CLI 增加 thread archive/unarchive，EyPc 归档桥对额外进程改走 CLI，预检用 Host thread read，核验用 Host 列表消失
+
+## RAW-200
+
+captured_at: 2026-09-02
+state: active
+text: >
+
+  还需要优化一下：从 Codex 里面点击归档时，要在 Host 里面也进行归档。当前插件我已经核验过了，插件里的归档功能可以正常在 Host 里面归档，以及在 Codex 里面归档。
+
+  还有一个问题：通过 Codex Host 里的对话产生的 side 导致主任务变成了"已完成未读" 实际上 它应该是"进行中"
+
+clarification_at: 2026-09-02
+clarification: >
+
+  Agent 解读：side 子对话在 Host 里是 ephemeral 的 fork 记录，任何列表都不列；Codex 归档主对话时只翻主记录，子对话仍未归档；EyPc 只看得到主记录自身的轮次。修法落在 Host：thread list 的 status/attention 汇总运行中的 side 子对话到主行；归档 / 取消归档级联到 side 子对话。EyPc 侧不改代码。

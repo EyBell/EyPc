@@ -1356,6 +1356,50 @@ describe('Codex App Server preload bridge', () => {
     context.bridge.close()
   })
 
+  it('drops an extra-process row the Desktop archived even while the Host list still carries it', async () => {
+    // Live shape behind 6e62d596 (2026-09-02): the Desktop archive removed the
+    // Grok row, a scan already in flight republished it from the cached Host
+    // roster with a newer membership revision, and the row sat in 待继续 until
+    // the next full membership publish. The archive must forget the roster entry.
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const externalId = 'acacacac-1234-4234-8234-123456789abc'
+    const context = loadCodexBridge(
+      child,
+      () => nativeRegistryText(),
+      desktopSocket,
+      false, true, null, false, null,
+      [{
+        threadId: externalId,
+        harnessId: 'grok',
+        status: 'completed',
+        hasUnreadTurn: false,
+        cwd: '/tmp/project',
+        title: '260902-归档后残留'
+      }]
+    )
+    const external = () => context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      .then((snapshot) => (snapshot.value.threads as Array<Record<string, any>>).find((row) => row.codexhostHarnessId === 'grok'))
+    expect(await external()).toBeTruthy()
+    await vi.waitFor(() => expect(desktopSocket.writes.length).toBeGreaterThan(0))
+    const deltas: Array<Record<string, any>> = []
+    const stop = context.bridge.onActivityChanged((delta: Record<string, any>) => deltas.push(delta))
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-archived',
+      sourceClientId: 'codex-desktop-owner',
+      version: 2,
+      params: { hostId: 'local', conversationId: externalId }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    stop()
+    expect(deltas.some((delta) => Array.isArray(delta.archivedKeys) && delta.archivedKeys.length === 1)).toBe(true)
+    // The roster forgot the id: the next scan, still served from the cached Host
+    // page that names the thread, must not publish the row again.
+    expect(await external()).toBeUndefined()
+    context.bridge.close()
+  })
+
   it('records the non-private Runtime Identity handshake once per semantic identity', () => {
     const context = loadCodexBridge(new FakeCodexProcess())
     const handshakes = () => context.diagnosticEvents.filter((event) => event.event === 'runtime-identity-handshake')
