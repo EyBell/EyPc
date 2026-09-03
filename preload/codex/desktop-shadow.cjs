@@ -38,6 +38,26 @@ function createCodexDesktopShadow(dependencies = {}) {
   const activityStatus = dependencies.activityStatus
   const projectedRequest = dependencies.projectedRequest
   const projectedRequests = dependencies.projectedRequests
+  /** Lazy: CodexHost discovery is constructed after this shadow. */
+  const isExternalThreadId = typeof dependencies.isExternalThreadId === 'function'
+    ? dependencies.isExternalThreadId
+    : () => false
+
+  /**
+   * Writes the Desktop's native unread set onto one connector record. CodexHost
+   * external conversations are absent from that atom by design, so their
+   * Host-written value is left alone (RAW-190). Returns whether it applied.
+   */
+  function codexApplyNativeConnectorUnread(known, threadId, unreadIds) {
+    // Duck-typed on purpose: the entry may run in a VM realm whose `Set` is not
+    // this module's `Set`, and `instanceof` would silently report "not applied".
+    if (!known || !unreadIds || typeof unreadIds.has !== 'function') return { applied: false, hasUnreadTurn: false }
+    if (isExternalThreadId(threadId) === true) return { applied: false, hasUnreadTurn: false }
+    const hasUnreadTurn = unreadIds.has(threadId)
+    known.connectorHasUnreadTurn = hasUnreadTurn
+    known.connectorUnreadAuthority = 'desktop-persisted'
+    return { applied: true, hasUnreadTurn }
+  }
   if (typeof record !== 'function'
     || typeof timestampMs !== 'function'
     || typeof validThreadId !== 'function'
@@ -280,7 +300,8 @@ function createCodexDesktopShadow(dependencies = {}) {
     codexDesktopRequestObservationCandidates,
     codexDesktopShadowFromSnapshot,
     codexDesktopPatchIndex,
-    codexApplyDesktopShadowPatch
+    codexApplyDesktopShadowPatch,
+    codexApplyNativeConnectorUnread
   }
 }
 

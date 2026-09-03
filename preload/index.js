@@ -881,7 +881,8 @@ try {
       reduceWaitingEdge: codexReduceWaitingEdge,
       activityStatus: sanitizeCodexActivityStatus,
       projectedRequest: codexDesktopProjectedRequest,
-      projectedRequests: codexDesktopProjectedRequests
+      projectedRequests: codexDesktopProjectedRequests,
+      isExternalThreadId: (threadId) => codexhostDiscovery?.isExternalThreadId?.(threadId) === true
     })
   }
 } catch { codexDesktopShadow = null }
@@ -1284,6 +1285,9 @@ try {
     codexhostDiscovery = codexhostDiscoveryModule.createCodexhostDiscovery({
       execFile,
       record: (entry) => recordCompanionDiagnosticEvent(entry),
+      // Thread memory (status continuity + jump-read) lives in plugin storage
+      // so a roster loss or reload cannot resurrect a read row as unread.
+      storage: () => globalThis.utools?.dbStorage,
       // The launch lane learns the CLI location while a Host is around to tell it.
       onCliPathObserved: (cliPath) => { codexDesktopLaunch?.rememberObservedCliPath(cliPath) }
     })
@@ -4089,7 +4093,8 @@ function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persiste
     return codexhostDiscovery.compareHostDesktopUnread(known, {
       connected: bridge?.state === 'connected',
       liveUnread: bridge?.liveUnread.get(threadId),
-      shadow
+      shadow,
+      openedRead: codexhostDiscovery.isExternalOpenedRead?.(threadId) === true
     })
   }
   const cachedUnread = bridge?.liveUnread.get(threadId)
@@ -5127,12 +5132,7 @@ class CodexDesktopCompanionBridge {
     if (options.clearStaleLiveFalse === true) codexClearStalePreCompletionLiveUnread(this, threadId)
     let unreadIds = null
     try { unreadIds = readCodexDesktopUnreadIds() } catch {}
-    // External conversations keep unread inside the Host; the official atom
-    // never lists them, so it must not overwrite the merged connector value.
-    if (unreadIds && codexhostDiscovery?.isExternalThreadId?.(threadId) !== true) {
-      known.connectorHasUnreadTurn = unreadIds.has(threadId)
-      known.connectorUnreadAuthority = 'desktop-persisted'
-    }
+    codexDesktopShadow?.codexApplyNativeConnectorUnread(known, threadId, unreadIds)
     const observation = codexDesktopUnreadObservation(this, known, threadId, this.shadows.get(threadId), unreadIds)
     known.hasUnreadTurn = observation.hasUnreadTurn
     known.unreadAuthority = observation.unreadAuthority
@@ -5964,6 +5964,7 @@ class CodexDesktopCompanionBridge {
         this.sideShadows.delete(params.conversationId)
         this.liveUnread.delete(params.conversationId)
         if (sideShadow?.parentThreadId) this.emitParentActivity(sideShadow.parentThreadId)
+        codexhostDiscovery?.codexhostForgetThread?.(params.conversationId)
         emitCodexActivityDelta([], true, archivedKey ? 'urgent' : 'normal', archivedKey ? [archivedKey] : [])
       }
       return
@@ -6771,24 +6772,16 @@ class CodexDesktopCompanionBridge {
       const known = codexActivityInventory.get(threadId)
       if (!known) continue
       const shadow = this.shadows.get(threadId)
-      // CodexHost external conversations are absent from the official unread
-      // atom by design; deriving their connector unread from it stomps the
-      // Host-written value the inventory merge just recorded (RAW-190: Host
-      // unread is not overwritten by the official atom).
-      const externalUnreadOwner = codexhostDiscovery?.isExternalThreadId?.(threadId) === true
-      const connectorHasUnreadTurn = unreadIds instanceof Set && !externalUnreadOwner
-        ? unreadIds.has(threadId)
+      const nativeUnread = codexDesktopShadow?.codexApplyNativeConnectorUnread(known, threadId, unreadIds) || { applied: false, hasUnreadTurn: false }
+      const connectorHasUnreadTurn = nativeUnread.applied
+        ? nativeUnread.hasUnreadTurn
         : known.connectorHasUnreadTurn === true
       let persistedBecameTrueQuery = Boolean(unreadIds)
         && this.persistedUnread.get(threadId) !== true
         && connectorHasUnreadTurn
         ? threadId
         : ''
-      if (unreadIds instanceof Set && !externalUnreadOwner) {
-        this.persistedUnread.set(threadId, connectorHasUnreadTurn)
-        known.connectorHasUnreadTurn = connectorHasUnreadTurn
-        known.connectorUnreadAuthority = 'desktop-persisted'
-      }
+      if (nativeUnread.applied) this.persistedUnread.set(threadId, connectorHasUnreadTurn)
       const childEntries = [...this.sideShadows.entries()]
         .filter(([, sideShadow]) => sideShadow.parentThreadId === threadId)
       for (const [childThreadId, parentThreadId] of codexInventorySideRelations) {
@@ -9625,7 +9618,8 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
           thread.codexhostHasUnreadTurn,
           unreadIds ? unreadIds.has(thread.id) : null,
           lastTurn.status === 'completed',
-          codexDesktopOpenedReadCoversCompletion(thread.id, { lastTurnStartedAt: lastTurn.startedAt, lastTurnCompletedAt: lastTurn.completedAt }))
+          codexDesktopOpenedReadCoversCompletion(thread.id, { lastTurnStartedAt: lastTurn.startedAt, lastTurnCompletedAt: lastTurn.completedAt })
+            || codexhostDiscovery.isExternalOpenedRead?.(thread.id) === true)
         : {
           hasUnreadTurn: unreadIds ? unreadIds.has(thread.id) : false,
           unreadAuthority: unreadIds ? 'desktop-persisted' : 'unavailable'
@@ -9726,6 +9720,8 @@ async function scanVerifiedCodexInventory() {
           threadKey: codexThreadKey
         })
       : { rows: [], turns: new Map() }
+    const codexhostRemovedKeys = (codexhostDiscovery?.codexhostTakeRemovedThreadIds?.() || []).map((threadId) => codexArchivedActivityKey(threadId)).filter(Boolean)
+    if (codexhostRemovedKeys.length) emitCodexActivityDelta([], true, 'urgent', codexhostRemovedKeys, { allowWithoutFingerprint: true })
     const rows = subagentRows.length || codexhost.rows.length
       ? [...recoveredRows, ...subagentRows, ...codexhost.rows]
       : recoveredRows
@@ -9775,7 +9771,9 @@ async function scanVerifiedCodexInventory() {
       unreadIds,
       orphanCount
     )
-    const threads = sanitizeCodexThreads(publicRows, registry, assignments, turns.latest, unreadIds)
+    // An archive that landed during the turn reads already left the Host roster; do not republish that row.
+    const liveRows = codexhost.rows.length ? publicRows.filter((thread) => thread.codexhostExternal !== true || codexhostDiscovery.isExternalThreadId(thread.id)) : publicRows
+    const threads = sanitizeCodexThreads(liveRows, registry, assignments, turns.latest, unreadIds)
     // How many extra processes survived into the published set. A lane that
     // discovers nine and publishes none is otherwise completely invisible.
     if (codexhost.rows.length) runtimeDiagnostics.record({ level: 'info', scope: 'task-recovery', event: 'codexhost-published', outcome: 'projected', provider: 'codex', count: threads.filter((thread) => thread.codexhostHarnessId).length, details: { discovered: codexhost.rows.length, publicRows: publicRows.length } })
@@ -11990,11 +11988,6 @@ async function preflightCompanionTaskPackageV7(input = {}) {
   }
 }
 
-const companionHostRegistry = createCompanionHostRegistry?.({
-  codex: {
-    inspect: inspectCodexEnvironment,
-    open: companionOpenReadiness ? companionOpenReadiness.wrapOpen('codex', openCompanionCodexTarget) : openCompanionCodexTarget,
-    executePlan: executeCompanionCodexPlan,
 // Open readiness: probe, launch and wait before any provider opener runs. A
 // failed load keeps today's direct dispatch for every provider.
 let companionOpenReadiness = null
@@ -12048,6 +12041,11 @@ try {
   }
 } catch { companionOpenReadiness = null }
 
+const companionHostRegistry = createCompanionHostRegistry?.({
+  codex: {
+    inspect: inspectCodexEnvironment,
+    open: companionOpenReadiness ? companionOpenReadiness.wrapOpen('codex', openCompanionCodexTarget) : openCompanionCodexTarget,
+    executePlan: executeCompanionCodexPlan,
     // `codexArchiveBridge` is constructed further below, after the Kernel --
     // a genuine bidirectional dependency (the bridge's own
     // `commitVerifiedCodexArchive` calls back into
@@ -14175,13 +14173,13 @@ window.eypcPlatform = {
     inspectEnvironment: inspectCodexEnvironment,
     setLaunchPath: setCodexLaunchPath,
     clearLaunchPath: clearCodexLaunchPath,
+    setCodexhostPath,
+    clearCodexhostPath,
     readSnapshot: readCodexSnapshot,
     readActivitySnapshot: readCodexActivitySnapshot,
     onActivityChanged(listener) {
       if (typeof listener !== 'function') return () => {}
       codexActivityListeners.add(listener)
-    setCodexhostPath,
-    clearCodexhostPath,
       return () => codexActivityListeners.delete(listener)
     },
     openThread: (...args) => runtimeIdentityCompatible ? openCodexThread(...args) : Promise.resolve(runtimeIdentityTaskFailure()),

@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 const require = createRequire(import.meta.url)
 const discoveryModule = require('../../preload/codex/codexhost-discovery.cjs') as {
   CODEXHOST_LIST_TTL_MS: number
+  CODEXHOST_FORGET_SUPPRESS_MS: number
+  CODEXHOST_THREAD_MEMORY_STORAGE_KEY: string
   codexhostHarnessLabel(value: unknown): string
   codexhostExternalIdentity(row: unknown): Record<string, string>
   codexhostExternalUnreadFields(
@@ -23,9 +25,12 @@ const discoveryModule = require('../../preload/codex/codexhost-discovery.cjs') a
     isExternalThreadKey(key: string): boolean
     honorExternalProjection(threadId: string, known: Record<string, any>, activity: Record<string, any> | null): Record<string, any>
     honorExternalOpenRead(threadId: string, result: Record<string, any>, markRead?: (id: string) => void): Record<string, any>
+    isExternalOpenedRead(threadId: string): boolean
     externalGoalEvidence(threadId: string): Record<string, unknown> | null
     compareHostDesktopUnread(known: Record<string, any>, input?: Record<string, any>): Record<string, any>
-    codexhostResetDiscovery(): void
+    codexhostForgetThread(threadId: string): boolean
+    codexhostTakeRemovedThreadIds(): string[]
+    codexhostResetDiscovery(options?: { forgetMemory?: boolean }): void
   }
 }
 
@@ -211,10 +216,10 @@ describe('codexhost external conversation discovery', () => {
 
   it('discovers the rendezvous from runtime children and shapes external rows with synthetic turns', async () => {
     const calls: Array<{ command: string; args: string[] }> = []
+    const observedCliPaths: string[] = []
     let clock = 1_000_000
     const discovery = discoveryModule.createCodexhostDiscovery({
       execFile: fakeExecFile(calls),
-    const observedCliPaths: string[] = []
       now: () => clock,
       onCliPathObserved: (cliPath: string) => { observedCliPaths.push(cliPath) }
     })
@@ -225,11 +230,11 @@ describe('codexhost external conversation discovery', () => {
 
     const listCall = calls.find((call) => call.command === CLI)
     expect(listCall?.args).toEqual(['thread', 'list', '--limit', '50', '--sort', 'recency-desc', '--all', 'true'])
+    // The launch lane learns the CLI location while a Host is around to tell it.
+    expect(observedCliPaths).toEqual([CLI])
 
     // Native codex threads and invalid ids are excluded; harness rows remain.
     expect(result.rows.map((row) => row.id).sort()).toEqual([NATIVE_ID < PI_ID ? PI_ID : PI_ID, CLAUDE_ID].sort())
-    // The launch lane learns the CLI location while a Host is around to tell it.
-    expect(observedCliPaths).toEqual([CLI])
     const claudeRow = result.rows.find((row) => row.id === CLAUDE_ID)!
     expect(claudeRow).toMatchObject({
       name: 'cc · 260901-供应商调优',
@@ -441,5 +446,203 @@ describe('codexhost external conversation discovery', () => {
     })
     const result = await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
     expect(result.rows).toEqual([])
+  })
+
+  describe('thread memory: status continuity and the remembered jump-read', () => {
+    const PI_DONE = { threadId: PI_ID, harnessId: 'pi', status: 'completed', cwd: '/repo/gonavi', title: '你好', hasUnreadTurn: true }
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+    function fakeStorage() {
+      const items = new Map<string, unknown>()
+      return {
+        getItem: (key: string) => (items.has(key) ? JSON.parse(JSON.stringify(items.get(key))) : null),
+        setItem: (key: string, value: unknown) => { items.set(key, JSON.parse(JSON.stringify(value))) },
+        items
+      }
+    }
+
+    function memoryHarness(storage = fakeStorage()) {
+      let clock = 9_000_000
+      let threads: Array<Record<string, unknown>> = [PI_DONE]
+      let hasChild = true
+      const make = () => discoveryModule.createCodexhostDiscovery({
+        execFile: (command: string, args: string[], _settings: unknown, done: (error: Error | null, stdout?: string) => void) => {
+          if (command === 'ps' && args[0] === '-axww') return done(null, processTable())
+          if (command === 'pgrep') return done(null, hasChild ? `${CHILD_PID}\n` : '')
+          if (command === 'ps' && args[0] === 'eww') {
+            return done(null, `${CHILD_PID} node adapter CODEXHOST_RUNTIME_ENDPOINT=${ENDPOINT} CODEXHOST_RUNTIME_TOKEN=${TOKEN} CODEXHOST_CLI_PATH=${CLI}`)
+          }
+          if (command === CLI) return done(null, JSON.stringify({ threads, nextCursor: null }))
+          return done(new Error('unexpected command'))
+        },
+        now: () => clock,
+        storage: () => storage
+      })
+      let discovery = make()
+      const scan = async () => {
+        clock += discoveryModule.CODEXHOST_LIST_TTL_MS + 1
+        await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
+        await settle()
+        return discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
+      }
+      return {
+        get discovery() { return discovery },
+        scan,
+        reload: () => { discovery = make() },
+        setThreads: (next: Array<Record<string, unknown>>) => { threads = next },
+        setHasChild: (value: boolean) => { hasChild = value },
+        advance: (ms: number) => { clock += ms },
+        storage
+      }
+    }
+
+    it('keeps statusChangedAt across a roster loss so a completed row does not come back as 刚刚', async () => {
+      const harness = memoryHarness()
+      const first = await harness.scan()
+      const seatedAt = first.rows[0].updatedAt as number
+      harness.setHasChild(false)
+      harness.advance(60_000)
+      // Rendezvous gone: the roster empties (today's fail-open behaviour).
+      expect((await harness.scan()).rows).toEqual([])
+      harness.setHasChild(true)
+      harness.advance(60_000)
+      const restored = await harness.scan()
+      expect(restored.rows[0].updatedAt).toBe(seatedAt)
+      expect(restored.turns.get(PI_ID)).toMatchObject({ status: 'completed', startedAt: seatedAt, completedAt: seatedAt })
+    })
+
+    it('remembers the jump-read through a reset and a reload, until the Host status actually changes', async () => {
+      const harness = memoryHarness()
+      const first = await harness.scan()
+      const seatedAt = first.rows[0].updatedAt as number
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(false)
+      harness.discovery.honorExternalOpenRead(PI_ID, { outcome: 'dispatched', confirmsRead: false })
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(true)
+      expect(discoveryModule.compareHostDesktopUnread({ connectorUnreadAuthority: 'desktop-persisted', connectorHasUnreadTurn: true }, { openedRead: true }))
+        .toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
+
+      // Session reset keeps the memory; the reseated row keeps its timestamp and its read.
+      harness.discovery.codexhostResetDiscovery()
+      harness.advance(5_000)
+      const reseated = await harness.scan()
+      expect(reseated.rows[0].updatedAt).toBe(seatedAt)
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(true)
+
+      // A fresh instance over the same storage (plugin reload) sees the same truth.
+      harness.reload()
+      harness.advance(5_000)
+      const reloaded = await harness.scan()
+      expect(reloaded.rows[0].updatedAt).toBe(seatedAt)
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(true)
+      const stored = harness.storage.getItem(discoveryModule.CODEXHOST_THREAD_MEMORY_STORAGE_KEY) as { threads: Record<string, Record<string, unknown>> }
+      expect(Object.keys(stored.threads)).toEqual([PI_ID])
+      expect(JSON.stringify(stored)).not.toMatch(/gonavi|你好|TOKEN|127\.0\.0\.1/)
+
+      // A real Host turn supersedes the read: running → completed moves statusChangedAt.
+      harness.setThreads([{ ...PI_DONE, status: 'running' }])
+      harness.advance(5_000)
+      await harness.scan()
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(false)
+      harness.setThreads([PI_DONE])
+      harness.advance(5_000)
+      const completedAgain = await harness.scan()
+      expect(completedAgain.rows[0].updatedAt).toBeGreaterThan(seatedAt)
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(false)
+    })
+
+    it('drops the remembered read on a Host unread edge false → true, and forgets archived ids', async () => {
+      const harness = memoryHarness()
+      await harness.scan()
+      harness.discovery.honorExternalOpenRead(PI_ID, { outcome: 'opened', confirmsRead: false })
+      // Desktop consumed the read: the Host now says false.
+      harness.setThreads([{ ...PI_DONE, hasUnreadTurn: false }])
+      await harness.scan()
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(true)
+      // A completion between two scans never shows as running; the unread edge is the only evidence.
+      harness.setThreads([PI_DONE])
+      await harness.scan()
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(false)
+
+      harness.discovery.honorExternalOpenRead(PI_ID, { outcome: 'opened', confirmsRead: false })
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(true)
+      expect(harness.discovery.codexhostForgetThread(PI_ID)).toBe(true)
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(false)
+      const stored = harness.storage.getItem(discoveryModule.CODEXHOST_THREAD_MEMORY_STORAGE_KEY) as { threads: Record<string, unknown> }
+      expect(stored.threads).toEqual({})
+      harness.discovery.codexhostResetDiscovery({ forgetMemory: true })
+    })
+  })
+
+  describe('archive lag and Host-list removals', () => {
+    const PI = { threadId: PI_ID, harnessId: 'pi', status: 'completed', cwd: '/repo/gonavi', title: '你好', hasUnreadTurn: false }
+    const CLAUDE = { threadId: CLAUDE_ID, harnessId: 'claude-code', status: 'completed', cwd: '/repo/gonavi', title: '供应商调优', hasUnreadTurn: false }
+    // Idle rosters refresh behind the scan; let the background list land before reading again.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+    function lagHarness() {
+      let clock = 3_000_000
+      let threads: Array<Record<string, unknown>> = [PI, CLAUDE]
+      let failList = false
+      const discovery = discoveryModule.createCodexhostDiscovery({
+        execFile: fakeExecFile([], {
+          list: () => failList
+            ? JSON.stringify({ error: { code: 'RUNTIME_UNREACHABLE', message: 'x' } })
+            : JSON.stringify({ threads, nextCursor: null })
+        }),
+        now: () => clock
+      })
+      const scan = async () => {
+        clock += discoveryModule.CODEXHOST_LIST_TTL_MS + 1
+        await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })
+        await settle()
+        return (await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'] })).rows.map((row) => row.id)
+      }
+      return {
+        discovery,
+        scan,
+        setThreads: (next: Array<Record<string, unknown>>) => { threads = next },
+        setFailList: (value: boolean) => { failList = value },
+        advance: (ms: number) => { clock += ms }
+      }
+    }
+
+    it('keeps a forgotten extra process out of the roster while the Host list still carries it', async () => {
+      const harness = lagHarness()
+      expect(await harness.scan()).toEqual([PI_ID, CLAUDE_ID])
+      expect(harness.discovery.codexhostForgetThread(PI_ID)).toBe(true)
+      // The Host page has not caught up with the archive: it must not seat the id again.
+      expect(await harness.scan()).toEqual([CLAUDE_ID])
+      expect(harness.discovery.isExternalThreadId(PI_ID)).toBe(false)
+      // A forgotten id is not also reported as a removal.
+      expect(harness.discovery.codexhostTakeRemovedThreadIds()).toEqual([])
+      // The Host caught up (no PI): suppression is released, and a later list naming PI again is an unarchive.
+      harness.setThreads([CLAUDE])
+      expect(await harness.scan()).toEqual([CLAUDE_ID])
+      harness.setThreads([PI, CLAUDE])
+      expect(await harness.scan()).toEqual([PI_ID, CLAUDE_ID])
+    })
+
+    it('releases the suppression once the window has passed even if the Host never dropped the id', async () => {
+      const harness = lagHarness()
+      await harness.scan()
+      harness.discovery.codexhostForgetThread(PI_ID)
+      expect(await harness.scan()).toEqual([CLAUDE_ID])
+      harness.advance(discoveryModule.CODEXHOST_FORGET_SUPPRESS_MS)
+      expect(await harness.scan()).toEqual([PI_ID, CLAUDE_ID])
+    })
+
+    it('reports an id a complete Host list dropped exactly once and nothing on a degraded pass', async () => {
+      const harness = lagHarness()
+      await harness.scan()
+      harness.setThreads([CLAUDE])
+      expect(await harness.scan()).toEqual([CLAUDE_ID])
+      expect(harness.discovery.codexhostTakeRemovedThreadIds()).toEqual([PI_ID])
+      expect(harness.discovery.codexhostTakeRemovedThreadIds()).toEqual([])
+      // Every list failed: the previous roster is kept and no removal is invented.
+      harness.setFailList(true)
+      expect(await harness.scan()).toEqual([CLAUDE_ID])
+      expect(harness.discovery.isExternalThreadId(CLAUDE_ID)).toBe(true)
+      expect(harness.discovery.codexhostTakeRemovedThreadIds()).toEqual([])
+    })
   })
 })
