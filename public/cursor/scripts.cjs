@@ -88,7 +88,7 @@ case "$EVENT" in
   *[!A-Za-z]* ) exit 0 ;;
 esac
 case "$MODE" in
-  ''|agent ) : ;;
+  ''|agent|plan ) : ;;
   *[!A-Za-z]* ) MODE='' ;;
 esac
 

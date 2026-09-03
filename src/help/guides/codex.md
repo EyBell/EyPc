@@ -143,7 +143,7 @@
 
 ## 接入 Cursor Agent（可选）
 
-Cursor Agent 是第三个独立来源，**默认关闭**。开启后插件只读本机 Cursor `composerHeaders` 白名单与磁盘 `status`，把本机 Agent 会话列进同一任务清单。磁盘 `status=none` 且没有会话头的空壳不进清单。归档双向跟随 App 的 `isArchived`：App 里归档的会话不进清单；在插件里对待继续/已完成会话点“归”，会在写前重验无进行中证据后翻转同一个 `isArchived` 对，App 归档列表同步可见。uTools 自带 Node 读不了这份库，插件改用本机 `sqlite3` 只跑白名单查询。进行中状态需要你在设置页确认后，才会把观察脚本加法写入用户级 `~/.cursor/hooks.json`（可随时移除，失败开放）。注册一次后关掉或重开插件仍保留，配置页会回读，不必每次再点注册。脚本只读 stdin 前 32KB 白名单字段；库存文件一变就补读未读/已读，不再等几秒轮询。若这份文件里已有钩子写了非法的 `loop_limit: 0`，Cursor 会拒收整份配置、热路径不会点火；重新注册会把该值收成 `1`。不做额度。点卡片会通过 Cursor 官方 deeplink（`agent?id=会话id`）唤起 Cursor 并切到该对话（Cursor 3.17.8 实测；Cursor Cursor 未运行时由就绪层先 `open -b` 启动并等到进程与窗口出现，再发送深链）。这只是「已派发」：插件不能确认对话真的展示成功，也不会把它标成已读。
+Cursor Agent 是第三个独立来源，**默认关闭**。开启后插件只读本机 Cursor `composerHeaders` 白名单与磁盘 `status`，把本机 Agent 与 Plan 模式会话列进同一任务清单（Chat / Ask / Edit 不进）。Plan 或 Agent 在向你提问、等你批准终端命令时显示为「待输入」，点一下或用快捷键就能跳过去回答；磁盘 `status=none` 且没有会话头的空壳不进清单。归档双向跟随 App 的 `isArchived`：App 里归档的会话不进清单；在插件里对待继续/已完成会话点“归”，会在写前重验无进行中证据后翻转同一个 `isArchived` 对，App 归档列表同步可见。uTools 自带 Node 读不了这份库，插件改用本机 `sqlite3` 只跑白名单查询。进行中状态需要你在设置页确认后，才会把观察脚本加法写入用户级 `~/.cursor/hooks.json`（可随时移除，失败开放）。注册一次后关掉或重开插件仍保留，配置页会回读，不必每次再点注册。脚本只读 stdin 前 32KB 白名单字段；库存文件一变就补读未读/已读，不再等几秒轮询。若这份文件里已有钩子写了非法的 `loop_limit: 0`，Cursor 会拒收整份配置、热路径不会点火；重新注册会把该值收成 `1`。不做额度。点卡片会通过 Cursor 官方 deeplink（`agent?id=会话id`）唤起 Cursor 并切到该对话（Cursor 3.17.8 实测；Cursor Cursor 未运行时由就绪层先 `open -b` 启动并等到进程与窗口出现，再发送深链）。这只是「已派发」：插件不能确认对话真的展示成功，也不会把它标成已读。
 
 Cursor 的 `conversation_id / subagent_id / parent_conversation_id` Hook 事件形成热拓扑，`composerHeaders` inventory 提供冷启动复核；两者都只提交白名单身份、有限状态与 generation。精确子任务进入同一 V6 根卡，不再通过 Auxiliary 候选、Controller Cursor 直调或包生成后的二次折叠。Hooks/库存不能建立精确关系时保持独立或隔离，不按标题、路径或时间猜父子。
 

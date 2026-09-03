@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 342 leaves / 6 modules / 318 active / 22 superseded / 2 proposed / 0 conflicted |
+| 需求登记 | 343 leaves / 6 modules / 319 active / 22 superseded / 2 proposed / 0 conflicted |
 | 取代关系 | 22 whole / 108 scoped |
-| 原始来源 | 49 documents / 271 ordered / 146 RAW-parent / 125 source-only |
+| 原始来源 | 50 documents / 281 ordered / 156 RAW-parent / 125 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-2867967cf02a11b5c102 / renderer-a13c33a2eded94204d24` · `artifact-ready` |
-| 当前构建时间 | `2026/09/03 17:24:14`（`2026-09-03T09:24:14.372Z`） |
+| 当前构建产物 | `host-e39d9e706aefda605c43 / renderer-28134d5a9a73740182b1` · `artifact-ready` |
+| 当前构建时间 | `2026/09/03 17:39:07`（`2026-09-03T09:39:07.485Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,10 +34,10 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 342,
+    "leaves": 343,
     "modules": 6,
     "proposed": 2,
-    "active": 318,
+    "active": 319,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
@@ -45,9 +45,9 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "scoped_relations": 108
   },
   "source_anchor_catalog": {
-    "documents": 49,
-    "ordered_anchors": 271,
-    "raw_parent_ordered": 146,
+    "documents": 50,
+    "ordered_anchors": 281,
+    "raw_parent_ordered": 156,
     "registered_requirements": 105,
     "source_only": 125
   },
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-2867967cf02a11b5c102",
-    "renderer_asset": "renderer-a13c33a2eded94204d24",
+    "host_asset": "host-e39d9e706aefda605c43",
+    "renderer_asset": "renderer-28134d5a9a73740182b1",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-03T09:24:14.372Z",
-    "built_at_local": "2026/09/03 17:24:14",
+    "built_at": "2026-09-03T09:39:07.485Z",
+    "built_at_local": "2026/09/03 17:39:07",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "cd523158dd05e8e96a5d8445d1f8f2750dd4ab18e1f42922e544c269d6203522",
-    "raw_sources": "1373596982e37bae69e7851961bce37ed1702b83bc63e6baad3599583a6ea2a5",
-    "source_anchor_catalog": "f48c31e104b72f99c2d357670cc0c7bf1d6c3ac5e2b416b7f1cdd82b976c42c2",
-    "product_body": "4da4c9c2c176d8d202cc62314dce751616b0df3771b8a48133903a9b703b0d7f",
+    "requirement_registry": "691703a473e30bb8a7cefff43c164714aade13e43d9cc8959c4f26ca952c0f59",
+    "raw_sources": "ca8c5b110906ff16d0ccaba74cf860de2808d07842867ce844a2ab3c1ea6716f",
+    "source_anchor_catalog": "fec1aafadb6caea8112a270f8a9c66c5153980d4882df2e4d5810ceee707c96f",
+    "product_body": "585dc9db4a9bdeba9d6ecf20b63c603d806ac3df53855abc3e00e0aea6db93bb",
     "architecture": "bcad9740fd8927d646772b1ed755de8190e01b0ee7ad97021b7b10ca07117ff0",
-    "runtime_contract": "59b4ac66c395ee087be46924434bf476073a001bc80097f0073dd99718477d50"
+    "runtime_contract": "0002aa124cd2918779f71cb5c7d526f14b57b88dd2bb360e479d79332c4c019f"
   }
 }
 ```
@@ -235,7 +235,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 - 当前拓扑与状态权威为 [RAW-179 / EyPc V7](260824/eypc-v7-global-refactor/spec.md#L1)，V6 [RAW-176 revision 4](260823/companion-task-topology-v5/spec.md#L1) 与原生交接 [RAW-177](260823/codex-tab-boundary-optimization/spec.md#L1) 是仍有效的历史基础：Provider adapter 只提交 membership、activity、interaction、unread、plan-artifact、metadata、topology 七条原始 evidence lane；Topology V2 只拥有精确 root/member membership；Kernel V7 是唯一可变 reducer。Main、Float、Codex 页面、全局角标、注意力入口和前后任务只消费同一不可变 Presentation Snapshot；点击、Enter、角标、菜单、全局快捷键与循环只提交 Catalog Command。Provider phase 回灌、Controller/Renderer 二次投影、task watcher/cache 与旧 facade 均只作为历史实现记录。
 
-- Codex、Claude Code 与 Cursor 是三个彼此独立的来源，可各自开关并共享同一个水球；默认只开启 Codex，此时插件不读取 Claude/Cursor 数据。数据、状态、额度、空态与角标语义保持 Codex-only 兼容；任务/项目行即使在单来源模式也保留文本化、可访问的来源标记。
+- Codex、Claude Code 与 Cursor 是三个彼此独立的来源，可各自开关并共享同一个水球；默认只开启 Codex，此时插件不读取 Claude/Cursor 数据。数据、状态、额度、空态与角标语义保持 Codex-only 兼容；任务/项目行即使在单来源模式也保留文本化、可访问的来源标记。Cursor 库存收 `unifiedMode = agent | plan` 的本机会话（chat / ask / edit / subagent / cloud 仍排除）；Cursor 自己的 `hasBlockingPendingActions`（AskQuestion / Plan 提问 / 终端审批）是精确的待输入交互，压过开着的 Turn 并可一键深链跳转，仍不发明待确认。RAW-206。
 - 任务排布与角标以**根任务状态**为准而非来源：待输入、进行中、已完成未读的角标数字是启用来源根任务的合计，子任务不重复计数或进入循环。三个角标与通用循环共用同一判据（可见、非暂停、`capabilities.open`），因此「角标里有」等价于「上一个/下一个能到」；不可打开的任务既不计数也不入环，不得出现只计数不可达的角标。每条根任务仍必须以文字、图标和可访问名称显示来源，并使用来源背景与状态标记正交区分。
 - Claude 来源细节权威为 [Claude Code Companion 权威重置](260807/claude-code-companion-authority-reset/spec.md#L1)，技术选择与严格测试门禁见其 [research](260807/claude-code-companion-authority-reset/research.md#L1)，实现/未验收边界见 [verify](260807/claude-code-companion-authority-reset/verify.md#L1)；跨来源拓扑、Snapshot、interaction/artifact 与命令形态由 RAW-179 V7 统揽。真实 Claude App quota 数据权威已通过；完整 uTools 状态/未读/项目筛选矩阵与最终渲染同屏仍待真实 Host 验收，因此不得宣称产品验收完成。
 - Claude 库存只镜像 Claude App **Code 模式**的 `claude-code-sessions/<org>/<user>/local_<uuid>.json`；CLI-only、Cowork、`local-agent-mode-sessions` 和云端索引均不进入卡片。卡片身份使用 App local id，标题使用 App `title`，空标题固定为 `General coding session`；UUID 不得成为可见标题。

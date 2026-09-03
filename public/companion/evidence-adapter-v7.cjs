@@ -287,13 +287,19 @@ function cursorSessionObservationV7(value = {}, hookValue = {}) {
     integer(session.lastUpdatedAt),
     integer(session.createdAt)
   )
+  // Cursor's own "needs your decision" flag (AskQuestion / plan questions /
+  // terminal approval) is an exact open user-input interaction, not an
+  // ambiguity: the Kernel shows 待输入 and the deeplink jumps straight to it.
+  // Cursor never distinguishes approval from a question at this layer, so
+  // `waiting-approval` is still never invented (RAW-206).
+  const blockingDecision = session.hasBlockingPendingActions === true
   return {
     kind,
-    exact: kind !== 'unknown' && session.hasBlockingPendingActions !== true,
+    exact: kind !== 'unknown',
     candidates: [{
       kind,
       authority: 'live-turn',
-      exact: kind !== 'unknown' && session.hasBlockingPendingActions !== true,
+      exact: kind !== 'unknown',
       sequence,
       observedAt: sequence,
       statusEnteredAt: Math.max(integer(hook.lastEventAt), integer(session.lastUpdatedAt)),
@@ -311,8 +317,8 @@ function cursorSessionObservationV7(value = {}, hookValue = {}) {
     unreadKnown: true,
     unread: session.hasUnreadMessages === true,
     unreadSequence: integer(session.lastUpdatedAt) || sequence,
-    interactionKind: '',
-    interactionSequence: 0,
+    interactionKind: blockingDecision ? 'user-input' : '',
+    interactionSequence: blockingDecision ? sequence : 0,
     planState: session.hasPendingPlan === true ? 'available' : 'unknown',
     planSequence: session.hasPendingPlan === true ? sequence : 0,
     planActionable: session.hasPendingPlan === true,
