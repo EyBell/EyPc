@@ -391,6 +391,25 @@ describe('codexhost external conversation discovery', () => {
     })).toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
   })
 
+  it('shares one Desktop evidence reading with the entry and honours only its read polarity', () => {
+    const evidence = require('../../preload/codex/desktop-unread-evidence.cjs') as {
+      desktopReadEvidence(input: Record<string, unknown>): 'read' | 'unread' | null
+      persistedConnectorUnread(known: Record<string, unknown> | null): { hasUnreadTurn: boolean; unreadAuthority: string }
+    }
+    expect(evidence.desktopReadEvidence({ liveUnread: { ownerClientId: 'eypc-open', hasUnreadTurn: false } })).toBe('read')
+    expect(evidence.desktopReadEvidence({ connected: true, liveUnread: { unreadEvidence: 'event', hasUnreadTurn: true } })).toBe('unread')
+    expect(evidence.desktopReadEvidence({ connected: false, liveUnread: { unreadEvidence: 'event', hasUnreadTurn: true } })).toBeNull()
+    expect(evidence.desktopReadEvidence({ shadow: { unreadEvidence: 'snapshot', hasUnreadTurn: false } })).toBeNull()
+    expect(evidence.persistedConnectorUnread({ connectorUnreadAuthority: 'desktop-persisted', connectorHasUnreadTurn: true }))
+      .toEqual({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
+    expect(evidence.persistedConnectorUnread(null)).toEqual({ hasUnreadTurn: false, unreadAuthority: 'unavailable' })
+    // An exact Desktop unread-true never outranks the Host for an extra process.
+    expect(discoveryModule.compareHostDesktopUnread(
+      { connectorUnreadAuthority: 'desktop-persisted', connectorHasUnreadTurn: false },
+      { connected: true, liveUnread: { unreadEvidence: 'event', hasUnreadTurn: true } }
+    )).toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' })
+  })
+
   it('treats an extra-process jump into Codex APP as read and leaves native jumps unchanged', async () => {
     const marked: string[] = []
     const discovery = discoveryModule.createCodexhostDiscovery({
@@ -402,8 +421,10 @@ describe('codexhost external conversation discovery', () => {
       outcome: 'dispatched',
       confirmsRead: false
     }, (id) => { marked.push(id) })
-    expect(extra).toEqual({ outcome: 'dispatched', confirmsRead: true })
+    // The receipt is untouched: Codex read state lives in the Provider, not in a Kernel hint.
+    expect(extra).toEqual({ outcome: 'dispatched', confirmsRead: false })
     expect(marked).toEqual([PI_ID])
+    expect(discovery.isExternalOpenedRead(PI_ID)).toBe(true)
     const native = discovery.honorExternalOpenRead(NATIVE_ID, {
       outcome: 'dispatched',
       confirmsRead: false

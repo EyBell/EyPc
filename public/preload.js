@@ -4058,13 +4058,9 @@ function codexReduceWaitingEdge(input = {}) {
 }
 
 function codexDesktopPersistedUnread(known) {
-  const unreadAuthority = known?.connectorUnreadAuthority === 'desktop-persisted'
-    ? 'desktop-persisted'
-    : 'unavailable'
-  return {
-    hasUnreadTurn: unreadAuthority === 'desktop-persisted' && known?.connectorHasUnreadTurn === true,
-    unreadAuthority
-  }
+  return codexDesktopShadow
+    ? codexDesktopShadow.persistedConnectorUnread(known)
+    : { hasUnreadTurn: false, unreadAuthority: 'unavailable' }
 }
 
 function codexIsConfirmedTurnEvidence(value) {
@@ -4106,14 +4102,12 @@ function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persiste
   const liveUnread = bridge?.state === 'connected' || cachedUnread?.ownerClientId === 'eypc-open'
     ? cachedUnread
     : null
-  if (cachedUnread?.ownerClientId === 'eypc-open' && cachedUnread.hasUnreadTurn === false) {
-    return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
-  }
-  const exact = shadow?.unreadEvidence === 'event'
-    ? shadow
-    : liveUnread?.unreadEvidence === 'event' ? liveUnread : null
-  if (exact && typeof exact.hasUnreadTurn === 'boolean') {
-    return { hasUnreadTurn: exact.hasUnreadTurn === true, unreadAuthority: 'desktop-live' }
+  // Native Codex honours both polarities of exact Desktop evidence.
+  const exactEvidence = codexDesktopShadow
+    ? codexDesktopShadow.desktopReadEvidence({ connected: bridge?.state === 'connected', liveUnread: cachedUnread, shadow })
+    : null
+  if (exactEvidence) {
+    return { hasUnreadTurn: exactEvidence === 'unread', unreadAuthority: 'desktop-live' }
   }
   // A refollow snapshot is the only replayable current-state evidence after
   // an exact read event was missed while EyPc was disconnected. Its explicit
@@ -11236,7 +11230,8 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
         terminalAt: 0
       }]
     }
-    if (isRoot && typeof thread.hasUnreadTurn === 'boolean' && thread.unreadAuthority !== 'unavailable') {
+    // Memberless root: the thread value is its own reading; with members the Kernel is the one merger.
+    if (isRoot && branches.length === 1 && typeof thread.hasUnreadTurn === 'boolean' && thread.unreadAuthority !== 'unavailable') {
       observation.unreadKnown = true
       observation.unread = thread.hasUnreadTurn === true
     }
