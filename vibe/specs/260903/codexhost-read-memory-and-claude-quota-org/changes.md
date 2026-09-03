@@ -12,10 +12,11 @@
 | `src/domain/codexPresentation.ts` | `codexWeeklyReading` |
 | `src/domain/companionPresentation.ts` | `CompanionQuotaRefreshReceipt`、`companionQuotaRefreshReceiptText`、`claudeAppQuotaReadable`、`claudeQuotaReadingStale`、组 `note`、`quotaRefreshReceipt` 切片字段 |
 | `src/runtime/codexController.ts` | `refreshQuota()` 等待 Claude 读取并发布回执；两处窗口重建改用 helper；诊断主读数改用 `claudePrimaryQuotaWindow` |
-| `src/FloatApp.vue` / `src/styles/float.css` | 可见刷新反馈 `.float-quota-feedback`、凭据状态 `.float-quota-note`、`selectedWeekly` 改用 helper |
+| `src/FloatApp.vue` / `src/styles/float.css` | 可见刷新反馈 `.float-quota-feedback`（真机复核后改为覆盖同一行的 overlay）、凭据状态 `.float-quota-note`（改为「!」标记 + 200ms 提示 + 可访问名称）、`selectedWeekly` 改用 helper |
+| `preload/claude/quota.cjs`（真机补丁） | `MIN_USAGE_API_INTERVAL_MS = 60s`：成功后的 usage API 间隔不再跟随 10 秒级刷新旋钮；fallback 用例 +1 |
 | `src/components/CodexWaterBall.vue` / `src/pages/CodexPage.vue` | 周读数取值改用 `codexWeeklyReading` |
 | `tests/platform/codexhostDiscovery.test.ts` | +3：roster 丢失保时间戳、reset/reload 保已读、unread 边沿与归档 |
-| `tests/platform/claudeQuotaFallback.test.ts` | +2：`acct:` 键形、多组织平局与 fail-closed |
+| `tests/platform/claudeQuotaFallback.test.ts` | +3：`acct:` 键形、多组织平局与 fail-closed、sub-minute cadence 下限 |
 | `tests/domain/companionPresentation.test.ts` | +2：凭据 note、回执文案 |
 | `tests/domain/codexPresentation.test.ts` | +1：`codexWeeklyReading` |
 | `tests/runtime/claudeCompanionController.test.ts` | +1：手动刷新回执 |

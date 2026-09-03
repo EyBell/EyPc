@@ -3457,8 +3457,21 @@ onUnmounted(() => {
             <span aria-hidden="true">{{ chip.shortLabel }}</span><strong aria-hidden="true">{{ chip.remainingPercent }}%</strong>
           </div>
           <p v-if="group.emptyReason">{{ group.emptyReason }}</p>
-          <p v-else-if="group.note" class="float-quota-note" :title="group.note">{{ group.note }}</p>
+          <!-- The row stays one line: an App-lane block is a marker whose reason
+               lives in the 200ms hint and the accessible name, never inline text. -->
+          <span
+            v-else-if="group.note"
+            class="float-quota-note"
+            role="img"
+            :aria-label="group.note"
+            tabindex="0"
+            @pointerenter="queueActionHint($event, group.note)"
+            @pointerleave="clearActionHint"
+            @focus="queueActionHint($event, group.note)"
+            @blur="clearActionHint"
+          >!</span>
         </div>
+        <!-- Refresh receipt overlays the row for a few seconds instead of adding a line. -->
         <p v-if="quotaFeedback" class="float-quota-feedback" role="status">{{ quotaFeedback }}</p>
       </section>
 

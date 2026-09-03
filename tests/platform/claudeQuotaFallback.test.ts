@@ -113,6 +113,22 @@ describe('fallback stays off unless asked for', () => {
     await fallback.read({ ...args, now: NOW + 60_000 })
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
+
+  it('never follows a sub-minute cadence to the usage endpoint, except for a manual refresh', async () => {
+    const home = makeHome()
+    const fetchImpl = vi.fn(async () => okResponse({ five_hour: { used_percentage: 1 } }))
+    const fallback = makeFallback(fetchImpl)
+    const args = { enabled: true, primaryUpdatedAt: 0, refreshIntervalMs: 10_000, claudeHome: home.claudeHome }
+    await fallback.read({ ...args, now: NOW })
+    await fallback.read({ ...args, now: NOW + 10_000 })
+    await fallback.read({ ...args, now: NOW + 59_999 })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fallback.diagnostics()).toMatchObject({ nextAllowedReason: 'interval', nextAllowedAt: NOW + quota.MIN_USAGE_API_INTERVAL_MS })
+    await fallback.read({ ...args, now: NOW + 20_000, force: true })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    await fallback.read({ ...args, now: NOW + 20_000 + quota.MIN_USAGE_API_INTERVAL_MS })
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
 })
 
 describe('Node 16 HTTPS transport', () => {
