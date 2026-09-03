@@ -26,7 +26,10 @@ describe('cursor agent cold inventory', () => {
     expect(normalizeCursorAgentObservation({ composerId: 'not-a-uuid' })).toBeNull()
     const blocking = observation({ hasBlockingPendingActions: true })
     expect(blocking).not.toBeNull()
-    expect(resolveCursorAgentPhase(blocking!)).toBe('unknown')
+    // A blocking user decision is 待输入, never waiting-approval, and beats an open Turn.
+    expect(resolveCursorAgentPhase(blocking!)).toBe('waiting-input')
+    expect(resolveCursorAgentPhase(observation({ hasBlockingPendingActions: true, hookTurnOpen: true })!)).toBe('waiting-input')
+    expect(resolveCursorAgentState(blocking!).activityState).toBe('waiting-input')
     expect(resolveCursorAgentState(blocking!).activityState).not.toBe('waiting-approval')
   })
 

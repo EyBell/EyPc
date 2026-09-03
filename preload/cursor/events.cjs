@@ -60,7 +60,7 @@ function normalizeQueueEntry(value) {
     event,
     at: safeInteger(value.t) || 0,
     pid: safeInteger(value.p),
-    mode: mode === 'agent' ? 'agent' : '',
+    mode: mode === 'agent' || mode === 'plan' ? mode : '',
     ...(generationId ? { generationId } : {}),
     ...(subagentId ? { subagentId, parentConversationId } : {}),
     stopStatus,

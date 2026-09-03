@@ -62,6 +62,15 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
     })
   })
 
+  it('maps a Cursor blocking user decision to an exact user-input interaction, never approval', () => {
+    const waiting = cursorSessionObservationV7({ hasBlockingPendingActions: true, lastUpdatedAt: 40, diskStatus: 'completed' }, { turnOpen: true, turnStartedAt: 30 })
+    expect(waiting).toMatchObject({ kind: 'turn-running', exact: true, interactionKind: 'user-input' })
+    expect(waiting.interactionSequence).toBeGreaterThan(0)
+    expect(waiting.candidates[0]).toMatchObject({ exact: true })
+    const settled = cursorSessionObservationV7({ hasBlockingPendingActions: true, lastUpdatedAt: 40, diskStatus: 'completed' }, {})
+    expect(settled).toMatchObject({ kind: 'turn-completed', exact: true, interactionKind: 'user-input' })
+  })
+
   it('maps a Cursor Plan artifact without fabricating an input interaction', () => {
     expect(cursorSessionObservationV7({ hasPendingPlan: true, lastUpdatedAt: 40 }, {})).toMatchObject({
       kind: 'turn-completed',

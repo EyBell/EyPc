@@ -17,6 +17,12 @@
  */
 
 const CURSOR_INVENTORY_REVISION = 'cursor-agent-inventory-v5'
+/**
+ * Unified modes that run a real Turn and therefore become cards. `plan` is a
+ * first-class run mode since Cursor 3.17 (tools, hooks, its own Turn); `chat`,
+ * `ask` and `edit` stay out (RAW-206, 2026-09-03).
+ */
+const INVENTORY_UNIFIED_MODES = new Set(['agent', 'plan'])
 const SQLITE_QUERY_TIMEOUT_MS = 20_000
 const SQLITE_QUERY_MAX_BUFFER = 8 * 1024 * 1024
 const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
@@ -118,7 +124,7 @@ function isEmptyShell(row) {
 
 function isInventoryRow(row) {
   if (!row || flagOf(row.isArchived) || flagOf(row.isSubagent) || flagOf(row.isBestOfNSubcomposer)) return false
-  if (textOf(row.unifiedMode).trim() !== 'agent') return false
+  if (!INVENTORY_UNIFIED_MODES.has(textOf(row.unifiedMode).trim())) return false
   if (isCloudRow(row)) return false
   if (isEmptyShell(row)) return false
   return COMPOSER_ID.test(textOf(row.composerId).trim())
@@ -135,7 +141,7 @@ function subagentParentIdOf(row) {
 /** Fork rows are evidence, never cards, so the empty-shell filter stays off. */
 function isSubagentEvidenceRow(row) {
   if (!row || !flagOf(row.isSubagent) || flagOf(row.isArchived)) return false
-  if (textOf(row.unifiedMode).trim() !== 'agent') return false
+  if (!INVENTORY_UNIFIED_MODES.has(textOf(row.unifiedMode).trim())) return false
   if (isCloudRow(row)) return false
   const id = textOf(row.composerId).trim()
   return id.length > 0 && id.length <= SUBAGENT_ID_MAX_LENGTH
@@ -177,6 +183,7 @@ function projectRow(row, subagents, pinnedOrder) {
     // pin scan ran; the reader's `pinnedAvailable` says whether it did.
     pinned: Number.isInteger(order),
     ...(Number.isInteger(order) ? { pinnedOrder: order } : {}),
+    unifiedMode: textOf(row.unifiedMode).trim(),
     workspaceIdentifier: textOf(row.workspaceIdentifier).trim() || textOf(row.workspaceId).trim(),
     name: textOf(row.name).trim(),
     subtitle: textOf(row.subtitle).trim(),
@@ -514,5 +521,6 @@ module.exports = {
   CURSOR_INVENTORY_REVISION,
   PINNED_COMPOSERS_KEY,
   parsePinnedComposers,
+  INVENTORY_UNIFIED_MODES,
   createInventoryReader
 }

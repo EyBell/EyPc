@@ -14,6 +14,7 @@ const LOCAL = '86e0370a-21b3-434d-a1a3-0ce83edc5ddd'
 const ARCHIVED = 'eaafef48-388a-403c-ab6b-8d51ad09acbd'
 const CLOUD = '64047b1c-1111-2222-3333-444444444444'
 const CHAT = 'f3ee44cd-aaaa-bbbb-cccc-dddddddddddd'
+const PLAN = 'd0d0d0d0-1111-2222-3333-444444444444'
 const EMPTY_NONE = 'aaaaaaaa-1111-2222-3333-444444444444'
 const NONE_WITH_HEADERS = 'bbbbbbbb-1111-2222-3333-444444444444'
 const FORK_RUNNING = 'cccccccc-1111-2222-3333-444444444444'
@@ -67,6 +68,13 @@ function writeFixture(path: string) {
     unifiedMode: 'chat',
     name: 'chat row'
   }))
+  // Plan mode runs a real Turn (Cursor >= 3.17) and asks the user through a
+  // blocking pending action; it is a card like an agent session (RAW-205).
+  insertHeader.run(PLAN, 'ws-local', 0, 0, 1000, 2100, JSON.stringify({
+    unifiedMode: 'plan',
+    name: 'plan session',
+    hasBlockingPendingActions: true
+  }))
   insertHeader.run(EMPTY_NONE, 'ws-local', 0, 0, 1000, 2000, JSON.stringify({
     unifiedMode: 'agent',
     name: 'empty shell'
@@ -102,6 +110,10 @@ function writeFixture(path: string) {
     text: 'conversation body must never be selected',
     richText: 'also forbidden'
   }))
+  insertData.run(`composerData:${PLAN}`, JSON.stringify({
+    status: 'completed',
+    text: 'conversation body must never be selected'
+  }))
   insertData.run(`composerData:${EMPTY_NONE}`, JSON.stringify({
     status: 'none',
     fullConversationHeadersOnly: []
@@ -131,11 +143,17 @@ describe('cursor inventory reader', () => {
       })
       const snapshot = reader.readInventory()
       expect(snapshot.available).toBe(true)
-      expect(snapshot.sessions).toHaveLength(2)
+      expect(snapshot.sessions).toHaveLength(3)
       expect(snapshot.sessions.map((session: { composerId: string }) => session.composerId).sort()).toEqual([
         LOCAL,
-        NONE_WITH_HEADERS
+        NONE_WITH_HEADERS,
+        PLAN
       ].sort())
+      expect(snapshot.sessions.find((session: { composerId: string }) => session.composerId === PLAN)).toMatchObject({
+        unifiedMode: 'plan',
+        hasBlockingPendingActions: true,
+        diskStatus: 'completed'
+      })
       expect(snapshot.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)).toMatchObject({
         composerId: LOCAL,
         diskStatus: 'completed',
@@ -330,10 +348,11 @@ describe('cursor inventory reader', () => {
         execFileSync
       }).readInventory()
       expect(snapshot.available).toBe(true)
-      expect(snapshot.sessions).toHaveLength(2)
+      expect(snapshot.sessions).toHaveLength(3)
       expect(snapshot.sessions.map((session: { composerId: string }) => session.composerId).sort()).toEqual([
         LOCAL,
-        NONE_WITH_HEADERS
+        NONE_WITH_HEADERS,
+        PLAN
       ].sort())
       expect(JSON.stringify(snapshot.sessions)).not.toContain('conversation body')
     } finally {
