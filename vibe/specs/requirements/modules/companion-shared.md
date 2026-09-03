@@ -34,6 +34,7 @@
 - [RAW-189](../shared-raw-189.md#L1) — `active` · 置顶显式稳定顺序与折叠编号；所有精确当前 interaction 的直接切换、App Server running 因果优先、旧 Plan 结构化消费及当前宿主构建身份可见性
 - [RAW-201](../shared-raw-201.md#L1) — `active` · 额度读数块点击即强制刷新两个来源；Claude 额度车道每次读取写有界 `quota/claude-quota-read` 诊断
 - [RAW-202](../shared-raw-202.md#L1) — `active` · 跳转前确保目标应用已打开与 CodexHost 启动通路
+- [RAW-205](../shared-raw-205.md#L1) — `active` · Cursor Plan 模式会话纳入库存；阻塞待决展示为待输入并可一键跳转
 
 
 ### 编号条款
