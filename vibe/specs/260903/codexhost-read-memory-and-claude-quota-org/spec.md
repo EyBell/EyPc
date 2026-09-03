@@ -120,14 +120,19 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L270)
 - [FloatApp.vue](../../../../src/FloatApp.vue#L368)：`quotaFeedback` 监听回执 `at`，额度行下方 `.float-quota-feedback` 显示 8 秒；组 `note` 以 `.float-quota-note` 显示。
 - 收敛：[claude.ts](../../../../src/domain/claude.ts#L181) `withClaudeQuotaWindows`；[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L36) `codexWeeklyReading`；[open-handoff.cjs](../../../../preload/companion/open-handoff.cjs#L66) `normalizeOpenResult` / `normalizeOpenLaunch`；[desktop-shadow.cjs](../../../../preload/codex/desktop-shadow.cjs#L51) `codexApplyNativeConnectorUnread`。
 
-## 未收敛的重复判定（审计登记，待裁决）
+## 重复判定收敛台账（审计 31 项）
 
-只读审计共 31 项；本轮收敛 6 项。未动的主要为：
+第一轮收敛 6 项（见「实现」）；F-3 第二轮再收敛 5 项：
 
-- `desktopAppRead`（discovery）与 `codexDesktopUnreadObservation`（entry）对 snapshot-false / event-true 的策略不一致（审计 #3 / #4）；
-- 观察层裸 `.has(threadId)` 与扫描层 `coversCompletion` 两套「已读是否覆盖」（#5 / #8 / #19）；
-- Kernel `readAcknowledgements` 对 Codex 是死码（`PROVIDER_TRAITS.codex.readAcknowledgements === false`，#18）；`honorExternalOpenRead` 的 `confirmsRead: true` 被 `normalizeCompanionOpenReceipt` 压回 false（#17）——两者都不影响本轮修复（已读由 preload 记忆承载）；
-- `claude.ts` 三处 status / freshness 派生规则不一致（#24 / #25），`companionAggregate` 与 `claudePrimaryQuotaWindow` 的 short/weekly 优先级差异（#26），前后端键词汇表重复（#31）。
+- #5 / #8 / #19：`codexAcknowledgementCoversTurn` 成为唯一的「已读确认是否覆盖该 Turn」规则，父线程 `codexDesktopOpenedReadCoversCompletion` 与 Side Chat `codexReconcileInventorySideOpenedReadWithTurn` 都改为调用它；Side 路径原来在「start 相等」时不比 `completedAt`，现与父路径一致。
+- #9：扫描路径的 `sanitizeCodexThreads` 把 `lastTurnId` 一并传入，Turn 身份快路径可用。
+- #12 / #13：分支投影里被观察层提前回答的 `.has(threadId)` 分支与重复施加的 `openedRead` 守卫删除。
+- #24 / #25（部分）：`mergeClaudePlanUsage` / `mergeClaudeQuotaWindows` / `staleClaudeQuota` 共用 `claudeQuotaWindowFreshness`、`claudeQuotaMergedStatus`、`markExpiredClaudeQuotaWindows`；`normalizeClaudeQuota` 对上游直出 payload 保留更严的 `plausibleResetAt` 规则（有意差异，已注释）。
+- 顺手：`codexForgetDesktopOpenedReadThread` 一行包装内联；入口棘轮 14288 → 实测值。
+
+判定为**有意差异**、不再列为冲突：#3 / #4（额外进程对 Desktop snapshot-false / event-true 不认，是 RAW-190 / RAW-193 的产品规则）、#26（水面 5h、球心与外圈周额度是各通道的产品含义）。
+
+仍未动（需要更大范围裁决）：#1 / #2 discovery 内 `desktopAppRead` / persisted 回退与 entry 同形（注入会带来模块缺失时的降级问题）；#14 / #15 / #16 机器子跑与未读投影的三处重复；#17 / #18 Kernel `readAcknowledgements` 对 Codex 是死码、`confirmsRead: true` 被回执归一压回；#20 两层 unread 聚合；#30 / #31 标签与键词汇表的前后端重复。
 
 ## Verification
 
