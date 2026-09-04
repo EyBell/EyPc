@@ -497,7 +497,7 @@
       "source_task": "260903/companion-pin-provider-sync",
       "source_path": "vibe/specs/260903/companion-pin-provider-sync/raw-requirement.md",
       "spec_id": "SPEC-260903-COMPANION-PIN-PROVIDER-SYNC",
-      "content_sha256": "a319d44e05e2b6c08a73b167fba4097d081eeeb0db18f148c760ea65ec89cb6c",
+      "content_sha256": "50d59e83d1607aa72768df22a47058f25c3a31fafe469829b23ebcbb348fbfbf",
       "raw_identity_count": 1,
       "ordered_anchor_count": 8,
       "raw_parent_ordered_count": 8,
@@ -6337,7 +6337,7 @@
       "source_id": "SA-695246CEF91A49A56F5F",
       "source_task": "260903/companion-pin-provider-sync",
       "source_path": "vibe/specs/260903/companion-pin-provider-sync/raw-requirement.md",
-      "line": 20,
+      "line": 32,
       "exact_heading_text": "Codex Desktop 原生线程",
       "heading_path": [
         "RAW-205：置顶与各 Agent 应用双向同步",
@@ -6360,7 +6360,7 @@
       "source_id": "SA-D23DC1C29E54DEF02BF4",
       "source_task": "260903/companion-pin-provider-sync",
       "source_path": "vibe/specs/260903/companion-pin-provider-sync/raw-requirement.md",
-      "line": 21,
+      "line": 33,
       "exact_heading_text": "Codex Desktop 原生线程",
       "heading_path": [
         "RAW-205：置顶与各 Agent 应用双向同步",
@@ -6383,7 +6383,7 @@
       "source_id": "SA-AE09A90F6DDA2313659D",
       "source_task": "260903/companion-pin-provider-sync",
       "source_path": "vibe/specs/260903/companion-pin-provider-sync/raw-requirement.md",
-      "line": 22,
+      "line": 34,
       "exact_heading_text": "Codex Desktop 原生线程",
       "heading_path": [
         "RAW-205：置顶与各 Agent 应用双向同步",
@@ -6406,7 +6406,7 @@
       "source_id": "SA-5B73CD302D9638018993",
       "source_task": "260903/companion-pin-provider-sync",
       "source_path": "vibe/specs/260903/companion-pin-provider-sync/raw-requirement.md",
-      "line": 26,
+      "line": 38,
       "exact_heading_text": "CodexHost 额外进程",
       "heading_path": [
         "RAW-205：置顶与各 Agent 应用双向同步",
@@ -6429,7 +6429,7 @@
       "source_id": "SA-7268896E7457E010A237",
       "source_task": "260903/companion-pin-provider-sync",
       "source_path": "vibe/specs/260903/companion-pin-provider-sync/raw-requirement.md",
-      "line": 30,
+      "line": 42,
       "exact_heading_text": "Claude Code App",
       "heading_path": [
         "RAW-205：置顶与各 Agent 应用双向同步",
@@ -6452,7 +6452,7 @@
       "source_id": "SA-B2F2BC2F02CD30935DA6",
       "source_task": "260903/companion-pin-provider-sync",
       "source_path": "vibe/specs/260903/companion-pin-provider-sync/raw-requirement.md",
-      "line": 31,
+      "line": 43,
       "exact_heading_text": "Claude Code App",
       "heading_path": [
         "RAW-205：置顶与各 Agent 应用双向同步",
@@ -6475,7 +6475,7 @@
       "source_id": "SA-689E495D3F861BCC993F",
       "source_task": "260903/companion-pin-provider-sync",
       "source_path": "vibe/specs/260903/companion-pin-provider-sync/raw-requirement.md",
-      "line": 35,
+      "line": 47,
       "exact_heading_text": "Cursor",
       "heading_path": [
         "RAW-205：置顶与各 Agent 应用双向同步",
@@ -6498,7 +6498,7 @@
       "source_id": "SA-13DF7E0BAD632FB1CCCF",
       "source_task": "260903/companion-pin-provider-sync",
       "source_path": "vibe/specs/260903/companion-pin-provider-sync/raw-requirement.md",
-      "line": 36,
+      "line": 48,
       "exact_heading_text": "Cursor",
       "heading_path": [
         "RAW-205：置顶与各 Agent 应用双向同步",
