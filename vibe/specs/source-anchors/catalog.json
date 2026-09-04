@@ -4,12 +4,12 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 51,
-    "ordered_anchors": 286,
-    "raw_parent_ordered": 160,
+    "source_documents": 52,
+    "ordered_anchors": 292,
+    "raw_parent_ordered": 166,
     "unparented_ordered": 126,
     "registered_requirements": 105,
-    "registry_review_required": 55,
+    "registry_review_required": 61,
     "source_addressable_not_registered": 126
   },
   "documents": [
@@ -57,8 +57,8 @@
       "source_task": "260724/1527-window-jump-workbench",
       "source_path": "vibe/specs/260724/1527-window-jump-workbench/raw-requirement.md",
       "spec_id": null,
-      "content_sha256": "9c6ccd5c5fba0b824005c99535416b8cdba8739c39337c939f71fc0a130141d2",
-      "raw_identity_count": 0,
+      "content_sha256": "fcf9a82deff959ed1acbd6ca75b6e75acca3cb5a48dd4afe232b98c46790b37f",
+      "raw_identity_count": 1,
       "ordered_anchor_count": 8,
       "raw_parent_ordered_count": 0,
       "unparented_ordered_count": 8
@@ -521,6 +521,16 @@
       "raw_identity_count": 4,
       "ordered_anchor_count": 4,
       "raw_parent_ordered_count": 4,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260904/window-unique-app-rebind",
+      "source_path": "vibe/specs/260904/window-unique-app-rebind/raw-requirement.md",
+      "spec_id": "SPEC-260904-WINDOW-UNIQUE-APP-REBIND",
+      "content_sha256": "1883802e2970a4dc6c2ba589ce107c4364e030f62b934f9dcd8a3e47853c8ee6",
+      "raw_identity_count": 1,
+      "ordered_anchor_count": 6,
+      "raw_parent_ordered_count": 6,
       "unparented_ordered_count": 0
     }
   ],
@@ -6819,6 +6829,138 @@
       "parent_raw_id": "RAW-207",
       "qualified_source": "SPEC-260903-SAME-TURN-WAITING-INPUT::RAW-207#4",
       "clause_sha256": "fa5366c88784ad92fc83c6019db7958647a82664c80c99c3fa10e656671a9dff",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-B553F0C2DF20DFDBED7D",
+      "source_task": "260904/window-unique-app-rebind",
+      "source_path": "vibe/specs/260904/window-unique-app-rebind/raw-requirement.md",
+      "line": 19,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-208：同应用唯一根原地换绑",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "1",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-208",
+      "qualified_source": "SPEC-260904-WINDOW-UNIQUE-APP-REBIND::RAW-208#1",
+      "clause_sha256": "28c4b31c797a9c6e15c8da62aab3075fbad0e25a4522ded15acca9b700c8485a",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-1B8BD6205E71FEDA9518",
+      "source_task": "260904/window-unique-app-rebind",
+      "source_path": "vibe/specs/260904/window-unique-app-rebind/raw-requirement.md",
+      "line": 20,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-208：同应用唯一根原地换绑",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "2",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-208",
+      "qualified_source": "SPEC-260904-WINDOW-UNIQUE-APP-REBIND::RAW-208#2",
+      "clause_sha256": "58d567362b3de0938ff1474197cae4bc55f5a589e38e211a2724b8f8df809bbd",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-9474AB14C8F55FB45C76",
+      "source_task": "260904/window-unique-app-rebind",
+      "source_path": "vibe/specs/260904/window-unique-app-rebind/raw-requirement.md",
+      "line": 21,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-208：同应用唯一根原地换绑",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "3",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-208",
+      "qualified_source": "SPEC-260904-WINDOW-UNIQUE-APP-REBIND::RAW-208#3",
+      "clause_sha256": "c663914d32e6db783363d088ced5974c80d4b1bd1c55cd7a94381d27aa501c38",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-67C8B66C734E73B5C3F3",
+      "source_task": "260904/window-unique-app-rebind",
+      "source_path": "vibe/specs/260904/window-unique-app-rebind/raw-requirement.md",
+      "line": 22,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-208：同应用唯一根原地换绑",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "4",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-208",
+      "qualified_source": "SPEC-260904-WINDOW-UNIQUE-APP-REBIND::RAW-208#4",
+      "clause_sha256": "ba6068f519b7813aa167c801429d898dee9818fc3d7c095c7a9c9d1c4e8b8ff9",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-C77A7511B584862D4274",
+      "source_task": "260904/window-unique-app-rebind",
+      "source_path": "vibe/specs/260904/window-unique-app-rebind/raw-requirement.md",
+      "line": 23,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-208：同应用唯一根原地换绑",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "5",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-208",
+      "qualified_source": "SPEC-260904-WINDOW-UNIQUE-APP-REBIND::RAW-208#5",
+      "clause_sha256": "fc382ff28b20988064bc9b5ebf5a3b63b5a71783d9ccbb5c283d2d7dfc3eaf94",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-C44218AB22CA50629636",
+      "source_task": "260904/window-unique-app-rebind",
+      "source_path": "vibe/specs/260904/window-unique-app-rebind/raw-requirement.md",
+      "line": 24,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-208：同应用唯一根原地换绑",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "6",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-208",
+      "qualified_source": "SPEC-260904-WINDOW-UNIQUE-APP-REBIND::RAW-208#6",
+      "clause_sha256": "aee7baf8af8a8fc40989c350a473be2041b8157aec3f6799626a1d211439f11e",
       "classification": "raw-child-requirement",
       "disposition": "registry-review-required",
       "semantic_module": null,

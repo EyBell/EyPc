@@ -80,7 +80,7 @@ export interface WindowTarget {
   appName: string
   /** Presentation/search metadata only; never participates in identity matching. */
   lastKnownTitle: string
-  /** Last verified native-window instance. Null means explicit rebind is required. */
+  /** Last verified native-window instance. Null means no exact locator; unique-app recovery may adopt one live root. */
   lastInstanceId: WindowInstanceId | null
   lastNativeRef: string | null
   /** Stable application aggregate identity; set only for Finder/Explorer virtual parents. */
@@ -163,6 +163,34 @@ export function windowTargetAppMatches(
 export interface WindowTargetResolution {
   live: LiveWindow | null
   candidates: LiveWindow[]
+}
+
+function sameAppInstanceTargets(
+  target: Pick<WindowTarget, 'platform' | 'appId' | 'appName'>,
+  allTargets: readonly WindowTarget[]
+): WindowTarget[] {
+  return allTargets.filter((candidate) => candidate.scope === 'instance'
+    && windowTargetAppMatches(target, { platform: candidate.platform, appId: candidate.appId, appName: candidate.appName }))
+}
+
+/**
+ * Unique-app restart recovery only: one persisted instance target and one live
+ * root of that app, and not already an exact locator hit. Titles never participate.
+ * Runtime still refuses a still-live old instance before adopting.
+ */
+export function uniqueSameAppRebindLive(
+  target: WindowTarget,
+  liveRoots: readonly LiveWindow[],
+  allTargets: readonly WindowTarget[]
+): LiveWindow | null {
+  if (target.scope !== 'instance') return null
+  const matchingTargets = sameAppInstanceTargets(target, allTargets)
+  if (matchingTargets.length !== 1 || matchingTargets[0]?.id !== target.id) return null
+  const matchingRoots = liveRoots.filter((live) => windowTargetAppMatches(target, live))
+  if (matchingRoots.length !== 1) return null
+  const live = matchingRoots[0]!
+  if (targetMatchesLiveWindow(target, live)) return null
+  return live
 }
 
 /** Resolve one logical target without title inference or sole-candidate shortcuts. */

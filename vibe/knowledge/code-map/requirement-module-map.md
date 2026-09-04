@@ -6,7 +6,7 @@
 
 - 改行为前：先打开登记叶子，确认不是 `superseded` / `proposed`。
 - 改代码时：从「实现入口」那一行往下读，不要从页面事件处理函数猜权威。
-- MQTT、窗口跳转多数条款尚未入册（见 [coverage.md](../../specs/requirements/coverage.md#L1)），实现以 PRD 对应节 + 任务 spec 为准。
+- MQTT、窗口跳转多数条款尚未入册（见 [coverage.md](../../specs/requirements/coverage.md#L1)）；窗口跳转唯一应用换绑已入册 [RAW-208](../../specs/requirements/windows-raw-208.md#L1)。其余实现以 PRD 对应节 + 任务 spec 为准。
 
 ## 全局与工程不变量
 
@@ -57,7 +57,8 @@
 
 | 需求面 | 权威 | 实现入口 | 用户可见面 |
 | --- | --- | --- | --- |
-| 根窗口身份、子窗口瞬时 | [1527 spec](../../specs/260724/1527-window-jump-workbench/spec.md#L1)（未入册） | [windows.ts](../../../src/domain/windows.ts#L228) `coalesceNativeWindowFamilies` | [WindowsPage.vue](../../../src/pages/WindowsPage.vue#L1) |
+| 根窗口身份、子窗口瞬时 | [1527 spec](../../specs/260724/1527-window-jump-workbench/spec.md#L1)（未入册） | [windows.ts](../../../src/domain/windows.ts#L256) `coalesceNativeWindowFamilies` | [WindowsPage.vue](../../../src/pages/WindowsPage.vue#L1) |
+| 唯一应用原地换绑 | [windows-raw-208](../../specs/requirements/windows-raw-208.md#L1) | [windows.ts](../../../src/domain/windows.ts#L181) `uniqueSameAppRebindLive` · [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1895) `tryUniqueSameAppRebind` | 窗口树 / 槽 1–10 |
 | 树投影 | 同左 | [windowTree.ts](../../../src/domain/windowTree.ts#L1) | ARIA tree |
 | 激活 / Space | WJ-22 | [windowActivationRuntime.ts](../../../src/runtime/window/windowActivationRuntime.ts#L1) · [preload/windows/index.cjs](../../../preload/windows/index.cjs#L1) | 槽 1–10 |
 | 槽路由 | [featureRouting.ts](../../../src/runtime/feature/featureRouting.ts#L46) | Runtime `windows.slot.activate` | `mainHide` |
