@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { allFeatures, visibleFeatures } from '../../src/runtime/feature/featureRegistry'
-import { routePluginFeature } from '../../src/runtime/feature/featureRouting'
+import { routeClaimsPluginCode, routePluginFeature } from '../../src/runtime/feature/featureRouting'
 
 describe('uTools feature routing', () => {
   it('keeps the default feature tab order with the disabled window workbench before Codex', () => {
@@ -213,5 +215,17 @@ describe('uTools feature routing', () => {
       settingsMaintenanceSection: 'features',
       actionId: 'codex.task.archiveFocused'
     })
+  })
+
+  it('claims every plugin.json feature code except eypc-main', () => {
+    const plugin = JSON.parse(readFileSync(resolve(process.cwd(), 'public/plugin.json'), 'utf8')) as {
+      features: Array<{ code: string }>
+    }
+    const codes = plugin.features.map((feature) => feature.code)
+    expect(codes).toContain('eypc-main')
+    for (const code of codes) {
+      if (code === 'eypc-main') continue
+      expect(routeClaimsPluginCode(code), code).toBe(true)
+    }
   })
 })

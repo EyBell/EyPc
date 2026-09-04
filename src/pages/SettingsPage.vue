@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { Ban, Braces, Keyboard, MoreHorizontal, RotateCcw, X } from '@lucide/vue'
 import FeatureHelpDialog from '../components/FeatureHelpDialog.vue'
-import type { AppSettings, AppTabId, FeatureConfig, KeybindingOverride, MqttStorageStatus, RuntimeDiagnosticsLevel, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
+import { FEATURE_MODULE_IDS, type AppSettings, type AppTabId, type FeatureConfig, type KeybindingOverride, type MqttStorageStatus, type RuntimeDiagnosticsLevel, type ShortcutProfileId, type ShortcutProfileMap } from '../domain/types'
 import { getFeatureHelp, hasFeatureHelp, type FeatureHelpDoc } from '../help/guides'
 import type { WindowActivationDiagnostic, WindowOperationDebugRecord } from '../runtime/appRuntime'
 import type { RuntimeDiagnosticsSnapshotV3 } from '../platform/eypcPlatform'
@@ -60,7 +60,7 @@ const emit = defineEmits<{
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', ...FEATURE_MODULE_IDS]
 
 const settingTabs: Array<{ id: SettingsTabId; label: string }> = [
   { id: 'shortcuts', label: '快捷键' },

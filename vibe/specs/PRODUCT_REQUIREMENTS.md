@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 51 documents / 286 ordered / 160 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-f6deea31198164ec6537 / renderer-6812be88197d76c0dc26` · `artifact-ready` |
-| 当前构建时间 | `2026/09/04 11:14:27`（`2026-09-04T03:14:27.601Z`） |
+| 当前构建产物 | `host-0af8cb17e6e8c67150cd / renderer-20d054406898fc61c7d7` · `artifact-ready` |
+| 当前构建时间 | `2026/09/04 14:15:26`（`2026-09-04T06:15:26.863Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,11 +62,11 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-f6deea31198164ec6537",
-    "renderer_asset": "renderer-6812be88197d76c0dc26",
+    "host_asset": "host-0af8cb17e6e8c67150cd",
+    "renderer_asset": "renderer-20d054406898fc61c7d7",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-04T03:14:27.601Z",
-    "built_at_local": "2026/09/04 11:14:27",
+    "built_at": "2026-09-04T06:15:26.863Z",
+    "built_at_local": "2026/09/04 14:15:26",
     "package_version": "0.1.0"
   },
   "content_digests": {
@@ -74,8 +74,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "raw_sources": "b68e9e1b4260437971f1dce282d9499bd95c4970c32fda6f4a1f1c3f5e5ce2b1",
     "source_anchor_catalog": "557d68b9de3cf069fb67cc3cd21afdfabd938b4e4798026cbe07a330a09b53d3",
     "product_body": "c0607354e6b3291e34c6e6cdb871541f717f628d2176733ee06b88ffd3798e5b",
-    "architecture": "4467ac283636fd640ce5c7f62e77ae8c3171f994918a268c37bf6eb9046d35e0",
-    "runtime_contract": "18ddcfacf85f4cd0cfc304c86911dbd8a0d1c37a750fa3cfbc34817cc33dad14"
+    "architecture": "d6ac38cd7796fb376fa0a3fc0bae69a8fff5577e764ac465072a5a232ca69697",
+    "runtime_contract": "ff404d41fa044755e2d569a378df6ee5bd04e456c5647e92c7ebfe9d6abfc153"
   }
 }
 ```

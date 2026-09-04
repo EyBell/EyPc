@@ -32,7 +32,7 @@ import {
 import { createWindowRebindState, transitionWindowRebind, windowInteractionAllowed, windowRebindView, type WindowInteractionPolicy, type WindowRebindEvent, type WindowRebindState, type WindowRebindView } from '../domain/windowRebind'
 import type { CodexFloatPosition, CodexManualPhaseValue, CodexSettings } from '../domain/codex'
 import { CODEX_MANUAL_PHASE_VALUES } from '../domain/codex'
-import type { AppState, AppTabId, FavoriteNode, FavoritePlatform, FavoriteRunnerConfig, FavoriteRunRecord, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, RuntimeDiagnosticsLevel, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
+import { FEATURE_MODULE_IDS, type AppState, type AppTabId, type FavoriteNode, type FavoritePlatform, type FavoriteRunnerConfig, type FavoriteRunRecord, type FeatureConfig, type KillRequest, type MqttArchiveState, type MqttConnectionConfig, type MqttConnectionGroup, type MqttInfoFilter, type MqttLayoutPrefs, type MqttMessageRecord, type MqttPublishDraft, type MqttPublishDraftHistoryEntry, type MqttPublishTemplate, type MqttQos, type MqttStorageStatus, type PortGroup, type PortGroupFolder, type PortGroupTarget, type PortProcess, type RuntimeDiagnosticsLevel, type ShortcutProfileId, type ShortcutProfileMap, type ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
 import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFavoriteRunResult, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FavoriteRunResult, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type RuntimeDiagnosticsSnapshotV3, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
@@ -696,7 +696,7 @@ export interface AppRuntimeOptions {
   mqttModuleLoader?: () => Promise<unknown>
 }
 
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', ...FEATURE_MODULE_IDS]
 
 function isDebugWindowOperationTracingBuild() {
   const environment = (import.meta as unknown as { env?: { DEV?: unknown } }).env

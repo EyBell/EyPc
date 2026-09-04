@@ -16,6 +16,7 @@ Baseline: 2026-09-04 · 相对当前 `main` 实现 · 状态：onboarding 层，
 | 某条 RAW 还作不作数 | [requirements/README.md](../../specs/requirements/README.md#L1) | 实现地图 |
 | 当前实现谁拥有哪一层 | [ARCHITECTURE.md](../ARCHITECTURE.md#L1) | 当前产品语义 |
 | 需求 ↔ 模块 ↔ 行号 | [requirement-module-map.md](requirement-module-map.md#L1) | PRD |
+| FeatureModule 贡献边界 | [modules/feature-module.md](modules/feature-module.md#L1) | 热插拔说明 |
 | 目录怎么走 | [directory.md](directory.md#L1) | 任务账本 |
 | 每个 `src/` 文件干什么 | [modules/src-map.md](modules/src-map.md#L1) | 逐行注释 |
 | 每个 `preload/` 文件干什么 | [modules/preload-map.md](modules/preload-map.md#L1) | 逐行注释 |
@@ -32,7 +33,7 @@ Baseline: 2026-09-04 · 相对当前 `main` 实现 · 状态：onboarding 层，
 ```text
 uTools feature code（public/plugin.json）
   → App.vue applyPluginRoute
-  → featureRouting.routePluginFeature（[L37](../../../src/runtime/feature/featureRouting.ts#L37)）
+  → featureRouting.routePluginFeature（[L59](../../../src/runtime/feature/featureRouting.ts#L59)）
   → AppRuntime.dispatch（唯一用户可见突变）
   → Domain 纯函数
   → eypcPlatform / preload

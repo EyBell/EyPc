@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 describe('mqtt page layout', () => {
   it('is lazy-loaded and exposes compact MQTT workbench surfaces', () => {
     const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+    const mqttPageBind = readFileSync(resolve(process.cwd(), 'src/runtime/feature/mqtt/pageBind.ts'), 'utf8')
     const page = readFileSync(resolve(process.cwd(), 'src/pages/MqttPage.vue'), 'utf8')
     const publishRecordList = readFileSync(resolve(process.cwd(), 'src/components/MqttPublishRecordList.vue'), 'utf8')
     const css = readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')
@@ -15,8 +16,9 @@ describe('mqtt page layout', () => {
     }
     const inlineRenameKeydown = functionSource('handleConnectionGroupInlineRenameKeydown')
 
-    expect(app).toContain("defineAsyncComponent(() => import('./pages/MqttPage.vue'))")
-    expect(app).toContain('<template #mqtt>')
+    expect(app).toContain('activePageBinding')
+    expect(app).toContain('.bindPage(')
+    expect(mqttPageBind).toContain("defineAsyncComponent(() => import('../../../pages/MqttPage.vue'))")
     expect(page).toContain('class="mqtt-workbench-grid"')
     expect(page).toContain('mqtt-connection-rail')
     expect(page).toContain('mqtt-subscription-rail')

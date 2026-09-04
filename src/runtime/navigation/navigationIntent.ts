@@ -1,4 +1,4 @@
-import type { AppTabId } from '../../domain/types'
+import { FEATURE_MODULE_IDS, type AppTabId } from '../../domain/types'
 import type { ChildSurfaceIdV7 } from '../../domain/generated/companionContractsV7'
 
 export const NAVIGATION_INTENT_REVISION_V7 = 'navigation-intent-v7' as const
@@ -40,7 +40,7 @@ export interface NavigationIntentV7 {
   disposition: 'focus' | 'open' | 'execute'
 }
 
-const FEATURE_IDS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'])
+const FEATURE_IDS = new Set<AppTabId>(FEATURE_MODULE_IDS)
 const SINGLE_TARGET_ARG_KEYS = [
   'targetId', 'favoriteId', 'portId', 'groupId', 'windowId', 'rowId', 'recordId',
   'taskKey', 'projectKey', 'path', 'id'
