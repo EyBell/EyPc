@@ -515,11 +515,12 @@ function nativeRegistryText() {
   })
 }
 
-function nativeRegistryTextWithUnread(threadIds: string[]) {
+function nativeRegistryTextWithUnread(threadIds: string[], pinnedThreadIds?: string[]) {
   const value = JSON.parse(nativeRegistryText()) as Record<string, unknown>
   value['electron-persisted-atom-state'] = JSON.stringify({
     'unread-thread-ids-by-host-v1': JSON.stringify({ local: threadIds })
   })
+  if (pinnedThreadIds) value['pinned-thread-ids'] = pinnedThreadIds
   return JSON.stringify(value)
 }
 
@@ -4822,6 +4823,33 @@ draft: v7EvidenceDraft({
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('treats a Desktop pin mirror change as an inbound pin signal and asks for a tasks-only membership rescan', async () => {
+    let pinned = [FIXED_THREAD_IDS[0]]
+    const child = new FakeCodexProcess()
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([], pinned))
+    await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const mirrorEvents = () => context.diagnosticEvents.filter((entry) => entry.scope === 'codex-pin-mirror')
+    // The inventory read seeds the baseline without announcing a change.
+    expect(mirrorEvents()).toHaveLength(0)
+
+    // Unread-only churn is not a pin signal.
+    context.triggerNativeStateChange()
+    expect(mirrorEvents()).toHaveLength(0)
+
+    // A Desktop pin (mirror order changes) is: once per change, not per event.
+    pinned = [FIXED_THREAD_IDS[1], FIXED_THREAD_IDS[0]]
+    context.triggerNativeStateChange()
+    context.triggerNativeStateRecoveryCheck()
+    expect(mirrorEvents()).toEqual([expect.objectContaining({ event: 'changed', outcome: 'reconciliation-requested' })])
+
+    // A Desktop unpin fires again; a re-read of the same mirror does not.
+    pinned = []
+    context.triggerNativeStateChange('rename')
+    context.triggerNativeStateChange()
+    expect(mirrorEvents()).toHaveLength(2)
+    context.bridge.close()
   })
 
   it('recovers missed and atomic native unread writes in Host, rebuilds fs.watch and suppresses 1,000 no-op pushes', async () => {

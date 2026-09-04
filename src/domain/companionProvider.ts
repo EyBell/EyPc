@@ -28,6 +28,39 @@ export const COMPANION_PROVIDER_LABELS = Object.freeze(Object.fromEntries(
   COMPANION_PROVIDER_IDS.map((provider) => [provider, providerManifest.providers[provider].label])
 )) as Readonly<Record<CompanionProviderId, string>>
 
+/**
+ * Manifest-declared pin policy. `inbound`: the app's own pin/star reaches the
+ * Kernel as `providerPin`. `outbound`: EyPc may write a pin back through that
+ * provider (the row still needs `capabilities.pin`, which Codex grants only
+ * for an app-server / CodexHost lane). `appLabel` / `pinNoun` are the only
+ * source of user-facing pin wording, so no surface branches on provider ids.
+ */
+export interface CompanionProviderPinPolicy {
+  readonly inbound: boolean
+  readonly outbound: boolean
+  readonly appLabel: string
+  readonly pinNoun: string
+}
+
+export const COMPANION_PROVIDER_PIN_POLICY = Object.freeze(Object.fromEntries(
+  COMPANION_PROVIDER_IDS.map((provider) => [provider, Object.freeze({ ...providerManifest.providers[provider].pin })])
+)) as Readonly<Record<CompanionProviderId, CompanionProviderPinPolicy>>
+
+export function companionPinPolicy(provider: CompanionProviderId | null | undefined): CompanionProviderPinPolicy {
+  return COMPANION_PROVIDER_PIN_POLICY[normalizeCompanionProviderId(provider)]
+}
+
+/** "Codex" / "Claude App" / "Cursor" — the app the pin syncs with. */
+export function companionPinAppLabel(provider: CompanionProviderId | null | undefined): string {
+  return companionPinPolicy(provider).appLabel
+}
+
+/** "Codex 置顶" / "Claude App 星标" / "Cursor 置顶" — the app's own pin noun. */
+export function companionPinNativeLabel(provider: CompanionProviderId | null | undefined): string {
+  const policy = companionPinPolicy(provider)
+  return `${policy.appLabel} ${policy.pinNoun}`
+}
+
 export function isCompanionProviderId(value: unknown): value is CompanionProviderId {
   return typeof value === 'string' && (COMPANION_PROVIDER_IDS as readonly string[]).includes(value)
 }
@@ -334,6 +367,16 @@ export interface CompanionOpenResultV2 {
   launch?: CompanionOpenLaunchV1
 }
 
+export interface CompanionProviderPinResultV2 {
+  outcome: 'completed' | 'failed' | 'indeterminate'
+  /** The value the provider reported back after the write; absent when unverified. */
+  providerPin?: boolean
+  method?: string
+  errorCode?: string
+  message?: string
+  operationId?: string
+}
+
 export interface CompanionExecutePlanResultV2 {
   outcome: 'executed' | 'failed' | 'indeterminate'
   message?: string
@@ -377,5 +420,7 @@ export interface CompanionProviderAdapter {
   open(request: Extract<CompanionTaskActionRequestV2, { action: 'open' }>): Promise<CompanionOpenResultV2>
   archive(request: Extract<CompanionTaskActionRequestV2, { action: 'archive' }>): Promise<CompanionArchiveResultV2>
   executePlan?(request: Extract<CompanionTaskActionRequestV2, { action: 'executePlan' }>): Promise<CompanionExecutePlanResultV2>
+  /** Present only when the manifest pin policy is `outbound`; the Host Registry rejects it otherwise. */
+  setPin?(target: { key: string; provider: CompanionProviderId }, request: { pinned: boolean; source?: string; operationId?: string }): Promise<CompanionProviderPinResultV2>
   close(): void
 }

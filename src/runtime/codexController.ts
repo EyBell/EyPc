@@ -36,7 +36,7 @@ import {
   type CodexTaskCard,
   type ConversationSnapshotV1
 } from '../domain/codex'
-import { companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
+import { companionPinAppLabel, companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
 import type { CompanionQuotaRefreshReceipt, CompanionSnapshotSlice } from '../domain/companionPresentation'
 import {
   emptyClaudeEnvironment,
@@ -2470,6 +2470,10 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
+  function providerPinSyncLabel(task: CodexTaskCard) {
+    return companionPinAppLabel(companionTaskProvider(task))
+  }
+
   function toggleLocalPin(kind: CodexLocalPin['kind'], key: string) {
     // Task rows are projected from the Kernel package, so their pin flag must be
     // committed there as well; project pins stay a Renderer-owned projection.
@@ -2493,7 +2497,7 @@ export function createCodexController(options: CodexControllerOptions) {
         event: 'set-pin-gate',
         outcome: 'blocked',
         code: 'target-not-found',
-        provider: 'codex',
+        provider: companionTaskProvider(presentationTask || kernelTask),
         taskRef: key
       })
       return false
@@ -2504,10 +2508,12 @@ export function createCodexController(options: CodexControllerOptions) {
     const kernelSnapshotTask = kind === 'task' && companionKernel
       ? companionKernel.getLatest().tasks.find((item) => item.key === key)
       : undefined
-    // A provider that accepts the pin write (Codex app-server, CodexHost) is
-    // the pin's single source: EyPc writes there and shows what it reads
-    // back, so the two sides cannot drift. A failed write falls back to the
-    // local pin so the gesture is never lost; unpinning always clears both.
+    // A row whose provider grants `pin` (Codex app-server / CodexHost lane)
+    // writes through the provider; a failed write falls back to the local pin
+    // so the gesture is never lost, and unpinning always clears both. Every
+    // other row (Claude App / Cursor by manifest policy, or a mirror-only
+    // Codex row) only toggles the local pin, which may layer on top of an
+    // app-side pin the plugin cannot write.
     const providerCapable = kernelSnapshotTask?.capabilities.pin === true
       || (presentationTask?.companionCapabilities?.pin === true)
     const providerPinned = kernelSnapshotTask
@@ -2526,9 +2532,9 @@ export function createCodexController(options: CodexControllerOptions) {
       void commitCompanionProviderPin(task, nextPinned).then((outcome) => {
         if (disposed) return
         if (outcome === 'updated' || outcome === 'unchanged') {
-          // Codex publishes no section notification: the Desktop sidebar
-          // repaints on its next window focus (real-host result, 2026-09-03).
-          options.setMessage(nextPinned ? '已置顶并同步到 Codex；侧栏切窗后刷新' : '已取消置顶并同步到 Codex；侧栏切窗后刷新')
+          // Native sidebars may not repaint until the next focus/flush.
+          const label = providerPinSyncLabel(task)
+          options.setMessage(nextPinned ? `已置顶并同步到 ${label}；应用侧栏稍后刷新` : `已取消置顶并同步到 ${label}；应用侧栏稍后刷新`)
           options.notify()
           return
         }
@@ -2538,9 +2544,11 @@ export function createCodexController(options: CodexControllerOptions) {
             codexState().localPins = [...current, { kind, key }].slice(-500)
           }
           republishAfterReceiptChange()
-          options.setMessage(outcome === 'indeterminate' ? '已在 EyPc 置顶；Codex 同步待确认' : '已在 EyPc 置顶；Codex 同步失败')
+          const label = providerPinSyncLabel(task)
+          options.setMessage(outcome === 'indeterminate' ? `已在 EyPc 置顶；${label} 同步待确认` : `已在 EyPc 置顶；${label} 同步失败`)
         } else {
-          options.setMessage(outcome === 'indeterminate' ? 'Codex 取消置顶待确认' : 'Codex 取消置顶失败')
+          const label = providerPinSyncLabel(task)
+          options.setMessage(outcome === 'indeterminate' ? `${label} 取消置顶待确认` : `${label} 取消置顶失败`)
         }
         options.notify()
       })
@@ -3317,7 +3325,7 @@ export function createCodexController(options: CodexControllerOptions) {
         event: 'set-pin-gate',
         outcome: 'blocked',
         code: gate,
-        provider: 'codex',
+        provider: companionTaskProvider(task),
         taskRef: task.key
       })
       return false
@@ -3348,7 +3356,7 @@ export function createCodexController(options: CodexControllerOptions) {
         event: 'set-provider-pin-gate',
         outcome: 'blocked',
         code: gate,
-        provider: 'codex',
+        provider: companionTaskProvider(task),
         taskRef: task.key
       })
       return 'failed'

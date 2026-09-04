@@ -9,7 +9,9 @@
  * exact local conversation) and reports `dispatched`, never a read confirmation.
  * Archive is the one confirmed state write: it flips the App's own
  * `isArchived` pair on a single `composerHeaders` row after re-verifying the
- * task is not live (see `archive.cjs`). Conversation bodies are never read.
+ * task is not live (see `archive.cjs`). The sidebar pin is inbound-only
+ * (`inventory.cjs`); EyPc never writes `cursor/pinnedComposers`.
+ * Conversation bodies are never read.
  */
 
 const CURSOR_BRIDGE_REVISION = 'cursor-agent-companion-v5'

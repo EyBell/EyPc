@@ -9,8 +9,9 @@
  * the floating window.
  *
  * Direct write scope is registration plus one version-gated, uniquely indexed
- * App-local `isArchived` transaction. No path crosses this facade, and no
- * LevelDB, transcript or non-target session is written.
+ * App-local `isArchived` transaction. The sidebar star (`isStarred`) is
+ * inbound-only. No path crosses this facade, and no LevelDB, transcript or
+ * non-target session is written.
  */
 
 const CLAUDE_BRIDGE_REVISION = 'claude-code-companion-v7'
