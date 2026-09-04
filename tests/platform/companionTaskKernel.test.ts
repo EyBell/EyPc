@@ -14,6 +14,12 @@ const {
   createEvidenceNodeV7,
   createEvidenceBatchV7
 } = require('../../preload/companion/evidence-adapter-v7.cjs') as Record<string, (...args: any[]) => any>
+const {
+  createCompanionHostRegistry,
+  loadProviderRegistry,
+  providerPinPolicy
+} = require('../../preload/companion/provider-registry.cjs') as Record<string, (...args: any[]) => any>
+const providerManifest = require('../../preload/companion/provider-manifest.json') as Record<string, any>
 
 function createCompanionTaskKernel(options: Record<string, unknown> = {}) {
   return createCompanionTaskKernelRaw({ now: () => 1_000, ...options })
@@ -1195,6 +1201,78 @@ describe('CompanionTaskKernel', () => {
       .resolves.toMatchObject({ outcome: 'failed', errorCode: 'unsupported' })
     expect(setPin).toHaveBeenCalledTimes(2)
     expect(diagnostics.filter((entry) => entry.event === 'set-provider-pin').map((entry) => entry.outcome)).toEqual(['pinned', 'failed'])
+  })
+
+  it('does not write Claude or Cursor pins: the manifest declares them inbound-only', async () => {
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      adapters: {
+        claude: { open: vi.fn(async () => nativeOpened()) },
+        cursor: { open: vi.fn(async () => nativeOpened()) }
+      },
+      initialConfiguration: { enabled: true, providers: { codex: false, claude: true, cursor: true } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: true, cursor: true } })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([
+      task({
+        key: 'claude:local_7badfe6b-950e-488b-a70c-cc6756e96763',
+        provider: 'claude',
+        kind: 'claude-session',
+        actionAlias: 'local_7badfe6b-950e-488b-a70c-cc6756e96763',
+        phase: 'completed',
+        unread: false,
+        providerPin: false,
+        providerPinAuthority: 'claude-metadata',
+        capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false, pin: false }
+      }),
+      task({
+        key: 'cursor:86e0370a-21b3-434d-a1a3-0ce83edc5ddd',
+        provider: 'cursor',
+        kind: 'cursor-session',
+        actionAlias: '86e0370a-21b3-434d-a1a3-0ce83edc5ddd',
+        phase: 'completed',
+        unread: false,
+        providerPin: false,
+        providerPinAuthority: 'cursor-workspace',
+        capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false, pin: false }
+      })
+    ], 1, {
+      providers: { codex: false, claude: true, cursor: true },
+      sourceGenerations: { codex: 0, claude: 1, cursor: 1 }
+    }) })
+
+    await expect(kernel.dispatch({
+      action: 'set-provider-pin',
+      key: 'claude:local_7badfe6b-950e-488b-a70c-cc6756e96763',
+      pinned: true,
+      source: 'task-pin'
+    })).resolves.toMatchObject({ outcome: 'failed', errorCode: 'unsupported' })
+    await expect(kernel.dispatch({
+      action: 'set-provider-pin',
+      key: 'cursor:86e0370a-21b3-434d-a1a3-0ce83edc5ddd',
+      pinned: true,
+      source: 'task-pin'
+    })).resolves.toMatchObject({ outcome: 'failed', errorCode: 'unsupported' })
+  })
+
+  it('binds the pin lane to the manifest: inbound-only providers may not mount a setPin adapter', () => {
+    expect(providerPinPolicy('codex')).toMatchObject({ inbound: true, outbound: true, appLabel: 'Codex', pinNoun: '置顶' })
+    expect(providerPinPolicy('claude')).toMatchObject({ inbound: true, outbound: false, appLabel: 'Claude App', pinNoun: '星标' })
+    expect(providerPinPolicy('cursor')).toMatchObject({ inbound: true, outbound: false, appLabel: 'Cursor', pinNoun: '置顶' })
+    expect(() => createCompanionHostRegistry({ claude: { open: vi.fn(), setPin: vi.fn() } }))
+      .toThrow('companion-provider-pin-adapter-forbidden:claude')
+    expect(() => createCompanionHostRegistry({ cursor: { setPin: vi.fn() } }))
+      .toThrow('companion-provider-pin-adapter-forbidden:cursor')
+    const codexOnly = createCompanionHostRegistry({ codex: { open: vi.fn(), setPin: vi.fn() } })
+    expect(typeof codexOnly.adapters.codex.setPin).toBe('function')
+    expect(codexOnly.adapters.claude.setPin).toBeUndefined()
+    // A manifest without a complete pin policy is rejected at load time.
+    const broken = JSON.parse(JSON.stringify(providerManifest))
+    delete broken.providers.claude.pin.appLabel
+    expect(() => loadProviderRegistry(broken)).toThrow('companion-provider-invalid:1')
+    const missing = JSON.parse(JSON.stringify(providerManifest))
+    delete missing.providers.cursor.pin
+    expect(() => loadProviderRegistry(missing)).toThrow('companion-provider-invalid:2')
   })
 
   it('rejects a stale, unleased or Plan-owned visibility mutation', () => {

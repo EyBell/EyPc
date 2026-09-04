@@ -857,7 +857,7 @@ export interface CodexTaskCard {
     pause: boolean
     resume: boolean
     executePlan: boolean
-    /** The provider accepts an EyPc pin/unpin write (Codex app-server, CodexHost). */
+    /** The provider accepts an EyPc pin/unpin write (Codex, Claude App, Cursor). */
     pin?: boolean
   }
   /** Root-only topology summary; child identities never enter Renderer state. */
@@ -881,6 +881,8 @@ export interface CodexTaskCard {
   projectKind: 'project' | 'chats'
   isHidden: boolean
   pinSource?: 'native' | 'local'
+  /** The provider's own pin is set, even while a local pin owns `pinSource`. */
+  providerPinned?: boolean
   /**
    * Owning companion provider. Absent on every legacy Codex card, which is why
    * readers must go through `companionTaskProvider()` instead of reading it

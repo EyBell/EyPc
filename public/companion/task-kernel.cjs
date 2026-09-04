@@ -2914,10 +2914,9 @@ function createCompanionTaskKernel(dependencies = {}) {
       return { outcome: 'updated', key }
     }
     /**
-     * Provider pin write. The Provider Adapter performs and verifies the
-     * write; only a verified result patches `providerPin`, so a failed or
-     * indeterminate write never shows a pin the provider does not hold. The
-     * next evidence rebuild re-reads the provider and confirms or corrects it.
+     * Provider pin write. Codex / CodexHost still write and verify; Claude App
+     * and Cursor do not grant `pin`, so this command returns unsupported and
+     * EyPc keeps a local pin. Only a verified result patches `providerPin`.
      */
     if (command.command === 'set-provider-pin') {
       const task = taskForKey(key)

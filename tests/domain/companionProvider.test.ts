@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  COMPANION_PROVIDER_PIN_POLICY,
+  companionPinAppLabel,
+  companionPinNativeLabel,
   COMPANION_PROVIDER_CYCLE_ORDER,
   DEFAULT_COMPANION_ENABLEMENT,
   aggregateCompanionTaskCounts,
@@ -50,6 +53,19 @@ function task(key: string, provider?: CompanionProviderId, pinSource?: 'native' 
 function keys(tasks: readonly CodexTaskCard[]): string[] {
   return tasks.map((item) => item.key)
 }
+
+describe('companion provider pin policy', () => {
+  it('reads inbound/outbound and wording from the manifest instead of provider-id branches', () => {
+    expect(COMPANION_PROVIDER_PIN_POLICY.codex).toEqual({ inbound: true, outbound: true, appLabel: 'Codex', pinNoun: '置顶' })
+    expect(COMPANION_PROVIDER_PIN_POLICY.claude).toEqual({ inbound: true, outbound: false, appLabel: 'Claude App', pinNoun: '星标' })
+    expect(COMPANION_PROVIDER_PIN_POLICY.cursor).toEqual({ inbound: true, outbound: false, appLabel: 'Cursor', pinNoun: '置顶' })
+    expect(companionPinAppLabel('claude')).toBe('Claude App')
+    expect(companionPinNativeLabel('claude')).toBe('Claude App 星标')
+    expect(companionPinNativeLabel('cursor')).toBe('Cursor 置顶')
+    // Legacy cards without a provider are Codex.
+    expect(companionPinNativeLabel(undefined)).toBe('Codex 置顶')
+  })
+})
 
 describe('companion provider identity', () => {
   it('defaults legacy cards without a provider field to codex', () => {

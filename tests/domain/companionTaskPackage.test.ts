@@ -221,7 +221,7 @@ describe('canonical Companion task projection', () => {
       providerPinAuthority: 'app-server',
       capabilities: { open: true, archive: true, pause: false, resume: false, executePlan: false, pin: true }
     }), 1))
-    expect(state.conversations.all[0]).toMatchObject({ pinSource: 'native', companionCapabilities: { pin: true } })
+    expect(state.conversations.all[0]).toMatchObject({ pinSource: 'native', providerPinned: true, companionCapabilities: { pin: true } })
     expect(state.dynamic.groups.pinned.map((task) => task.key)).toEqual([key])
     expect(state.conversations.projectSections.find((section) => section.id === 'pinned')?.entries).toEqual([
       expect.objectContaining({ kind: 'task', pinSource: 'native' })
@@ -235,7 +235,9 @@ describe('canonical Companion task projection', () => {
       revisionAt: 300,
       visibilityRevision: 300
     }), 2))
-    expect(state.conversations.all[0].pinSource).toBe('local')
+    // A local pin layered on the provider pin owns the control while the card
+    // still reports the provider pin, so the UI can name both.
+    expect(state.conversations.all[0]).toMatchObject({ pinSource: 'local', providerPinned: true })
 
     state = applyCompanionTaskPackageViews(state, packageFor(canonical({
       unread: false,
@@ -245,6 +247,7 @@ describe('canonical Companion task projection', () => {
       visibilityRevision: 400
     }), 3))
     expect(state.conversations.all[0].pinSource).toBeUndefined()
+    expect(state.conversations.all[0].providerPinned).toBeUndefined()
     expect(state.dynamic.groups.pinned).toEqual([])
   })
 

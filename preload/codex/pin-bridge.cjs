@@ -82,78 +82,87 @@ function createCodexPinBridge(dependencies = {}) {
     } catch {}
   }
 
-  async function nativeWrite(input) {
-    const params = {
-      threadId: input.threadId,
-      sectionId: input.pinned ? CODEX_PINNED_SECTION_ID : null,
-      beforeThreadId: null
-    }
-    try {
-      await requestCodexRpc('thread/section/move', params)
-      return { method: 'thread/section/move' }
-    } catch (error) {
-      if (!methodNotFound(error)) throw error
-    }
-    await requestCodexRpc('thread/metadata/update', { threadId: input.threadId, isPinned: input.pinned })
-    return { method: 'thread/metadata/update' }
+  /**
+   * Two lanes, one transaction. A lane answers `write(input)` with the method
+   * it used (or throws / returns `{ ok: false }`) and `verify(input)` with the
+   * provider's current pin state (`null` = the provider could not say).
+   */
+  const appServerLane = {
+    id: 'app-server',
+    async write(input) {
+      const params = {
+        threadId: input.threadId,
+        sectionId: input.pinned ? CODEX_PINNED_SECTION_ID : null,
+        beforeThreadId: null
+      }
+      try {
+        await requestCodexRpc('thread/section/move', params)
+        return { ok: true, method: 'thread/section/move' }
+      } catch (error) {
+        if (!methodNotFound(error)) throw error
+      }
+      await requestCodexRpc('thread/metadata/update', { threadId: input.threadId, isPinned: input.pinned })
+      return { ok: true, method: 'thread/metadata/update' }
+    },
+    async verify(input) {
+      const response = record(await requestCodexRpc(
+        'thread/read',
+        { threadId: input.threadId, includeTurns: false },
+        CODEX_PIN_VERIFY_TIMEOUT_MS
+      ))
+      return codexThreadSectionPinned(record(response.thread))
+    },
+    failureMessage: 'Codex 置顶写入失败'
   }
 
-  async function nativeVerify(input) {
-    const response = record(await requestCodexRpc(
-      'thread/read',
-      { threadId: input.threadId, includeTurns: false },
-      CODEX_PIN_VERIFY_TIMEOUT_MS
-    ))
-    const thread = record(response.thread)
-    return codexThreadSectionPinned(thread)
-  }
-
-  async function codexhostWrite(input) {
-    if (!codexhostDiscovery || typeof codexhostDiscovery.codexhostPinThread !== 'function') {
-      return { ok: false, code: 'unsupported', message: 'CodexHost 置顶通道不可用' }
-    }
-    return codexhostDiscovery.codexhostPinThread(input.threadId, input.pinned)
-  }
-
-  async function codexhostVerify(input) {
-    if (!codexhostDiscovery || typeof codexhostDiscovery.codexhostPinState !== 'function') return null
-    const state = await codexhostDiscovery.codexhostPinState(input.threadId)
-    return state && state.ok && typeof state.pinned === 'boolean' ? state.pinned : null
+  const codexhostLane = {
+    id: 'codexhost',
+    async write(input) {
+      if (!codexhostDiscovery || typeof codexhostDiscovery.codexhostPinThread !== 'function') {
+        return { ok: false, code: 'unsupported', message: 'CodexHost 置顶通道不可用' }
+      }
+      const written = await codexhostDiscovery.codexhostPinThread(input.threadId, input.pinned)
+      return written && written.ok === true
+        ? { ok: true, method: 'codexhost thread pin' }
+        : { ok: false, code: written && typeof written.code === 'string' ? written.code : 'codexhost-write-failed', message: written && written.message }
+    },
+    async verify(input) {
+      if (!codexhostDiscovery || typeof codexhostDiscovery.codexhostPinState !== 'function') return null
+      const state = await codexhostDiscovery.codexhostPinState(input.threadId)
+      return state && state.ok && typeof state.pinned === 'boolean' ? state.pinned : null
+    },
+    failureMessage: 'CodexHost 置顶写入失败'
   }
 
   /**
    * Pin or unpin one Codex thread at the provider. Result shape:
    * `{ outcome: 'completed' | 'failed' | 'indeterminate', providerPin, method?, errorCode?, message? }`.
    * `indeterminate` means the write was accepted but the read-back could not
-   * confirm the section — the caller keeps its local pin and says so.
+   * confirm the section — the caller keeps its local pin and says so. One
+   * transaction per thread at a time: a pin racing an unpin of the same thread
+   * joins the first instead of interleaving two verify windows.
    */
   async function setCodexThreadPin(input = {}) {
     const threadId = typeof input.threadId === 'string' ? input.threadId.toLowerCase() : ''
     const pinned = input.pinned === true
     if (!threadId) return { outcome: 'failed', errorCode: 'invalid-target', message: '任务身份无效' }
-    const external = input.codexhostExternal === true
-    const flightKey = `${threadId}:${pinned ? 'pin' : 'unpin'}`
-    if (inFlight.has(flightKey)) return inFlight.get(flightKey)
+    const lane = input.codexhostExternal === true ? codexhostLane : appServerLane
+    if (inFlight.has(threadId)) return inFlight.get(threadId)
     const startedAt = now()
     const run = (async () => {
       note('pin-intent', 'started', input)
       try {
-        let method = ''
-        if (external) {
-          const written = await codexhostWrite(input)
-          if (!written || written.ok !== true) {
-            const errorCode = written && typeof written.code === 'string' ? written.code : 'codexhost-write-failed'
-            note('pin-provider-write', 'failed', input, { code: errorCode, durationMs: now() - startedAt })
-            return { outcome: 'failed', errorCode, message: (written && written.message) || 'CodexHost 置顶写入失败' }
-          }
-          method = 'codexhost thread pin'
-        } else {
-          method = (await nativeWrite({ threadId, pinned })).method
+        const written = await lane.write({ threadId, pinned })
+        if (!written || written.ok !== true) {
+          const errorCode = written && typeof written.code === 'string' ? written.code : `${lane.id}-write-failed`
+          note('pin-provider-write', 'failed', input, { code: errorCode, durationMs: now() - startedAt })
+          return { outcome: 'failed', errorCode, message: (written && written.message) || lane.failureMessage }
         }
+        const method = written.method
         note('pin-provider-write', 'completed', input, { method })
         let verified = null
         try {
-          verified = external ? await codexhostVerify({ threadId }) : await nativeVerify({ threadId })
+          verified = await lane.verify({ threadId })
         } catch (error) {
           note('pin-server-verify', 'failed', input, { code: 'verify-read-failed', durationMs: now() - startedAt })
           return { outcome: 'indeterminate', method, providerPin: null, errorCode: 'verify-read-failed', message: '置顶已提交，但未能回读确认' }
@@ -170,17 +179,17 @@ function createCodexPinBridge(dependencies = {}) {
         return { outcome: 'completed', method, providerPin: verified }
       } catch (error) {
         const code = rpcErrorCode(error)
-        const message = error && typeof error.message === 'string' ? error.message.slice(0, 200) : 'Codex 置顶写入失败'
+        const message = error && typeof error.message === 'string' ? error.message.slice(0, 200) : lane.failureMessage
         note('pin-provider-write', 'failed', input, {
           code: code === null ? 'rpc-failed' : `rpc-${code}`,
           durationMs: now() - startedAt
         })
         return { outcome: 'failed', errorCode: code === null ? 'rpc-failed' : `rpc-${code}`, message }
       } finally {
-        inFlight.delete(flightKey)
+        inFlight.delete(threadId)
       }
     })()
-    inFlight.set(flightKey, run)
+    inFlight.set(threadId, run)
     return run
   }
 
@@ -257,3 +266,21 @@ function codexThreadNativePinFields(row, mirrorOrder) {
 }
 
 module.exports.codexThreadNativePinFields = codexThreadNativePinFields
+
+/**
+ * Provider pin evidence triple shared by every producer. `pinned` must be a
+ * boolean to claim a lane; anything else reports `providerPin: null` with an
+ * empty authority, which the Kernel reads as "no pin lane", never "unpinned".
+ * `order` wins over `fallbackOrder` only when it is an integer.
+ */
+function providerPinFields(input = {}) {
+  const source = record(input)
+  const hasLane = typeof source.pinned === 'boolean'
+  return {
+    providerPin: hasLane ? source.pinned : null,
+    providerPinOrder: Number.isInteger(source.order) ? source.order : source.fallbackOrder,
+    providerPinAuthority: hasLane && typeof source.authority === 'string' ? source.authority : ''
+  }
+}
+
+module.exports.providerPinFields = providerPinFields

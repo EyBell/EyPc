@@ -159,7 +159,15 @@ const BUDGET = Object.freeze({
   // 2026-09-03 (RAW-207): +3 -- companionCursorEvidenceV7 now forwards
   // interactionKind / branchRef / turnEpoch into the synthetic bundle so a
   // still-running Cursor AskQuestion reaches Kernel waiting-input.
-  lines: 14360,
+  // 2026-09-03 (RAW-205 pin write): +20 -- Claude/Cursor setPin adapters on
+  // the host registry plus public pin methods next to archive.
+  // 2026-09-04 (RAW-205 inbound-only): -5 -- Claude/Cursor registry setPin
+  // collapsed to unsupported one-liners; capability pin revoked.
+  // 2026-09-04 (RAW-205 pin lane interface): +27 net -- Claude/Cursor setPin
+  // stubs and public pin methods deleted (-13), producers share
+  // `companionProviderPinFields` (-4), Desktop pin-mirror change detection on
+  // the unread watcher (+24) and the CodexHost store watcher wiring (+6).
+  lines: 14402,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

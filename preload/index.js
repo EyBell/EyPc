@@ -1289,7 +1289,13 @@ try {
       // so a roster loss or reload cannot resurrect a read row as unread.
       storage: () => globalThis.utools?.dbStorage,
       // The launch lane learns the CLI location while a Host is around to tell it.
-      onCliPathObserved: (cliPath) => { codexDesktopLaunch?.rememberObservedCliPath(cliPath) }
+      onCliPathObserved: (cliPath) => { codexDesktopLaunch?.rememberObservedCliPath(cliPath) },
+      // Inbound Host record watcher (status / pin). Late-bound: the Kernel
+      // reconciliation queue is defined further below.
+      fs,
+      path,
+      homeDirectory: os.homedir(),
+      onRosterChanged: () => { if (companionTaskKernel) queueCompanionHostReconciliation('codex') }
     })
   }
 } catch { codexhostDiscovery = null }
@@ -1316,6 +1322,13 @@ try {
   }
   if (typeof codexPinBridgeModule?.codexThreadNativePinFields !== 'function') codexPinBridgeModule = null
 } catch { codexPinBridgeModule = null }
+
+/** Provider pin evidence triple for every producer; a failed module load reports "no lane". */
+function companionProviderPinFields(input) {
+  return typeof codexPinBridgeModule?.providerPinFields === 'function'
+    ? codexPinBridgeModule.providerPinFields(input)
+    : { providerPin: null, providerPinOrder: input?.fallbackOrder, providerPinAuthority: '' }
+}
 
 
 // A failed load degrades to the bare minimum safe fields (`key` plus an
@@ -1401,6 +1414,7 @@ function cursorUnavailable(shape) {
   if (shape === 'register') {
     return { ok: false, message }
   }
+  if (shape === 'archive') return { outcome: 'failed', errorCode: 'archive-unavailable', message }
   return { outcome: 'unavailable', confirmsRead: false, message }
 }
 
@@ -4753,6 +4767,7 @@ class CodexDesktopCompanionBridge {
     this.waitingStates = new Map()
     this.unreadStateWatcher = null
     this.unreadStateWatchPath = ''
+    this.pinMirrorLine = undefined
     this.unreadStateStatWatcherActive = false
     this.unreadStateWatcherRetryAvailable = true
     this.lastSocketError = ''
@@ -6784,9 +6799,26 @@ class CodexDesktopCompanionBridge {
     emitCodexActivityDelta([codexActivityPublicEntry(known)], false)
   }
 
+  /**
+   * A Desktop pin/unpin only rewrites the global-state mirror, so it is the
+   * one inbound pin signal for native rows. A changed mirror forces a
+   * tasks-only membership reconciliation, whose fresh `thread/list` carries
+   * the authoritative `section`. The first read only seeds the baseline.
+   */
+  notePinMirror(line, emit) {
+    if (typeof line !== 'string') return
+    if (this.pinMirrorLine === undefined) { this.pinMirrorLine = line; return }
+    if (line === this.pinMirrorLine) return
+    this.pinMirrorLine = line
+    if (!emit) return
+    runtimeDiagnostics.record({ level: 'info', scope: 'codex-pin-mirror', event: 'changed', outcome: 'reconciliation-requested' })
+    requestCodexInventoryMembershipReconciliation('watcher-event', { forceTasksOnly: true })
+  }
+
   refreshPersistedUnread(emit = true) {
     let unreadIds = null
     try { unreadIds = readCodexDesktopUnreadIds() } catch {}
+    if (unreadIds) this.notePinMirror(unreadIds.pinMirrorLine, emit)
     const changed = []
     for (const threadId of this.inventory) {
       const known = codexActivityInventory.get(threadId)
@@ -6930,6 +6962,7 @@ class CodexDesktopCompanionBridge {
     }
     this.unreadStateStatWatcherActive = false
     this.unreadStateWatchPath = ''
+    this.pinMirrorLine = undefined
     this.unreadStateWatcherRetryAvailable = true
   }
 
@@ -8670,7 +8703,16 @@ function readCodexDesktopUnreadIdsInner() {
   if (!Array.isArray(local) || local.length > 100_000 || local.some((threadId) => !validCodexThreadId(threadId))) {
     throw codexError('protocol-error', 'Codex desktop unread state is invalid')
   }
-  return new Set(local)
+  const ids = new Set(local)
+  // The Desktop pin mirror (`pinned-thread-ids`, ordered) rides on the same
+  // parse as a hidden field: the unread watcher is the only live signal for a
+  // Desktop-side pin toggle, which touches no session file.
+  const mirror = codexRecord(parsed)['pinned-thread-ids']
+  Object.defineProperty(ids, 'pinMirrorLine', {
+    value: Array.isArray(mirror) ? mirror.filter(validCodexThreadId).slice(0, 500).join(',') : '',
+    enumerable: false
+  })
+  return ids
 }
 
 // A failed load leaves the runtime phase unknown rather than misread: the
@@ -11349,9 +11391,7 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       turnMode: isRoot ? rootSource.turnMode : 'unknown',
       idleConfirmed: !(observation.candidates || []).some((candidate) => candidate.kind === 'turn-running'),
       localPin,
-      providerPin: pinLane ? rootSource.nativePinned === true : null,
-      providerPinOrder: Number.isInteger(rootSource.nativePinnedOrder) ? rootSource.nativePinnedOrder : order,
-      providerPinAuthority: pinLane,
+      ...companionProviderPinFields({ pinned: pinLane ? rootSource.nativePinned === true : null, order: rootSource.nativePinnedOrder, authority: pinLane, fallbackOrder: order }),
       // Only a root row carries a hand-set phase: a topology child has its own
       // evidence and must not inherit the parent's stand-in.
       manualPhase: isRoot ? manualPhaseEntry?.phase || '' : '',
@@ -11525,10 +11565,8 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
       hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
       idleConfirmed: terminal,
       localPin,
-      // The App's sidebar star is its pin. Read-only: it is server-synced.
-      providerPin: session.isStarred === true,
-      providerPinOrder: input.order,
-      providerPinAuthority: 'claude-metadata',
+      // Inbound only (manifest `pin.outbound: false`): the App sidebar star.
+      ...companionProviderPinFields({ pinned: session.isStarred === true, authority: 'claude-metadata', fallbackOrder: input.order }),
       manualPhase: manualPhaseEntry?.phase || '',
       manualPhaseSetAt: manualPhaseEntry?.setAt || 0,
       dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.turnStartedAt, session.lastActivityAt) >= input.dynamicCutoff,
@@ -11678,10 +11716,8 @@ function companionCursorEvidenceV7(sessionValue, hookValue, input = {}) {
       hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
       idleConfirmed: terminal,
       localPin,
-      // Workspace-store sidebar pin. Read-only: VS Code caches that table.
-      providerPin: typeof session.pinned === 'boolean' ? session.pinned : null,
-      providerPinOrder: Number.isInteger(session.pinnedOrder) ? session.pinnedOrder : input.order,
-      providerPinAuthority: typeof session.pinned === 'boolean' ? 'cursor-workspace' : '',
+      // Inbound only (manifest `pin.outbound: false`): the workspace sidebar pin.
+      ...companionProviderPinFields({ pinned: session.pinned, order: session.pinnedOrder, authority: 'cursor-workspace', fallbackOrder: input.order }),
       dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.lastUpdatedAt, session.unfinishedRunAt) >= input.dynamicCutoff,
       displayName: alias || originalTitle,
       originalTitle,
@@ -12116,6 +12152,8 @@ const companionHostRegistry = createCompanionHostRegistry?.({
     archive: (target) => claudeBridge
       ? claudeBridge.archiveCodeSession(target.actionAlias)
       : Promise.resolve(claudeUnavailable('archive')),
+    // No `setPin`: the manifest declares Claude pin inbound-only, so EyPc pins
+    // stay local and the Host Registry rejects a write adapter here.
     close: () => undefined
   },
   cursor: {
@@ -12125,6 +12163,7 @@ const companionHostRegistry = createCompanionHostRegistry?.({
       ? cursorBridge.archiveTask(String(target.actionAlias
         || (typeof target.key === 'string' && target.key.startsWith('cursor:') ? target.key.slice('cursor:'.length) : '')))
       : Promise.resolve(cursorUnavailable('archive')),
+    // No `setPin`: Cursor pin is inbound-only by manifest policy (see claude).
     close: () => undefined
   }
 })
@@ -14177,6 +14216,9 @@ window.eypcPlatform = {
     openTask: (...args) => cursorBridge
       ? cursorBridge.openTask(...args)
       : Promise.resolve(cursorUnavailable('open')),
+    archiveTask: (...args) => cursorBridge
+      ? cursorBridge.archiveTask(...args)
+      : Promise.resolve(cursorUnavailable('archive')),
     diagnostics: () => ({
       ...(cursorBridge && typeof cursorBridge.diagnostics === 'function' ? cursorBridge.diagnostics() : {}),
       revision: cursorBridge ? cursorBridge.revision : '',

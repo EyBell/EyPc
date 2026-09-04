@@ -133,7 +133,7 @@ export interface CompanionCanonicalTaskV4 {
     pause: boolean
     resume: boolean
     executePlan: boolean
-    /** The provider accepts an EyPc pin/unpin write (Codex app-server, CodexHost). */
+    /** The provider accepts an EyPc pin/unpin write (Codex, Claude App, Cursor). */
     pin?: boolean
   }
   archiveRequest?: CompanionTaskArchiveRequestV3
@@ -414,6 +414,8 @@ function projectCanonicalCard(
   }
   // A local pin wins the control's identity; a provider pin alone shows as
   // native (Codex Pinned section, Claude star, Cursor pinned agent).
+  if (task.providerPin === true) next.providerPinned = true
+  else delete next.providerPinned
   if (task.localPin) next.pinSource = 'local'
   else if (task.providerPin === true) next.pinSource = 'native'
   else if (task.providerPin === false) delete next.pinSource

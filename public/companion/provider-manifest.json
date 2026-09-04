@@ -15,7 +15,8 @@
       "taskKind": "codex-thread",
       "relationMode": "exact",
       "topologySources": ["app-server"],
-      "capabilities": ["open", "archive", "pause", "resume", "execute-plan", "topology"]
+      "capabilities": ["open", "archive", "pause", "resume", "execute-plan", "topology"],
+      "pin": { "inbound": true, "outbound": true, "appLabel": "Codex", "pinNoun": "置顶" }
     },
     "claude": {
       "id": "claude",
@@ -24,7 +25,8 @@
       "taskKind": "claude-session",
       "relationMode": "exact",
       "topologySources": ["hooks"],
-      "capabilities": ["open", "archive", "topology"]
+      "capabilities": ["open", "archive", "topology"],
+      "pin": { "inbound": true, "outbound": false, "appLabel": "Claude App", "pinNoun": "星标" }
     },
     "cursor": {
       "id": "cursor",
@@ -33,7 +35,8 @@
       "taskKind": "cursor-session",
       "relationMode": "exact",
       "topologySources": ["hooks", "inventory"],
-      "capabilities": ["open", "archive", "topology"]
+      "capabilities": ["open", "archive", "topology"],
+      "pin": { "inbound": true, "outbound": false, "appLabel": "Cursor", "pinNoun": "置顶" }
     }
   }
 }

@@ -57,41 +57,15 @@ function normalizeTarget(value, enabledProviders) {
   }
 }
 
-function normalizeArchiveResult(value, target) {
+/**
+ * One result envelope for every provider effect. `spec.outcomes` is the
+ * accepted outcome vocabulary (anything else collapses to `failed`);
+ * `spec.passthrough` lists the typed extras the effect may report back.
+ */
+function normalizeActionResult(value, target, spec) {
   const source = value && typeof value === 'object' ? value : {}
-  const outcome = ['confirmation-required', 'archived', 'failed', 'indeterminate'].includes(source.outcome)
-    ? source.outcome
-    : 'failed'
-  return {
-    outcome,
-    provider: target.provider,
-    key: target.key,
-    ...(typeof source.operationId === 'string' ? { operationId: source.operationId.slice(0, 160) } : {}),
-    ...(typeof source.errorCode === 'string' && source.errorCode ? { errorCode: source.errorCode.slice(0, 80) } : {}),
-    ...(typeof source.message === 'string' && source.message ? { message: source.message.slice(0, 240) } : {}),
-    ...(source.alreadyArchived === true ? { alreadyArchived: true } : {})
-  }
-}
-
-function normalizePinResult(value, target) {
-  const source = value && typeof value === 'object' ? value : {}
-  const outcome = ['completed', 'failed', 'indeterminate'].includes(source.outcome) ? source.outcome : 'failed'
-  return {
-    outcome,
-    provider: target.provider,
-    key: target.key,
-    ...(typeof source.providerPin === 'boolean' ? { providerPin: source.providerPin } : {}),
-    ...(typeof source.method === 'string' ? { method: source.method.slice(0, 80) } : {}),
-    ...(typeof source.operationId === 'string' ? { operationId: source.operationId.slice(0, 160) } : {}),
-    ...(typeof source.errorCode === 'string' && source.errorCode ? { errorCode: source.errorCode.slice(0, 80) } : {}),
-    ...(typeof source.message === 'string' && source.message ? { message: source.message.slice(0, 240) } : {})
-  }
-}
-
-function normalizeExecuteResult(value, target) {
-  const source = value && typeof value === 'object' ? value : {}
-  const outcome = ['executed', 'failed', 'indeterminate'].includes(source.outcome) ? source.outcome : 'failed'
-  return {
+  const outcome = spec.outcomes.includes(source.outcome) ? source.outcome : 'failed'
+  const result = {
     outcome,
     provider: target.provider,
     key: target.key,
@@ -99,7 +73,28 @@ function normalizeExecuteResult(value, target) {
     ...(typeof source.errorCode === 'string' && source.errorCode ? { errorCode: source.errorCode.slice(0, 80) } : {}),
     ...(typeof source.message === 'string' && source.message ? { message: source.message.slice(0, 240) } : {})
   }
+  for (const [field, kind] of Object.entries(spec.passthrough || {})) {
+    const extra = source[field]
+    if (kind === 'boolean' && typeof extra === 'boolean') result[field] = extra
+    else if (kind === 'flag' && extra === true) result[field] = true
+    else if (kind === 'string' && typeof extra === 'string') result[field] = extra.slice(0, 80)
+  }
+  return result
 }
+
+const ARCHIVE_RESULT_SPEC = Object.freeze({
+  outcomes: ['confirmation-required', 'archived', 'failed', 'indeterminate'],
+  passthrough: { alreadyArchived: 'flag' }
+})
+const PIN_RESULT_SPEC = Object.freeze({
+  outcomes: ['completed', 'failed', 'indeterminate'],
+  passthrough: { providerPin: 'boolean', method: 'string' }
+})
+const EXECUTE_RESULT_SPEC = Object.freeze({ outcomes: ['executed', 'failed', 'indeterminate'], passthrough: {} })
+
+const normalizeArchiveResult = (value, target) => normalizeActionResult(value, target, ARCHIVE_RESULT_SPEC)
+const normalizePinResult = (value, target) => normalizeActionResult(value, target, PIN_RESULT_SPEC)
+const normalizeExecuteResult = (value, target) => normalizeActionResult(value, target, EXECUTE_RESULT_SPEC)
 
 function createCompanionTaskActions(dependencies = {}) {
   const now = typeof dependencies.now === 'function' ? dependencies.now : Date.now
