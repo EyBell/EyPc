@@ -34,6 +34,8 @@ const CODEXHOST_LIST_TTL_MS = 12_000
 /** Running extra processes can complete between inventory scans; keep that
  * snapshot hot without treating elapsed time as a terminal. */
 const CODEXHOST_RUNNING_LIST_TTL_MS = 1_000
+/** Coalesces a burst of Host record writes into one list refresh. */
+const CODEXHOST_STORE_DEBOUNCE_MS = 300
 /** How long a resolved rendezvous is trusted before re-reading process env. */
 const CODEXHOST_RENDEZVOUS_TTL_MS = 60_000
 /** Per-`thread list` invocation timeout; the CLI answers a local runtime. */
@@ -177,12 +179,25 @@ function createCodexhostDiscovery(dependencies = {}) {
   const onCliPathObserved = typeof dependencies.onCliPathObserved === 'function' ? dependencies.onCliPathObserved : null
   /** Injected, never read off `globalThis`: the entry runs inside VM sandboxes. */
   const storage = typeof dependencies.storage === 'function' ? dependencies.storage : () => undefined
+  /**
+   * Inbound Host state watcher. The Host persists per-thread records (status,
+   * `pinned`) under `<data dir>/mapping-store/threads/*.json`; a change there
+   * invalidates the list TTL and asks the entry to rescan, so a Desktop-side
+   * pin of an extra process reaches the plugin without waiting a TTL.
+   */
+  const fs = dependencies.fs || null
+  const pathModule = dependencies.path || null
+  const onRosterChanged = typeof dependencies.onRosterChanged === 'function' ? dependencies.onRosterChanged : null
+  const setTimer = typeof dependencies.setTimeout === 'function' ? dependencies.setTimeout : (fn, ms) => setTimeout(fn, ms)
+  const clearTimer = typeof dependencies.clearTimeout === 'function' ? dependencies.clearTimeout : (id) => clearTimeout(id)
   if (typeof execFile !== 'function') {
     throw new TypeError('codexhost discovery requires execFile')
   }
 
   /** { endpoint, token, cliPath, resolvedAt } or null. */
   let rendezvous = null
+  let storeWatcher = null
+  let storeWatchTimer = null
   /** threadId -> { threadId, harnessId, status, cwd, title, firstSeenAt, statusChangedAt } */
   let externalThreads = new Map()
   let externalKeys = new Set()
@@ -378,9 +393,55 @@ function createCodexhostDiscovery(dependencies = {}) {
       if (!cliPath || !cliPath.startsWith('/')) continue
       rendezvous = { endpoint, token, cliPath, resolvedAt: now() }
       if (onCliPathObserved) { try { onCliPathObserved(cliPath) } catch {} }
+      ensureStoreWatcher(environmentValue(psLine, 'CODEXHOST_DATA_DIR'))
       return rendezvous
     }
     return null
+  }
+
+  function storeThreadsDirectory(dataDirectory) {
+    if (!pathModule) return ''
+    const base = dataDirectory && dataDirectory.startsWith('/')
+      ? dataDirectory
+      : typeof dependencies.homeDirectory === 'string' && dependencies.homeDirectory
+        ? pathModule.join(dependencies.homeDirectory, '.codexhost')
+        : ''
+    return base ? pathModule.join(base, 'mapping-store', 'threads') : ''
+  }
+
+  /** Drops the list TTL and asks for a rescan; exported so a caller may force it too. */
+  function codexhostInvalidateList() {
+    listRefreshedAt = 0
+    if (onRosterChanged) { try { onRosterChanged() } catch {} }
+  }
+
+  function ensureStoreWatcher(dataDirectory) {
+    if (storeWatcher || !fs || typeof fs.watch !== 'function') return
+    const directory = storeThreadsDirectory(dataDirectory)
+    if (!directory) return
+    try {
+      const watcher = fs.watch(directory, { persistent: false }, (_event, filename) => {
+        if (filename && !/\.json$/i.test(String(filename))) return
+        if (storeWatchTimer) clearTimer(storeWatchTimer)
+        storeWatchTimer = setTimer(() => {
+          storeWatchTimer = null
+          codexhostInvalidateList()
+        }, CODEXHOST_STORE_DEBOUNCE_MS)
+      })
+      watcher.unref?.()
+      watcher.on?.('error', () => closeStoreWatcher())
+      storeWatcher = watcher
+    } catch {
+      // Missing store (Host never persisted) or unsupported fs: the TTL poll
+      // remains the fallback and the next rendezvous retries the watch.
+      storeWatcher = null
+    }
+  }
+
+  function closeStoreWatcher() {
+    if (storeWatchTimer) { clearTimer(storeWatchTimer); storeWatchTimer = null }
+    try { storeWatcher?.close() } catch {}
+    storeWatcher = null
   }
 
   function normalizeThread(value) {
@@ -899,6 +960,7 @@ function createCodexhostDiscovery(dependencies = {}) {
    * every remembered id with its original `statusChangedAt` and jump-read.
    */
   function codexhostResetDiscovery(options = {}) {
+    closeStoreWatcher()
     rendezvous = null
     externalThreads = new Map()
     externalKeys = new Set()
@@ -931,6 +993,7 @@ function createCodexhostDiscovery(dependencies = {}) {
     codexhostPinState,
     codexhostForgetThread,
     codexhostTakeRemovedThreadIds,
+    codexhostInvalidateList,
     codexhostResetDiscovery
   }
 }
@@ -942,6 +1005,7 @@ module.exports = {
   CODEXHOST_THREAD_MEMORY_LIMIT,
   CODEXHOST_LIST_TTL_MS,
   CODEXHOST_RUNNING_LIST_TTL_MS,
+  CODEXHOST_STORE_DEBOUNCE_MS,
   CODEXHOST_RENDEZVOUS_TTL_MS,
   codexhostHarnessLabel,
   codexhostExternalIdentity,

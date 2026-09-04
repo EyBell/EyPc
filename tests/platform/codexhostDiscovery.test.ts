@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 const require = createRequire(import.meta.url)
 const discoveryModule = require('../../preload/codex/codexhost-discovery.cjs') as {
   CODEXHOST_LIST_TTL_MS: number
+  CODEXHOST_STORE_DEBOUNCE_MS: number
   CODEXHOST_FORGET_SUPPRESS_MS: number
   CODEXHOST_THREAD_MEMORY_STORAGE_KEY: string
   codexhostHarnessLabel(value: unknown): string
@@ -30,6 +31,7 @@ const discoveryModule = require('../../preload/codex/codexhost-discovery.cjs') a
     compareHostDesktopUnread(known: Record<string, any>, input?: Record<string, any>): Record<string, any>
     codexhostForgetThread(threadId: string): boolean
     codexhostTakeRemovedThreadIds(): string[]
+    codexhostInvalidateList(): void
     codexhostResetDiscovery(options?: { forgetMemory?: boolean }): void
   }
 }
@@ -177,6 +179,57 @@ describe('codexhost external conversation discovery', () => {
 
     expect(calls.slice(afterFailedPass).some((call) => call.command === 'pgrep')).toBe(true)
     expect(recovered.rows.length).toBeGreaterThan(0)
+  })
+
+  it('watches the Host mapping-store threads directory and refreshes the list before the TTL', async () => {
+    const calls: Array<{ command: string; args: string[] }> = []
+    const watches: Array<{ directory: string; listener: (event: string, filename: string) => void; closed: boolean }> = []
+    const timers: Array<{ fn: () => void; ms: number }> = []
+    const rosterChanges: number[] = []
+    let clock = 100_000
+    const discovery = discoveryModule.createCodexhostDiscovery({
+      execFile: fakeExecFile(calls),
+      now: () => clock,
+      record: () => undefined,
+      fs: {
+        watch: (directory: string, _options: unknown, listener: (event: string, filename: string) => void) => {
+          const entry = { directory, listener, closed: false, close: () => { entry.closed = true } }
+          watches.push(entry)
+          return entry
+        }
+      },
+      path: { join: (...parts: string[]) => parts.join('/') },
+      homeDirectory: '/Users/tester',
+      setTimeout: (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length },
+      clearTimeout: (id: number) => { timers.splice(id - 1, 1, { fn: () => undefined, ms: 0 }) },
+      onRosterChanged: () => rosterChanges.push(clock)
+    })
+
+    await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'], threadKey: (id: string) => id })
+    // The watcher lands on the Host's own store, not the lock-churning root.
+    expect(watches.map((entry) => entry.directory)).toEqual(['/Users/tester/.codexhost/mapping-store/threads'])
+    const listsAfterFirst = calls.filter((call) => call.command === CLI).length
+
+    // Inside the running-list TTL nothing refreshes on its own.
+    clock += 500
+    await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'], threadKey: (id: string) => id })
+    expect(calls.filter((call) => call.command === CLI)).toHaveLength(listsAfterFirst)
+
+    // A Host record write (a Desktop-side pin of an extra process) is
+    // debounced into one invalidation, then the next scan re-lists.
+    watches[0].listener('change', 'ccd66b72-1111-4222-8333-944444444444.json')
+    watches[0].listener('change', 'ccd66b72-1111-4222-8333-944444444444.json')
+    watches[0].listener('change', 'store.lock')
+    expect(rosterChanges).toEqual([])
+    const pending = timers.filter((timer) => timer.ms === discoveryModule.CODEXHOST_STORE_DEBOUNCE_MS)
+    expect(pending.length).toBeGreaterThan(0)
+    pending.at(-1)!.fn()
+    expect(rosterChanges).toEqual([clock])
+    await discovery.codexhostRowsForScan({ roots: ['/repo/gonavi'], threadKey: (id: string) => id })
+    expect(calls.filter((call) => call.command === CLI)).toHaveLength(listsAfterFirst + 1)
+
+    discovery.codexhostResetDiscovery()
+    expect(watches[0].closed).toBe(true)
   })
 
   it('reports a refresh failure and a cache-served pass instead of going silent', async () => {
