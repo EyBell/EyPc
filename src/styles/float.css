@@ -949,6 +949,15 @@ button.float-search-glyph { cursor: pointer; }
 .inline-icon-button:disabled { cursor: not-allowed; opacity: .4; }
 .inline-icon-button.action-pin[data-pin-source="local"] { border-color: color-mix(in srgb, var(--codex-warning) 76%, var(--codex-border)); background: color-mix(in srgb, var(--codex-warning) 14%, var(--codex-surface)); color: var(--codex-warning); }
 .inline-icon-button.action-pin[data-pin-source="native"] { border-color: color-mix(in srgb, var(--codex-accent) 52%, var(--codex-border)); background: color-mix(in srgb, var(--codex-accent) 9%, var(--codex-surface)); color: color-mix(in srgb, var(--codex-accent) 72%, var(--codex-muted)); }
+.inline-icon-button.action-pin .action-pin-glyph {
+  display: grid;
+  place-items: center;
+  line-height: 0;
+  transform-origin: 50% 50%;
+}
+.inline-icon-button.action-pin[data-pin-source="local"] .action-pin-glyph,
+.inline-icon-button.action-pin[data-pin-source="native"] .action-pin-glyph,
+.inline-icon-button.action-pin .action-pin-glyph.is-pinned { transform: rotate(-45deg); }
 .inline-icon-button.action-pin[aria-disabled="true"] { cursor: not-allowed; }
 .inline-icon-button.action-pin[aria-disabled="true"]:hover { border-color: var(--codex-focus); }
 .inline-icon-button.action-archive[aria-disabled="true"] { cursor: not-allowed; opacity: .4; }
