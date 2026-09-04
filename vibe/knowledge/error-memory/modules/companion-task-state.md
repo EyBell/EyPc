@@ -44,6 +44,7 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 - [Plan lifecycle and interrupted causality](../companion-plan-lifecycle-and-interrupted-causality.md#L1)
 - [Independent authorities must not share full refresh](../independent-authorities-coupled-by-full-refresh.md#L1)
 - [Watcher callback latency is not publication latency](../watcher-callback-latency-is-not-end-to-end-publication-latency.md#L1)
+- [Display clock zero is missing, not a reset](../companion-display-clock-zero-is-missing.md#L1)
 
 ## Related Error Records
 

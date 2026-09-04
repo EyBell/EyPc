@@ -70,7 +70,15 @@ describe('Claude App Code domain', () => {
     ], { appUnread: [LOCAL_A] })[0]).toMatchObject({
       bucket: 'completed-unread',
       statusEnteredAt: 430,
-      pendingSince: 430
+      pendingSince: 430,
+      lastQuestionAt: 250
+    })
+    expect(projectClaudeCodeTaskCards([
+      observation('completed', { lastStopAt: 430, turnStartedAt: 0 })
+    ])[0]).toMatchObject({
+      bucket: 'completed',
+      lastQuestionAt: 430,
+      lastTurnCompletedAt: 430
     })
   })
 

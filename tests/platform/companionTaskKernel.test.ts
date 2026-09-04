@@ -4199,4 +4199,41 @@ describe('per-task phase transition diagnostics', () => {
       count: 3
     })])
   })
+
+  it('keeps lastQuestionAt when a later metadata batch sends 0', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: false, claude: false, cursor: true } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: false, cursor: true } })
+    const cursorKey = 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const cursorTask = (lastQuestionAt: number, revision: number) => task({
+      key: cursorKey,
+      provider: 'cursor',
+      kind: 'cursor-session',
+      actionAlias: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      family: cursorKey,
+      phase: 'completed',
+      unread: false,
+      revisionAt: revision,
+      phaseRevision: revision,
+      membershipRevision: revision,
+      metadataRevision: revision,
+      statusEnteredAt: revision,
+      lastQuestionAt,
+      createdAt: 800
+    })
+    const lanes = (revision: number) => ({
+      providers: { codex: false, claude: false, cursor: true },
+      sourceGenerations: { codex: 0, claude: 0, cursor: revision },
+      sourceLaneGenerations: {
+        codex: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
+        claude: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
+        cursor: { membership: revision, activity: revision, interaction: 0, unread: revision, planArtifact: 0, metadata: revision, topology: 0 }
+      }
+    })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([cursorTask(900, 900)], 1, lanes(1)) })
+    expect(kernel.getLatest().tasks[0].lastQuestionAt).toBe(900)
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([cursorTask(0, 910)], 2, lanes(2)) })
+    expect(kernel.getLatest().tasks[0].lastQuestionAt).toBe(900)
+  })
 })

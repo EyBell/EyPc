@@ -321,6 +321,7 @@ export function projectClaudeCodeTaskCard(
   const completedAt = resolved.phase === 'completed'
     ? observation.lastStopAt || observation.phaseUpdatedAt || observation.metadataUpdatedAt || observation.lastActivityAt
     : 0
+  const questionAt = observation.turnStartedAt || completedAt || updatedAt
   const statusEnteredAt = resolved.phase === 'waiting-approval'
     ? observation.waitingApprovalAt || observation.phaseUpdatedAt || updatedAt
     : resolved.phase === 'waiting-input'
@@ -362,7 +363,8 @@ export function projectClaudeCodeTaskCard(
         ? ['waitingOnUserInput']
         : undefined,
     updatedAt,
-    ...(observation.turnStartedAt ? { lastQuestionAt: observation.turnStartedAt, lastTurnStartedAt: observation.turnStartedAt } : {}),
+    ...(questionAt ? { lastQuestionAt: questionAt } : {}),
+    ...(observation.turnStartedAt ? { lastTurnStartedAt: observation.turnStartedAt } : {}),
     createdAt: observation.createdAt || undefined,
     firstPromptAt: observation.createdAt || undefined,
     source: resolved.phase === 'unknown' ? 'unresolved' : 'current',

@@ -37,6 +37,7 @@
 - [RAW-202](../shared-raw-202.md#L1) — `active` · 跳转前确保目标应用已打开与 CodexHost 启动通路
 - [RAW-206](../shared-raw-206.md#L1) — `active` · Cursor Plan 模式会话纳入库存；阻塞待决展示为待输入并可一键跳转
 - [RAW-207](../shared-raw-207.md#L1) — `active` · 同一 Turn 仍 running 的精确提问/审批公开为待输入；Cursor kind 送进 Kernel
+- [RAW-208](../shared-raw-208.md#L1) — `active` · Claude/Cursor 行上时钟在 Turn 关闭后回退完成/活动时间；入站 0 不覆盖；Cloud Agent 仍排除
 
 
 ### 编号条款

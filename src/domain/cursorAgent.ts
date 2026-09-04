@@ -205,6 +205,7 @@ export function projectCursorAgentTaskCard(
   const projectName = options.projectAliases?.[projectKey] || 'Cursor Agent'
   const updatedAt = observation.lastUpdatedAt || observation.unfinishedRunAt || observation.createdAt
   const completedAt = resolved.phase === 'completed' ? (observation.lastUpdatedAt || observation.createdAt) : 0
+  const questionAt = observation.unfinishedRunAt || completedAt || updatedAt
   const statusEnteredAt = resolved.phase === 'waiting-input'
     ? observation.lastUpdatedAt || updatedAt
     : resolved.bucket === 'completed-unread'
@@ -238,7 +239,8 @@ export function projectCursorAgentTaskCard(
               : 'attention',
     activeFlags: resolved.phase === 'waiting-input' ? ['waitingOnUserInput'] : undefined,
     updatedAt,
-    ...(observation.unfinishedRunAt ? { lastQuestionAt: observation.unfinishedRunAt, lastTurnStartedAt: observation.unfinishedRunAt } : {}),
+    ...(questionAt ? { lastQuestionAt: questionAt } : {}),
+    ...(observation.unfinishedRunAt ? { lastTurnStartedAt: observation.unfinishedRunAt } : {}),
     createdAt: observation.createdAt || undefined,
     firstPromptAt: observation.createdAt || undefined,
     source: resolved.phase === 'unknown' ? 'unresolved' : 'current',
