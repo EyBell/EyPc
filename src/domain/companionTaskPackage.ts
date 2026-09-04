@@ -400,7 +400,7 @@ function projectCanonicalCard(
     manualPhase: (task.manualPhase || '') as CodexTaskCard['manualPhase'],
     state: projectedLegacyState(task.phase, task.unread),
     updatedAt: sourceUpdatedAt,
-    lastQuestionAt: task.lastQuestionAt || card.lastQuestionAt,
+    lastQuestionAt: task.lastQuestionAt || card.lastQuestionAt || lastTurnStartedAt || completionRevision || sourceUpdatedAt,
     lastTurnStartedAt,
     createdAt: task.createdAt || card.createdAt,
     isHidden: task.hidden || task.paused,

@@ -117,6 +117,8 @@ describe('cursor agent cold inventory', () => {
     expect(card.archiveCapability).toBe('blocked-stopped')
     const completed = projectCursorAgentTaskCard(observation({ diskStatus: 'completed' })!)
     expect(completed).toMatchObject({ canArchive: true, archiveCapability: 'allowed' })
+    expect(completed.lastQuestionAt).toBe(2_000)
+    expect(completed.lastTurnCompletedAt).toBe(2_000)
     const stopped = projectCursorAgentTaskCard(observation({ diskStatus: 'aborted' })!)
     expect(stopped).toMatchObject({ canArchive: true, archiveCapability: 'allowed' })
     const running = projectCursorAgentTaskCard(observation({ unfinishedRunAt: 9_000 })!)

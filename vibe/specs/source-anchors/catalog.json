@@ -4,12 +4,12 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 52,
-    "ordered_anchors": 292,
-    "raw_parent_ordered": 166,
+    "source_documents": 53,
+    "ordered_anchors": 296,
+    "raw_parent_ordered": 170,
     "unparented_ordered": 126,
     "registered_requirements": 105,
-    "registry_review_required": 61,
+    "registry_review_required": 65,
     "source_addressable_not_registered": 126
   },
   "documents": [
@@ -519,6 +519,16 @@
       "spec_id": "SPEC-260903-SAME-TURN-WAITING-INPUT",
       "content_sha256": "3474bfe8a746f72c633215f8af4d7aa382b8ac26bae1b350f5b7ef8d96cf5960",
       "raw_identity_count": 4,
+      "ordered_anchor_count": 4,
+      "raw_parent_ordered_count": 4,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260904/companion-display-clock",
+      "source_path": "vibe/specs/260904/companion-display-clock/raw-requirement.md",
+      "spec_id": "SPEC-260904-COMPANION-DISPLAY-CLOCK",
+      "content_sha256": "0c04e90e238be3c369f02d45ea58ed8b8f706f58693677f446cf4704bd990da1",
+      "raw_identity_count": 2,
       "ordered_anchor_count": 4,
       "raw_parent_ordered_count": 4,
       "unparented_ordered_count": 0
@@ -6829,6 +6839,94 @@
       "parent_raw_id": "RAW-207",
       "qualified_source": "SPEC-260903-SAME-TURN-WAITING-INPUT::RAW-207#4",
       "clause_sha256": "fa5366c88784ad92fc83c6019db7958647a82664c80c99c3fa10e656671a9dff",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-33F6A2707D0EF7E7D022",
+      "source_task": "260904/companion-display-clock",
+      "source_path": "vibe/specs/260904/companion-display-clock/raw-requirement.md",
+      "line": 16,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-208：Claude / Cursor 行上时钟在 Turn 关闭后仍可读",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "1",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-208",
+      "qualified_source": "SPEC-260904-COMPANION-DISPLAY-CLOCK::RAW-208#1",
+      "clause_sha256": "3da134a5cffc8e887cf1ea9d492868b1a59e8e4998bb6444a541f8f8f97db7b3",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-80DD365C2C87ADE7C5DD",
+      "source_task": "260904/companion-display-clock",
+      "source_path": "vibe/specs/260904/companion-display-clock/raw-requirement.md",
+      "line": 17,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-208：Claude / Cursor 行上时钟在 Turn 关闭后仍可读",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "2",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-208",
+      "qualified_source": "SPEC-260904-COMPANION-DISPLAY-CLOCK::RAW-208#2",
+      "clause_sha256": "96f4af9979fe6f647d373df59ab6f3709ed7a28fd48cd012f6bd682affaf1551",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-AC4BE747E5EBF39918ED",
+      "source_task": "260904/companion-display-clock",
+      "source_path": "vibe/specs/260904/companion-display-clock/raw-requirement.md",
+      "line": 18,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-208：Claude / Cursor 行上时钟在 Turn 关闭后仍可读",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "3",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-208",
+      "qualified_source": "SPEC-260904-COMPANION-DISPLAY-CLOCK::RAW-208#3",
+      "clause_sha256": "150e2bccafdb42868de007b6c73a74896ea23989b11858c6bc61116e675271b5",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-DE8F17451D671D70BE90",
+      "source_task": "260904/companion-display-clock",
+      "source_path": "vibe/specs/260904/companion-display-clock/raw-requirement.md",
+      "line": 19,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-208：Claude / Cursor 行上时钟在 Turn 关闭后仍可读",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "4",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-208",
+      "qualified_source": "SPEC-260904-COMPANION-DISPLAY-CLOCK::RAW-208#4",
+      "clause_sha256": "d0f8cc26ebbbe2d667c6bcd798567e18f8ef20b8f0fe28356ff9c0550f27640e",
       "classification": "raw-child-requirement",
       "disposition": "registry-review-required",
       "semantic_module": null,

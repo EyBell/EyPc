@@ -427,6 +427,36 @@ describe('canonical Companion task projection', () => {
 
   })
 
+  it('falls back to completion or card activity time when lastQuestionAt is missing', () => {
+    const source = emptyConversationSnapshot()
+    const completedCard: CodexTaskCard = {
+      ...card(),
+      bucket: 'completed',
+      activityState: 'ongoing',
+      state: 'recent-activity',
+      lastQuestionAt: undefined,
+      lastTurnStartedAt: undefined,
+      lastTurnCompletedAt: 180,
+      completionRevision: 180,
+      updatedAt: 220
+    }
+    source.completed = [completedCard]
+    source.all = [completedCard]
+    source.sourceFingerprint = 'a'.repeat(64)
+    const state = applyCompanionTaskPackageViews(
+      buildCodexTaskStatePackage(source, { sourceRevision: CODEX_TASK_STATE_REVISION, now: 1_000 }),
+      packageFor(canonical({
+        phase: 'completed',
+        unread: false,
+        lastQuestionAt: 0,
+        turnStartedAt: 0,
+        terminalAt: 180,
+        statusEnteredAt: 180
+      }), 1)
+    )
+    expect(state.conversations.completed[0].lastQuestionAt).toBe(180)
+  })
+
   it('projects Codex and Cursor roots together from one complete V6 snapshot', () => {
     const cursorKey = 'cursor:86e0370a-21b3-434d-a1a3-0ce83edc5ddd'
     const cursorCard: CodexTaskCard = {

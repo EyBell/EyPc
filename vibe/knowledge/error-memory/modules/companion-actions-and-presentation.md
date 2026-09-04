@@ -43,6 +43,7 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 
 - [Task count/list projection convergence](../codex-task-count-list-projection-divergence.md#L1)
 - [Consumer cache and Float applied ACK](../companion-consumer-cache-and-float-applied-ack.md#L1)
+- [Display clock zero is missing, not a reset](../companion-display-clock-zero-is-missing.md#L1)
 
 ## Historical Or Migration Sources
 

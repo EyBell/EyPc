@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 345 leaves / 7 modules / 321 active / 22 superseded / 2 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 111 scoped |
-| 原始来源 | 52 documents / 292 ordered / 166 RAW-parent / 126 source-only |
+| 需求登记 | 346 leaves / 7 modules / 322 active / 22 superseded / 2 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 112 scoped |
+| 原始来源 | 53 documents / 296 ordered / 170 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-0af8cb17e6e8c67150cd / renderer-20d054406898fc61c7d7` · `artifact-ready` |
-| 当前构建时间 | `2026/09/04 14:15:26`（`2026-09-04T06:15:26.863Z`） |
+| 当前构建产物 | `host-39a0bdcc59f580df9ac8 / renderer-4873f208472862aad711` · `artifact-ready` |
+| 当前构建时间 | `2026/09/04 16:35:13`（`2026-09-04T08:35:13.934Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,20 +34,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 345,
+    "leaves": 346,
     "modules": 7,
     "proposed": 2,
-    "active": 321,
+    "active": 322,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 111
+    "scoped_relations": 112
   },
   "source_anchor_catalog": {
-    "documents": 52,
-    "ordered_anchors": 292,
-    "raw_parent_ordered": 166,
+    "documents": 53,
+    "ordered_anchors": 296,
+    "raw_parent_ordered": 170,
     "registered_requirements": 105,
     "source_only": 126
   },
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-0af8cb17e6e8c67150cd",
-    "renderer_asset": "renderer-20d054406898fc61c7d7",
+    "host_asset": "host-39a0bdcc59f580df9ac8",
+    "renderer_asset": "renderer-4873f208472862aad711",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-04T06:15:26.863Z",
-    "built_at_local": "2026/09/04 14:15:26",
+    "built_at": "2026-09-04T08:35:13.934Z",
+    "built_at_local": "2026/09/04 16:35:13",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "ae00a92354e4839f181d2f4ce99d0a5bd3aab1a17f993d5deb18b68ba938c037",
-    "raw_sources": "a7826b235f362d56e0b18f60f268a856bcb5767b951667fb544de92869301b53",
-    "source_anchor_catalog": "10ff353ea6099cb55967e6a43d2812f01e87b493e69e8f9108e32bd5eaf172dd",
-    "product_body": "4c3ce76c21fe5c0e957a431ad6f74344ebce8dd599022d47dff6aa73c504cb79",
-    "architecture": "d6ac38cd7796fb376fa0a3fc0bae69a8fff5577e764ac465072a5a232ca69697",
-    "runtime_contract": "ff404d41fa044755e2d569a378df6ee5bd04e456c5647e92c7ebfe9d6abfc153"
+    "requirement_registry": "3abc1abaae81278b5894bc8386087162696b0bf8ea7df5945dd30bea27917c73",
+    "raw_sources": "d808aef7a39fa3bdea7fc6b27fcd20d586d8fca1f21bf9ce072c09885b599089",
+    "source_anchor_catalog": "d90a0965a2af7d10204671ea8fd451b0456b538e53768fca83502c9385c42025",
+    "product_body": "d806ddaa03e3d0c67ce991a046ba565973d376a6c6823e0d4cad006fc93c1b57",
+    "architecture": "bfd1f7b9bb5bf5551c0cfe8f986a4b1e4eff9b2998cd0e064718e05f518ea79d",
+    "runtime_contract": "51194bfe05fe626f01b6f2354e22d97ac9e40ef9a2b68fd19e6b2444ffdcc27b"
   }
 }
 ```
@@ -235,7 +235,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 - 当前拓扑与状态权威为 [RAW-179 / EyPc V7](260824/eypc-v7-global-refactor/spec.md#L1)，V6 [RAW-176 revision 4](260823/companion-task-topology-v5/spec.md#L1) 与原生交接 [RAW-177](260823/codex-tab-boundary-optimization/spec.md#L1) 是仍有效的历史基础：Provider adapter 只提交 membership、activity、interaction、unread、plan-artifact、metadata、topology 七条原始 evidence lane；Topology V2 只拥有精确 root/member membership；Kernel V7 是唯一可变 reducer。Main、Float、Codex 页面、全局角标、注意力入口和前后任务只消费同一不可变 Presentation Snapshot；点击、Enter、角标、菜单、全局快捷键与循环只提交 Catalog Command。Provider phase 回灌、Controller/Renderer 二次投影、task watcher/cache 与旧 facade 均只作为历史实现记录。
 
-- Codex、Claude Code 与 Cursor 是三个彼此独立的来源，可各自开关并共享同一个水球；默认只开启 Codex，此时插件不读取 Claude/Cursor 数据。数据、状态、额度、空态与角标语义保持 Codex-only 兼容；任务/项目行即使在单来源模式也保留文本化、可访问的来源标记。Cursor 库存收 `unifiedMode = agent | plan` 的本机会话（chat / ask / edit / subagent / cloud 仍排除）；Cursor 自己的 `hasBlockingPendingActions`（AskQuestion / Plan 提问 / 终端审批）是精确的待输入交互，压过开着的 Turn 并可一键深链跳转，仍不发明待确认。RAW-206。
+- Codex、Claude Code 与 Cursor 是三个彼此独立的来源，可各自开关并共享同一个水球；默认只开启 Codex，此时插件不读取 Claude/Cursor 数据。数据、状态、额度、空态与角标语义保持 Codex-only 兼容；任务/项目行即使在单来源模式也保留文本化、可访问的来源标记。Cursor 库存收 `unifiedMode = agent | plan` 的本机会话（chat / ask / edit / subagent / cloud 仍排除）；Cursor 自己的 `hasBlockingPendingActions`（AskQuestion / Plan 提问 / 终端审批）是精确的待输入交互，压过开着的 Turn 并可一键深链跳转，仍不发明待确认。RAW-206。任务行上的相对时间读公开 `lastQuestionAt`：Turn 仍开着时用 Turn 起点，Turn 关闭后回退到完成时间或最近活动时间，不得显示「时间缺失」；后续 metadata 入站 0 不得清掉已有时钟。这不改变相位。Cursor Cloud Agent 仍排除。RAW-208。
 - 任务排布与角标以**根任务状态**为准而非来源：待输入、进行中、已完成未读的角标数字是启用来源根任务的合计，子任务不重复计数或进入循环。三个角标与通用循环共用同一判据（可见、非暂停、`capabilities.open`），因此「角标里有」等价于「上一个/下一个能到」；不可打开的任务既不计数也不入环，不得出现只计数不可达的角标。每条根任务仍必须以文字、图标和可访问名称显示来源，并使用来源背景与状态标记正交区分。
 - Claude 来源细节权威为 [Claude Code Companion 权威重置](260807/claude-code-companion-authority-reset/spec.md#L1)，技术选择与严格测试门禁见其 [research](260807/claude-code-companion-authority-reset/research.md#L1)，实现/未验收边界见 [verify](260807/claude-code-companion-authority-reset/verify.md#L1)；跨来源拓扑、Snapshot、interaction/artifact 与命令形态由 RAW-179 V7 统揽。真实 Claude App quota 数据权威已通过；完整 uTools 状态/未读/项目筛选矩阵与最终渲染同屏仍待真实 Host 验收，因此不得宣称产品验收完成。
 - Claude 库存只镜像 Claude App **Code 模式**的 `claude-code-sessions/<org>/<user>/local_<uuid>.json`；CLI-only、Cowork、`local-agent-mode-sessions` 和云端索引均不进入卡片。卡片身份使用 App local id，标题使用 App `title`，空标题固定为 `General coding session`；UUID 不得成为可见标题。

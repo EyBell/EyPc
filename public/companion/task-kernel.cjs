@@ -1846,7 +1846,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         displayOrder: incoming.displayOrder,
         cycleOrder: incoming.cycleOrder,
         attentionOrder: incoming.attentionOrder,
-        lastQuestionAt: incoming.lastQuestionAt,
+        lastQuestionAt: finiteInteger(incoming.lastQuestionAt) || finiteInteger(previous.lastQuestionAt),
         createdAt: incoming.createdAt,
         hidden: incoming.hidden,
         localPin: incoming.localPin,
