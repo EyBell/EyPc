@@ -28,7 +28,9 @@ vibe/
       directory.md
       requirement-module-map.md
       modules/
-      flows/
+        src-map.md
+        preload-map.md
+        feature-module.md    Tab 贡献型壳层边界
 src/help/guides/              给终端用户的「说明」，不是开发导读
 .codemark/codemark.json       核心流程书签，侧栏加载
 ```

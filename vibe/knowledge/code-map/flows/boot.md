@@ -19,13 +19,13 @@ Float / Action 是另外两个 HTML 入口：
 
 [src/App.vue](../../../../src/App.vue#L37) 调用 `createAppRuntime(normalizeAppState(platform.storage.getState()))`。
 
-六个功能 slice 从 [featureModules.ts](../../../../src/runtime/feature/featureModules.ts#L59) `featureModuleV7(id).createSlice` 来，页面拿不到完整 `AppRuntimeSnapshot`。
+六个功能 slice 从 [featureModules.ts](../../../../src/runtime/feature/featureModules.ts#L21) `FEATURE_MODULES_V7` 的 `createSlice` 来，当前页由 [App.vue](../../../../src/App.vue#L108) `bindPage` 动态挂上，页面拿不到完整 `AppRuntimeSnapshot`。
 
 ## 4. 把 uTools payload 变成 Tab 或 Action
 
 [src/App.vue](../../../../src/App.vue#L374) `applyPluginRoute`：
 
-1. [routePluginFeature](../../../../src/runtime/feature/featureRouting.ts#L37) 解释 `payload.code`
+1. [routePluginFeature](../../../../src/runtime/feature/featureRouting.ts#L59) 解释 `payload.code`
 2. 需要时 `runtime.setTab`
 3. 有 `actionId` 则 [runtime.dispatch](../../../../src/App.vue#L384)（`source: 'utools-feature'`）
 4. `mainHide` 槽位不额外 hide

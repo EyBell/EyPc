@@ -25,11 +25,12 @@
 | [command/commandCatalog.ts](../../../../src/runtime/command/commandCatalog.ts#L24) | 命令描述唯一表 |
 | [command/layerStack.ts](../../../../src/runtime/command/layerStack.ts#L210) | 模态 / Escape / 层优先级 |
 | [command/types.ts](../../../../src/runtime/command/types.ts#L1) | 命令类型 |
-| [feature/featureRegistry.ts](../../../../src/runtime/feature/featureRegistry.ts#L17) | 六 Tab 元数据与默认开关 |
-| [feature/featureModules.ts](../../../../src/runtime/feature/featureModules.ts#L54) | FeatureModuleV7：生命周期 + slice 工厂 |
-| [feature/featureModule.ts](../../../../src/runtime/feature/featureModule.ts#L1) | FeatureModule 类型 |
+| [feature/featureRegistry.ts](../../../../src/runtime/feature/featureRegistry.ts#L18) | 从模块 definition 派生 FEATURES 与默认开关 |
+| [feature/featureModules.ts](../../../../src/runtime/feature/featureModules.ts#L21) | 六个贡献包冻结登记 |
+| [feature/featureModule.ts](../../../../src/runtime/feature/featureModule.ts#L66) | 贡献型 FeatureModule ABI |
+| [feature/feature-module.md](feature-module.md#L1) | Tab 贡献边界导读（命令/路由/挂页/订阅） |
 | [feature/featureRuntimeSlices.ts](../../../../src/runtime/feature/featureRuntimeSlices.ts#L1) | 各 Tab 窄切片选择器 |
-| [feature/featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L37) | uTools code → Tab/Action |
+| [feature/featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L59) | 遍历模块 routes：uTools code → Tab/Action |
 | [keybinding/keybindingRuntime.ts](../../../../src/runtime/keybinding/keybindingRuntime.ts#L1142) | 绑定、when、冲突、Catalog 构建 |
 | [keybinding/keybindingIndex.ts](../../../../src/runtime/keybinding/keybindingIndex.ts#L1) | 当前表面过滤后的快捷键索引 |
 | [keyboardEvent.ts](../../../../src/runtime/keyboardEvent.ts#L1) | 输入角色与快捷键事件分类 |

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { FEATURE_MODULE_IDS, type AppTabId } from './domain/types'
 import { normalizeAppState } from './domain/state'
 import { getPlatform } from './platform/eypcPlatform'
 import ConfirmLayer from './components/ConfirmLayer.vue'
@@ -9,17 +10,10 @@ import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import TabShell from './components/TabShell.vue'
 import { moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import { createAppRuntime } from './runtime/appRuntime'
+import type { FeaturePageBindingV7, FeaturePageHostV7 } from './runtime/feature/featureModule'
+import { FEATURE_MODULES_V7, featureModuleV7 } from './runtime/feature/featureModules'
 import { routePluginFeature } from './runtime/feature/featureRouting'
-import {
-  selectTabShellRuntimeSliceV7,
-  type CodexRuntimeSliceV7,
-  type FavoritesRuntimeSliceV7,
-  type MqttRuntimeSliceV7,
-  type PortsRuntimeSliceV7,
-  type SettingsRuntimeSliceV7,
-  type WindowsRuntimeSliceV7
-} from './runtime/feature/featureRuntimeSlices'
-import { featureModuleV7 } from './runtime/feature/featureModules'
+import { selectTabShellRuntimeSliceV7 } from './runtime/feature/featureRuntimeSlices'
 import { createRuntimeSliceV7, type RuntimeSliceOwnerV7 } from './runtime/runtimeSlice'
 import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget, shortcutFromEvent, shouldEnableShiftPreview } from './runtime/keyboardEvent'
 import { createShortcutHintTiming } from './runtime/shortcutHintTiming'
@@ -27,13 +21,6 @@ import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, type QuickJ
 import { dispatchKeyboardContextMenuV7 } from './ui/contextMenuKeyboard'
 
 const platform = getPlatform()
-const PortsPage = defineAsyncComponent(() => import('./pages/PortsPage.vue'))
-const FavoritesPage = defineAsyncComponent(() => import('./pages/FavoritesPage.vue'))
-const QuickFavoritesPage = defineAsyncComponent(() => import('./pages/QuickFavoritesPage.vue'))
-const WindowsPage = defineAsyncComponent(() => import('./pages/WindowsPage.vue'))
-const MqttPage = defineAsyncComponent(() => import('./pages/MqttPage.vue'))
-const CodexPage = defineAsyncComponent(() => import('./pages/CodexPage.vue'))
-const SettingsPage = defineAsyncComponent(() => import('./pages/SettingsPage.vue'))
 const runtime = createAppRuntime(normalizeAppState(platform.storage.getState()))
 const companionVersion = ref(0)
 const shiftPreview = ref(false)
@@ -55,56 +42,45 @@ const featureSliceSource = {
   subscribeDomain: runtime.subscribeDomain
 }
 
-function createFeatureSlice<TView>(id: 'ports' | 'mqtt' | 'favorites' | 'windows' | 'codex' | 'settings') {
-  return featureModuleV7(id).createSlice(featureSliceSource) as RuntimeSliceOwnerV7<TView>
-}
-
 const shellSlice = createRuntimeSliceV7({
   id: 'shell',
   readSource: runtime.snapshot,
   select: selectTabShellRuntimeSliceV7,
   subscribeSource: (listener) => runtime.subscribeDomain('shell', listener)
 })
-const portsSlice = createFeatureSlice<PortsRuntimeSliceV7>('ports')
-const mqttSlice = createFeatureSlice<MqttRuntimeSliceV7>('mqtt')
-const favoritesSlice = createFeatureSlice<FavoritesRuntimeSliceV7>('favorites')
-const windowsSlice = createFeatureSlice<WindowsRuntimeSliceV7>('windows')
-const codexSlice = createFeatureSlice<CodexRuntimeSliceV7>('codex')
-const settingsSlice = createFeatureSlice<SettingsRuntimeSliceV7>('settings')
-const runtimeSlices = [shellSlice, portsSlice, mqttSlice, favoritesSlice, windowsSlice, codexSlice, settingsSlice] as const
-const featureSlices = {
-  ports: portsSlice,
-  mqtt: mqttSlice,
-  favorites: favoritesSlice,
-  windows: windowsSlice,
-  codex: codexSlice,
-  settings: settingsSlice
-} as const
+const featureSlices = Object.fromEntries(
+  FEATURE_MODULES_V7.map((module) => [module.id, module.createSlice(featureSliceSource)])
+) as Record<AppTabId, RuntimeSliceOwnerV7<unknown>>
+const runtimeSlices = [shellSlice, ...FEATURE_MODULE_IDS.map((id) => featureSlices[id])] as const
+const connectedOnlySliceIds = new Set(
+  FEATURE_MODULES_V7
+    .filter((module) => module.lifecycle.backgroundPolicy === 'connected-only')
+    .map((module) => `feature:${module.id}`)
+)
 let synchronizingFeatureSlices = false
 
-function featureEnabled(id: keyof typeof featureSlices): boolean {
+function featureEnabled(id: AppTabId): boolean {
+  const module = featureModuleV7(id)
+  if (module.alwaysEnabled) return true
   return shellSlice.snapshot().state.settings.featureConfigs.find((item) => item.id === id)?.enabled !== false
 }
 
-function shouldSubscribeFeatureSlice(id: keyof typeof featureSlices): boolean {
-  const activeTab = shellSlice.snapshot().state.activeTab
-  if (id === activeTab) return true
+function shouldSubscribeFeatureSlice(id: AppTabId): boolean {
   const module = featureModuleV7(id)
-  if (!featureEnabled(id)) return false
-  if (module.lifecycle.backgroundPolicy === 'entry-enabled') return true
-  if (module.lifecycle.backgroundPolicy === 'connected-only') {
-    return ['connecting', 'connected', 'reconnecting'].includes(mqttSlice.snapshot().mqttConnectionStatus.state)
-  }
-  return false
+  return module.shouldSubscribe({
+    activeTab: shellSlice.snapshot().state.activeTab,
+    enabled: featureEnabled(id),
+    view: featureSlices[id].snapshot()
+  })
 }
 
 function synchronizeFeatureSliceSubscriptions(): void {
   if (synchronizingFeatureSlices) return
   synchronizingFeatureSlices = true
   try {
-    for (const [id, slice] of Object.entries(featureSlices) as [keyof typeof featureSlices, typeof featureSlices[keyof typeof featureSlices]][]) {
-      if (shouldSubscribeFeatureSlice(id)) slice.start()
-      else slice.stop()
+    for (const id of FEATURE_MODULE_IDS) {
+      if (shouldSubscribeFeatureSlice(id)) featureSlices[id].start()
+      else featureSlices[id].stop()
     }
   } finally {
     synchronizingFeatureSlices = false
@@ -115,7 +91,7 @@ synchronizeFeatureSliceSubscriptions()
 const runtimeSliceVersions = ref<Record<string, number>>(Object.fromEntries(runtimeSlices.map((slice) => [slice.id, slice.revision])))
 const disposeRuntimeSliceListeners = runtimeSlices.map((slice) => slice.subscribe((revision) => {
   runtimeSliceVersions.value = { ...runtimeSliceVersions.value, [slice.id]: revision }
-  if (slice.id === 'shell' || slice.id === 'feature:mqtt') synchronizeFeatureSliceSubscriptions()
+  if (slice.id === 'shell' || connectedOnlySliceIds.has(slice.id)) synchronizeFeatureSliceSubscriptions()
 }))
 
 const snapshot = computed(() => {
@@ -123,13 +99,23 @@ const snapshot = computed(() => {
   return shellSlice.snapshot()
 })
 const tabShellSnapshot = snapshot
-const portsSnapshot = computed(() => { runtimeSliceVersions.value['feature:ports']; return portsSlice.snapshot() })
-const mqttSnapshot = computed(() => { runtimeSliceVersions.value['feature:mqtt']; return mqttSlice.snapshot() })
-const favoritesSnapshot = computed(() => { runtimeSliceVersions.value['feature:favorites']; return favoritesSlice.snapshot() })
-const quickFavoritesSnapshot = computed(() => favoritesSnapshot.value)
-const windowsSnapshot = computed(() => { runtimeSliceVersions.value['feature:windows']; return windowsSlice.snapshot() })
-const codexSnapshot = computed(() => { runtimeSliceVersions.value['feature:codex']; return codexSlice.snapshot() })
-const settingsSnapshot = computed(() => { runtimeSliceVersions.value['feature:settings']; return settingsSlice.snapshot() })
+const activePageBinding = computed((): FeaturePageBindingV7 => {
+  const tab = snapshot.value.state.activeTab
+  runtimeSliceVersions.value[`feature:${tab}`]
+  shortcutHints.value
+  shiftPreview.value
+  initialMaintenanceSection.value
+  return featureModuleV7(tab).bindPage({
+    runtime: runtime as FeaturePageHostV7,
+    slice: featureSlices[tab],
+    shell: {
+      shortcutHints: shortcutHints.value,
+      shiftPreview: shiftPreview.value,
+      initialMaintenanceSection: initialMaintenanceSection.value,
+      favoriteQuickMode: snapshot.value.favoriteQuickMode
+    }
+  })
+})
 const companionPresentation = computed(() => {
   companionVersion.value
   return runtime.companionPresentationSnapshot()
@@ -137,13 +123,7 @@ const companionPresentation = computed(() => {
 const runtimeReloadRequired = computed(() => platform.runtimeIdentityStatus?.status === 'reload-required')
 const runtimeReloadMessage = computed(() => platform.runtimeIdentityStatus?.message || 'Preload 与 UI 版本不一致，需要重新接入或重载')
 const confirmRestoreFocusSelectors = computed(() => {
-  if (snapshot.value.state.activeTab !== 'favorites') return []
-  return [...new Set([
-    `[data-role="favorite-${snapshot.value.activeFavoritePane}"]`,
-    '[data-role="favorite-items"]',
-    '.favorite-add-button',
-    '[data-role="favorite-containers"]'
-  ])]
+  return featureModuleV7(snapshot.value.state.activeTab).confirmRestoreFocusSelectors?.(snapshot.value) ?? []
 })
 
 type QuickJumpDirection = 'forward' | 'backward'
@@ -517,117 +497,11 @@ onUnmounted(() => {
       :snapshot="tabShellSnapshot"
       @select="(tab) => runtime.dispatch(`tab.select.${tab}`)"
     >
-      <template #ports>
-        <PortsPage
-          :snapshot="portsSnapshot"
-          :shift-preview="shiftPreview"
-          :show-shortcut-hints="shortcutHints"
-          @search="runtime.setPortSearch"
-          @group-search="runtime.setPortGroupSearch"
-          @scan="runtime.scanPorts"
-          @focus="runtime.focusPort"
-          @toggle="runtime.togglePortSelection"
-          @focus-group="runtime.focusPortGroup"
-          @focus-group-target="runtime.focusPortGroupTarget"
-          @move-group-to-folder="runtime.movePortGroupToFolder"
-          @update-group-draft="runtime.updatePortGroupDraft"
-          @save-group-draft="runtime.savePortGroupDraft"
-          @cancel-group-draft="runtime.cancelPortGroupDraft"
-          @dispatch="runtime.dispatch"
-        />
-      </template>
-      <template #mqtt>
-        <MqttPage
-          :snapshot="mqttSnapshot"
-          :shift-preview="shiftPreview"
-          :show-shortcut-hints="shortcutHints"
-          @search="runtime.setMqttSearch"
-          @focus-config="runtime.focusMqttConfig"
-          @focus-connection-group="runtime.focusMqttConnectionGroup"
-          @focus-session="runtime.focusMqttSession"
-          @focus-message="runtime.focusMqttMessage"
-          @focus-log="runtime.focusMqttLog"
-          @update-config-draft="runtime.updateMqttConfigDraft"
-          @update-connection-group-draft="runtime.updateMqttConnectionGroupDraft"
-          @update-subscription-draft="runtime.updateMqttSubscriptionDraft"
-          @update-favorite-draft="runtime.updateMqttFavoriteDraft"
-          @update-record-edit-draft="runtime.updateMqttRecordEditDraft"
-          @update-publish-draft-history-edit-draft="runtime.updateMqttPublishDraftHistoryEditDraft"
-          @update-publish-draft="runtime.updateMqttPublishDraft"
-          @dispatch="runtime.dispatch"
-        />
-      </template>
-      <template #favorites>
-        <QuickFavoritesPage
-          v-if="snapshot.favoriteQuickMode"
-          :snapshot="quickFavoritesSnapshot"
-          :show-shortcut-hints="shortcutHints"
-          @search="runtime.setFavoriteSearch"
-          @focus="runtime.focusFavorite"
-          @dispatch="runtime.dispatch"
-        />
-        <FavoritesPage
-          v-else
-          :snapshot="favoritesSnapshot"
-          :show-shortcut-hints="shortcutHints"
-          @search="runtime.setFavoriteSearch"
-          @group-search="runtime.setFavoriteGroupSearch"
-          @focus="runtime.focusFavorite"
-          @focus-group="runtime.focusFavoriteGroup"
-          @focus-directory="runtime.focusFavoriteDirectory"
-          @toggle="runtime.toggleFavoriteSelection"
-          @toggle-directory="runtime.toggleFavoriteDirectorySelection"
-          @collapse="runtime.toggleFavoriteCollapse"
-          @add="runtime.addFavorite"
-          @remove="runtime.removeFavorite"
-          @reorder="(nodeId, parentId, beforeNodeId) => runtime.dispatch('favorites.reorder', { nodeId, parentId, beforeNodeId })"
-          @update-pick-review-item="runtime.updateFavoritePickReviewItem"
-          @update-favorite-draft="runtime.updateFavoriteDraft"
-          @save-favorite-draft="runtime.saveFavoriteDraft"
-          @cancel-favorite-draft="runtime.cancelFavoriteDraft"
-          @dispatch="runtime.dispatch"
-        />
-      </template>
-      <template #windows>
-        <WindowsPage
-          :snapshot="windowsSnapshot"
-          :show-shortcut-hints="shortcutHints"
-          @search="runtime.setWindowSearch"
-          @focus="runtime.focusWindow"
-          @update-draft="runtime.updateWindowDraft"
-          @cancel-draft="runtime.cancelWindowDraft"
-          @dispatch="runtime.dispatch"
-        />
-      </template>
-      <template #codex>
-        <CodexPage
-          :snapshot="codexSnapshot.codex"
-          @dispatch="runtime.dispatch"
-        />
-      </template>
-      <template #settings>
-        <SettingsPage
-          :overrides="settingsSnapshot.state.settings.keybindingOverrides"
-          :shortcut-profiles="settingsSnapshot.state.settings.shortcutProfiles"
-          :feature-configs="settingsSnapshot.state.settings.featureConfigs"
-          :initial-maintenance-section="initialMaintenanceSection"
-          :persisted-settings-tab-id="settingsSnapshot.state.settingsTabId"
-          :persisted-maintenance-section-id="settingsSnapshot.state.settingsMaintenanceSectionId"
-          :settings="settingsSnapshot.state.settings"
-          :runtime-diagnostics="settingsSnapshot.runtimeDiagnostics"
-          :mqtt-storage-status="settingsSnapshot.mqttStorageStatus"
-          :window-activation-diagnostics="settingsSnapshot.windowActivationDiagnostics"
-          :window-operation-trace-enabled="settingsSnapshot.windowOperationTraceEnabled"
-          :window-operation-traces="settingsSnapshot.windowOperationTraces"
-          @update-keybinding="runtime.updateKeybinding"
-          @reset-keybinding="runtime.resetKeybinding"
-          @save-shortcut-profiles="runtime.saveShortcutProfiles"
-          @save-feature-configs="runtime.saveFeatureConfigs"
-          @update-tool-preview-prefs="(input) => runtime.dispatch('tool.preview.hover.update', input)"
-          @update-settings-path="runtime.setSettingsPath"
-          @dispatch="runtime.dispatch"
-        />
-      </template>
+      <component
+        :is="activePageBinding.page"
+        v-bind="activePageBinding.props"
+        v-on="activePageBinding.on"
+      />
     </TabShell>
     <ConfirmLayer
       v-if="snapshot.confirm"

@@ -12,7 +12,7 @@
 
 | 需求面 | 登记 | 实现入口 | 用户可见面 |
 | --- | --- | --- | --- |
-| V7 Tab / FeatureModule / RuntimeSlice | [invariants-raw-179-clause-003](../../specs/requirements/invariants-raw-179-clause-003.md#L1) | [featureModules.ts](../../../src/runtime/feature/featureModules.ts#L54) `FEATURE_MODULES_V7` | [App.vue](../../../src/App.vue#L58) 六个 slice |
+| V7 Tab / FeatureModule / RuntimeSlice | [invariants-raw-179-clause-003](../../specs/requirements/invariants-raw-179-clause-003.md#L1) | [featureModules.ts](../../../src/runtime/feature/featureModules.ts#L21) `FEATURE_MODULES_V7` · [feature-module.md](modules/feature-module.md#L1) | [App.vue](../../../src/App.vue#L108) `bindPage` |
 | 唯一当前产品真值 | [invariants-raw-178](../../specs/requirements/invariants-raw-178.md#L1) | 文档层，无运行时代码 | [PRODUCT_REQUIREMENTS.md](../../specs/PRODUCT_REQUIREMENTS.md#L1) |
 | 来源锚点与需求身份分层 | [invariants-raw-177-clause-001](../../specs/requirements/invariants-raw-177-clause-001.md#L1) | [validate-source-anchors.mjs](../../../scripts/validate-source-anchors.mjs#L1) | 无 |
 | 入口行数棘轮 | [invariants-raw-169](../../specs/requirements/invariants-raw-169.md#L1) | [validate-preload-entry-budget.mjs](../../../scripts/validate-preload-entry-budget.mjs#L1) | 无 |

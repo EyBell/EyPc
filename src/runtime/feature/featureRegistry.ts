@@ -1,5 +1,6 @@
-/** 六 Tab 的产品名、说明与默认开关；每个 id 必须有对应 src/help/guides/{id}.md。 */
+/** 六 Tab 的产品名、说明与默认开关；每个 id 必须有对应 src/help/guides/{id}.md。定义正文在各 FeatureModule，这里只派生。 */
 import type { AppTabId, FeatureConfig } from '../../domain/types'
+import { FEATURE_MODULES_V7 } from './featureModules'
 
 export interface FeatureDefinition {
   id: AppTabId
@@ -14,14 +15,7 @@ export interface VisibleFeatureDefinition extends FeatureDefinition {
 }
 
 /** Each entry requires a matching `src/help/guides/{id}.md` (EYPC-FEATURE-HELP-001). */
-export const FEATURES: FeatureDefinition[] = [
-  { id: 'ports', title: '端口进程', description: '扫描指定端口进程并安全终止' },
-  { id: 'mqtt', title: 'MQTT', description: '快速连接 MQTT over WebSocket 并归档收发记录' },
-  { id: 'favorites', title: '文件收藏', description: '管理文件和文件夹收藏、标签、分组和颜色' },
-  { id: 'windows', title: '窗口跳转', description: '收藏桌面窗口、配置稳定槽位并安全跳转' },
-  { id: 'codex', title: 'Codex', description: '启用后首次自动检测 Codex 环境，并配置额度任务悬浮球' },
-  { id: 'settings', title: '设置', description: '管理快捷键和运行时配置' }
-]
+export const FEATURES: FeatureDefinition[] = FEATURE_MODULES_V7.map((module) => module.definition)
 
 export const DEFAULT_FEATURE_CONFIGS: FeatureConfig[] = [
   { id: 'ports', enabled: true, sortOrder: 1 },

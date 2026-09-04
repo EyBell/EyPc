@@ -1,4 +1,4 @@
-import type { AppState, AppTabId, FavoriteKind, FavoriteNode, FavoriteSearchAffinity, FavoriteSlot, FeatureConfig, KeybindingOverride, PortGroup, PortGroupFolder, RuntimeDiagnosticsSettings, ShortcutProfileId, ShortcutProfileMap } from './types'
+import { FEATURE_MODULE_IDS, type AppState, type AppTabId, type FavoriteKind, type FavoriteNode, type FavoriteSearchAffinity, type FavoriteSlot, type FeatureConfig, type KeybindingOverride, type PortGroup, type PortGroupFolder, type RuntimeDiagnosticsSettings, type ShortcutProfileId, type ShortcutProfileMap } from './types'
 import { normalizeMqttState } from './mqtt'
 import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistory'
 import { normalizeShortcutId } from './shortcuts'
@@ -9,8 +9,8 @@ import { createDefaultCodexState, normalizeCodexState } from './codex'
 import { createWindowSlots, type WindowPlatform, type WindowSlot, type WindowTarget } from './windows'
 import { fileManagerGroupKey } from './windowTree'
 
-const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'])
-const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
+const VALID_TABS = new Set<AppTabId>(FEATURE_MODULE_IDS)
+const TAB_IDS: AppTabId[] = [...FEATURE_MODULE_IDS]
 const DEFAULT_FEATURE_SORT_ORDER: Record<AppTabId, number> = {
   ports: 1,
   favorites: 2,
@@ -20,7 +20,7 @@ const DEFAULT_FEATURE_SORT_ORDER: Record<AppTabId, number> = {
   settings: 6
 }
 const VALID_FAVORITE_KINDS = new Set<FavoriteKind>(['file', 'folder', 'group'])
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', ...FEATURE_MODULE_IDS]
 const RUNTIME_DIAGNOSTICS_DEFAULTS_REVISION = 3 as const
 
 function record(value: unknown): Record<string, unknown> {

@@ -1,7 +1,8 @@
 import type { CodexState } from './codex'
 import type { WindowSlot, WindowTarget } from './windows'
 
-export type AppTabId = 'ports' | 'mqtt' | 'favorites' | 'windows' | 'codex' | 'settings'
+export const FEATURE_MODULE_IDS = ['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'] as const
+export type AppTabId = typeof FEATURE_MODULE_IDS[number]
 
 export interface FeatureConfig {
   id: AppTabId
@@ -283,7 +284,7 @@ export interface KeybindingOverride {
   disabled?: boolean
 }
 
-export type ShortcutProfileId = 'global' | 'ports' | 'mqtt' | 'favorites' | 'windows' | 'codex' | 'settings'
+export type ShortcutProfileId = 'global' | AppTabId
 
 export interface ToolPreviewPrefs {
   hoverPreviewEnabled: boolean
