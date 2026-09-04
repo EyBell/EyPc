@@ -1,0 +1,15 @@
+{
+    "nodes": {
+        "e069f891-aa02-43bd-8579-a5ca4cb6c41a": {
+            "type": "group",
+            "uuid": "e069f891-aa02-43bd-8579-a5ca4cb6c41a",
+            "name": "test"
+        }
+    },
+    "children": {
+        "e069f891-aa02-43bd-8579-a5ca4cb6c41a": []
+    },
+    "roots": [
+        "e069f891-aa02-43bd-8579-a5ca4cb6c41a"
+    ]
+}
