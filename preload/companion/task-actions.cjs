@@ -261,6 +261,7 @@ function createCompanionTaskActions(dependencies = {}) {
     return current
   }
 
+  /** 同一 key 永远用 Host 已接受的 target；Renderer 旧 alias 不能换任务。 */
   function resolveOpenTarget(input) {
     const key = typeof input?.key === 'string' ? input.key : ''
     const current = targets.get(key) || null
@@ -287,6 +288,7 @@ function createCompanionTaskActions(dependencies = {}) {
     }
   }
 
+  /** 过程快照上的 open；未就绪/无 target/无 adapter 分别失败，成功也要过 handoff 收据。 */
   async function open(input = {}) {
     const startedAt = now()
     const currentOperationId = operationId(input, 'open')

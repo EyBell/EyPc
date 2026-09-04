@@ -33,6 +33,7 @@ function normalizeCompanionOpenHandoff(value, requestedOutcome) {
   }
 }
 
+/** 自称 opened 但无原生可见且 controlOwner≠target-native 时，降成 dispatched。 */
 function normalizeCompanionOpenReceipt(value) {
   const source = value && typeof value === 'object' ? value : {}
   const requestedOutcome = ['opened', 'dispatched', 'unavailable', 'failed'].includes(source.outcome)
@@ -59,6 +60,7 @@ function normalizeOpenLaunch(value) {
 }
 
 /**
+ * Kernel 与 navigation 共用同一打开结果形；字段只在这里加，避免两侧各拷一份。
  * One open result shape for the Kernel and the navigation lane. Both used to
  * carry a verbatim copy of this normalizer; a field added on one side was
  * silently dropped on the other.

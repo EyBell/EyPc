@@ -1,3 +1,4 @@
+/** 把 uTools feature code（含 mainHide 槽位）映射成 Tab 或 Runtime Action，不在这里执行副作用。 */
 import type { AppTabId, FeatureConfig } from '../../domain/types'
 
 export interface PluginEnterPayload {
