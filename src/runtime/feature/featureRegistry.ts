@@ -1,3 +1,4 @@
+/** 六 Tab 的产品名、说明与默认开关；每个 id 必须有对应 src/help/guides/{id}.md。 */
 import type { AppTabId, FeatureConfig } from '../../domain/types'
 
 export interface FeatureDefinition {

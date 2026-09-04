@@ -1,3 +1,4 @@
+/** 用户可见突变的唯一入口：register 描述命令，dispatch 按 when/risk 执行并可选快照。 */
 import type { CommandCatalogV7 } from '../command/commandCatalog'
 import type { RuntimeActionDefinition, RuntimeActionDispatchResult, RuntimeActionHandlerV7, RuntimeActionIntent, RuntimeActionScope } from './types'
 

@@ -26,7 +26,7 @@ Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 - [validate-requirements.mjs](../../scripts/validate-requirements.mjs#L1) enforces exactly one current-truth owner marker and an exact deterministic block containing registry/source counts、runtime revisions/assets and SHA-256 digests for the requirement registry、all raw sources、Source Anchor Catalog、resolved product body、architecture and runtime contract. A mismatch fails ordinary validation；after source/catalog/authority synchronization, `node scripts/validate-requirements.mjs --write-current-truth` rewrites only that bounded generated block.
 - Source changes synchronize [catalog.json](../specs/source-anchors/catalog.json#L1) first；the truth writer rejects missing/extra raw documents or a catalog whose recorded document hashes do not match current sources. Wall-clock timestamps never establish freshness.
 - Current MQTT implementation sync: [../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
-- Durable architecture facts live in [ARCHITECTURE.md](ARCHITECTURE.md#L1); repeated wrong paths live in [error-memory.md](error-memory.md#L1); interaction taste lives in [developer-soul.md](developer-soul.md#L1).
+- Durable architecture facts live in [ARCHITECTURE.md](ARCHITECTURE.md#L1); requirement-to-code walkthroughs live in [code-map/README.md](code-map/README.md#L1); repeated wrong paths live in [error-memory.md](error-memory.md#L1); interaction taste lives in [developer-soul.md](developer-soul.md#L1).
 
 ## Claude Companion Provider
 

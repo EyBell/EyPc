@@ -1,3 +1,4 @@
+/** FeatureModuleV7 注册表：生命周期、命令、层、帮助 id，以及每 Tab 的 RuntimeSlice 工厂。 */
 import type { AppTabId } from '../../domain/types'
 import type { FeatureModuleV7 } from './featureModule'
 import { FEATURES } from './featureRegistry'

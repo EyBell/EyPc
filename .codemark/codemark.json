@@ -5,11 +5,805 @@
             "uuid": "root",
             "name": "CodeMarks",
             "createdAt": 1781606218888,
-            "modifiedAt": 1781606218888
+            "modifiedAt": 1788500668099
+        },
+        "991facc1-e456-5522-859c-c490705d4355": {
+            "type": "group",
+            "uuid": "991facc1-e456-5522-859c-c490705d4355",
+            "name": "00 启动与壳",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459
+        },
+        "1ffc1445-f00f-5362-add0-087fea8ddefa": {
+            "type": "bookmark",
+            "uuid": "1ffc1445-f00f-5362-add0-087fea8ddefa",
+            "name": "1. plugin.json 功能入口表",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "public/plugin.json",
+            "line": 15,
+            "column": 3
+        },
+        "abb8930c-0b36-5a2b-93c3-7e7a6f52929d": {
+            "type": "bookmark",
+            "uuid": "abb8930c-0b36-5a2b-93c3-7e7a6f52929d",
+            "name": "2. 主窗 mount",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/main.ts",
+            "line": 9,
+            "column": 1
+        },
+        "3fb775a3-9d39-5bb1-9d0d-c1eaf5c2e547": {
+            "type": "bookmark",
+            "uuid": "3fb775a3-9d39-5bb1-9d0d-c1eaf5c2e547",
+            "name": "3. 创建 AppRuntime",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/App.vue",
+            "line": 37,
+            "column": 17
+        },
+        "686a9544-1522-5a2c-a3ff-20d93d46b402": {
+            "type": "bookmark",
+            "uuid": "686a9544-1522-5a2c-a3ff-20d93d46b402",
+            "name": "4. uTools 路由落到 Tab/Action",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/App.vue",
+            "line": 374,
+            "column": 10
+        },
+        "0b136ba8-1887-540f-822e-e3f68c8fa526": {
+            "type": "bookmark",
+            "uuid": "0b136ba8-1887-540f-822e-e3f68c8fa526",
+            "name": "5. routePluginFeature",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/feature/featureRouting.ts",
+            "line": 37,
+            "column": 17
+        },
+        "e3e05587-d2c2-5226-9757-623c1334b164": {
+            "type": "bookmark",
+            "uuid": "e3e05587-d2c2-5226-9757-623c1334b164",
+            "name": "6. FeatureModuleV7 注册表",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/feature/featureModules.ts",
+            "line": 54,
+            "column": 14
+        },
+        "4e1dbfed-5b98-5bff-9f3a-84e816d4943e": {
+            "type": "bookmark",
+            "uuid": "4e1dbfed-5b98-5bff-9f3a-84e816d4943e",
+            "name": "7. FEATURES 六 Tab 定义",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/feature/featureRegistry.ts",
+            "line": 17,
+            "column": 14
+        },
+        "28a297d3-6712-56c7-8bfd-cd7f282ea922": {
+            "type": "bookmark",
+            "uuid": "28a297d3-6712-56c7-8bfd-cd7f282ea922",
+            "name": "8. getPlatform 宿主桥",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/platform/eypcPlatform.ts",
+            "line": 1183,
+            "column": 17
+        },
+        "af5f8227-ad82-56c8-b24c-84a62e3fa3e3": {
+            "type": "bookmark",
+            "uuid": "af5f8227-ad82-56c8-b24c-84a62e3fa3e3",
+            "name": "9. preload 装 Kernel",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "preload/index.js",
+            "line": 12173,
+            "column": 1
+        },
+        "5473649b-e2ee-5bf7-8e1f-98e63d37578c": {
+            "type": "bookmark",
+            "uuid": "5473649b-e2ee-5bf7-8e1f-98e63d37578c",
+            "name": "10. window.eypcPlatform 挂载",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "preload/index.js",
+            "line": 14075,
+            "column": 1
+        },
+        "357602a5-e99a-5c71-9949-5e063816cd26": {
+            "type": "group",
+            "uuid": "357602a5-e99a-5c71-9949-5e063816cd26",
+            "name": "01 Action 派发",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459
+        },
+        "e3ce076f-f73b-560e-9ca8-312a43d59472": {
+            "type": "bookmark",
+            "uuid": "e3ce076f-f73b-560e-9ca8-312a43d59472",
+            "name": "1. createActionRuntime",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/action/actionRuntime.ts",
+            "line": 56,
+            "column": 17
+        },
+        "6b1c86de-290d-5674-86f1-b98b51b8cac7": {
+            "type": "bookmark",
+            "uuid": "6b1c86de-290d-5674-86f1-b98b51b8cac7",
+            "name": "2. dispatch 唯一突变入口",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/action/actionRuntime.ts",
+            "line": 119,
+            "column": 5
+        },
+        "78a94fdc-c368-5d3f-ae37-9d001d687ba5": {
+            "type": "bookmark",
+            "uuid": "78a94fdc-c368-5d3f-ae37-9d001d687ba5",
+            "name": "3. createAppRuntime",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/appRuntime.ts",
+            "line": 706,
+            "column": 17
+        },
+        "dea8dd78-ec4a-570c-af4b-f12c37f88253": {
+            "type": "bookmark",
+            "uuid": "dea8dd78-ec4a-570c-af4b-f12c37f88253",
+            "name": "4. 注册全局隐藏",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/appRuntime.ts",
+            "line": 8881,
+            "column": 5
+        },
+        "443cfb9a-36a4-578e-ab70-dc1e566b3b31": {
+            "type": "bookmark",
+            "uuid": "443cfb9a-36a4-578e-ab70-dc1e566b3b31",
+            "name": "5. Command Catalog",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/command/commandCatalog.ts",
+            "line": 24,
+            "column": 17
+        },
+        "54745382-5d30-5bad-b681-29e0397fc93c": {
+            "type": "bookmark",
+            "uuid": "54745382-5d30-5bad-b681-29e0397fc93c",
+            "name": "6. resolveKeybinding",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/keybinding/keybindingRuntime.ts",
+            "line": 1142,
+            "column": 17
+        },
+        "f36abc1b-a23c-59da-af0d-1a0d04847735": {
+            "type": "bookmark",
+            "uuid": "f36abc1b-a23c-59da-af0d-1a0d04847735",
+            "name": "7. LayerStack 焦点层",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/command/layerStack.ts",
+            "line": 210,
+            "column": 17
+        },
+        "eeb96791-7e1f-555f-a979-5d2a26a7afc9": {
+            "type": "group",
+            "uuid": "eeb96791-7e1f-555f-a979-5d2a26a7afc9",
+            "name": "02 Companion Kernel",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459
+        },
+        "8bf1776c-f8a7-5b24-81d2-a76ae6fb001f": {
+            "type": "bookmark",
+            "uuid": "8bf1776c-f8a7-5b24-81d2-a76ae6fb001f",
+            "name": "1. Kernel 工厂",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 890,
+            "column": 10
+        },
+        "99880750-660b-560b-bdff-d418bef35ece": {
+            "type": "bookmark",
+            "uuid": "99880750-660b-560b-bdff-d418bef35ece",
+            "name": "2. finalizeTask 公开相位",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 694,
+            "column": 10
+        },
+        "942f902a-fcc1-54f3-8776-23ef30a660cc": {
+            "type": "bookmark",
+            "uuid": "942f902a-fcc1-54f3-8776-23ef30a660cc",
+            "name": "3. taskPinned 置顶谓词",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 608,
+            "column": 10
+        },
+        "5b4bcc12-3afb-5fd0-9ce9-b3a507a1ef8b": {
+            "type": "bookmark",
+            "uuid": "5b4bcc12-3afb-5fd0-9ce9-b3a507a1ef8b",
+            "name": "4. Task Actions 网关",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "preload/companion/task-actions.cjs",
+            "line": 99,
+            "column": 10
+        },
+        "c76b6ea5-629d-564f-bd87-97f1273967d0": {
+            "type": "bookmark",
+            "uuid": "c76b6ea5-629d-564f-bd87-97f1273967d0",
+            "name": "5. open-handoff 收据",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "preload/companion/open-handoff.cjs",
+            "line": 9,
+            "column": 10
+        },
+        "06c65713-b105-5005-9b34-09016d63160b": {
+            "type": "bookmark",
+            "uuid": "06c65713-b105-5005-9b34-09016d63160b",
+            "name": "6. createCodexController",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/codexController.ts",
+            "line": 383,
+            "column": 17
+        },
+        "f71b1fe2-7921-5177-aa3d-a3bf8ee9cf61": {
+            "type": "bookmark",
+            "uuid": "f71b1fe2-7921-5177-aa3d-a3bf8ee9cf61",
+            "name": "7. Kernel 身份闸门",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/codexController.ts",
+            "line": 385,
+            "column": 9
+        },
+        "141125c9-6da3-5d8d-8693-93e613e9f449": {
+            "type": "bookmark",
+            "uuid": "141125c9-6da3-5d8d-8693-93e613e9f449",
+            "name": "8. Float 呈现投影",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/domain/companionPresentation.ts",
+            "line": 1,
+            "column": 1
+        },
+        "e1677538-cc39-5994-8d06-58f6ca35b0d2": {
+            "type": "bookmark",
+            "uuid": "e1677538-cc39-5994-8d06-58f6ca35b0d2",
+            "name": "9. Companion 包投影",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/domain/companionTaskPackage.ts",
+            "line": 1,
+            "column": 1
+        },
+        "933d6263-efdc-5e41-9401-18fc965d8382": {
+            "type": "group",
+            "uuid": "933d6263-efdc-5e41-9401-18fc965d8382",
+            "name": "03 端口进程",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459
+        },
+        "3c32bda5-58bb-5352-bf1c-4898dfd65c09": {
+            "type": "bookmark",
+            "uuid": "3c32bda5-58bb-5352-bf1c-4898dfd65c09",
+            "name": "1. 端口去重",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/domain/ports.ts",
+            "line": 30,
+            "column": 17
+        },
+        "89ec0098-337e-5e59-8040-2928ecd25a07": {
+            "type": "bookmark",
+            "uuid": "89ec0098-337e-5e59-8040-2928ecd25a07",
+            "name": "2. 杀进程前 PID/端口复核",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/domain/ports.ts",
+            "line": 312,
+            "column": 17
+        },
+        "8aa78c87-381c-5cad-b0de-dbc6dce154ef": {
+            "type": "bookmark",
+            "uuid": "8aa78c87-381c-5cad-b0de-dbc6dce154ef",
+            "name": "3. 跨平台 kill 计划",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/platform/processBridge.ts",
+            "line": 27,
+            "column": 17
+        },
+        "58c94740-9479-5917-8d8c-25b1c37c68e9": {
+            "type": "bookmark",
+            "uuid": "58c94740-9479-5917-8d8c-25b1c37c68e9",
+            "name": "4. 端口页",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/pages/PortsPage.vue",
+            "line": 1,
+            "column": 1
+        },
+        "9614dd82-f690-533f-a8ae-dba520d78ed6": {
+            "type": "group",
+            "uuid": "9614dd82-f690-533f-a8ae-dba520d78ed6",
+            "name": "04 MQTT",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459
+        },
+        "77b443f1-bdc5-5b6f-8f2e-eb9bb1e7b4b6": {
+            "type": "bookmark",
+            "uuid": "77b443f1-bdc5-5b6f-8f2e-eb9bb1e7b4b6",
+            "name": "1. normalizeMqttState",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/domain/mqtt.ts",
+            "line": 273,
+            "column": 17
+        },
+        "f6b0a50f-b51a-51ad-a21a-8e5a89595e9b": {
+            "type": "bookmark",
+            "uuid": "f6b0a50f-b51a-51ad-a21a-8e5a89595e9b",
+            "name": "2. 连接选项（不含密码）",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/domain/mqtt.ts",
+            "line": 791,
+            "column": 17
+        },
+        "05168e02-4136-59ae-ba2f-3a1aa7a1c924": {
+            "type": "bookmark",
+            "uuid": "05168e02-4136-59ae-ba2f-3a1aa7a1c924",
+            "name": "3. MQTT 页",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/pages/MqttPage.vue",
+            "line": 1,
+            "column": 1
+        },
+        "b319cea3-9e4b-5f71-aec4-3f6df3e64915": {
+            "type": "group",
+            "uuid": "b319cea3-9e4b-5f71-aec4-3f6df3e64915",
+            "name": "05 文件收藏",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459
+        },
+        "fab47903-197c-50cf-8fef-a81051935410": {
+            "type": "bookmark",
+            "uuid": "fab47903-197c-50cf-8fef-a81051935410",
+            "name": "1. 图规范化",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/domain/favorites.ts",
+            "line": 73,
+            "column": 17
+        },
+        "9c99517b-872f-5c74-bc76-179ccbdfd0ff": {
+            "type": "bookmark",
+            "uuid": "9c99517b-872f-5c74-bc76-179ccbdfd0ff",
+            "name": "2. 只删元数据不删盘",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/domain/favorites.ts",
+            "line": 397,
+            "column": 17
+        },
+        "87efb0d5-b57c-56ef-987c-f65b47768113": {
+            "type": "bookmark",
+            "uuid": "87efb0d5-b57c-56ef-987c-f65b47768113",
+            "name": "3. 收藏页",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/pages/FavoritesPage.vue",
+            "line": 1,
+            "column": 1
+        },
+        "02ed0f68-2462-57c1-ab75-da951b3ffe86": {
+            "type": "bookmark",
+            "uuid": "02ed0f68-2462-57c1-ab75-da951b3ffe86",
+            "name": "4. 快速收藏页",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/pages/QuickFavoritesPage.vue",
+            "line": 1,
+            "column": 1
+        },
+        "34d4f03e-14ff-52b5-b28f-85c4d9e653d0": {
+            "type": "group",
+            "uuid": "34d4f03e-14ff-52b5-b28f-85c4d9e653d0",
+            "name": "06 窗口跳转",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459
+        },
+        "4432bb12-fa9f-5d18-994d-fe4b672eaa27": {
+            "type": "bookmark",
+            "uuid": "4432bb12-fa9f-5d18-994d-fe4b672eaa27",
+            "name": "1. 窗口族归约",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/domain/windows.ts",
+            "line": 228,
+            "column": 17
+        },
+        "5ea3ea86-6e6f-54b4-bc6d-d5f9f76127f4": {
+            "type": "bookmark",
+            "uuid": "5ea3ea86-6e6f-54b4-bc6d-d5f9f76127f4",
+            "name": "2. 激活动作注册",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/appRuntime.ts",
+            "line": 9001,
+            "column": 5
+        },
+        "d23cb8ff-8fd3-5b69-b035-7d0e2d299309": {
+            "type": "bookmark",
+            "uuid": "d23cb8ff-8fd3-5b69-b035-7d0e2d299309",
+            "name": "3. 窗口页",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/pages/WindowsPage.vue",
+            "line": 1,
+            "column": 1
+        },
+        "4df0d703-b8dd-53c5-9257-26b7b002589a": {
+            "type": "bookmark",
+            "uuid": "4df0d703-b8dd-53c5-9257-26b7b002589a",
+            "name": "4. WJ-22 原生门面",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "preload/windows/index.cjs",
+            "line": 1,
+            "column": 1
+        },
+        "440ea603-7e9c-53b8-9f5e-64ff39c846c3": {
+            "type": "group",
+            "uuid": "440ea603-7e9c-53b8-9f5e-64ff39c846c3",
+            "name": "07 悬浮球与 Float",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459
+        },
+        "b95184ff-51d0-5e5f-b408-d8255092f4d4": {
+            "type": "bookmark",
+            "uuid": "b95184ff-51d0-5e5f-b408-d8255092f4d4",
+            "name": "1. Float 入口",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/float-main.ts",
+            "line": 8,
+            "column": 1
+        },
+        "26192dd8-ca56-51e3-86bc-09a0e7b5647c": {
+            "type": "bookmark",
+            "uuid": "26192dd8-ca56-51e3-86bc-09a0e7b5647c",
+            "name": "2. FloatApp 根",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/FloatApp.vue",
+            "line": 1,
+            "column": 1
+        },
+        "c2e16e4a-7f57-504f-b6af-0ec56449ccfb": {
+            "type": "bookmark",
+            "uuid": "c2e16e4a-7f57-504f-b6af-0ec56449ccfb",
+            "name": "3. 水球组件",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/components/CodexWaterBall.vue",
+            "line": 1,
+            "column": 1
+        },
+        "64fa7884-86ee-5bbf-87a7-b0bb487dfc4c": {
+            "type": "bookmark",
+            "uuid": "64fa7884-86ee-5bbf-87a7-b0bb487dfc4c",
+            "name": "4. float-bridge",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "preload/codex/float-bridge.cjs",
+            "line": 1,
+            "column": 1
+        },
+        "4b907114-43f4-5133-af25-44e5220a55fd": {
+            "type": "group",
+            "uuid": "4b907114-43f4-5133-af25-44e5220a55fd",
+            "name": "08 设置",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459
+        },
+        "7a681f9e-ab66-54ab-a211-d39e87c25bbb": {
+            "type": "bookmark",
+            "uuid": "7a681f9e-ab66-54ab-a211-d39e87c25bbb",
+            "name": "1. 设置页保存快捷键",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/pages/SettingsPage.vue",
+            "line": 704,
+            "column": 10
+        },
+        "3dac4dec-38f3-5429-ad9f-9ea454d971a9": {
+            "type": "bookmark",
+            "uuid": "3dac4dec-38f3-5429-ad9f-9ea454d971a9",
+            "name": "2. 默认功能开关",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/runtime/feature/featureRegistry.ts",
+            "line": 26,
+            "column": 14
+        },
+        "464796bc-b010-520d-9588-f28b733f4f31": {
+            "type": "bookmark",
+            "uuid": "464796bc-b010-520d-9588-f28b733f4f31",
+            "name": "3. 帮助指南注册",
+            "createdAt": 1788499863459,
+            "modifiedAt": 1788499863459,
+            "filePath": "src/help/guides/index.ts",
+            "line": 1,
+            "column": 1
+        },
+        "ec619567-bd1a-5b39-bd05-7bba8f53817a": {
+            "type": "group",
+            "uuid": "ec619567-bd1a-5b39-bd05-7bba8f53817a",
+            "name": "02a Kernel 函数走读",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500187580
+        },
+        "c90ec331-cf42-50af-b053-224401ba5756": {
+            "type": "bookmark",
+            "uuid": "c90ec331-cf42-50af-b053-224401ba5756",
+            "name": "1. createCompanionTaskKernel 工厂",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 894,
+            "column": 10
+        },
+        "2ac260be-7e69-5c3b-8d2d-3c734e2ac903": {
+            "type": "bookmark",
+            "uuid": "2ac260be-7e69-5c3b-8d2d-3c734e2ac903",
+            "name": "2. commitDraft 吃证据",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 1938,
+            "column": 12
+        },
+        "d442af23-2294-5f55-956f-33159d22259c": {
+            "type": "bookmark",
+            "uuid": "d442af23-2294-5f55-956f-33159d22259c",
+            "name": "3. reconcileInteractions 墓碑",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 1039,
+            "column": 12
+        },
+        "f994a356-2b0a-589b-aca3-96ce6ef77688": {
+            "type": "bookmark",
+            "uuid": "f994a356-2b0a-589b-aca3-96ce6ef77688",
+            "name": "4. applyInteractionProjection 待输入",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 1145,
+            "column": 12
+        },
+        "0ad7c238-42c6-5d0c-8569-fea3c9be3fe5": {
+            "type": "bookmark",
+            "uuid": "0ad7c238-42c6-5d0c-8569-fea3c9be3fe5",
+            "name": "5. finalizeTask 公开字段",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 697,
+            "column": 10
+        },
+        "e947af84-a612-5dd1-a9dc-8db27754a9bb": {
+            "type": "bookmark",
+            "uuid": "e947af84-a612-5dd1-a9dc-8db27754a9bb",
+            "name": "6. taskPinned 置顶谓词",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 609,
+            "column": 10
+        },
+        "18bf5427-1bd7-5f67-a827-b4101760229e": {
+            "type": "bookmark",
+            "uuid": "18bf5427-1bd7-5f67-a827-b4101760229e",
+            "name": "7. aggregateKernelRoot 根聚合",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 1585,
+            "column": 12
+        },
+        "03af78fb-fe21-51e1-b61b-2fde3ab0791f": {
+            "type": "bookmark",
+            "uuid": "03af78fb-fe21-51e1-b61b-2fde3ab0791f",
+            "name": "8. publishEvidence Host 提交",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 2396,
+            "column": 12
+        },
+        "6c1e1bf4-4b66-5232-a192-bcc6d64b2181": {
+            "type": "bookmark",
+            "uuid": "6c1e1bf4-4b66-5232-a192-bcc6d64b2181",
+            "name": "9. dispatchCommand 命令闸门",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 3043,
+            "column": 12
+        },
+        "a0ab531a-9665-5935-9c00-b8e35ca43ae4": {
+            "type": "bookmark",
+            "uuid": "a0ab531a-9665-5935-9c00-b8e35ca43ae4",
+            "name": "10. dispatchLegacyIntent open",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 2721,
+            "column": 12
+        },
+        "790270d8-d3a1-5646-8b28-95e334265dec": {
+            "type": "bookmark",
+            "uuid": "790270d8-d3a1-5646-8b28-95e334265dec",
+            "name": "11. acknowledgeOpenedTask 已读",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-kernel.cjs",
+            "line": 1282,
+            "column": 12
+        },
+        "ff3033e2-07ed-5ac8-b144-6ba8de91d534": {
+            "type": "bookmark",
+            "uuid": "ff3033e2-07ed-5ac8-b144-6ba8de91d534",
+            "name": "12. actions.open 过程身份",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-actions.cjs",
+            "line": 292,
+            "column": 9
+        },
+        "a7cca8d3-7df5-5023-9b69-e52985738bdb": {
+            "type": "bookmark",
+            "uuid": "a7cca8d3-7df5-5023-9b69-e52985738bdb",
+            "name": "13. resolveOpenTarget 不准换人",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/task-actions.cjs",
+            "line": 265,
+            "column": 12
+        },
+        "0d2b0ce3-af2c-5e63-915d-b971bc18254a": {
+            "type": "bookmark",
+            "uuid": "0d2b0ce3-af2c-5e63-915d-b971bc18254a",
+            "name": "14. normalizeOpenReceipt 降级",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/open-handoff.cjs",
+            "line": 37,
+            "column": 10
+        },
+        "a235a247-a034-5c46-bdc1-4cda981b0d94": {
+            "type": "bookmark",
+            "uuid": "a235a247-a034-5c46-bdc1-4cda981b0d94",
+            "name": "15. normalizeOpenResult",
+            "createdAt": 1788500187580,
+            "modifiedAt": 1788500668099,
+            "filePath": "preload/companion/open-handoff.cjs",
+            "line": 68,
+            "column": 10
         }
     },
     "children": {
-        "root": []
+        "991facc1-e456-5522-859c-c490705d4355": [
+            "1ffc1445-f00f-5362-add0-087fea8ddefa",
+            "abb8930c-0b36-5a2b-93c3-7e7a6f52929d",
+            "3fb775a3-9d39-5bb1-9d0d-c1eaf5c2e547",
+            "686a9544-1522-5a2c-a3ff-20d93d46b402",
+            "0b136ba8-1887-540f-822e-e3f68c8fa526",
+            "e3e05587-d2c2-5226-9757-623c1334b164",
+            "4e1dbfed-5b98-5bff-9f3a-84e816d4943e",
+            "28a297d3-6712-56c7-8bfd-cd7f282ea922",
+            "af5f8227-ad82-56c8-b24c-84a62e3fa3e3",
+            "5473649b-e2ee-5bf7-8e1f-98e63d37578c"
+        ],
+        "357602a5-e99a-5c71-9949-5e063816cd26": [
+            "e3ce076f-f73b-560e-9ca8-312a43d59472",
+            "6b1c86de-290d-5674-86f1-b98b51b8cac7",
+            "78a94fdc-c368-5d3f-ae37-9d001d687ba5",
+            "dea8dd78-ec4a-570c-af4b-f12c37f88253",
+            "443cfb9a-36a4-578e-ab70-dc1e566b3b31",
+            "54745382-5d30-5bad-b681-29e0397fc93c",
+            "f36abc1b-a23c-59da-af0d-1a0d04847735"
+        ],
+        "eeb96791-7e1f-555f-a979-5d2a26a7afc9": [
+            "8bf1776c-f8a7-5b24-81d2-a76ae6fb001f",
+            "99880750-660b-560b-bdff-d418bef35ece",
+            "942f902a-fcc1-54f3-8776-23ef30a660cc",
+            "5b4bcc12-3afb-5fd0-9ce9-b3a507a1ef8b",
+            "c76b6ea5-629d-564f-bd87-97f1273967d0",
+            "06c65713-b105-5005-9b34-09016d63160b",
+            "f71b1fe2-7921-5177-aa3d-a3bf8ee9cf61",
+            "141125c9-6da3-5d8d-8693-93e613e9f449",
+            "e1677538-cc39-5994-8d06-58f6ca35b0d2"
+        ],
+        "933d6263-efdc-5e41-9401-18fc965d8382": [
+            "3c32bda5-58bb-5352-bf1c-4898dfd65c09",
+            "89ec0098-337e-5e59-8040-2928ecd25a07",
+            "8aa78c87-381c-5cad-b0de-dbc6dce154ef",
+            "58c94740-9479-5917-8d8c-25b1c37c68e9"
+        ],
+        "9614dd82-f690-533f-a8ae-dba520d78ed6": [
+            "77b443f1-bdc5-5b6f-8f2e-eb9bb1e7b4b6",
+            "f6b0a50f-b51a-51ad-a21a-8e5a89595e9b",
+            "05168e02-4136-59ae-ba2f-3a1aa7a1c924"
+        ],
+        "b319cea3-9e4b-5f71-aec4-3f6df3e64915": [
+            "fab47903-197c-50cf-8fef-a81051935410",
+            "9c99517b-872f-5c74-bc76-179ccbdfd0ff",
+            "87efb0d5-b57c-56ef-987c-f65b47768113",
+            "02ed0f68-2462-57c1-ab75-da951b3ffe86"
+        ],
+        "34d4f03e-14ff-52b5-b28f-85c4d9e653d0": [
+            "4432bb12-fa9f-5d18-994d-fe4b672eaa27",
+            "5ea3ea86-6e6f-54b4-bc6d-d5f9f76127f4",
+            "d23cb8ff-8fd3-5b69-b035-7d0e2d299309",
+            "4df0d703-b8dd-53c5-9257-26b7b002589a"
+        ],
+        "440ea603-7e9c-53b8-9f5e-64ff39c846c3": [
+            "b95184ff-51d0-5e5f-b408-d8255092f4d4",
+            "26192dd8-ca56-51e3-86bc-09a0e7b5647c",
+            "c2e16e4a-7f57-504f-b6af-0ec56449ccfb",
+            "64fa7884-86ee-5bbf-87a7-b0bb487dfc4c"
+        ],
+        "4b907114-43f4-5133-af25-44e5220a55fd": [
+            "7a681f9e-ab66-54ab-a211-d39e87c25bbb",
+            "3dac4dec-38f3-5429-ad9f-9ea454d971a9",
+            "464796bc-b010-520d-9588-f28b733f4f31"
+        ],
+        "root": [
+            "991facc1-e456-5522-859c-c490705d4355",
+            "357602a5-e99a-5c71-9949-5e063816cd26",
+            "eeb96791-7e1f-555f-a979-5d2a26a7afc9",
+            "ec619567-bd1a-5b39-bd05-7bba8f53817a",
+            "933d6263-efdc-5e41-9401-18fc965d8382",
+            "9614dd82-f690-533f-a8ae-dba520d78ed6",
+            "b319cea3-9e4b-5f71-aec4-3f6df3e64915",
+            "34d4f03e-14ff-52b5-b28f-85c4d9e653d0",
+            "440ea603-7e9c-53b8-9f5e-64ff39c846c3",
+            "4b907114-43f4-5133-af25-44e5220a55fd"
+        ],
+        "ec619567-bd1a-5b39-bd05-7bba8f53817a": [
+            "c90ec331-cf42-50af-b053-224401ba5756",
+            "2ac260be-7e69-5c3b-8d2d-3c734e2ac903",
+            "d442af23-2294-5f55-956f-33159d22259c",
+            "f994a356-2b0a-589b-aca3-96ce6ef77688",
+            "0ad7c238-42c6-5d0c-8569-fea3c9be3fe5",
+            "e947af84-a612-5dd1-a9dc-8db27754a9bb",
+            "18bf5427-1bd7-5f67-a827-b4101760229e",
+            "03af78fb-fe21-51e1-b61b-2fde3ab0791f",
+            "6c1e1bf4-4b66-5232-a192-bcc6d64b2181",
+            "a0ab531a-9665-5935-9c00-b8e35ca43ae4",
+            "790270d8-d3a1-5646-8b28-95e334265dec",
+            "ff3033e2-07ed-5ac8-b144-6ba8de91d534",
+            "a7cca8d3-7df5-5023-9b69-e52985738bdb",
+            "0d2b0ce3-af2c-5e63-915d-b971bc18254a",
+            "a235a247-a034-5c46-bdc1-4cda981b0d94"
+        ]
     },
     "roots": [
         "root"

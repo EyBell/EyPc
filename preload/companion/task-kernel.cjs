@@ -600,6 +600,7 @@ function compareByLatestQuestion(left, right) {
 }
 
 /**
+ * 置顶只搬家：localPin 或 providerPin 任一为真即进 pinned 组，不取消待输入资格。
  * One pin predicate for every display decision. An EyPc-local pin and a
  * provider-side pin (Codex Pinned section, Claude star, Cursor pinned agent)
  * park the row the same way; which one it is only matters to the control
@@ -669,6 +670,7 @@ function derivedCycleTier(task) {
   return 'none'
 }
 
+/** 显示分组：置顶一律 pinned；待输入资格仍走 attention，不要在 Vue 里改组。 */
 function derivedDynamicGroup(task) {
   if (task.hidden || task.paused) return 'none'
   // A local pin is a "keep this where I can find it" request; the row moves to
@@ -691,6 +693,7 @@ function derivedDynamicGroup(task) {
   return 'none'
 }
 
+/** 公开相位、分组、快捷键环都从这里算出；先拍 canonicalPhase，再决定显示组。 */
 function finalizeTask(task) {
   const revisionAt = finiteInteger(task.revisionAt)
   const next = { ...task, revisionAt }
@@ -887,6 +890,7 @@ function semanticPackage(packageValue) {
   })
 }
 
+/** Kernel 工厂：私有图只在这里；对外只发根任务 Snapshot。 */
 function createCompanionTaskKernel(dependencies = {}) {
   const now = typeof dependencies.now === 'function' ? dependencies.now : Date.now
   const setTimer = typeof dependencies.setTimeout === 'function' ? dependencies.setTimeout : setTimeout
@@ -1031,6 +1035,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (interactionSupersedes(previous, interaction)) interactionTombstones.set(key, interaction)
   }
 
+  /** 按 activity sequence 关旧提问并写入墓碑，避免已清掉的 waiting 复活。 */
   function reconcileInteractions(batches, incomingLanes, currentLanes, enabledProviders) {
     for (const provider of PROVIDERS) {
       if (!enabledProviders.has(provider)) continue
@@ -1136,6 +1141,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     ))
   }
 
+  /** RAW-207：interactionStore 仍有 opened 时，Turn running 也必须公开成待输入。 */
   function applyInteractionProjection(task) {
     const basePhase = isKnownTaskPhase(task.activityPhase) ? task.activityPhase : task.phase
     const interactions = taskOpenInteractions(task)
@@ -1272,6 +1278,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     )
   }
 
+  /** 只有收据 confirmsRead===true 才清 completed-unread；Deep Link 成功不等于已读。 */
   function acknowledgeOpenedTask(task, result) {
     markAttentionOpened(task)
     if (result?.confirmsRead !== true) return
@@ -1572,7 +1579,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     return { known: false, value: false }
   }
 
-  /** The Kernel is the sole owner of root state aggregation. Topology supplies
+  /** 根任务聚合：Topology 只给成员图，相位/未读/Plan 只在这里归约。
+   * The Kernel is the sole owner of root state aggregation. Topology supplies
    * membership only; it never interprets phase, unread, Plan or capabilities. */
   function aggregateKernelRoot(root, members) {
     const activityPhase = aggregateMemberPhase(members)
@@ -1926,6 +1934,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     }, Math.max(0, dueAt - now()))
   }
 
+  /** 吃证据的唯一入口：schema/revision 失败则整批丢掉，且不消耗 producer revision。 */
   function commitDraft(draft, forceUnknown = false) {
     if (disposed || !draft || draft.schema !== COMPANION_TASK_DRAFT_REVISION) return null
     const producer = draftProducer(draft.producer)
@@ -2383,6 +2392,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     return result
   }
 
+  /** Host 证据提交；语义无变化则 packageRevision 不涨。 */
   function publishEvidence(draft) {
     const startedAt = now()
     const beforeRevision = currentPackage.packageRevision
@@ -2707,6 +2717,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (input.action === 'open-attention') {
       return dispatchAttention(input.kind === 'completed-unread' ? 'completedUnread' : 'input', input)
     }
+    // 打开：用当前 Snapshot 身份走 navigation.open，避免与 cycle 抢 Adapter。
     if (input.action === 'open') {
       const task = taskForKey(input.key)
       const target = task
@@ -3028,6 +3039,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       : { outcome: 'unavailable', errorCode: 'unsupported', message: '未知任务命令' }
   }
 
+  /** 点开一条任务的命令闸门：revision 必须匹配，同 key 串行，operationId 去重。 */
   function dispatchCommand(input = {}) {
     if (!input || input.revision !== COMPANION_TASK_COMMAND_REVISION) {
       return Promise.resolve({ outcome: 'unavailable', errorCode: 'reload-required', message: '任务命令版本不兼容，需要重新接入或重载' })
