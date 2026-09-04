@@ -914,26 +914,28 @@ describe('Codex Companion V4 UI contract', () => {
     const nativePin = wrapper.get(`[data-focus-key="task:${TASK_ACTIVE}"] .action-pin`)
     const plainPin = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"] .action-pin`)
     expect(localPin.attributes('aria-label')).toContain('来源：EyPc 本地置顶 · 点击取消')
-    // A native pin without the provider write capability stays read-only.
-    expect(nativePin.attributes('aria-label')).toContain('来源：Codex 置顶 · 只读，请在应用内取消')
-    expect(nativePin.attributes('aria-disabled')).toBe('true')
+    expect(localPin.attributes('aria-pressed')).toBe('true')
+    expect(localPin.get('.action-pin-glyph').classes()).toContain('is-pinned')
+    expect(String((localPin.get('.action-pin-glyph').element as HTMLElement).style.transform)).toContain('rotate(-45deg)')
+    // A native pin the plugin cannot write is not read-only: a click layers an
+    // EyPc local pin on it; only the local order stays unmovable.
+    expect(nativePin.attributes('aria-label')).toContain('来源：Codex 置顶 · 点击叠加 EyPc 本地置顶；应用内取消请在应用中操作')
+    expect(nativePin.attributes('aria-pressed')).toBe('true')
+    expect(nativePin.get('.action-pin-glyph').classes()).toContain('is-pinned')
+    expect(nativePin.attributes('aria-disabled')).toBe('false')
     expect(nativePin.attributes('disabled')).toBeUndefined()
     expect(plainPin.attributes('aria-label')).toContain('未置顶 · 点击后由 EyPc 本地置顶')
+    expect(plainPin.attributes('aria-pressed')).toBe('false')
+    expect(plainPin.get('.action-pin-glyph').classes()).not.toContain('is-pinned')
     action.mockClear()
     await nativePin.trigger('click')
+    expect(action).toHaveBeenCalledWith('codex.pin.toggle', { kind: 'task', key: TASK_ACTIVE })
+    action.mockClear()
     const nativeRow = wrapper.get(`[data-focus-key="task:${TASK_ACTIVE}"]`)
     ;(nativeRow.element as HTMLElement).focus()
-    await nativeRow.trigger('keydown', { key: 'p', code: 'KeyP', ctrlKey: true })
     await nativeRow.trigger('keydown', { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
-    expect(action).toHaveBeenCalledWith('codex.task.focus', {
-      key: TASK_ACTIVE,
-      source: 'automatic-focus'
-    })
-    expect(action.mock.calls.some(([id, args]) => id === 'codex.task.focus'
-      && args !== null
-      && typeof args === 'object'
-      && 'revisionAt' in args)).toBe(false)
-    expect(action.mock.calls.every(([id]) => id === 'codex.task.focus')).toBe(true)
+    // Alt+↑ on a provider-only pin has no local order to move.
+    expect(action.mock.calls.some(([id]) => id === 'codex.pin.move')).toBe(false)
     await localPin.trigger('focus')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
@@ -949,9 +951,13 @@ describe('Codex Companion V4 UI contract', () => {
     expect(projects.action.mock.calls.every(([id]) => id === 'codex.task.focus')).toBe(true)
 
     const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
+    const component = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
     expect(css).toContain('.action-pin[data-pin-source="local"]')
     expect(css).toContain('var(--codex-warning)')
-    const component = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
+    expect(css).toContain('.action-pin[data-pin-source="local"] .action-pin-glyph')
+    expect(css).toContain('.action-pin-glyph.is-pinned')
+    expect(css).toContain('rotate(-45deg)')
+    expect(component).toContain('pinGlyphStyle')
     expect(component).toContain("allowAriaDisabled: element.matches('.action-pin')")
   })
 

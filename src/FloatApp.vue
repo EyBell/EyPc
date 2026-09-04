@@ -76,7 +76,7 @@ import type {
   CodexTaskCard
 } from './domain/codex'
 import { normalizeCodexQuota, orderCodexAttentionTasks, orderCodexTasksForDisplay } from './domain/codex'
-import { companionTaskProvider, type CompanionProviderId } from './domain/companionProvider'
+import { companionPinAppLabel, companionPinNativeLabel, companionTaskProvider, type CompanionProviderId } from './domain/companionProvider'
 import { COMMAND_MODIFIER_LABEL, hasCommandModifier } from './ui/commandModifier'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
@@ -1359,7 +1359,7 @@ const drawerActions = computed<DrawerAction[]>(() => {
       { id: 'task-new-thread-model', label: '选择模型新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project, true) },
       { id: 'task-detail', label: '查看详情', run: () => openDetailPanel(item) },
       { id: 'task-alias', label: '编辑别名', run: () => editAlias(item) },
-      { id: 'task-pin', label: pinMenuLabel(item), disabled: pinIsReadOnly(item), disabledReason: `${pinProviderLabel(item)}只读，请在应用内取消`, run: () => togglePin(item) },
+      { id: 'task-pin', label: pinMenuLabel(item), disabled: pinIsReadOnly(item), disabledReason: pinSourceHint(item), run: () => togglePin(item) },
       ...manualPhaseActions,
       ...planActions,
       { id: 'task-archive', label: '真实归档', danger: true, disabled: !item.task.canArchive, disabledReason: taskArchiveBlockedReason(item.task), run: requestTaskArchive }
@@ -1613,37 +1613,59 @@ function isProjectCollapsed(project: CodexProjectCard) {
     : project.collapsed
 }
 
-/** Task rows whose provider accepts the EyPc pin write (Codex app-server, CodexHost). */
+/** Task rows whose provider accepts the EyPc pin write. */
 function pinProviderWritable(item: FocusItem) {
   return item.kind === 'task' && item.task.companionCapabilities?.pin === true
 }
 
+/** Provider of the row; project rows are Codex-only surfaces. */
+function pinProviderOf(item: FocusItem) {
+  return item.kind === 'task' ? companionTaskProvider(item.task) : 'codex'
+}
+
+/** "Codex 置顶" / "Claude App 星标" / "Cursor 置顶" from the manifest pin policy. */
 function pinProviderLabel(item: FocusItem) {
-  const provider = item.kind === 'task' ? companionTaskProvider(item.task) : 'codex'
-  return provider === 'claude' ? 'Claude App 星标' : provider === 'cursor' ? 'Cursor 置顶' : 'Codex 置顶'
+  return companionPinNativeLabel(pinProviderOf(item))
+}
+
+function pinProviderSyncName(item: FocusItem) {
+  return companionPinAppLabel(pinProviderOf(item))
+}
+
+/** The app's own pin is set on this row, whether or not a local pin layers on it. */
+function pinProviderPinned(item: FocusItem) {
+  return item.kind === 'task' ? item.task.providerPinned === true : item.project.pinSource === 'native'
 }
 
 function pinSourceHint(item: FocusItem) {
   if (item.kind === 'project' && item.project.kind === 'chats') return 'Chats 分组不可置顶'
   if (item.kind === 'project' && item.marker.claudeOnly) return projectActionBlockedReason(item.marker, '项目置顶')
   const source = item.kind === 'task' ? item.task.pinSource : item.project.pinSource
+  const nativeLabel = pinProviderLabel(item)
   if (source === 'native') {
-    return pinProviderWritable(item)
-      ? `来源：${pinProviderLabel(item)} · 点击取消并同步`
-      : item.kind === 'task'
-        ? `来源：${pinProviderLabel(item)} · 只读，请在应用内取消`
-        : '来源：Codex 原生置顶 · 顺序只读'
+    if (pinProviderWritable(item)) return `来源：${nativeLabel} · 点击取消并同步`
+    // The plugin cannot write this app's pin: a click layers a local pin so
+    // the row survives an in-app unpin, and the app-side pin stays as is.
+    return item.kind === 'task'
+      ? `来源：${nativeLabel} · 点击叠加 EyPc 本地置顶；应用内取消请在应用中操作`
+      : '来源：Codex 原生置顶 · 顺序只读'
   }
   if (source === 'local') {
-    return pinProviderWritable(item) ? '来源：EyPc 本地置顶（Codex 未同步） · 点击取消' : '来源：EyPc 本地置顶 · 点击取消'
+    if (pinProviderWritable(item)) return `来源：EyPc 本地置顶（${pinProviderSyncName(item)} 未同步） · 点击取消`
+    return pinProviderPinned(item)
+      ? `来源：${nativeLabel} + EyPc 本地置顶 · 点击取消本地置顶；应用内${pinProviderOf(item) === 'claude' ? '星标' : '置顶'}请在应用中取消`
+      : '来源：EyPc 本地置顶 · 点击取消'
   }
-  return pinProviderWritable(item) ? '未置顶 · 点击后同步置顶到 Codex' : '未置顶 · 点击后由 EyPc 本地置顶'
+  return pinProviderWritable(item) ? `未置顶 · 点击后同步置顶到 ${pinProviderSyncName(item)}` : '未置顶 · 点击后由 EyPc 本地置顶'
 }
 
 function pinMenuLabel(item: FocusItem) {
   const source = item.kind === 'task' ? item.task.pinSource : item.project.pinSource
-  if (pinProviderWritable(item)) return source ? '取消置顶（同步 Codex）' : '置顶（同步 Codex）'
-  if (source === 'native') return `${pinProviderLabel(item)}（只读）`
+  if (pinProviderWritable(item)) {
+    const name = pinProviderSyncName(item)
+    return source ? `取消置顶（同步 ${name}）` : `置顶（同步 ${name}）`
+  }
+  if (source === 'native') return item.kind === 'task' ? `叠加本地置顶（${pinProviderLabel(item)}保留）` : `${pinProviderLabel(item)}（只读）`
   return source === 'local' ? '取消本地置顶' : '本地置顶'
 }
 
@@ -1652,10 +1674,25 @@ function pinSourceValue(item: FocusItem) {
   return (item.kind === 'task' ? item.task.pinSource : item.project.pinSource) || 'none'
 }
 
+function pinGlyphPinned(item: FocusItem) {
+  const source = pinSourceValue(item)
+  return source === 'local' || source === 'native'
+}
+
+function pinGlyphStyle(item: FocusItem) {
+  return pinGlyphPinned(item) ? { transform: 'rotate(-45deg)' } : undefined
+}
+
+/** Toggle gate: only blocked projects and native project pins are untouchable; a native task pin accepts a local layer. */
 function pinIsReadOnly(item: FocusItem) {
   const source = pinSourceValue(item)
-  if (source === 'native') return !pinProviderWritable(item)
+  if (source === 'native') return item.kind !== 'task' && !pinProviderWritable(item)
   return source === 'blocked'
+}
+
+/** Reorder gate: only an EyPc local pin has a local order to move. */
+function pinMoveIsReadOnly(item: FocusItem) {
+  return pinIsReadOnly(item) || pinSourceValue(item) !== 'local'
 }
 
 function togglePin(item: FocusItem) {
@@ -1668,7 +1705,7 @@ function togglePin(item: FocusItem) {
 }
 
 function movePin(item: FocusItem, direction: -1 | 1) {
-  if (pinIsReadOnly(item)) {
+  if (pinMoveIsReadOnly(item)) {
     liveMessage.value = pinSourceHint(item)
     return false
   }
@@ -3542,7 +3579,7 @@ onUnmounted(() => {
                 <span><strong>{{ row.project.name }}</strong><i class="project-provider-marker" :class="row.marker.className">{{ row.marker.label }}</i><small v-if="row.hiddenProject">项目分组已隐藏 · 任务仍在其他页签</small><small v-else>{{ row.project.tasks.length ? `${row.project.tasks.length} 个最近任务` : `最近 ${settings?.timeWindowDays || 30} 天无会话` }}</small></span>
               </button>
               <div class="project-inline-actions" role="toolbar" :aria-label="`${row.project.name} 项目操作`">
-                <button type="button" class="inline-icon-button action-pin" :data-pin-source="pinSourceValue(row)" :aria-disabled="pinIsReadOnly(row)" :aria-pressed="Boolean(row.project.pinSource)" :aria-label="`${row.project.name}，${pinSourceHint(row)}`" data-quick-jump-target :data-quick-jump-label="pinSourceHint(row)" @pointerenter="queueActionHint($event, pinSourceHint(row))" @pointerleave="clearActionHint" @focus="queueActionHint($event, pinSourceHint(row))" @blur="clearActionHint" @click.stop="focusedKey = row.key; togglePin(row)"><Pin :size="13" aria-hidden="true" /></button>
+                <button type="button" class="inline-icon-button action-pin" :data-pin-source="pinSourceValue(row)" :aria-disabled="pinIsReadOnly(row)" :aria-pressed="Boolean(row.project.pinSource)" :aria-label="`${row.project.name}，${pinSourceHint(row)}`" data-quick-jump-target :data-quick-jump-label="pinSourceHint(row)" @pointerenter="queueActionHint($event, pinSourceHint(row))" @pointerleave="clearActionHint" @focus="queueActionHint($event, pinSourceHint(row))" @blur="clearActionHint" @click.stop="focusedKey = row.key; togglePin(row)"><span class="action-pin-glyph" :class="{ 'is-pinned': pinGlyphPinned(row) }" :style="pinGlyphStyle(row)" aria-hidden="true"><Pin :size="13" /></span></button>
                 <button type="button" class="inline-icon-button action-remove" :class="{ confirming: projectRemoveConfirming(row.project) }" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly || !row.project.actionAlias || !conversations?.sourceFingerprint" :title="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : '从 Codex 侧栏移除；需先完全退出 Codex'" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? `确认从 Codex 侧栏移除 ${row.project.name}` : `从 Codex 侧栏移除 ${row.project.name}`" data-confirm-slot data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : `从 Codex 移除 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @blur="clearActionHint" @click.stop="focusedKey = row.key; requestProjectRemove(row.project, $event)"><Check v-if="projectRemoveConfirming(row.project)" :size="13" aria-hidden="true" /><Trash2 v-else :size="13" aria-hidden="true" /></button>
                 <button type="button" class="inline-icon-button action-hide" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly" :aria-pressed="isProjectHidden(row.project)" :aria-label="isProjectHidden(row.project) ? `恢复项目分组 ${row.project.name}` : `隐藏项目分组 ${row.project.name}`" data-quick-jump-target :data-quick-jump-label="isProjectHidden(row.project) ? `恢复项目 ${row.project.name}` : `隐藏项目 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @blur="clearActionHint" @click.stop="focusedKey = row.key; toggleProjectHidden(row.project)"><Eye v-if="isProjectHidden(row.project)" :size="13" aria-hidden="true" /><EyeOff v-else :size="13" aria-hidden="true" /></button>
                 <button type="button" class="inline-icon-button action-create" :disabled="row.marker.claudeOnly || !row.project.actionAlias" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : row.project.actionAlias ? `在 ${row.project.name} 新建会话` : '项目动作已失效'" data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : `在 ${row.project.name} 新建会话`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @blur="clearActionHint" @click.stop="focusedKey = row.key; openComposer(row.project)"><Plus :size="14" aria-hidden="true" /></button>
@@ -3625,7 +3662,7 @@ onUnmounted(() => {
                   @focus="queueActionHint($event, pinSourceHint(row))"
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; togglePin(row)"
-                ><Pin :size="13" aria-hidden="true" /></button>
+                ><span class="action-pin-glyph" :class="{ 'is-pinned': pinGlyphPinned(row) }" :style="pinGlyphStyle(row)" aria-hidden="true"><Pin :size="13" /></span></button>
                 <button
                   type="button"
                   class="inline-icon-button action-hide"
