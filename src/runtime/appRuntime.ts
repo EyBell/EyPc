@@ -9,7 +9,7 @@ import { toggleIdWithAdvance } from '../domain/listSelection'
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutLabel, formatShortcutList } from '../domain/shortcuts'
 import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
-import { coalesceNativeWindowFamilies, normalizeWindowText, resolveLiveWindowsForTarget, targetMatchesLiveWindow, windowFamilyRoots, windowTargetAppMatches, type LiveWindow, type WindowFamily, type WindowInstanceProbeResult, type WindowPlatform, type WindowTarget } from '../domain/windows'
+import { coalesceNativeWindowFamilies, normalizeWindowText, resolveLiveWindowsForTarget, targetMatchesLiveWindow, uniqueSameAppRebindLive, windowFamilyRoots, windowTargetAppMatches, type LiveWindow, type WindowFamily, type WindowInstanceProbeResult, type WindowPlatform, type WindowTarget } from '../domain/windows'
 import {
   buildWindowTreeRows,
   candidateInstanceIdFromRowId,
@@ -1521,7 +1521,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     | { kind: 'editor-active' }
     | { kind: 'activation-failed'; outcome: Exclude<WindowActivationOutcome, 'activated'> }
 
-  async function refreshWindows({ clearSearch = false }: { clearSearch?: boolean } = {}): Promise<WindowRefreshOutcome> {
+  async function refreshWindows({ clearSearch = false, adoptUnique = true }: { clearSearch?: boolean; adoptUnique?: boolean } = {}): Promise<WindowRefreshOutcome> {
     if (clearSearch && state.windowSearch) {
       state.windowSearch = ''
       save()
@@ -1557,6 +1557,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       }
       const completeness = normalizeWindowInventoryCompleteness(result.completeness)
       applyWindowInventory(freshFamilies, completeness)
+      if (adoptUnique) await adoptUniqueSameAppWindowTargets()
       let candidateFocusInstanceId: string | null = null
       if (windowRebindState.phase === 'confirming') {
         const candidateTarget = windowTargetById(windowRebindState.targetId)
@@ -1787,7 +1788,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   async function refreshForWindowActivation(attempt: WindowActivationAttempt, focusRowId: string | null, platformId: WindowPlatform): Promise<'complete' | 'partial' | null> {
-    const outcome = await refreshWindows()
+    const outcome = await refreshWindows({ adoptUnique: false })
     if (outcome === 'failed') {
       appendWindowOperationTrace(attempt, 'refresh', 'failed')
       finishWindowActivation(attempt, 'refresh', 'refresh-failed', 'blocking', { focusRowId, platformId })
@@ -1885,6 +1886,34 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       changed = rememberFileManagerLanding(fileManagerTargetByGroupKey(groupKey), live) || changed
     }
     if (changed) save()
+  }
+
+  function windowTargetHasNativeLocator(target: WindowTarget): boolean {
+    return Boolean(target.lastInstanceId || target.lastNativeRef)
+  }
+
+  async function tryUniqueSameAppRebind(target: WindowTarget, persist = true): Promise<LiveWindow | null> {
+    if (windowDraft || windowRebindState.phase === 'confirming') return null
+    const live = uniqueSameAppRebindLive(target, liveWindows, state.windowTargets)
+    if (!live) return null
+    if (windowTargetHasNativeLocator(target)) {
+      const proof = await probeWindowTargetInstance(target)
+      if (proof.status === 'live' || proof.liveness === 'temporarily-unobserved') return null
+      if (proof.status === 'gone') clearVerifiedGoneWindowNativeRef(target, proof)
+    }
+    if (persist) {
+      const changed = rememberVerifiedWindowTarget(target, live, live.instanceId)
+      if (changed) save()
+    }
+    return live
+  }
+
+  async function adoptUniqueSameAppWindowTargets(): Promise<void> {
+    for (const target of state.windowTargets) {
+      if (target.scope !== 'instance') continue
+      if (liveWindowsForTarget(target).live) continue
+      await tryUniqueSameAppRebind(target)
+    }
   }
 
   async function activateLiveWindow(root: LiveWindow, target: WindowTarget | null, attempt: WindowActivationAttempt, member: LiveWindow | null = null): Promise<WindowActivationOutcome> {
@@ -2094,14 +2123,20 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const outcome = await activateLiveWindow(resolved.live, target, attempt)
       return outcome === 'activated' ? { kind: 'activated' } : { kind: 'activation-failed', outcome }
     }
+    if (windowDraft) {
+      finishWindowActivation(attempt, 'resolve', 'editor-active', 'blocking', {
+        focusRowId: targetWindowRowId(target.id),
+        platformId: target.platform
+      })
+      return { kind: 'editor-active' }
+    }
+    const uniqueLive = await tryUniqueSameAppRebind(target, false)
+    if (uniqueLive) {
+      appendWindowOperationTrace(attempt, 'resolve', 'ok')
+      const outcome = await activateLiveWindow(uniqueLive, target, attempt)
+      return outcome === 'activated' ? { kind: 'activated' } : { kind: 'activation-failed', outcome }
+    }
     if (resolved.candidates.length) {
-      if (windowDraft) {
-        finishWindowActivation(attempt, 'resolve', 'editor-active', 'blocking', {
-          focusRowId: targetWindowRowId(target.id),
-          platformId: target.platform
-        })
-        return { kind: 'editor-active' }
-      }
       appendWindowOperationTrace(attempt, 'resolve', 'not-found')
       const effects = advanceWindowRebind({
         type: 'begin',

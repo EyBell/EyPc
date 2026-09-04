@@ -36,7 +36,7 @@ Updated: 2026-08-04
 - Root activation preserves the browser/IDE's current internal Tab/editor state. Real native children remain session-only exact destinations and fail closed.
 - [windowTree.ts](../../../../src/domain/windowTree.ts#L1) may project families but cannot merge logical targets or remap slots. A single unambiguous legacy member can adopt its proven root; same-root multi-target convergence remains manual.
 - [windowRebind.ts](../../../../src/domain/windowRebind.ts#L1) carries the originating slot. Candidate confirmation activates first, then reuses/creates a precise target and updates only that slot.
-- Same-app independent roots, including equal titles, remain separate; title/app/unique-candidate inference is forbidden.
+- Same-app independent roots, including equal titles, remain separate; title/similarity inference is forbidden. RAW-208 allows in-place locator replacement only when one persisted instance target and one live root of that app remain, and the old instance is empty, `verified-gone`, or `indeterminate`.
 
 ### Module and package boundaries
 

@@ -16,9 +16,9 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 344 leaves / 6 modules / 320 active / 22 superseded / 2 proposed / 0 conflicted |
+| 需求登记 | 345 leaves / 7 modules / 321 active / 22 superseded / 2 proposed / 0 conflicted |
 | 取代关系 | 22 whole / 111 scoped |
-| 原始来源 | 51 documents / 286 ordered / 160 RAW-parent / 126 source-only |
+| 原始来源 | 52 documents / 292 ordered / 166 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
 | 当前构建产物 | `host-0af8cb17e6e8c67150cd / renderer-20d054406898fc61c7d7` · `artifact-ready` |
@@ -34,10 +34,10 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 344,
-    "modules": 6,
+    "leaves": 345,
+    "modules": 7,
     "proposed": 2,
-    "active": 320,
+    "active": 321,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
@@ -45,9 +45,9 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "scoped_relations": 111
   },
   "source_anchor_catalog": {
-    "documents": 51,
-    "ordered_anchors": 286,
-    "raw_parent_ordered": 160,
+    "documents": 52,
+    "ordered_anchors": 292,
+    "raw_parent_ordered": 166,
     "registered_requirements": 105,
     "source_only": 126
   },
@@ -70,10 +70,10 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "1c2b4bbd5148ee8a77281cabc243d2cd12f04cc5d25b54a990496a31db9a15d6",
-    "raw_sources": "b68e9e1b4260437971f1dce282d9499bd95c4970c32fda6f4a1f1c3f5e5ce2b1",
-    "source_anchor_catalog": "557d68b9de3cf069fb67cc3cd21afdfabd938b4e4798026cbe07a330a09b53d3",
-    "product_body": "c0607354e6b3291e34c6e6cdb871541f717f628d2176733ee06b88ffd3798e5b",
+    "requirement_registry": "ae00a92354e4839f181d2f4ce99d0a5bd3aab1a17f993d5deb18b68ba938c037",
+    "raw_sources": "a7826b235f362d56e0b18f60f268a856bcb5767b951667fb544de92869301b53",
+    "source_anchor_catalog": "10ff353ea6099cb55967e6a43d2812f01e87b493e69e8f9108e32bd5eaf172dd",
+    "product_body": "4c3ce76c21fe5c0e957a431ad6f74344ebce8dd599022d47dff6aa73c504cb79",
     "architecture": "d6ac38cd7796fb376fa0a3fc0bae69a8fff5577e764ac465072a5a232ca69697",
     "runtime_contract": "ff404d41fa044755e2d569a378df6ee5bd04e456c5647e92c7ebfe9d6abfc153"
   }
@@ -187,15 +187,15 @@ Next increment — **approved requirement, not implemented**: [260807/1740-favor
 
 ## Window Jump Workbench
 
-Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-window-jump-workbench/spec.md#L1). 该任务的条款以无编号形式承载，尚未入册，见 [覆盖账](requirements/coverage.md#L1)。
+Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-window-jump-workbench/spec.md#L1)；唯一应用原地换绑：[260904/window-unique-app-rebind/spec.md](260904/window-unique-app-rebind/spec.md#L1)（[RAW-208](requirements/windows-raw-208.md#L1)）。1527 其余条款以无编号形式承载，尚未入册，见 [覆盖账](requirements/coverage.md#L1)。
 
-- Window Jump is a default-disabled feature. Each independently operable real main/root window is the stable identity; browser Tabs and editor pages remain internal mutable state, while bridge-proven real native children are transient exact destinations. Stable slots use exact `PID+CGWindowID/HWND`, may switch only the target display to a session-cached Space, and verify the final root/member. Titles, Tab, position, size, order, display and Space never define identity; there is no title/ordinal/unique-candidate fallback, environment snapshot or background poller.
+- Window Jump is a default-disabled feature. Each independently operable real main/root window is the stable identity; browser Tabs and editor pages remain internal mutable state, while bridge-proven real native children are transient exact destinations. Stable slots use exact `PID+CGWindowID/HWND`, may switch only the target display to a session-cached Space, and verify the final root/member. Titles, Tab, position, size, order, display and Space never define identity. There is no title/ordinal/similarity fallback, environment snapshot or background poller. RAW-208 allows one exception: when the persisted instance target for that app is unique, the live root of that app is unique, and the old locator is empty or `probeInstance` is not `live`/`temporarily-unobserved`, EyPc may replace `lastInstanceId` in place. Two live roots, two persisted records, or a still-live old instance still require explicit confirmation. A Microsoft Edge tab titled ChatGPT is not the ChatGPT app.
 - `EyPc 窗口槽 1` through `EyPc 窗口槽 10` are `mainHide` uTools features. Successful jumps activate the target without showing the plugin transit window; the slot route must not add a second generic hide. Missing, ambiguous, unauthorized, or otherwise failed activation opens the windows workbench/settings fallback with an explicit diagnostic.
 - `AppState` persists EyPc-local root/group targets and ten `1–10` platform-separated slot mappings. `WindowTarget.id` is the stable logical target; `scope='instance'` stores only the last verified real root locator, while Space/display/liveness remain preload-session cache. Child windows are session-only. Projection never merges targets or remaps slots: one unambiguous legacy member may adopt its proven root, while same-root multi-target conflicts require explicit per-slot recovery. That recovery changes one slot, reuses or creates one precise target, and never copies unrelated aliases/favorite/pin state.
 - Windows uses fixed PowerShell/User32 calls and `EnumWindows` only; it never uses `EnumChildWindows` to enumerate control HWNDs. Admission requires a visible, non-cloaked, activatable top-level/owned popup with valid bounds; `WS_CHILD`, no-activate, transparent, host, system and helper surfaces are omitted. Same-app `GA_ROOTOWNER` proves root/member relationships. `root-current` resolves the current/last member at call time and verifies final foreground ownership; `member-exact` additionally requires final focus on the requested member. `win32:PID:HWND` remains a current verified locator, not a promise against later handle reuse. Focus refusal is reported without simulated input or foreground-protection bypass.
 - macOS starts from Accessibility windows of regular foreground applications, admits valid `AXWindow`/`AXSheet`/`AXDialog` roles, maps each through `_AXUIElementGetWindow`, and requires a positive Core Graphics window ID as identity corroboration. `AXParent`/`AXTopLevelUIElement`/`AXWindow` prove root/member relationships. Core Graphics alone never creates a product row; CG-only, system-layer, helper and non-actionable surfaces are omitted. Root and exact-member activation/close revalidate application, root, member and relation, then require final `AXFocusedWindow` to map to the requested root and exact member when supplied. Bridge revision mismatch blocks activation, and macOS cannot claim permanent topmost for arbitrary third-party windows.
 - Alias changes leave the uTools feature binding intact. EyPc may open the official uTools binding screen, but never reads or mirrors the current host binding.
-- Root activation always uses `root-current`, so Tab/editor/dialog changes do not invalidate favorites or slots. Selecting a real native child uses fail-closed `member-exact`. Inventory completeness governs projection merging only: missing rows become temporarily unobserved, and neither complete nor partial absence can prove death. `windows.probeInstance()` alone returns live/gone/indeterminate; only matching verified-gone evidence clears the native locator before explicit same-app candidate recovery.
+- Root activation always uses `root-current`, so Tab/editor/dialog changes do not invalidate favorites or slots. Selecting a real native child uses fail-closed `member-exact`. Inventory completeness governs projection merging only: missing rows become temporarily unobserved, and neither complete nor partial absence can prove death. `windows.probeInstance()` alone returns live/gone/indeterminate; only matching verified-gone evidence clears the native locator without a replacement. RAW-208 may adopt the unique same-app live root onto the same logical target when the old instance is gone or indeterminate; a still-live old instance and explicit same-app multi-window recovery remain manual. macOS inventory stays `partial` and is not a uniqueness gate.
 - The replacement flow has one root-only session state machine as its source of truth. Complete/partial inventory handling, candidate membership, success/cancel termination, stale-binding effect and focus-return effect are not reimplemented by the page or individual actions. One Window domain projection owns family rows, target/slot retention, tree/search, `window / child-window / file-manager-group / selection / slot` action contexts, navigation and root-only selection; Runtime applies side effects and the page consumes rows. An active editor draft and replacement confirmation must never coexist.
 - Window activation diagnostics are session-only Runtime state, capped at 50 and cleared through a named action. They carry only opaque timing/entry/platform/stage/code/level and sanitized explanations; no title, app, PID, handle, native ref, raw command/error or Space/display identifier is exposed. Development may request bounded enum/count traces including a `space` stage; production requests no trace. The internal Space cache is not a diagnostic snapshot and never persists.
 - The compact workbench uses a toolbar, persistent slot strip, status band, ARIA tree and existing action/editor layers. Ordinary real roots are level one and verified real children are level two; same-app independent roots remain siblings and no application virtual parent is created. Finder/Explorer alone use one virtual level-one parent plus independent real roots at level two, never a third level. Search temporarily expands a matching child while preserving manual expansion state. Right-click first focuses then opens one contextual panel; child context allows exact activate, capability-gated exact close, readonly details and Windows HWND copy only. Children and virtual parents never enter multi-selection; children additionally cannot favorite, pin, rename, bind slots, topmost, force terminate or join batch actions. `ArrowRight/ArrowLeft` own tree navigation, and Escape closes the right panel before search/editor/rebind/selection while restoring hidden/stale-child focus to its real root.

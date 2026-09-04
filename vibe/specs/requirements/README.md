@@ -43,6 +43,7 @@
 | [Companion Shared](modules/companion-shared.md#L1) | 跨 Provider 的状态内核、包合同、诊断与运行身份 |
 | [Interaction Shell](modules/interaction-shell.md#L1) | Quick Jump、快捷键、命令面板与全局交互 |
 | [File Favorites](modules/file-favorites.md#L1) | 文件收藏工作台、槽位与快速打开 |
+| [Window Jump](modules/window-jump.md#L1) | 窗口跳转身份、槽位与唯一应用原地换绑 |
 
 每条叶子必须恰好出现在一个模块的 `Primary Requirements`。模块不复制条款正文。
 

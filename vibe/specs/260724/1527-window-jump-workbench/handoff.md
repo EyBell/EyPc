@@ -27,4 +27,4 @@ WJ-22 restores exact cross-Space activation without allowing projections to own 
 
 ## Safety
 
-No background polling, persistent Space/liveness cache, title matching, unique-candidate auto-rebind, simulated input or unrelated business change is permitted. Real close/terminate testing remains confirmation-gated.
+No background polling, persistent Space/liveness cache, title matching, simulated input or unrelated business change is permitted. Unique-candidate auto-rebind is limited to RAW-208 (unique persisted record + unique live root + non-live probe, in-place). Real close/terminate testing remains confirmation-gated.

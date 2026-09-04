@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coalesceNativeWindowFamilies, compareWindowRowsByApplication, filterIdentifiedLiveWindows, liveWindowIdentity, mergePartialWindowFamilyInventory, targetMatchesLiveWindow, windowTargetAppMatches, type LiveWindow, type WindowTarget } from '../../src/domain/windows'
+import { coalesceNativeWindowFamilies, compareWindowRowsByApplication, filterIdentifiedLiveWindows, liveWindowIdentity, mergePartialWindowFamilyInventory, targetMatchesLiveWindow, uniqueSameAppRebindLive, windowTargetAppMatches, type LiveWindow, type WindowTarget } from '../../src/domain/windows'
 import { buildWindowTreeRows, candidateInstanceIdFromRowId, candidateWindowRowId, chooseFileManagerGroupLanding, fileManagerGroupKey, flattenWindowTree, liveWindowRowId, projectWindowTree, reconcileWindowTargetsWithFamilies, resolveVisibleWindowTreeFocus, resolveWindowTreeActionTargets, resolveWindowTreeNavigation, targetWindowRowId, toggleWindowTreeSelection } from '../../src/domain/windowTree'
 import { createWindowRebindState, transitionWindowRebind, windowInteractionAllowed, windowRebindView } from '../../src/domain/windowRebind'
 
@@ -323,6 +323,71 @@ describe('legacy member target reconciliation', () => {
     ])
     expect(result.slots.map((slot) => slot.targetIdByPlatform.darwin)).toEqual(['later', 'earlier'])
     expect(result.changed).toBe(false)
+  })
+})
+
+describe('unique same-app rebind gate', () => {
+  const chatgpt: LiveWindow = {
+    id: 'darwin:80:1', instanceId: 'darwin:80:1', platform: 'darwin', nativeRef: '80:0:1',
+    appId: 'com.openai.chat', appName: 'ChatGPT', pid: 80, title: 'ChatGPT', minimized: false, focused: true
+  }
+  const wechatA: LiveWindow = {
+    id: 'darwin:81:1', instanceId: 'darwin:81:1', platform: 'darwin', nativeRef: '81:0:1',
+    appId: 'com.tencent.xinWeChat', appName: '微信', pid: 81, title: '微信', minimized: false, focused: false
+  }
+  const wechatB: LiveWindow = {
+    id: 'darwin:82:1', instanceId: 'darwin:82:1', platform: 'darwin', nativeRef: '82:0:1',
+    appId: 'com.tencent.xinWeChat', appName: '微信', pid: 82, title: '微信', minimized: false, focused: false
+  }
+  const chatgptTarget = (id: string, lastInstanceId: string | null): WindowTarget => ({
+    id, alias: 'ChatGPT', scope: 'instance', platform: 'darwin', appId: 'com.openai.chat', appName: 'ChatGPT',
+    lastKnownTitle: 'ChatGPT', lastInstanceId, lastNativeRef: lastInstanceId ? '9:0:9' : null,
+    groupKey: null, lastActiveInstanceId: null, alternateAliases: [], favorite: true, pinned: false, createdAt: 1, updatedAt: 1
+  })
+  const wechatTarget: WindowTarget = {
+    id: 'wechat', alias: '微信', scope: 'instance', platform: 'darwin', appId: 'com.tencent.xinWeChat', appName: '微信',
+    lastKnownTitle: '微信', lastInstanceId: 'darwin:10:1', lastNativeRef: '10:0:1',
+    groupKey: null, lastActiveInstanceId: null, alternateAliases: [], favorite: true, pinned: false, createdAt: 1, updatedAt: 1
+  }
+
+  it('returns the single live root when the persisted instance target is also unique', () => {
+    const target = chatgptTarget('chatgpt', 'darwin:9:9')
+    expect(uniqueSameAppRebindLive(target, [chatgpt], [target])).toMatchObject({ instanceId: 'darwin:80:1' })
+  })
+
+  it('does not treat an already exact locator as a rebind candidate', () => {
+    const target = chatgptTarget('chatgpt', 'darwin:80:1')
+    target.lastNativeRef = '80:0:1'
+    expect(uniqueSameAppRebindLive(target, [chatgpt], [target])).toBeNull()
+  })
+
+  it('rejects two live roots of the same app even when the persisted record is unique', () => {
+    expect(uniqueSameAppRebindLive(wechatTarget, [wechatA, wechatB], [wechatTarget])).toBeNull()
+  })
+
+  it('rejects two persisted instance records of the same app even when only one live root exists', () => {
+    const first = chatgptTarget('chatgpt-a', 'darwin:9:9')
+    const second = chatgptTarget('chatgpt-b', 'darwin:8:8')
+    expect(uniqueSameAppRebindLive(first, [chatgpt], [first, second])).toBeNull()
+  })
+
+  it('does not treat a different app as the unique root even when titles look like ChatGPT', () => {
+    const edgeTarget = chatgptTarget('edge-chatgpt', 'darwin:9:9')
+    edgeTarget.appId = 'com.microsoft.edgemac'
+    edgeTarget.appName = 'Microsoft Edge'
+    edgeTarget.lastKnownTitle = 'ChatGPT - Mac - 已固定 - Microsoft Edge'
+    expect(uniqueSameAppRebindLive(edgeTarget, [chatgpt], [edgeTarget])).toBeNull()
+  })
+
+  it('ignores file-manager group targets and title similarity', () => {
+    const group: WindowTarget = {
+      ...chatgptTarget('finder', null),
+      scope: 'file-manager-group',
+      appId: 'com.apple.finder',
+      appName: 'Finder',
+      groupKey: 'file-manager:darwin:com.apple.finder'
+    }
+    expect(uniqueSameAppRebindLive(group, [chatgpt], [group])).toBeNull()
   })
 })
 

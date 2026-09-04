@@ -5917,7 +5917,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().windowRows[0]).toMatchObject({ id: 'live:darwin:3:1:1', favorite: false, pinned: false })
   })
 
-  it('does not deduplicate a stale target by pid or application when the native instance differs', async () => {
+  it('adopts the unique same-app live root in place without using the window title', async () => {
     const { state } = installPlatform({
       windows: {
         capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
@@ -5965,9 +5965,17 @@ describe('app runtime', () => {
 
     const rows = runtime.snapshot().windowRows
     expect(rows).toEqual([
-      expect.objectContaining({ id: 'target:t1', unavailable: true, title: 'Old Title' }),
-      expect.objectContaining({ id: 'live:darwin:7:0:222', unavailable: false, title: 'New Title' })
+      expect.objectContaining({
+        id: 'target:t1',
+        unavailable: false,
+        title: 'New Title'
+      })
     ])
+    expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({
+      lastInstanceId: 'darwin:7:0:222',
+      lastNativeRef: '7:0:222',
+      lastKnownTitle: 'New Title'
+    })
   })
 
   it('keeps darwin minimized live windows because off-Space CG windows are also reported offscreen', async () => {
@@ -6371,11 +6379,10 @@ describe('app runtime', () => {
       runtime.dispatch('windows.slot.activate', { slot: 1 })
       await flushWindowActions()
 
-      expect(activated).toEqual(['old-ref'])
+      expect(activated).toEqual(['old-ref', 'new-ref'])
       expect(listCount).toBe(1)
-      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('old-ref')
-      expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'diagnostic-target' })
-      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))
+      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('new-ref')
+      expect(runtime.snapshot().windowRebind).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
     })
 
     it('rebinds only the originating slot after explicit confirmation and preserves the shared old target', async () => {
@@ -6388,7 +6395,10 @@ describe('app runtime', () => {
           list: async () => ({
             capability: darwinCapability,
             completeness: 'complete' as const,
-            windows: [{ id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: currentTitle, minimized: false, focused: false }]
+            windows: [
+              { id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: currentTitle, minimized: false, focused: false },
+              { id: 'darwin:92:0:333', instanceId: 'darwin:92:0:333', platform: 'darwin', nativeRef: '92:0:333', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 92, title: 'Other.cs', minimized: false, focused: false }
+            ]
           }),
           activate: async (request) => {
             const window = activationLandingWindow(request)
@@ -6412,9 +6422,8 @@ describe('app runtime', () => {
 
       expect(activated).toEqual(['7:0:111'])
       expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'rider' })
-      expect(runtime.snapshot().windowRows).toHaveLength(1)
-      expect(runtime.snapshot().windowRows[0]).toMatchObject({
-        id: 'candidate:darwin:91:0:222',
+      expect(runtime.snapshot().windowRows).toHaveLength(2)
+      expect(runtime.snapshot().windowRows.find((row) => row.id === 'candidate:darwin:91:0:222')).toMatchObject({
         displayName: currentTitle,
         title: currentTitle,
         candidate: true,
@@ -6493,6 +6502,7 @@ describe('app runtime', () => {
     it('keeps candidate recovery active across empty, partial, and replacement refreshes until the user exits', async () => {
       let listCount = 0
       const firstCandidate = { id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin' as const, nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: 'Program.cs', minimized: false, focused: false }
+      const siblingCandidate = { ...firstCandidate, id: 'darwin:90:0:100', instanceId: 'darwin:90:0:100', nativeRef: '90:0:100', pid: 90, title: 'Other.cs' }
       const partialCandidate = { ...firstCandidate, id: 'darwin:91:0:333', instanceId: 'darwin:91:0:333', nativeRef: '91:0:333', title: 'README.md' }
       const replacementCandidate = { ...firstCandidate, id: 'darwin:91:0:444', instanceId: 'darwin:91:0:444', nativeRef: '91:0:444', title: 'package.json' }
       const { state } = installPlatform({
@@ -6500,7 +6510,7 @@ describe('app runtime', () => {
           capabilities: async () => darwinCapability,
           list: async () => {
             listCount += 1
-            if (listCount === 1) return { capability: darwinCapability, completeness: 'complete' as const, windows: [firstCandidate] }
+            if (listCount === 1) return { capability: darwinCapability, completeness: 'complete' as const, windows: [firstCandidate, siblingCandidate] }
             if (listCount === 2) return { capability: darwinCapability, completeness: 'complete' as const, windows: [] }
             if (listCount === 3) return { capability: darwinCapability, completeness: 'partial' as const, windows: [partialCandidate] }
             if (listCount === 4) return { capability: darwinCapability, completeness: 'partial' as const, windows: [] }
@@ -6516,7 +6526,7 @@ describe('app runtime', () => {
 
       runtime.dispatch('windows.slot.activate', { slot: 1 })
       await flushWindowActions()
-      expect(runtime.snapshot().windowRows.map((row) => row.id)).toEqual(['candidate:darwin:91:0:222'])
+      expect(runtime.snapshot().windowRows.map((row) => row.id).sort()).toEqual(['candidate:darwin:90:0:100', 'candidate:darwin:91:0:222'])
 
       runtime.dispatch('windows.refresh')
       await flushWindowActions()
@@ -6574,10 +6584,6 @@ describe('app runtime', () => {
       runtime.dispatch('windows.slot.activate', { slot: 1 })
       await flushWindowActions()
 
-      runtime.focusWindow('candidate:darwin:91:0:222')
-      runtime.dispatch('windows.activate')
-      await flushWindowActions()
-
       expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '7:0:111', lastKnownTitle: previousTitle })
       expect(runtime.snapshot().state.windowTargets[0]).not.toHaveProperty('titleHistory')
       expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'focus-denied', level: 'blocking' }))
@@ -6617,7 +6623,7 @@ describe('app runtime', () => {
       expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))
     })
 
-    it('does not auto-replace from a partial inventory even when its only visible candidate is similar', async () => {
+    it('auto-replaces the unique same-app root from a partial inventory without using the title', async () => {
       const activated: string[] = []
       const { state } = installPlatform({
         windows: {
@@ -6628,8 +6634,9 @@ describe('app runtime', () => {
             windows: [{ id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: 'agro-management – Program.cs', minimized: false, focused: false }]
           }),
           activate: async (request) => {
-            activated.push(activationLandingWindow(request).nativeRef)
-            return { outcome: 'not-found' as const }
+            const nativeRef = activationLandingWindow(request).nativeRef
+            activated.push(nativeRef)
+            return { outcome: nativeRef === '7:0:111' ? 'not-found' as const : 'activated' as const }
           }
         }
       })
@@ -6641,12 +6648,16 @@ describe('app runtime', () => {
       runtime.dispatch('windows.slot.activate', { slot: 1 })
       await flushWindowActions()
 
-      expect(activated).toEqual(['7:0:111'])
-      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('7:0:111')
-      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'target-indeterminate', level: 'blocking' }))
+      expect(activated).toEqual(['7:0:111', '91:0:222'])
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({
+        lastNativeRef: '91:0:222',
+        lastInstanceId: 'darwin:91:0:222',
+        lastKnownTitle: 'agro-management – Program.cs'
+      })
+      expect(runtime.snapshot().windowRebind).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
     })
 
-    it('uses the same explicit rebind requirement for manual workbench activation', async () => {
+    it('auto-replaces the unique same-app root from manual workbench activation', async () => {
       const activated: string[] = []
       const { state } = installPlatform({
         windows: {
@@ -6670,10 +6681,250 @@ describe('app runtime', () => {
       expect(runtime.dispatch('windows.activate').handled).toBe(true)
       await flushWindowActions()
 
-      expect(activated).toEqual(['old-ref'])
-      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('old-ref')
+      expect(activated).toEqual(['old-ref', 'manual-new'])
+      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('manual-new')
+      expect(runtime.snapshot().windowRebind).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
+    })
+
+    it('auto-replaces a unique same-app root in place after verified-gone, including a partial macOS inventory', async () => {
+      const activated: string[] = []
+      const { state, getHideCount } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'partial' as const,
+            windows: [{
+              id: 'darwin:80:1', instanceId: 'darwin:80:1', platform: 'darwin' as const, nativeRef: '80:0:1',
+              appId: 'com.example.target', appName: 'Example', pid: 80, title: 'ChatGPT', minimized: false, focused: true
+            }]
+          }),
+          probeInstance: async (window) => ({ status: 'gone' as const, instanceId: window.instanceId, liveness: 'verified-gone' as const, reason: 'owner-exited' as const }),
+          activate: async (request) => {
+            const nativeRef = activationLandingWindow(request).nativeRef
+            activated.push(nativeRef)
+            return { outcome: nativeRef === '7:0:111' ? 'not-found' as const : 'activated' as const }
+          }
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      state.windowTargets[0].lastInstanceId = 'darwin:7:111'
+      state.windowTargets[0].lastNativeRef = '7:0:111'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(activated).toEqual(['7:0:111', '80:0:1'])
+      expect(runtime.snapshot().state.windowTargets).toHaveLength(1)
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({
+        id: 'diagnostic-target',
+        alias: '诊断目标',
+        favorite: true,
+        lastInstanceId: 'darwin:80:1',
+        lastNativeRef: '80:0:1',
+        lastKnownTitle: 'ChatGPT'
+      })
+      expect(runtime.snapshot().state.windowSlots[0].targetIdByPlatform.darwin).toBe('diagnostic-target')
+      expect(runtime.snapshot().windowRebind).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
+      expect(getHideCount()).toBeGreaterThanOrEqual(1)
+    })
+
+    it('adopts a unique same-app root on refresh without activating it', async () => {
+      const activated: string[] = []
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'partial' as const,
+            windows: [{
+              id: 'darwin:80:1', instanceId: 'darwin:80:1', platform: 'darwin' as const, nativeRef: '80:0:1',
+              appId: 'com.example.target', appName: 'Example', pid: 80, title: 'ChatGPT', minimized: false, focused: true
+            }]
+          }),
+          probeInstance: async (window) => ({ status: 'gone' as const, instanceId: window.instanceId, liveness: 'verified-gone' as const, reason: 'owner-exited' as const }),
+          activate: async (request) => {
+            activated.push(activationLandingWindow(request).nativeRef)
+            return { outcome: 'activated' as const }
+          }
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      state.windowTargets[0].lastInstanceId = 'darwin:7:111'
+      state.windowTargets[0].lastNativeRef = '7:0:111'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.refresh')
+      await flushWindowActions()
+
+      expect(activated).toEqual([])
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({
+        id: 'diagnostic-target',
+        lastInstanceId: 'darwin:80:1',
+        lastNativeRef: '80:0:1'
+      })
+      expect(runtime.snapshot().windowRebind).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
+    })
+
+    it('does not auto-replace when two live roots of the same app are visible', async () => {
+      const activated: string[] = []
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'complete' as const,
+            windows: [
+              {
+                id: 'darwin:80:1', instanceId: 'darwin:80:1', platform: 'darwin' as const, nativeRef: '80:0:1',
+                appId: 'com.example.target', appName: 'Example', pid: 80, title: '微信', minimized: false, focused: false
+              },
+              {
+                id: 'darwin:81:1', instanceId: 'darwin:81:1', platform: 'darwin' as const, nativeRef: '81:0:1',
+                appId: 'com.example.target', appName: 'Example', pid: 81, title: '微信', minimized: false, focused: true
+              }
+            ]
+          }),
+          probeInstance: async (window) => ({ status: 'gone' as const, instanceId: window.instanceId, liveness: 'verified-gone' as const, reason: 'owner-exited' as const }),
+          activate: async (request) => {
+            activated.push(activationLandingWindow(request).nativeRef)
+            return { outcome: request.root.nativeRef === '7:0:111' ? 'not-found' as const : 'activated' as const }
+          }
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      state.windowTargets[0].lastInstanceId = 'darwin:7:111'
+      state.windowTargets[0].lastNativeRef = '7:0:111'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(activated).toEqual(['7:0:111'])
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111' })
       expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'diagnostic-target' })
       expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))
+    })
+
+    it('does not auto-replace when two persisted instance records share the app', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'complete' as const,
+            windows: [{
+              id: 'darwin:80:1', instanceId: 'darwin:80:1', platform: 'darwin' as const, nativeRef: '80:0:1',
+              appId: 'com.example.target', appName: 'Example', pid: 80, title: 'ChatGPT', minimized: false, focused: true
+            }]
+          }),
+          probeInstance: async (window) => ({ status: 'gone' as const, instanceId: window.instanceId, liveness: 'verified-gone' as const, reason: 'owner-exited' as const }),
+          activate: async () => ({ outcome: 'not-found' as const })
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      state.windowTargets[0].lastInstanceId = 'darwin:7:111'
+      state.windowTargets[0].lastNativeRef = '7:0:111'
+      state.windowTargets.push({
+        ...state.windowTargets[0],
+        id: 'diagnostic-target-2',
+        alias: '第二份',
+        lastInstanceId: 'darwin:6:66',
+        lastNativeRef: '6:0:66',
+        createdAt: 2,
+        updatedAt: 2
+      })
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ id: 'diagnostic-target', lastInstanceId: 'darwin:7:111' })
+      expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'diagnostic-target' })
+    })
+
+    it('does not auto-replace when the old instance is still live', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'complete' as const,
+            windows: [{
+              id: 'darwin:80:1', instanceId: 'darwin:80:1', platform: 'darwin' as const, nativeRef: '80:0:1',
+              appId: 'com.example.target', appName: 'Example', pid: 80, title: 'ChatGPT', minimized: false, focused: true
+            }]
+          }),
+          probeInstance: async (window) => ({
+            status: 'live' as const,
+            instanceId: window.instanceId,
+            liveness: 'verified-live' as const,
+            evidence: 'space-binding' as const
+          }),
+          activate: async () => ({ outcome: 'not-found' as const })
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      state.windowTargets[0].lastInstanceId = 'darwin:7:111'
+      state.windowTargets[0].lastNativeRef = '7:0:111'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111' })
+      expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'diagnostic-target' })
+    })
+
+    it('auto-replaces a unique same-app root when native liveness is indeterminate', async () => {
+      const activated: string[] = []
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'partial' as const,
+            windows: [{
+              id: 'darwin:80:1', instanceId: 'darwin:80:1', platform: 'darwin' as const, nativeRef: '80:0:1',
+              appId: 'com.example.target', appName: 'Example', pid: 80, title: 'LocalOps', minimized: false, focused: true
+            }]
+          }),
+          probeInstance: async (window) => ({
+            status: 'indeterminate' as const,
+            instanceId: window.instanceId,
+            liveness: 'indeterminate' as const,
+            reason: 'native-query-failed' as const
+          }),
+          activate: async (request) => {
+            const nativeRef = activationLandingWindow(request).nativeRef
+            activated.push(nativeRef)
+            return { outcome: nativeRef === '7:0:111' ? 'not-found' as const : 'activated' as const }
+          }
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      state.windowTargets[0].lastInstanceId = 'darwin:7:111'
+      state.windowTargets[0].lastNativeRef = '7:0:111'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(activated).toEqual(['7:0:111', '80:0:1'])
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({
+        id: 'diagnostic-target',
+        lastInstanceId: 'darwin:80:1',
+        lastNativeRef: '80:0:1',
+        lastKnownTitle: 'LocalOps'
+      })
+      expect(runtime.snapshot().windowRebind).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
     })
 
     it('marks a target closed only after an exact native-instance probe proves it gone', async () => {
