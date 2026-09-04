@@ -36,6 +36,7 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Ring reachability outlives list visibility](../ring-reachability-outlives-list-visibility.md#L1)
 - [Parked item inherits fresh-item invalidation](../parked-item-inherits-fresh-item-invalidation.md#L1)
 - [Membership predicate restated at every consumer](../membership-predicate-restated-at-every-consumer.md#L1)
+- [Cursor sqlite pin write is not sidebar pin](../cursor-sqlite-pin-write-is-not-sidebar-pin.md#L1)
 - [Plain cold start bypasses CodexHost; open readiness launches through the Host first](../codexhost-plain-cold-start-bypasses-host.md#L1)
 
 ## Related Error Records

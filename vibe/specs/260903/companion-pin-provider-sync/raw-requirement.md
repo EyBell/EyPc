@@ -13,6 +13,18 @@ spec_id: SPEC-260903-COMPANION-PIN-PROVIDER-SYNC
 
 （「Cloud Code」按本项目既有记忆指 Claude Code 桌面 App。）
 
+## 用户补充（2026-09-04，claude 会话）
+
+> 针对于置顶状态同步 需要去优化一下当前的这个实现, 我需要的效果如下:
+> * 针对于 Codex 或 Codex Host 里的对话 它可以与插件 Codex Host 以及 Codex 进行真正的实时同步 也就是说 在任何一个地方操作了置顶或取消置顶 都可以在插件以及对应的 Codex 上实时同步展示置顶或非置顶状态
+> * 针对于 Cloud Code 和 Cursor，当前 PC 插件可以实现的效果如下：
+>  1. 本地插件支持置顶和取消置顶。
+>  2. 当在 Cloud Code 或 Cursor 软件内操作置顶和取消置顶时，可以实时同步到本插件。
+>  3. 本插件不能直接操作软件内的置顶和取消置顶项，因为该操作是无效的，也无法实时同步。
+> 具体要求如下：1. 避免代码冗余，尽量封装成接口。2. 部分能力需要根据 Agent 宿主进行判断适配。3. 接口化、统一化，方便后续管理。
+
+同轮裁决（用户选项）：Claude / Cursor 的写出站死代码**删除**；Claude App / Cursor 在应用内已置顶的任务在 EyPc 点图钉时**允许叠加本地置顶**（应用内置顶保留、插件不写）。
+
 ## 核验证据（只读，本机 2026-09-03）
 
 ### Codex Desktop 原生线程
@@ -37,10 +49,12 @@ spec_id: SPEC-260903-COMPANION-PIN-PROVIDER-SYNC
 
 ## 裁决
 
-- 感知四路全部可行；触发只有 Codex 原生线程与 CodexHost 额外进程可行，Claude / Cursor 只能单向读入。
-- 可回写的 Provider 是置顶的单一来源：EyPc 写到 Provider 并显示回读值；写失败回退本地置顶。只读 Provider 的置顶只增不减，EyPc 取消只清本地置顶。
-- 修订 PRD「本地偏好不回写 Provider / 原生置顶顺序只读」：置顶成为唯一回写 Codex 的本地偏好。
-- Desktop 侧栏是否在 EyPc 写入后即时刷新没有静态证据。真机（2026-09-03 用户实测）：不即时刷新，切窗后刷新；成功提示收口为「已置顶并同步到 Codex；侧栏切窗后刷新」。
+- 感知四路全部可行。调研当时的写出站：Codex 原生与 CodexHost 有官方/会合点协议；Claude / Cursor 当时只有磁盘覆盖金丝，产品暂不授予 `pin`。
+- 2026-09-03 用户授权完整实现后：四路均可回写。
+- 2026-09-04 用户收口（Cursor sqlite 写通但侧栏不刷新）：Cloud Code（Claude App）与 Cursor 不再回写；插件自己维护置顶，这两路应用内置顶仍同步进插件。Codex / CodexHost 写出站保留。
+- 修订 PRD：置顶回写只保留 Codex 原生与 CodexHost；会话归档仍走既有 Claude `isArchived` / Cursor `composerHeaders` 写。
+- 2026-09-04 接口化收口：置顶策略由 `provider-manifest.json` `pin` 块（`inbound / outbound / appLabel / pinNoun`）单点声明，preload 与 renderer 共读；Host Registry 对 `outbound:false` 的 Provider 拒绝 `setPin` 适配器；Claude / Cursor 写出站代码删除。入站实时：Codex Desktop 置顶只改全局状态镜像 `pinned-thread-ids`，插件在已有的未读 watcher 上比较该镜像并强制 tasks-only 成员重扫；CodexHost 监听 `<data dir>/mapping-store/threads/*.json` 变化后失效列表 TTL 并重扫。Codex Desktop 侧栏对 EyPc 写入仍只在重获焦点时重拉（无通知），不可改。
+- Desktop 侧栏是否在 EyPc 写入后即时刷新没有静态证据。真机（2026-09-03 用户实测 Codex）：不即时刷新，切窗后刷新；成功提示收口为「已置顶并同步到 {应用}；应用侧栏稍后刷新」。不得把 Cursor sqlite 回读成功说成侧栏已置顶。
 
 ## 输入规范化边界
 
