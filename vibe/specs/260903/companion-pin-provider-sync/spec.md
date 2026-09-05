@@ -3,7 +3,7 @@
 spec_id: `SPEC-260903-COMPANION-PIN-PROVIDER-SYNC`
 Tool: claude
 Date: 2026-09-03
-Status: `implementation-landed / focused-automated-verified / artifact-ready / host-verified-inbound / desktop-repaint-on-focus / host-verified-native-and-host-pin / claude-cursor-pin-inbound-only / pin-lane-interface / inbound-realtime-host-pending`
+Status: `implementation-landed / focused-automated-verified / artifact-ready / host-verified-inbound / desktop-repaint-on-focus / host-verified-native-and-host-pin / claude-cursor-pin-inbound-only / pin-lane-interface / host-verified-codex-bidirectional-pin / host-verified-cursor-wal-inbound`
 Documentation level: `standard requirement`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
@@ -30,8 +30,12 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L250)
     "vibe/specs/PROJECT_STATUS.md",
     "vibe/knowledge/ARCHITECTURE.md",
     "vibe/knowledge/error-memory/cursor-sqlite-pin-write-is-not-sidebar-pin.md",
+    "vibe/knowledge/error-memory/cursor-workspace-pin-cache-ignores-wal.md",
+    "vibe/knowledge/error-memory/cursor-disk-completed-stale-hook-turnopen.md",
+    "vibe/knowledge/error-memory/codex-desktop-pin-sqlite-not-json-mirror.md",
     "vibe/knowledge/error-memory/verify-policy-must-not-skip-utools-artifact-build.md",
     "vibe/knowledge/error-memory/modules/companion-actions-and-presentation.md",
+    "vibe/knowledge/error-memory/modules/companion-task-state.md",
     "vibe/knowledge/error-memory/modules/runtime-and-packaging.md",
     "src/help/guides/codex.md"
   ],
@@ -43,6 +47,7 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L250)
     "preload/companion/provider-registry.cjs",
     "preload/companion/task-kernel.cjs",
     "preload/companion/task-actions.cjs",
+    "preload/companion/evidence-adapter-v7.cjs",
     "preload/claude/code-sessions.cjs",
     "preload/claude/index.cjs",
     "preload/cursor/index.cjs",
@@ -52,6 +57,7 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L250)
     "src/domain/companionTaskTopology.ts",
     "src/domain/codex.ts",
     "src/domain/codexPresentation.ts",
+    "src/domain/cursorAgent.ts",
     "src/runtime/codexController.ts",
     "src/FloatApp.vue",
     "tests/platform/codexPinBridge.test.ts",
@@ -61,8 +67,10 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L250)
     "tests/platform/codexAppServerBridge.test.ts",
     "tests/platform/claudeBridge.test.ts",
     "tests/platform/cursorInventory.test.ts",
+    "tests/platform/providerEvidenceAdapterV7.test.ts",
     "tests/domain/companionProvider.test.ts",
     "tests/domain/companionTaskPackage.test.ts",
+    "tests/domain/cursorAgent.test.ts",
     "tests/ui/codexCompanion.test.ts"
   ],
   "validators": [
@@ -79,8 +87,12 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L250)
     "vibe/specs/PROJECT_STATUS.md",
     "vibe/knowledge/ARCHITECTURE.md",
     "vibe/knowledge/error-memory/cursor-sqlite-pin-write-is-not-sidebar-pin.md",
+    "vibe/knowledge/error-memory/cursor-workspace-pin-cache-ignores-wal.md",
+    "vibe/knowledge/error-memory/cursor-disk-completed-stale-hook-turnopen.md",
+    "vibe/knowledge/error-memory/codex-desktop-pin-sqlite-not-json-mirror.md",
     "vibe/knowledge/error-memory/verify-policy-must-not-skip-utools-artifact-build.md",
     "vibe/knowledge/error-memory/modules/companion-actions-and-presentation.md",
+    "vibe/knowledge/error-memory/modules/companion-task-state.md",
     "vibe/knowledge/error-memory/modules/runtime-and-packaging.md",
     "src/help/guides/codex.md",
     "preload/codex/pin-bridge.cjs",
@@ -90,6 +102,7 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L250)
     "preload/companion/provider-registry.cjs",
     "preload/companion/task-kernel.cjs",
     "preload/companion/task-actions.cjs",
+    "preload/companion/evidence-adapter-v7.cjs",
     "preload/claude/code-sessions.cjs",
     "preload/claude/index.cjs",
     "preload/cursor/index.cjs",
@@ -99,6 +112,7 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L250)
     "src/domain/companionTaskTopology.ts",
     "src/domain/codex.ts",
     "src/domain/codexPresentation.ts",
+    "src/domain/cursorAgent.ts",
     "src/runtime/codexController.ts",
     "src/FloatApp.vue",
     "tests/platform/codexPinBridge.test.ts",
@@ -108,8 +122,10 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L250)
     "tests/platform/codexAppServerBridge.test.ts",
     "tests/platform/claudeBridge.test.ts",
     "tests/platform/cursorInventory.test.ts",
+    "tests/platform/providerEvidenceAdapterV7.test.ts",
     "tests/domain/companionProvider.test.ts",
     "tests/domain/companionTaskPackage.test.ts",
+    "tests/domain/cursorAgent.test.ts",
     "tests/ui/codexCompanion.test.ts"
   ]
 }
@@ -126,7 +142,7 @@ Kernel 任务新增 `providerPin: boolean | null`、`providerPinOrder`、`provid
 - Codex 原生：`thread/list` 行 `section.id === 01984de2-…` 为权威；行无 `section` 键时才回退全局状态镜像 `pinned-thread-ids`。
 - CodexHost 额外进程：Host `thread list` 行 `pinned`（codex-host 本轮新增）；老 Host 省略时报「无车道」。持久线程记忆携带 `pinned`。
 - Claude App：`local_*.json` `isStarred`（入站）；插件置顶不写该键。
-- Cursor：全部 `workspaceStorage/*/state.vscdb` 的 `cursor/pinnedComposers`，按文件签名缓存，读失败保留旧值（入站）；插件置顶不写该键。
+- Cursor：全部 `workspaceStorage/*/state.vscdb` 的 `cursor/pinnedComposers`，按主库+WAL 签名缓存，读失败保留旧值（入站）；插件置顶不写该键。
 
 ### RAW-205#3 · 回写与来源仲裁
 
@@ -139,7 +155,7 @@ Kernel 任务新增 `providerPin: boolean | null`、`providerPinOrder`、`provid
 - 渲染层：`COMPANION_PROVIDER_PIN_POLICY` / `companionPinAppLabel` / `companionPinNativeLabel` 从 manifest 派生，所有置顶文案与诊断 `provider` 不再按 Provider id 分支；卡片新增 `providerPinned`。
 - 叠加本地置顶：应用内已置顶（`providerPin:true`）且本行不可写的任务在 EyPc 点图钉 = 叠加 `localPin`（提示「来源：X 星标/置顶 · 点击叠加 EyPc 本地置顶」；叠加后「X + EyPc 本地置顶 · 点击取消本地置顶」）；应用内置顶只能在应用中取消；`Alt+↑/↓` 只对本地置顶生效。项目级 Codex 原生置顶仍只读。
 - 死代码删除：`cursor/pin.cjs`、`code-sessions.setSessionStarred`、`claude.setSessionPin`、`cursor.setTaskPin`、平台 API 与类型、相关测试。
-- 入站实时：Codex 原生——Desktop 置顶只改 `.codex-global-state.json` 顶层 `pinned-thread-ids`，未读 watcher 同一次解析附带该镜像（有序），变化即 `requestCodexInventoryMembershipReconciliation('watcher-event', { forceTasksOnly: true })`，fresh `thread/list` 的 `section` 为权威；首读只记基线。CodexHost——rendezvous 成功后 `fs.watch(<CODEXHOST_DATA_DIR|~/.codexhost>/mapping-store/threads)`，`*.json` 变化 300 ms 防抖后失效列表 TTL 并请求 `queueCompanionHostReconciliation('codex')`；缺目录时保留 TTL 轮询。Claude / Cursor 沿用既有 watcher。
+- 入站实时：Codex 原生——Desktop 置顶只改 `.codex-global-state.json` 顶层 `pinned-thread-ids`，未读 watcher 同一次解析附带该镜像（有序），变化即 `requestCodexInventoryMembershipReconciliation('watcher-event', { forceTasksOnly: true })`，fresh `thread/list` 的 `section` 为权威；首读只记基线。2026-09-05 用户确认该路双向已满足（App→插件、插件→App），不另做 `state_5.sqlite` Pinned 分区 watcher。CodexHost——rendezvous 成功后 `fs.watch(<CODEXHOST_DATA_DIR|~/.codexhost>/mapping-store/threads)`，`*.json` 变化 300 ms 防抖后失效列表 TTL 并请求 `queueCompanionHostReconciliation('codex')`；缺目录时保留 TTL 轮询。Claude 沿用既有 watcher。Cursor workspace 递归 watch 把 `state.vscdb-wal` 纳入签名与 StatWatcher，取消置顶只写 WAL 时也会重读。
 - 不可改边界：Codex 无 section 通知，EyPc 写入后 Desktop 侧栏仍在重获焦点时刷新；提示文案保持「应用侧栏稍后刷新」。
 
 ### RAW-205#4 · Desktop 侧栏与产品条款修订
@@ -163,8 +179,10 @@ Codex 没有 section 变更通知，Desktop IPC 没有 pin 消息；真机（202
 - 产品回写（2026-09-03 曾接入 Claude/Cursor 写出站；2026-09-04 用户收口为入站-only）：Claude / Cursor 不再授予 `capabilities.pin`，Host Registry `setPin` 返回 `unsupported`；会话归档状态仍走既有 Claude `isArchived` / Cursor `composerHeaders` 写。
 
 - 2026-09-04 接口化收口（claude 会话）：聚焦 vitest `companionTaskKernel / companionTaskActionsBridge / companionContractsV7 / codexPinBridge / providerEvidenceAdapterV7 / claudeBridge / cursorInventory / eypcPlatform / runtimeIdentity / codexhostDiscovery / codexhostArchive / codexAppServerBridge / companionProvider / companionTaskPackage / codexCompanion / codexController / companionAggregate` 全绿；typecheck 通过；入口预算 14402 / 278 / 157；`pnpm verify` 与 build 见 changes。真机入站实时（Desktop 置顶 ≤2 s 进插件、Host 记录写入触发重扫、叠加本地置顶）待用户重载 uTools 核验。
+- 2026-09-05 用户确认（cursor 会话）：Codex Desktop 置顶双向已符合要求——App 里置顶/取消会自动进插件，插件置顶/取消也会同步到 App。本轮只记录，不新增 sqlite 分区 watcher；未完成的 watcher 草稿已撤回。
+- 2026-09-05 用户确认（cursor 会话）：Cursor APP 置顶/取消置顶会在插件置顶分组正常展示；入站走 workspace 主库+WAL 签名。磁盘完成后陈旧 `turnOpen` 仍只有聚焦自动化证据，未另报真机相位。
 
 ## 会话衔接
 
-- RP-02（2026-09-04）：接口化与入站实时已落地未提交；待用户真机核验四路入站与叠加本地置顶后收口状态为 `host-verified-inbound-realtime`。
+- RP-02（2026-09-05）：Codex Desktop 双向置顶已用户确认，状态含 `host-verified-codex-bidirectional-pin`。Cursor WAL 入站已用户确认，状态含 `host-verified-cursor-wal-inbound`。
 - RP-01：Codex / CodexHost 置顶写出站仍接产品车道。Cloud Code / Cursor 改为插件自持 + 入站；sqlite 回读不得声称侧栏已置顶。两仓改动未提交。

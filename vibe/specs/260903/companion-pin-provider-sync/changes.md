@@ -11,7 +11,15 @@
 | `preload/claude/index.cjs` | `setSessionPin` |
 | `preload/cursor/pin.cjs`（新） | workspace `ItemTable` `cursor/pinnedComposers` 加入/去掉 composer id，写后回读 |
 | `preload/cursor/index.cjs` | `setTaskPin` |
-| `preload/cursor/inventory.cjs` | v5：`queryRows` 通用 sqlite 车道、`workspaceStorage/*/state.vscdb` `cursor/pinnedComposers` 扫描（按 size:mtime 缓存、读失败保留旧值）、`projectRow` 带 `pinned/pinnedOrder`、快照 `pinnedAvailable/pinnedStoreCount`、递归 watch workspace 库并纳入签名 |
+| `preload/cursor/inventory.cjs` | v5：`queryRows` 通用 sqlite 车道、`workspaceStorage/*/state.vscdb` `cursor/pinnedComposers` 扫描（按主库+WAL size:mtime 缓存、读失败保留旧值）、`projectRow` 带 `pinned/pinnedOrder`、快照 `pinnedAvailable/pinnedStoreCount`、递归 watch workspace 库并纳入签名 |
+| **2026-09-05 Codex 双向核验（记录，无代码）** | |
+| spec / `PROJECT_STATUS` / `shared-raw-205` / ARCHITECTURE / error-memory | 用户确认 Codex Desktop 置顶双向已满足（App↔插件）；JSON/sqlite 计数分叉只作诊断；撤回未落地的 sqlite 分区 watcher |
+| **2026-09-05 Cursor WAL 入站与陈旧 turnOpen** | | |
+| `preload/cursor/inventory.cjs` | 置顶缓存/`signatureOf` 含 workspace `-wal`；watch 时对已发现 workspace 主库+WAL 补 StatWatcher |
+| `preload/companion/evidence-adapter-v7.cjs` / `src/domain/cursorAgent.ts` | 磁盘 `completed` 且无冷路径活标记时，陈旧 `hook.turnOpen` / `hookPhase=running` 不再单独保持进行中；`aborted`/空磁盘仍允许开 Turn 定 running |
+| `tests/platform/cursorInventory.test.ts` | +2：主库签名冻结时 WAL 变化重读取消置顶；workspace WAL 通知 |
+| `tests/platform/providerEvidenceAdapterV7.test.ts` / `tests/domain/cursorAgent.test.ts` | 磁盘 completed + 陈旧 turnOpen → completed；活 `unfinishedRunAt` / 空磁盘仍 running |
+| **2026-09-05 Cursor WAL 入站真机** | 用户确认 Cursor APP 置顶/取消置顶在插件内正常展示；状态改 `host-verified-cursor-wal-inbound` |
 | `src/domain/companionTaskPackage.ts` | 快照类型 `providerPin*`、`capabilities.pin`；`pinSource`：local → native（providerPin）→ 未知时保留库存原生标记；Pinned 分区收 native |
 | `src/domain/companionTaskTopology.ts` | 命令名 `set-provider-pin` |
 | `src/domain/codex.ts` | `companionCapabilities.pin` |
