@@ -313,7 +313,8 @@ function createInventoryReader(dependencies) {
     return textOf(dependencies.workspaceStorageDir) || workspaceStorageDir(path, resolveDbPath())
   }
 
-  /** workspace db path -> { signature, ids } so an unchanged store is never re-queried. */
+  /** workspace db path -> { signature, ids } so an unchanged store is never re-queried.
+   * Signature is main sqlite plus WAL; Cursor often unpins only in the WAL. */
   const pinnedCache = new Map()
 
   function listWorkspaceDbs() {
@@ -343,7 +344,7 @@ function createInventoryReader(dependencies) {
     let available = dbs.length > 0
     let scanned = 0
     for (const dbPath of dbs) {
-      const signature = dbSignature(dbPath)
+      const signature = storeSignature(dbPath)
       const cached = pinnedCache.get(dbPath)
       let ids = cached ? cached.ids : []
       if (!cached || cached.signature !== signature) {
@@ -421,6 +422,10 @@ function createInventoryReader(dependencies) {
     }
   }
 
+  function storeSignature(dbPath) {
+    return `${dbSignature(dbPath)}|${dbSignature(`${dbPath}-wal`)}`
+  }
+
   function watch(listener) {
     if (typeof listener !== 'function') return () => {}
     const dbPath = resolveDbPath()
@@ -436,7 +441,7 @@ function createInventoryReader(dependencies) {
     // Workspace pin stores change without touching the global db, so their
     // signatures join the change detector and a recursive watch covers them.
     const workspaceRoot = resolveWorkspaceStorageDir()
-    const signatureOf = () => [...targets, ...listWorkspaceDbs()].map(dbSignature).join('|')
+    const signatureOf = () => [...targets, ...listWorkspaceDbs().flatMap((db) => [db, `${db}-wal`])].map(dbSignature).join('|')
     let lastSignature = signatureOf()
     const notify = () => {
       if (disposed) return
@@ -495,6 +500,17 @@ function createInventoryReader(dependencies) {
           watchFileFn(filePath, { persistent: false, interval: WATCHER_RECOVERY_INTERVAL_MS }, callback)
           recovery.push({ filePath, callback })
         } catch { /* recovery is optional */ }
+      }
+    }
+    if (watchFileFn) {
+      for (const dbPath of listWorkspaceDbs()) {
+        for (const filePath of [dbPath, `${dbPath}-wal`]) {
+          try {
+            const callback = () => requestNotify()
+            watchFileFn(filePath, { persistent: false, interval: WATCHER_RECOVERY_INTERVAL_MS }, callback)
+            recovery.push({ filePath, callback })
+          } catch { /* recovery is optional */ }
+        }
       }
     }
     return () => {

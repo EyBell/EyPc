@@ -240,6 +240,59 @@ describe('cursor inventory reader', () => {
     }
   })
 
+  it('re-reads pinned composers when the workspace WAL changes even if the main db signature is frozen', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-pinned-wal-'))
+    const dbPath = join(root, 'User', 'globalStorage', 'state.vscdb')
+    mkdirSync(dirname(dbPath), { recursive: true })
+    writeFixture(dbPath)
+    const workspaceA = join(root, 'User', 'workspaceStorage', 'empty-window')
+    const workspaceB = join(root, 'User', 'workspaceStorage', 'other')
+    mkdirSync(workspaceA, { recursive: true })
+    mkdirSync(workspaceB, { recursive: true })
+    const workspaceBDb = join(workspaceB, 'state.vscdb')
+    const writePins = (dir: string, ids: string[]) => {
+      const db = new DatabaseSync(join(dir, 'state.vscdb'))
+      db.exec('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)')
+      db.prepare('INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)').run('cursor/pinnedComposers', JSON.stringify(ids))
+      db.close()
+    }
+    writePins(workspaceA, [NONE_WITH_HEADERS])
+    writePins(workspaceB, [LOCAL])
+    let freezeMain = false
+    let frozenMain: ReturnType<typeof fs.statSync> | undefined
+    try {
+      const reader = inventoryModule.createInventoryReader({
+        fs: {
+          ...fs,
+          statSync: (value: string) => {
+            if (freezeMain && String(value) === workspaceBDb) {
+              if (!frozenMain) frozenMain = fs.statSync(workspaceBDb)
+              return frozenMain
+            }
+            return fs.statSync(value)
+          }
+        },
+        path: { join, dirname },
+        os: { homedir: () => root },
+        platform: 'darwin',
+        env: {},
+        stateDbPath: dbPath,
+        DatabaseSync
+      })
+      const snapshot = reader.readInventory()
+      expect(snapshot.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)).toMatchObject({ pinned: true })
+      freezeMain = true
+      frozenMain = fs.statSync(workspaceBDb)
+      writePins(workspaceB, [])
+      require('node:fs').writeFileSync(`${workspaceBDb}-wal`, 'wal-unpin')
+      const unpinned = reader.readInventory()
+      expect(unpinned.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)).toMatchObject({ pinned: false })
+      expect(unpinned.sessions.find((session: { composerId: string }) => session.composerId === NONE_WITH_HEADERS)).toMatchObject({ pinned: true })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('parses the pin list defensively', () => {
     expect(inventoryModule.parsePinnedComposers([{ value: JSON.stringify([LOCAL, LOCAL, 7, '']) }])).toEqual([LOCAL])
     expect(inventoryModule.parsePinnedComposers([{ value: 'not json' }])).toEqual([])
@@ -389,6 +442,59 @@ describe('cursor inventory reader', () => {
       const dispose = reader.watch(() => { notified += 1 })
       expect(typeof fileListener).toBe('function')
       require('node:fs').writeFileSync(`${dbPath}-wal`, 'x')
+      fileListener?.()
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(notified).toBe(1)
+      fileListener?.()
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(notified).toBe(1)
+      dispose()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('notifies inventory watchers when a workspace WAL changes even if that store main is frozen', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-workspace-wal-watch-'))
+    const dbPath = join(root, 'User', 'globalStorage', 'state.vscdb')
+    mkdirSync(dirname(dbPath), { recursive: true })
+    writeFixture(dbPath)
+    const workspaceB = join(root, 'User', 'workspaceStorage', 'other')
+    mkdirSync(workspaceB, { recursive: true })
+    const workspaceDb = join(workspaceB, 'state.vscdb')
+    const db = new DatabaseSync(workspaceDb)
+    db.exec('CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)')
+    db.prepare('INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)').run('cursor/pinnedComposers', JSON.stringify([LOCAL]))
+    db.close()
+    const frozenMain = fs.statSync(workspaceDb)
+    let fileListener: (() => void) | undefined
+    try {
+      const reader = inventoryModule.createInventoryReader({
+        fs: {
+          existsSync: () => true,
+          readdirSync: (value: string) => require('node:fs').readdirSync(value),
+          statSync: (value: string) => {
+            if (String(value) === workspaceDb) return frozenMain
+            try { return require('node:fs').statSync(value) } catch { throw new Error('missing') }
+          },
+          watch: () => ({ close() {}, on() {} })
+        },
+        watchFile: (_path: string, _opts: unknown, callback: () => void) => {
+          fileListener = callback
+        },
+        unwatchFile: () => undefined,
+        path: { join, dirname },
+        os: { homedir: () => root },
+        platform: 'darwin',
+        env: {},
+        stateDbPath: dbPath,
+        workspaceStorageDir: join(root, 'User', 'workspaceStorage'),
+        DatabaseSync
+      })
+      let notified = 0
+      const dispose = reader.watch(() => { notified += 1 })
+      expect(typeof fileListener).toBe('function')
+      require('node:fs').writeFileSync(`${workspaceDb}-wal`, 'x')
       fileListener?.()
       await new Promise((resolve) => setImmediate(resolve))
       expect(notified).toBe(1)
