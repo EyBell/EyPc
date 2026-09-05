@@ -1,7 +1,7 @@
 import { commandProfilesFromRecord } from '../../keybinding/commandProfile'
 import { createFeatureModuleV7, defaultShouldSubscribeV7 } from '../featureModule'
 import { selectWindowsRuntimeSliceV7, type WindowsRuntimeSliceV7 } from '../featureRuntimeSlices'
-import { registerWindowsActions } from './actions'
+import { registerWindowsActions, enterWindowsTab } from './actions'
 import { WINDOWS_COMMAND_PROFILES } from './commands'
 import { bindWindowsPage } from './pageBind'
 import { WINDOWS_ROUTES } from './routes'
@@ -19,5 +19,6 @@ export const windowsFeatureModuleV7 = createFeatureModuleV7<'windows', WindowsRu
   selectView: selectWindowsRuntimeSliceV7,
   shouldSubscribe: (ctx) => defaultShouldSubscribeV7('windows', lifecycle, ctx),
   registerActions: registerWindowsActions,
+  onTabEnter: enterWindowsTab,
   bindPage: bindWindowsPage
 })

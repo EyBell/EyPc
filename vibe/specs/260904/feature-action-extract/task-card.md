@@ -53,7 +53,7 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
 - Documentation level: `standard`
 - Execution: `main-only` until a worktree is authorized
 - Automation lane: `not-applicable`
-- Status: `in-progress / slice-1`
+- Status: `in-progress / slice-2`
 
 ## Explicit non-goals
 
@@ -64,7 +64,7 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
 ## Construction slices
 
 1. **ActionHost + 按前缀搬家。** 已接线：`FeatureActionHostV7` + 各包 `actions.ts`；Shell 只留全局命令。零语义。
-2. **`onTabEnter`。** `setTab` 里 mqtt archive / windows refresh / codex `syncActivation` 改模块钩子；缺省 no-op。
+2. **`onTabEnter`。** 已接线：`setTab` 遍历各包可选钩子；mqtt archive / windows refresh / codex `syncActivation` 在对应包；缺省 no-op。`syncActivation` 仍对每次切 Tab 调用（离开 Codex 传 `false`）。
 3. **`focusSearch`。** `focusSearch()` 的 Tab 分支改模块贡献，缺省 false。
 4. **壳旁路。** App.vue ports/windows DOM 对焦 watch 与 CommandHints 文案改为模块可选贡献。可与第 3 刀分开。
 
@@ -82,7 +82,7 @@ interface FeatureActionHostV7 {
 interface FeatureModuleV7 {
   // 现有贡献保留
   registerActions?(host: FeatureActionHostV7): void
-  onTabEnter?(tab: AppTabId, options: { refreshWindows?: boolean }): void
+  onTabEnter?(tab: AppTabId, options: { refreshWindows?: boolean }, host: FeatureActionHostV7): void
   focusSearch?(): boolean
 }
 ```
@@ -92,7 +92,7 @@ interface FeatureModuleV7 {
 ## VerificationImpactTrace
 
 - 变更面：动作登记所有权、切 Tab 副作用、后续搜焦点 / DOM 对焦
-- 直接消费者：快捷键、右键/More 菜单、页面 `dispatch`、uTools feature 热键
-- 选中命令（第 1 刀）：`tests/runtime/action.test.ts`、`tests/runtime/keybinding.test.ts`、`pnpm exec vue-tsc --noEmit`
-- 不选：仓库级 `pnpm test`、MQTT 套件、`pnpm run serve` / 真 uTools，除非某刀碰到对应边界
-- 行为闸门：命令 id 集合、默认 shortcut、when、run 可见效果不变
+- 直接消费者：`setTab`、mqtt archive、windows refresh、codex `syncActivation`
+- 选中命令（第 2 刀）：`tests/runtime/featureModule.test.ts`、`pnpm exec vue-tsc --noEmit`
+- 不选：整份 `action.test.ts`、MQTT 套件、仓库级 `pnpm test`、`pnpm run serve` / 真 uTools
+- 行为闸门：mqtt 仅在 `tab === 'mqtt'` 加载 archive；windows 仅 `refreshWindows === true` 刷新；codex 每次切 Tab 调用 `syncActivation`

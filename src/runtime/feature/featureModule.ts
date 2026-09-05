@@ -64,6 +64,8 @@ export type FeatureSliceSourceV7 = {
   subscribeDomain(domain: RuntimeNotificationDomainV7, listener: () => void): () => void
 }
 
+export type FeatureTabEnterOptionsV7 = { refreshWindows?: boolean }
+
 export interface FeatureModuleV7<Id extends AppTabId = AppTabId, View = unknown> {
   readonly id: Id
   readonly definition: FeatureDefinition & { id: Id }
@@ -79,6 +81,7 @@ export interface FeatureModuleV7<Id extends AppTabId = AppTabId, View = unknown>
   createSlice(source: FeatureSliceSourceV7): RuntimeSliceOwnerV7<View>
   shouldSubscribe(ctx: FeatureSubscribeContextV7<View>): boolean
   registerActions(host: FeatureActionHostV7): void
+  onTabEnter?(tab: AppTabId, options: FeatureTabEnterOptionsV7, host: FeatureActionHostV7): void
   bindPage(input: {
     runtime: FeaturePageHostV7
     slice: RuntimeSliceOwnerV7<View>

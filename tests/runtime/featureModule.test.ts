@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_FEATURE_CONFIGS, FEATURE_MODULE_IDS } from '../../src/domain/types'
+import type { FeatureActionHostV7 } from '../../src/runtime/feature/featureActionHost'
 import { FEATURES } from '../../src/runtime/feature/featureRegistry'
 import { FEATURE_MODULES_V7, featureModuleV7 } from '../../src/runtime/feature/featureModules'
 
@@ -64,4 +65,37 @@ describe('FeatureModule V7', () => {
     expect(runtime).toContain("if (domain === state.activeTab) notifyDomains('shell', domain)")
     expect(runtime).not.toContain("notifyDomains('shell', domain)\n  }")
   })
+
+  it('moves setTab mqtt/windows/codex side effects onto optional onTabEnter', () => {
+    expect(typeof featureModuleV7('mqtt').onTabEnter).toBe('function')
+    expect(typeof featureModuleV7('windows').onTabEnter).toBe('function')
+    expect(typeof featureModuleV7('codex').onTabEnter).toBe('function')
+    expect(featureModuleV7('ports').onTabEnter).toBeUndefined()
+    expect(featureModuleV7('favorites').onTabEnter).toBeUndefined()
+    expect(featureModuleV7('settings').onTabEnter).toBeUndefined()
+
+    const ensureMqttArchiveLoaded = vi.fn()
+    const refreshWindows = vi.fn()
+    const syncActivation = vi.fn()
+    const host = { ensureMqttArchiveLoaded, refreshWindows, codexController: { syncActivation } } as unknown as FeatureActionHostV7
+
+    featureModuleV7('mqtt').onTabEnter?.('mqtt', {}, host)
+    featureModuleV7('mqtt').onTabEnter?.('ports', {}, host)
+    expect(ensureMqttArchiveLoaded).toHaveBeenCalledTimes(1)
+
+    featureModuleV7('windows').onTabEnter?.('windows', {}, host)
+    featureModuleV7('windows').onTabEnter?.('windows', { refreshWindows: true }, host)
+    expect(refreshWindows).toHaveBeenCalledTimes(1)
+
+    featureModuleV7('codex').onTabEnter?.('codex', {}, host)
+    featureModuleV7('codex').onTabEnter?.('ports', {}, host)
+    expect(syncActivation.mock.calls).toEqual([[true], [false]])
+
+    const runtime = readFileSync(resolve(process.cwd(), 'src/runtime/appRuntime.ts'), 'utf8')
+    expect(runtime).toContain('module.onTabEnter?.(state.activeTab, options, featureActionHost)')
+    expect(runtime).not.toContain("if (state.activeTab === 'mqtt') ensureMqttArchiveLoaded()")
+    expect(runtime).not.toContain("if (state.activeTab === 'windows' && options.refreshWindows === true) void refreshWindows()")
+    expect(runtime).not.toContain("codexController.syncActivation(state.activeTab === 'codex')")
+  })
+
 })

@@ -1,5 +1,11 @@
 import { CODEX_MANUAL_PHASE_VALUES, type CodexFloatPosition, type CodexManualPhaseValue, type CodexSettings } from '../../../domain/codex'
+import type { AppTabId } from '../../../domain/types'
 import type { FeatureActionHostV7 } from '../featureActionHost'
+import type { FeatureTabEnterOptionsV7 } from '../featureModule'
+
+export function enterCodexTab(tab: AppTabId, _options: FeatureTabEnterOptionsV7, host: FeatureActionHostV7): void {
+  host.codexController.syncActivation(tab === 'codex')
+}
 
 export function registerCodexActions(host: FeatureActionHostV7): void {
   const { register, registerHandler, isTabEnabled, setMessage, setTab } = host
