@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 349 leaves / 7 modules / 325 active / 22 superseded / 2 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 121 scoped |
-| 原始来源 | 55 documents / 310 ordered / 184 RAW-parent / 126 source-only |
+| 需求登记 | 351 leaves / 7 modules / 327 active / 22 superseded / 2 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 124 scoped |
+| 原始来源 | 57 documents / 319 ordered / 193 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-354813902e712f1e440e / renderer-5503058d8ff8cfc102f1` · `artifact-ready` |
-| 当前构建时间 | `2026/09/05 19:18:51`（`2026-09-05T11:18:51.590Z`） |
+| 当前构建产物 | `host-2c8c2fd1b6b80a32e59b / renderer-fb0a45dc036eb2d3c5fb` · `artifact-ready` |
+| 当前构建时间 | `2026/09/05 20:13:31`（`2026-09-05T12:13:31.103Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,20 +34,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 349,
+    "leaves": 351,
     "modules": 7,
     "proposed": 2,
-    "active": 325,
+    "active": 327,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 121
+    "scoped_relations": 124
   },
   "source_anchor_catalog": {
-    "documents": 55,
-    "ordered_anchors": 310,
-    "raw_parent_ordered": 184,
+    "documents": 57,
+    "ordered_anchors": 319,
+    "raw_parent_ordered": 193,
     "registered_requirements": 105,
     "source_only": 126
   },
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-354813902e712f1e440e",
-    "renderer_asset": "renderer-5503058d8ff8cfc102f1",
+    "host_asset": "host-2c8c2fd1b6b80a32e59b",
+    "renderer_asset": "renderer-fb0a45dc036eb2d3c5fb",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-05T11:18:51.590Z",
-    "built_at_local": "2026/09/05 19:18:51",
+    "built_at": "2026-09-05T12:13:31.103Z",
+    "built_at_local": "2026/09/05 20:13:31",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "ad170fc99691628b56796182da15b3b7de6bd685ddf4b1e71d4b1015d2a391d4",
-    "raw_sources": "45770a2e6eb601604038095a47ddaf7c5fe353e352899c68a107be6a979f3d3d",
-    "source_anchor_catalog": "032377acfc0e7d3c2ea2836d8fe2fc93438663e227fda274876e7c79d3c63538",
-    "product_body": "3979872341491c58da23b814fe5c9308ef203eaa31e04f4d3138ef7e9b374772",
-    "architecture": "6c3b9163352b03592f923c342b20071ccb919aa6f9633d9f3e9d4c0b243f472a",
-    "runtime_contract": "4295b70f786dec0852bca4386083a68a8d9f6e5a7886e205b991eb30fa00d52e"
+    "requirement_registry": "1b451611dbd48bdde821b3c8d615083b6ea205f10c2ce1b430c087c090a3edc7",
+    "raw_sources": "d6415ffb0cab7df81806a9c65ab51287d4a208eb36f6512b01665d35bbf2d2ad",
+    "source_anchor_catalog": "4ffb17492e1b1911f513009db5087c711938c24b06f8d3ca745528d8f084b599",
+    "product_body": "6b9d157deb7674d7ef33364cf60195281854f39b0b208b3d8e4180082fe6e7a9",
+    "architecture": "fa70dbcf0d53a734cf65eaa7846ed28c308710fb51b1e7819dc009527832ed2e",
+    "runtime_contract": "ebaa6809baf3a351163b3ee3cfd9efdd7ade66df7980b31d18996aa44910503f"
   }
 }
 ```
@@ -187,9 +187,9 @@ Next increment — **approved requirement, not implemented**: [260807/1740-favor
 
 ## Window Jump Workbench
 
-Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-window-jump-workbench/spec.md#L1)；唯一应用原地换绑：[260904/window-unique-app-rebind/spec.md](260904/window-unique-app-rebind/spec.md#L1)（[RAW-208](requirements/windows-raw-208.md#L1)）。1527 其余条款以无编号形式承载，尚未入册，见 [覆盖账](requirements/coverage.md#L1)。
+Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-window-jump-workbench/spec.md#L1)；唯一应用原地换绑：[260904/window-unique-app-rebind/spec.md](260904/window-unique-app-rebind/spec.md#L1)（[RAW-208](requirements/windows-raw-208.md#L1)）；会话冷启动自动加载：[260905/window-tab-auto-refresh/spec.md](260905/window-tab-auto-refresh/spec.md#L1)（[RAW-213](requirements/windows-raw-213.md#L1)）。1527 其余条款以无编号形式承载，尚未入册，见 [覆盖账](requirements/coverage.md#L1)。
 
-- Window Jump is a default-disabled feature. Each independently operable real main/root window is the stable identity; browser Tabs and editor pages remain internal mutable state, while bridge-proven real native children are transient exact destinations. Stable slots use exact `PID+CGWindowID/HWND`, may switch only the target display to a session-cached Space, and verify the final root/member. Titles, Tab, position, size, order, display and Space never define identity. There is no title/ordinal/similarity fallback, environment snapshot or background poller. RAW-208 allows one exception: when the persisted instance target for that app is unique, the live root of that app is unique, and the old locator is empty or `probeInstance` is not `live`/`temporarily-unobserved`, EyPc may replace `lastInstanceId` in place. Two live roots, two persisted records, or a still-live old instance still require explicit confirmation. A Microsoft Edge tab titled ChatGPT is not the ChatGPT app.
+- Window Jump is a default-disabled feature. Each independently operable real main/root window is the stable identity; browser Tabs and editor pages remain internal mutable state, while bridge-proven real native children are transient exact destinations. Stable slots use exact `PID+CGWindowID/HWND`, may switch only the target display to a session-cached Space, and verify the final root/member. Titles, Tab, position, size, order, display and Space never define identity. There is no title/ordinal/similarity fallback, environment snapshot or background poller. Opening the windows Tab, plugin restart/reinstall, or close-then-re-enter auto-loads the observable list once per process session and runs RAW-208 unique-app rebind; the same session returning to the Tab does not rescan unless the user refreshes or a slot cache miss needs one targeted retry. RAW-213. RAW-208 allows one exception: when the persisted instance target for that app is unique, the live root of that app is unique, and the old locator is empty or `probeInstance` is not `live`/`temporarily-unobserved`, EyPc may replace `lastInstanceId` in place. Two live roots, two persisted records, or a still-live old instance still require explicit confirmation. A Microsoft Edge tab titled ChatGPT is not the ChatGPT app.
 - `EyPc 窗口槽 1` through `EyPc 窗口槽 10` are `mainHide` uTools features. Successful jumps activate the target without showing the plugin transit window; the slot route must not add a second generic hide. Missing, ambiguous, unauthorized, or otherwise failed activation opens the windows workbench/settings fallback with an explicit diagnostic.
 - `AppState` persists EyPc-local root/group targets and ten `1–10` platform-separated slot mappings. `WindowTarget.id` is the stable logical target; `scope='instance'` stores only the last verified real root locator, while Space/display/liveness remain preload-session cache. Child windows are session-only. Projection never merges targets or remaps slots: one unambiguous legacy member may adopt its proven root, while same-root multi-target conflicts require explicit per-slot recovery. That recovery changes one slot, reuses or creates one precise target, and never copies unrelated aliases/favorite/pin state.
 - Windows uses fixed PowerShell/User32 calls and `EnumWindows` only; it never uses `EnumChildWindows` to enumerate control HWNDs. Admission requires a visible, non-cloaked, activatable top-level/owned popup with valid bounds; `WS_CHILD`, no-activate, transparent, host, system and helper surfaces are omitted. Same-app `GA_ROOTOWNER` proves root/member relationships. `root-current` resolves the current/last member at call time and verifies final foreground ownership; `member-exact` additionally requires final focus on the requested member. `win32:PID:HWND` remains a current verified locator, not a promise against later handle reuse. Focus refusal is reported without simulated input or foreground-protection bypass.
@@ -264,7 +264,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 静默 uTools 入口必须由 Preload 的 `onPluginEnter` 直接向 V7 Command Gateway 提交命令，不依赖 Renderer 挂载或后续 Alt+Tab。完整 Snapshot 即可按根 selector 派发；`unknown/verifying` 是单任务证据状态，不是成员缺口。只有冷启动、重连或明确成员缺口才做所需 Provider 的 tasks-only 预检，失败保留旧 Snapshot 且不从部分集合跳转。普通 `mainHide`、Float 关闭或 Renderer 重建不清进程缓存；真实进程退出后从 Provider 冷证据重建，动态任务状态不持久化。RAW-181 划定唯一拓扑例外：Desktop Side→parent 恢复提示（仅 threadId/parentThreadId/observedAt，上限 200、TTL 48h）有界持久化，重载后据此重新 follow 并走既有定向 latest-Turn 校验；提示本身不产生 running/unread/waiting，严格法定人数清退原样适用且清退同步删除持久化条目。
 - 明确 waiting/active/completed/interrupted 不得被 debounce、quota、环境、完整库存或非任务 unread 阻塞；同 tick 只做 microtask 合并并在下一帧原子展示。Provider observation → Kernel canonical P95 ≤50ms、最大 ≤200ms，Kernel → Main accepted ≤50ms，Kernel → Float applied ACK P95 ≤250ms，回复/取消/执行 → Float 最终状态 P95 ≤300ms。unknown 保持中立并只做有界核验；无法确认的 interrupted/failed 不猜测 waiting。Codex 冷启动/重连冲突只对该任务 single-flight 精读一次 latest Turn。phase 与 unread 独立；同一 completion epoch 的 unread 保留到明确 read receipt 或新 Turn。Main 与 Float 必须应用同一 package revision。
 - 任务库存与所有消费者不得使用产品级固定条数上限：Claude inventory、Kernel、操作、导航、mutation、批量归档均处理完整已接纳集合；Codex `thread/list limit=100` 仅为协议页大小，必须遍历至 cursor 结束并拒绝 cursor loop。数量增长只能影响分页和性能，不得改变卡片、Tab、角标或动作资格。
-- 每次生产/uTools 构建生成确定性 `hostAssetId / rendererAssetId`，并同时验证 Registry、Topology、Snapshot、Command、Subscribe 与 ACK 能力/版本。Main UI、Main Preload、Float UI、Float Preload 任一身份缺失或不一致时必须显示 `reload-required` 并停止任务动作，不得表现为无响应或继续运行旧逻辑。构建只表示 `artifact-ready`；只有真实 uTools 重新接入/安装产物并完成全链握手才表示 `host-loaded`。产品不调用私有 uTools API，也不自动结束插件后台进程。
+- 每次生产/uTools 构建生成确定性 `hostAssetId / rendererAssetId`，并同时验证 Registry、Topology、Snapshot、Command、Subscribe 与 ACK 能力/版本。Main UI、Main Preload、Float UI、Float Preload 任一身份缺失或不一致时，持久化插窗口必须先受控重建（工作台 `plugin-enter`、主 Renderer 身份变化、任务包 `identity-mismatch`/`invalid-payload`、Float revision 高于 Host）；重建后仍不一致才显示 `reload-required` 并停止任务动作，不得表现为无响应或继续运行旧逻辑，也不得要求用户先手动关开悬浮球。心跳卡死仍用 60 秒冷却；静默 `mainHide` 槽位/循环/quick 入口不拆窗。构建只表示 `artifact-ready`；只有真实 uTools 重新接入/安装产物并完成全链握手才表示 `host-loaded`。产品不调用私有 uTools API，也不自动结束插件后台进程。RAW-212。
 - EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶回写只保留 Codex 原生与 CodexHost（RAW-205，2026-09-04 收口）：Codex 原生线程走 app-server `thread/section/move`（方法缺失回退 `thread/metadata/update`）并以 `thread/read` 回读核验，CodexHost 额外进程走 Host CLI `thread pin|unpin` 并以 Host 列表核验。Cloud Code（Claude App）与 Cursor 的插件置顶只落 EyPc 本地；这两路应用内置顶/星标仍入站到 Kernel `providerPin` 并进入置顶分组，插件不写 `isStarred` 或 `cursor/pinnedComposers`（sqlite 回读成功不等于 Cursor 侧栏已置顶），应用内已置顶的任务在 EyPc 点图钉即**叠加本地置顶**（应用内置顶只能在应用中取消，`Alt+↑/↓` 只对本地置顶生效）。置顶策略由 `provider-manifest.json` 的 `pin { inbound, outbound, appLabel, pinNoun }` 单点声明：Host Registry 对 `outbound:false` 的 Provider 拒绝 `setPin` 适配器，所有置顶文案与诊断来源从策略表派生，不按 Provider id 分支。入站实时：Codex Desktop 置顶只改全局状态镜像 `pinned-thread-ids`，插件在未读 watcher 上比较该镜像并强制 tasks-only 成员重扫（`thread/list` `section` 为权威）；CodexHost 监听 mapping-store `threads/*.json` 变化后失效列表 TTL 并重扫；Claude 沿用既有文件 watcher；Cursor workspace `pinnedComposers` 缓存与 watcher 签名含 WAL。Codex 无 section 变更通知，Desktop 侧栏在窗口重新获得焦点时才重拉列表（2026-09-03 真机），成功提示固定写明「应用侧栏稍后刷新」，不得声称侧栏已同步。会话归档仍走既有 Claude `isArchived` / Cursor `composerHeaders` 写；相位与未读不回写。置顶、隐藏、折叠偏好、alias 与**状态未知任务的手动指定相位**是唯一可持久化的任务侧本地配置；手动相位仅对 `unknown` 行开放（已有真实证据的行拒绝指定，不允许伪造状态），且只在设定时所处的那一段未知内有效——任务离开 `unknown` 再回来即自动失效，不复活旧答案。覆盖落在 Kernel 单点，使相位、分组、cycle 层级与计数读同一个值；`canonicalPhase` 保存证据原值，一切关于证据的判断（首推 unknown 宽限窗）读它而非被用户偏好回答。其余的 live phase、unread 与 cycle 位置只在进程内，topology 仅 RAW-181 的有界 Side→parent 恢复提示（ID+observedAt）可持久化且不携带任何状态。
 - 水球额度映射随启用组合变化：仅 Codex 时与旧版完全一致；仅 Claude 时 Claude 独占整个水球；两者同时启用时外圈进度表示 Codex、球心百分比表示 Claude 并标注来源，Claude 未连接或无读数时百分比回退为 Codex 原样。球心那个 Claude 读数以**无 scope 的普通周限额**（`weekly_all`）为基准：它是真正约束一周节奏的那条线，5 小时窗口摆动过快，不适合当常驻状态数字。账号同时上报按模型的 scoped 周限额时，球心并列读作 `{scoped}/{plain}`（scoped 优先取 Fable，在前）且**不带百分号**——两个百分号在球体里放不下；scoped 侧仍不得冒充普通周限额，也不得在没有普通周窗口时单独占据球心。并列字号取用户设定 `percentSize` 的 `.7` 与球体尺寸 `.165` 的较小值，使 32px 设置下最宽的 `100/100` 仍在圈内、12px 设置仍被尊重；球心读数使用 `tabular-nums lining-nums`，避免就地刷新时中心左右跳动。账号只有普通周窗口时球心是单值 `{plain}%`；确实没有普通周窗口时才依次回退到 5 小时窗口、其它已上报窗口，只为不让球心空着。展开卡额度区仍逐窗口显示全部窗口，不受球心选择影响。
 - 展开卡额度区按来源分区展示；Claude 分区在授权关闭、凭据不可用、Retry-After 或其它失败时显示对应安全原因，已有值保留但标为可能过期。展开卡额度行的每个读数块都是刷新触发器：点击（Claude 块亦可 Enter / Space，以 button 角色播报）立即强制刷新两个来源的额度，Claude usage API 借此绕过普通 cadence 与通用退避，但 429 Retry-After 与 401/403 凭据锁不变；每次 Claude 额度读取记录一条有界 `quota / claude-quota-read` 诊断（触发原因、各车道读数年龄、usage API 结果与阻塞原因、Retry 与 reset 距离、窗口计数与主读数来源，不含百分比、reset 时刻或身份）。RAW-201。手动刷新等待 Claude 读取完成后发布有界回执 `companion.quotaRefreshReceipt`（Claude 车道 `changed / usageApi / accessStatus / blockedBy / retryInMs / windowCount / scopedCount`，Codex `requested`），浮窗在同一额度行上覆盖显示 8 秒并同步播报，额度区始终保持一行；已授权但 usage API 被挡（凭据不可用 / Retry-After / 失败）时，即使已有缓存行也在行内显示一个警示标记，原因放在 200ms 悬停提示与可访问名称里。RAW-204。
