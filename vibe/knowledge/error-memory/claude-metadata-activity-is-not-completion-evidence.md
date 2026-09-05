@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: claude-state-source-selection__metadata-activity-time-retires-live-append-phase__provenance-gated-history-supersession
 first_seen: 2026-08-13
-last_verified: 2026-08-13
+last_verified: 2026-09-05
 review_after: 2026-11-13
 evidence:
   - preload/claude/code-sessions.cjs
@@ -43,6 +43,8 @@ const liveObserved = (entry) => entry?.evidenceProvenance === 'live-append'
 const appSupersededByHistory = livePhase(exactApp) && !liveObserved(exactApp) && historyAt > appAt
 ```
 
+唯一关联（`direct-local` / `unique-cli`）的 live Hook 与 App live-append 同类：不得被未递增的 `completedTurns` / `lastActivityAt` 退休。history 只能在 `completedTurns` 相对 previous 增加、且完成水位晚于该 Hook `turnStartedAt` 时退休旧 Turn。
+
 冷重放的 live 相位已在 `app-state.cjs` 上游被降级为 `unknown`，因此这里不需要第二道时间戳防线；保留时间戳比较只用于没有 provenance 的证据。真正的完成仍由 exact terminal event 关闭分支。
 
 不要改成「把 ExitPlanMode 加进某张工具白名单」——分类本来就是对的，那样只会在没坏的地方加一处硬编码，并留下一组永远绿的回归。
@@ -57,3 +59,4 @@ const appSupersededByHistory = livePhase(exactApp) && !liveObserved(exactApp) &&
 ## Occurrence History
 
 - 2026-08-13：用户在计划待批准窗口现场发现。先由 App 日志与 hook 队列取证推翻分类假设，再以 `tests/platform/claudeBridge.test.ts` 的 `metadata activity versus a live App append` RED 回归钉死来源选择，修复后 12 文件 472 项定向矩阵全通过。
+- 2026-09-05：Cloud Code 本机行侧栏仍开着，插件把 `completedTurns=1` 的行打成已完成。App live-append 盾仍有效，但 `hookSupersededByHistory` 仍是 `historyAt > hookAt`，冷启动 `lastActivityAt` 继续退休唯一关联 live Hook。对齐：唯一关联 live Hook 不得被未递增的 completedTurns 退休；`completedTurns` 递增且水位晚于该 Hook `turnStartedAt` 时仍可退休旧 Turn。
