@@ -37,6 +37,9 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Parked item inherits fresh-item invalidation](../parked-item-inherits-fresh-item-invalidation.md#L1)
 - [Membership predicate restated at every consumer](../membership-predicate-restated-at-every-consumer.md#L1)
 - [Cursor sqlite pin write is not sidebar pin](../cursor-sqlite-pin-write-is-not-sidebar-pin.md#L1)
+- [Cursor workspace pin cache ignores WAL unpin](../cursor-workspace-pin-cache-ignores-wal.md#L1)
+- [Cursor disk completed stale hook turnOpen](../cursor-disk-completed-stale-hook-turnopen.md#L1)
+- [Codex Desktop pin sqlite not JSON mirror](../codex-desktop-pin-sqlite-not-json-mirror.md#L1)
 - [Plain cold start bypasses CodexHost; open readiness launches through the Host first](../codexhost-plain-cold-start-bypasses-host.md#L1)
 
 ## Related Error Records

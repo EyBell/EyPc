@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 53 documents / 296 ordered / 170 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-39a0bdcc59f580df9ac8 / renderer-4873f208472862aad711` · `artifact-ready` |
-| 当前构建时间 | `2026/09/04 16:35:13`（`2026-09-04T08:35:13.934Z`） |
+| 当前构建产物 | `host-06da4f23842a2aa7c090 / renderer-bdf0ae75fee514109ea2` · `artifact-ready` |
+| 当前构建时间 | `2026/09/05 12:30:48`（`2026-09-05T04:30:48.225Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-39a0bdcc59f580df9ac8",
-    "renderer_asset": "renderer-4873f208472862aad711",
+    "host_asset": "host-06da4f23842a2aa7c090",
+    "renderer_asset": "renderer-bdf0ae75fee514109ea2",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-04T08:35:13.934Z",
-    "built_at_local": "2026/09/04 16:35:13",
+    "built_at": "2026-09-05T04:30:48.225Z",
+    "built_at_local": "2026/09/05 12:30:48",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "3abc1abaae81278b5894bc8386087162696b0bf8ea7df5945dd30bea27917c73",
+    "requirement_registry": "7eb9a272d214390759d8a3803c9122239cf4e305a0efeb7661a17f5c957fac64",
     "raw_sources": "d808aef7a39fa3bdea7fc6b27fcd20d586d8fca1f21bf9ce072c09885b599089",
     "source_anchor_catalog": "d90a0965a2af7d10204671ea8fd451b0456b538e53768fca83502c9385c42025",
-    "product_body": "d806ddaa03e3d0c67ce991a046ba565973d376a6c6823e0d4cad006fc93c1b57",
-    "architecture": "bfd1f7b9bb5bf5551c0cfe8f986a4b1e4eff9b2998cd0e064718e05f518ea79d",
-    "runtime_contract": "51194bfe05fe626f01b6f2354e22d97ac9e40ef9a2b68fd19e6b2444ffdcc27b"
+    "product_body": "21a2a9c28d8d93a9437dc5d86b287404af5589ee391b6bd78bf8cee010fdb14f",
+    "architecture": "ba67684df9a15fa84b1f20b787b76707d1913198ba5bfac71729eef2ac804a5b",
+    "runtime_contract": "90e93bc98b0ba92ae1daa032471e15995a02dc344c63fab1cc0eba8597b0f212"
   }
 }
 ```
@@ -235,7 +235,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 - 当前拓扑与状态权威为 [RAW-179 / EyPc V7](260824/eypc-v7-global-refactor/spec.md#L1)，V6 [RAW-176 revision 4](260823/companion-task-topology-v5/spec.md#L1) 与原生交接 [RAW-177](260823/codex-tab-boundary-optimization/spec.md#L1) 是仍有效的历史基础：Provider adapter 只提交 membership、activity、interaction、unread、plan-artifact、metadata、topology 七条原始 evidence lane；Topology V2 只拥有精确 root/member membership；Kernel V7 是唯一可变 reducer。Main、Float、Codex 页面、全局角标、注意力入口和前后任务只消费同一不可变 Presentation Snapshot；点击、Enter、角标、菜单、全局快捷键与循环只提交 Catalog Command。Provider phase 回灌、Controller/Renderer 二次投影、task watcher/cache 与旧 facade 均只作为历史实现记录。
 
-- Codex、Claude Code 与 Cursor 是三个彼此独立的来源，可各自开关并共享同一个水球；默认只开启 Codex，此时插件不读取 Claude/Cursor 数据。数据、状态、额度、空态与角标语义保持 Codex-only 兼容；任务/项目行即使在单来源模式也保留文本化、可访问的来源标记。Cursor 库存收 `unifiedMode = agent | plan` 的本机会话（chat / ask / edit / subagent / cloud 仍排除）；Cursor 自己的 `hasBlockingPendingActions`（AskQuestion / Plan 提问 / 终端审批）是精确的待输入交互，压过开着的 Turn 并可一键深链跳转，仍不发明待确认。RAW-206。任务行上的相对时间读公开 `lastQuestionAt`：Turn 仍开着时用 Turn 起点，Turn 关闭后回退到完成时间或最近活动时间，不得显示「时间缺失」；后续 metadata 入站 0 不得清掉已有时钟。这不改变相位。Cursor Cloud Agent 仍排除。RAW-208。
+- Codex、Claude Code 与 Cursor 是三个彼此独立的来源，可各自开关并共享同一个水球；默认只开启 Codex，此时插件不读取 Claude/Cursor 数据。数据、状态、额度、空态与角标语义保持 Codex-only 兼容；任务/项目行即使在单来源模式也保留文本化、可访问的来源标记。Cursor 库存收 `unifiedMode = agent | plan` 的本机会话（chat / ask / edit / subagent / cloud 仍排除）；Cursor 自己的 `hasBlockingPendingActions`（AskQuestion / Plan 提问 / 终端审批）是精确的待输入交互，压过开着的 Turn 并可一键深链跳转，仍不发明待确认。磁盘 `status=completed` 且没有会话/分叉冷路径进行中证据时，陈旧钩子 `turnOpen` 不得单独保持进行中。RAW-206。任务行上的相对时间读公开 `lastQuestionAt`：Turn 仍开着时用 Turn 起点，Turn 关闭后回退到完成时间或最近活动时间，不得显示「时间缺失」；后续 metadata 入站 0 不得清掉已有时钟。这不改变相位。Cursor Cloud Agent 仍排除。RAW-208。
 - 任务排布与角标以**根任务状态**为准而非来源：待输入、进行中、已完成未读的角标数字是启用来源根任务的合计，子任务不重复计数或进入循环。三个角标与通用循环共用同一判据（可见、非暂停、`capabilities.open`），因此「角标里有」等价于「上一个/下一个能到」；不可打开的任务既不计数也不入环，不得出现只计数不可达的角标。每条根任务仍必须以文字、图标和可访问名称显示来源，并使用来源背景与状态标记正交区分。
 - Claude 来源细节权威为 [Claude Code Companion 权威重置](260807/claude-code-companion-authority-reset/spec.md#L1)，技术选择与严格测试门禁见其 [research](260807/claude-code-companion-authority-reset/research.md#L1)，实现/未验收边界见 [verify](260807/claude-code-companion-authority-reset/verify.md#L1)；跨来源拓扑、Snapshot、interaction/artifact 与命令形态由 RAW-179 V7 统揽。真实 Claude App quota 数据权威已通过；完整 uTools 状态/未读/项目筛选矩阵与最终渲染同屏仍待真实 Host 验收，因此不得宣称产品验收完成。
 - Claude 库存只镜像 Claude App **Code 模式**的 `claude-code-sessions/<org>/<user>/local_<uuid>.json`；CLI-only、Cowork、`local-agent-mode-sessions` 和云端索引均不进入卡片。卡片身份使用 App local id，标题使用 App `title`，空标题固定为 `General coding session`；UUID 不得成为可见标题。
@@ -265,7 +265,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 明确 waiting/active/completed/interrupted 不得被 debounce、quota、环境、完整库存或非任务 unread 阻塞；同 tick 只做 microtask 合并并在下一帧原子展示。Provider observation → Kernel canonical P95 ≤50ms、最大 ≤200ms，Kernel → Main accepted ≤50ms，Kernel → Float applied ACK P95 ≤250ms，回复/取消/执行 → Float 最终状态 P95 ≤300ms。unknown 保持中立并只做有界核验；无法确认的 interrupted/failed 不猜测 waiting。Codex 冷启动/重连冲突只对该任务 single-flight 精读一次 latest Turn。phase 与 unread 独立；同一 completion epoch 的 unread 保留到明确 read receipt 或新 Turn。Main 与 Float 必须应用同一 package revision。
 - 任务库存与所有消费者不得使用产品级固定条数上限：Claude inventory、Kernel、操作、导航、mutation、批量归档均处理完整已接纳集合；Codex `thread/list limit=100` 仅为协议页大小，必须遍历至 cursor 结束并拒绝 cursor loop。数量增长只能影响分页和性能，不得改变卡片、Tab、角标或动作资格。
 - 每次生产/uTools 构建生成确定性 `hostAssetId / rendererAssetId`，并同时验证 Registry、Topology、Snapshot、Command、Subscribe 与 ACK 能力/版本。Main UI、Main Preload、Float UI、Float Preload 任一身份缺失或不一致时必须显示 `reload-required` 并停止任务动作，不得表现为无响应或继续运行旧逻辑。构建只表示 `artifact-ready`；只有真实 uTools 重新接入/安装产物并完成全链握手才表示 `host-loaded`。产品不调用私有 uTools API，也不自动结束插件后台进程。
-- EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶回写只保留 Codex 原生与 CodexHost（RAW-205，2026-09-04 收口）：Codex 原生线程走 app-server `thread/section/move`（方法缺失回退 `thread/metadata/update`）并以 `thread/read` 回读核验，CodexHost 额外进程走 Host CLI `thread pin|unpin` 并以 Host 列表核验。Cloud Code（Claude App）与 Cursor 的插件置顶只落 EyPc 本地；这两路应用内置顶/星标仍入站到 Kernel `providerPin` 并进入置顶分组，插件不写 `isStarred` 或 `cursor/pinnedComposers`（sqlite 回读成功不等于 Cursor 侧栏已置顶），应用内已置顶的任务在 EyPc 点图钉即**叠加本地置顶**（应用内置顶只能在应用中取消，`Alt+↑/↓` 只对本地置顶生效）。置顶策略由 `provider-manifest.json` 的 `pin { inbound, outbound, appLabel, pinNoun }` 单点声明：Host Registry 对 `outbound:false` 的 Provider 拒绝 `setPin` 适配器，所有置顶文案与诊断来源从策略表派生，不按 Provider id 分支。入站实时：Codex Desktop 置顶只改全局状态镜像 `pinned-thread-ids`，插件在未读 watcher 上比较该镜像并强制 tasks-only 成员重扫（`thread/list` `section` 为权威）；CodexHost 监听 mapping-store `threads/*.json` 变化后失效列表 TTL 并重扫；Claude / Cursor 沿用既有文件 watcher。Codex 无 section 变更通知，Desktop 侧栏在窗口重新获得焦点时才重拉列表（2026-09-03 真机），成功提示固定写明「应用侧栏稍后刷新」，不得声称侧栏已同步。会话归档仍走既有 Claude `isArchived` / Cursor `composerHeaders` 写；相位与未读不回写。置顶、隐藏、折叠偏好、alias 与**状态未知任务的手动指定相位**是唯一可持久化的任务侧本地配置；手动相位仅对 `unknown` 行开放（已有真实证据的行拒绝指定，不允许伪造状态），且只在设定时所处的那一段未知内有效——任务离开 `unknown` 再回来即自动失效，不复活旧答案。覆盖落在 Kernel 单点，使相位、分组、cycle 层级与计数读同一个值；`canonicalPhase` 保存证据原值，一切关于证据的判断（首推 unknown 宽限窗）读它而非被用户偏好回答。其余的 live phase、unread 与 cycle 位置只在进程内，topology 仅 RAW-181 的有界 Side→parent 恢复提示（ID+observedAt）可持久化且不携带任何状态。
+- EyPc alias 是 Main/Float 的统一显示名称；Provider 更新只刷新 `originalTitle`，清除 alias 后才恢复最新原始标题。本地 alias 不回写 Provider；V1 不允许重命名子任务。置顶回写只保留 Codex 原生与 CodexHost（RAW-205，2026-09-04 收口）：Codex 原生线程走 app-server `thread/section/move`（方法缺失回退 `thread/metadata/update`）并以 `thread/read` 回读核验，CodexHost 额外进程走 Host CLI `thread pin|unpin` 并以 Host 列表核验。Cloud Code（Claude App）与 Cursor 的插件置顶只落 EyPc 本地；这两路应用内置顶/星标仍入站到 Kernel `providerPin` 并进入置顶分组，插件不写 `isStarred` 或 `cursor/pinnedComposers`（sqlite 回读成功不等于 Cursor 侧栏已置顶），应用内已置顶的任务在 EyPc 点图钉即**叠加本地置顶**（应用内置顶只能在应用中取消，`Alt+↑/↓` 只对本地置顶生效）。置顶策略由 `provider-manifest.json` 的 `pin { inbound, outbound, appLabel, pinNoun }` 单点声明：Host Registry 对 `outbound:false` 的 Provider 拒绝 `setPin` 适配器，所有置顶文案与诊断来源从策略表派生，不按 Provider id 分支。入站实时：Codex Desktop 置顶只改全局状态镜像 `pinned-thread-ids`，插件在未读 watcher 上比较该镜像并强制 tasks-only 成员重扫（`thread/list` `section` 为权威）；CodexHost 监听 mapping-store `threads/*.json` 变化后失效列表 TTL 并重扫；Claude 沿用既有文件 watcher；Cursor workspace `pinnedComposers` 缓存与 watcher 签名含 WAL。Codex 无 section 变更通知，Desktop 侧栏在窗口重新获得焦点时才重拉列表（2026-09-03 真机），成功提示固定写明「应用侧栏稍后刷新」，不得声称侧栏已同步。会话归档仍走既有 Claude `isArchived` / Cursor `composerHeaders` 写；相位与未读不回写。置顶、隐藏、折叠偏好、alias 与**状态未知任务的手动指定相位**是唯一可持久化的任务侧本地配置；手动相位仅对 `unknown` 行开放（已有真实证据的行拒绝指定，不允许伪造状态），且只在设定时所处的那一段未知内有效——任务离开 `unknown` 再回来即自动失效，不复活旧答案。覆盖落在 Kernel 单点，使相位、分组、cycle 层级与计数读同一个值；`canonicalPhase` 保存证据原值，一切关于证据的判断（首推 unknown 宽限窗）读它而非被用户偏好回答。其余的 live phase、unread 与 cycle 位置只在进程内，topology 仅 RAW-181 的有界 Side→parent 恢复提示（ID+observedAt）可持久化且不携带任何状态。
 - 水球额度映射随启用组合变化：仅 Codex 时与旧版完全一致；仅 Claude 时 Claude 独占整个水球；两者同时启用时外圈进度表示 Codex、球心百分比表示 Claude 并标注来源，Claude 未连接或无读数时百分比回退为 Codex 原样。球心那个 Claude 读数以**无 scope 的普通周限额**（`weekly_all`）为基准：它是真正约束一周节奏的那条线，5 小时窗口摆动过快，不适合当常驻状态数字。账号同时上报按模型的 scoped 周限额时，球心并列读作 `{scoped}/{plain}`（scoped 优先取 Fable，在前）且**不带百分号**——两个百分号在球体里放不下；scoped 侧仍不得冒充普通周限额，也不得在没有普通周窗口时单独占据球心。并列字号取用户设定 `percentSize` 的 `.7` 与球体尺寸 `.165` 的较小值，使 32px 设置下最宽的 `100/100` 仍在圈内、12px 设置仍被尊重；球心读数使用 `tabular-nums lining-nums`，避免就地刷新时中心左右跳动。账号只有普通周窗口时球心是单值 `{plain}%`；确实没有普通周窗口时才依次回退到 5 小时窗口、其它已上报窗口，只为不让球心空着。展开卡额度区仍逐窗口显示全部窗口，不受球心选择影响。
 - 展开卡额度区按来源分区展示；Claude 分区在授权关闭、凭据不可用、Retry-After 或其它失败时显示对应安全原因，已有值保留但标为可能过期。展开卡额度行的每个读数块都是刷新触发器：点击（Claude 块亦可 Enter / Space，以 button 角色播报）立即强制刷新两个来源的额度，Claude usage API 借此绕过普通 cadence 与通用退避，但 429 Retry-After 与 401/403 凭据锁不变；每次 Claude 额度读取记录一条有界 `quota / claude-quota-read` 诊断（触发原因、各车道读数年龄、usage API 结果与阻塞原因、Retry 与 reset 距离、窗口计数与主读数来源，不含百分比、reset 时刻或身份）。RAW-201。手动刷新等待 Claude 读取完成后发布有界回执 `companion.quotaRefreshReceipt`（Claude 车道 `changed / usageApi / accessStatus / blockedBy / retryInMs / windowCount / scopedCount`，Codex `requested`），浮窗在同一额度行上覆盖显示 8 秒并同步播报，额度区始终保持一行；已授权但 usage API 被挡（凭据不可用 / Retry-After / 失败）时，即使已有缓存行也在行内显示一个警示标记，原因放在 200ms 悬停提示与可访问名称里。RAW-204。
 - 新设置 `claudeAppQuotaAccess` 默认关闭，旧已授权 quota fallback 配置迁移为开启。授权后 macOS 只读 Claude App `oauth:tokenCacheV2` 并以内存方式使用 Claude 专属 Safe Storage Keychain 项；账号/组织无法唯一仲裁时失败关闭，密钥、令牌和缓存明文不进入诊断/Renderer/持久化。缓存键 `acct:<account>|<profile>:<org>:<apiHost>:<scopes>` 的组织取第 2 段、账号取第 1 段 `|` 前（旧 `<client>:<org>:…` 键形不变）；多组织同时有效且无显式 activeOrganization 时，以 Claude App `plan-usage-history` 最新样本的 `org` 裁决，提示命中不了任何候选仍失败关闭。RAW-204。
