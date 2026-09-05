@@ -11,19 +11,6 @@ import type { FavoriteKind, FavoriteNode } from '../domain/types'
 
 const props = defineProps<{ snapshot: FavoritesRuntimeSliceV7; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
-  search: [value: string]
-  groupSearch: [value: string]
-  focus: [id: string]
-  focusGroup: [id: string]
-  focusDirectory: [path: string]
-  toggle: [id: string]
-  toggleDirectory: [path: string]
-  collapse: [id: string]
-  reorder: [nodeId: string, parentId: string | null, beforeNodeId: string | null]
-  updatePickReviewItem: [index: number, value: Partial<FavoritePickReviewItem>]
-  updateFavoriteDraft: [value: Partial<FavoriteDraft>]
-  saveFavoriteDraft: [value?: Partial<FavoriteDraft>]
-  cancelFavoriteDraft: []
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
@@ -83,7 +70,7 @@ function isRenaming(id: string) {
 
 function favoriteDoubleClick(item: FavoriteNode) {
   if (item.kind === 'group') {
-    emit('focusGroup', item.id)
+    emit('dispatch', 'favorites.group.focus', { id: item.id })
     emit('dispatch', 'favorites.group.apply', { favoriteId: item.id })
     return
   }
@@ -91,8 +78,8 @@ function favoriteDoubleClick(item: FavoriteNode) {
 }
 
 function focusFavoriteRow(item: FavoriteNode) {
-  if (item.kind === 'group') emit('focusGroup', item.id)
-  else emit('focus', item.id)
+  if (item.kind === 'group') emit('dispatch', 'favorites.group.focus', { id: item.id })
+  else emit('dispatch', 'favorites.item.focus', { id: item.id })
 }
 
 function virtualRows() {
@@ -201,8 +188,8 @@ function reviewTitle() {
 
 function openFavoriteContextMenu(id: string) {
   const item = props.snapshot.state.favorites.find((node) => node.id === id)
-  if (item?.kind === 'group') emit('focusGroup', id)
-  else emit('focus', id)
+  if (item?.kind === 'group') emit('dispatch', 'favorites.group.focus', { id })
+  else emit('dispatch', 'favorites.item.focus', { id })
   if (props.snapshot.selectedFavoriteIds.includes(id) && props.snapshot.selectedFavoriteIds.length > 0) {
     emit('dispatch', 'favorites.drawer.open')
     return
@@ -211,13 +198,13 @@ function openFavoriteContextMenu(id: string) {
 }
 
 function openDirectoryContextMenu(path: string) {
-  emit('focusDirectory', path)
+  emit('dispatch', 'favorites.directory.focus', { path })
   emit('dispatch', 'favorites.drawer.open', { directoryPaths: [path] })
 }
 
 function dispatchFavoriteRowAction(item: FavoriteNode, actionId: string) {
-  if (item.kind === 'group') emit('focusGroup', item.id)
-  else emit('focus', item.id)
+  if (item.kind === 'group') emit('dispatch', 'favorites.group.focus', { id: item.id })
+  else emit('dispatch', 'favorites.item.focus', { id: item.id })
   if (actionId === 'favorites.drawer.open' && props.snapshot.selectedFavoriteIds.includes(item.id) && props.snapshot.selectedFavoriteIds.length > 0) {
     emit('dispatch', actionId)
     return
@@ -231,7 +218,7 @@ function dispatchFavoriteTreeAction(id: string, actionId: string) {
 }
 
 function dispatchDirectoryRowAction(path: string, actionId: string) {
-  emit('focusDirectory', path)
+  emit('dispatch', 'favorites.directory.focus', { path })
   emit('dispatch', actionId, { directoryPaths: [path] })
 }
 
@@ -239,15 +226,15 @@ function inferNameFromPath(event: ClipboardEvent) {
   const path = event.clipboardData?.getData('text/plain')?.trim()
   const draft = props.snapshot.favoriteDraft
   if (!path || !draft || draft.name.trim()) return
-  emit('updateFavoriteDraft', { name: inferFavoriteNameFromPath(path) })
+  emit('dispatch', 'favorites.draft.update', { name: inferFavoriteNameFromPath(path) })
 }
 
 function updateDraft(value: Partial<FavoriteDraft>) {
-  emit('updateFavoriteDraft', value)
+  emit('dispatch', 'favorites.draft.update', value)
 }
 
 function updateReview(index: number, value: Partial<FavoritePickReviewItem>) {
-  emit('updatePickReviewItem', index, value)
+  emit('dispatch', 'favorites.pickReview.item.update', { index, ...value })
 }
 
 function trapFocus(event: KeyboardEvent) {
@@ -434,7 +421,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
           :status="`${props.snapshot.favoriteContainerRows.length} 节点`"
           :shortcut-hint="ctrlCommandLabel('favorites.groupSearch.focus', 'c-s-f')"
           @focus="emit('dispatch', 'favorites.groupSearch.focus')"
-          @update:model-value="emit('groupSearch', $event)"
+          @update:model-value="emit('dispatch', 'favorites.groupSearch.set', { query: $event })"
         />
       </div>
 
@@ -446,14 +433,14 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
         :collapsed-ids="props.snapshot.state.collapsedFavoriteGroupIds"
         :rename-draft="props.snapshot.activeFavoritePane === 'containers' ? props.snapshot.favoriteDraft : null"
         :can-open="props.snapshot.favoriteCapabilities.open"
-        @focus="emit('focusGroup', $event)"
+        @focus="emit('dispatch', 'favorites.group.focus', { id: $event })"
         @context="openFavoriteContextMenu"
         @action="dispatchFavoriteTreeAction"
         @update-rename="updateDraft({ name: $event })"
-        @save-rename="emit('saveFavoriteDraft')"
-        @cancel-rename="emit('cancelFavoriteDraft')"
-        @collapse="emit('collapse', $event)"
-        @reorder="(nodeId, parentId, beforeNodeId) => emit('reorder', nodeId, parentId, beforeNodeId)"
+        @save-rename="emit('dispatch', 'favorites.draft.save')"
+        @cancel-rename="emit('dispatch', 'favorites.draft.cancel')"
+        @collapse="emit('dispatch', 'favorites.group.collapseToggle', { id: $event })"
+        @reorder="(nodeId, parentId, beforeNodeId) => emit('dispatch', 'favorites.reorder', { nodeId, parentId, beforeNodeId })"
       />
       <p v-if="props.snapshot.state.favorites.length > 0 && props.snapshot.favoriteContainerRows.length === 0" class="empty-note favorite-container-empty">没有匹配的容器。</p>
     </aside>
@@ -469,7 +456,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
             :status="`${virtualRows().length} 收藏`"
             :shortcut-hint="ctrlCommandLabel('favorites.search.focus', 'c-f')"
             @focus="emit('dispatch', 'favorites.search.focus')"
-            @update:model-value="emit('search', $event)"
+            @update:model-value="emit('dispatch', 'favorites.search.set', { query: $event })"
           />
         </div>
         <div class="toolbar-actions favorite-add-anchor">
@@ -522,12 +509,12 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
             draggable="true"
             @dragstart="$event.dataTransfer?.setData('text/plain', item.id)"
             @dragover.prevent
-            @drop.prevent="emit('reorder', $event.dataTransfer?.getData('text/plain') || item.id, selectedParentId(), item.id)"
+            @drop.prevent="emit('dispatch', 'favorites.reorder', { nodeId: $event.dataTransfer?.getData('text/plain') || item.id, parentId: selectedParentId(), beforeNodeId: item.id })"
             @click="focusFavoriteRow(item)"
             @dblclick="favoriteDoubleClick(item)"
             @contextmenu.prevent="openFavoriteContextMenu(item.id)"
           >
-            <span role="gridcell"><input type="checkbox" tabindex="-1" :aria-label="`选择 ${item.name}`" :checked="props.snapshot.selectedFavoriteIds.includes(item.id)" @click.stop="emit('toggle', item.id)" /></span>
+            <span role="gridcell"><input type="checkbox" tabindex="-1" :aria-label="`选择 ${item.name}`" :checked="props.snapshot.selectedFavoriteIds.includes(item.id)" @click.stop="emit('dispatch', 'favorites.item.toggle', { id: item.id })" /></span>
             <span class="color-dot" role="gridcell" />
             <span class="favorite-kind-icon" role="gridcell" :title="kindName(item.kind)">
               <FolderTree v-if="item.kind === 'group'" :size="16" aria-hidden="true" />
@@ -544,8 +531,8 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
                 aria-label="重命名收藏"
                 @click.stop
                 @input="updateDraft({ name: ($event.target as HTMLInputElement).value })"
-                @keydown.enter.prevent.stop="emit('saveFavoriteDraft')"
-                @keydown.escape.prevent.stop="emit('cancelFavoriteDraft')"
+                @keydown.enter.prevent.stop="emit('dispatch', 'favorites.draft.save')"
+                @keydown.escape.prevent.stop="emit('dispatch', 'favorites.draft.cancel')"
               />
               <span v-else class="favorite-name">{{ item.name }}</span>
               <span class="favorite-path">{{ item.path || '虚拟分组' }}</span>
@@ -566,8 +553,8 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
               <button v-if="item.kind !== 'group'" type="button" tabindex="-1" aria-label="打开或运行" title="打开或运行" :disabled="!props.snapshot.favoriteCapabilities.open && !props.snapshot.favoriteCapabilities.run" @click="dispatchFavoriteRowAction(item, 'favorites.open')"><Play v-if="props.snapshot.favoriteCurrentPlatform && item.runnerByPlatform?.[props.snapshot.favoriteCurrentPlatform]" :size="14" aria-hidden="true" /><SquareArrowOutUpRight v-else :size="14" aria-hidden="true" /></button>
               <button v-if="item.kind !== 'group'" type="button" tabindex="-1" aria-label="定位" title="定位" :disabled="!props.snapshot.favoriteCapabilities.reveal" @click="dispatchFavoriteRowAction(item, 'favorites.reveal')"><LocateFixed :size="14" aria-hidden="true" /></button>
               <button v-if="item.kind !== 'group'" type="button" tabindex="-1" aria-label="复制路径" title="复制路径" :disabled="!props.snapshot.favoriteCapabilities.copyPath" @click="dispatchFavoriteRowAction(item, 'favorites.copyPath')"><Copy :size="14" aria-hidden="true" /></button>
-              <button v-if="isRenaming(item.id)" type="button" tabindex="-1" aria-label="保存重命名" title="保存" @click="emit('saveFavoriteDraft')"><Check :size="14" aria-hidden="true" /></button>
-              <button v-if="isRenaming(item.id)" type="button" tabindex="-1" aria-label="取消重命名" title="取消" @click="emit('cancelFavoriteDraft')"><X :size="14" aria-hidden="true" /></button>
+              <button v-if="isRenaming(item.id)" type="button" tabindex="-1" aria-label="保存重命名" title="保存" @click="emit('dispatch', 'favorites.draft.save')"><Check :size="14" aria-hidden="true" /></button>
+              <button v-if="isRenaming(item.id)" type="button" tabindex="-1" aria-label="取消重命名" title="取消" @click="emit('dispatch', 'favorites.draft.cancel')"><X :size="14" aria-hidden="true" /></button>
               <button v-else type="button" tabindex="-1" aria-label="更多动作" title="更多动作" @click="dispatchFavoriteRowAction(item, 'favorites.drawer.open')"><MoreHorizontal :size="14" aria-hidden="true" /></button>
               <button type="button" tabindex="-1" class="danger" aria-label="移出收藏元数据" title="移出收藏元数据" @click="dispatchFavoriteRowAction(item, 'favorites.remove')"><Trash2 :size="14" aria-hidden="true" /></button>
             </span>
@@ -627,11 +614,11 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
             :class="{ selected: entry.selected, focused: entry.focused, favorited: entry.favorited }"
             data-operation-tooltip="双击打开；右键显示目录项操作"
             data-operation-shortcut="Ctrl+← / Ctrl+→"
-            @click="emit('focusDirectory', entry.path)"
+            @click="emit('dispatch', 'favorites.directory.focus', { path: entry.path })"
             @dblclick="emit('dispatch', 'favorites.directory.open', { directoryPaths: [entry.path] })"
             @contextmenu.prevent="openDirectoryContextMenu(entry.path)"
           >
-            <span role="gridcell"><input type="checkbox" tabindex="-1" :aria-label="`选择 ${entry.name}`" :checked="entry.selected" @click.stop="emit('toggleDirectory', entry.path)" /></span>
+            <span role="gridcell"><input type="checkbox" tabindex="-1" :aria-label="`选择 ${entry.name}`" :checked="entry.selected" @click.stop="emit('dispatch', 'favorites.directory.toggle', { path: entry.path })" /></span>
             <span class="favorite-kind-icon" role="gridcell" :title="kindName(entry.kind)"><Folder v-if="entry.kind === 'folder'" :size="16" aria-hidden="true" /><File v-else :size="16" aria-hidden="true" /></span>
             <span class="favorite-primary-copy" role="gridcell"><span class="favorite-name">{{ entry.name }}</span><span class="favorite-path">{{ entry.path }}</span></span>
             <span class="favorite-meta" role="gridcell">{{ entry.isSymbolicLink ? `符号链接 → ${entry.linkTargetKind || '未知'}` : entry.favorited ? '已收藏' : '实际项' }}</span>
@@ -812,8 +799,8 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
       </section>
     </div>
 
-    <div v-if="props.snapshot.favoriteDraft && props.snapshot.favoriteDraft.mode !== 'rename'" class="modal-backdrop" @click.self="emit('cancelFavoriteDraft')">
-      <form class="favorite-editor confirm-layer" data-role="favorite-editor" role="dialog" aria-modal="true" aria-labelledby="favorite-editor-title" @keydown.tab="trapFocus" @submit.prevent="emit('saveFavoriteDraft')">
+    <div v-if="props.snapshot.favoriteDraft && props.snapshot.favoriteDraft.mode !== 'rename'" class="modal-backdrop" @click.self="emit('dispatch', 'favorites.draft.cancel')">
+      <form class="favorite-editor confirm-layer" data-role="favorite-editor" role="dialog" aria-modal="true" aria-labelledby="favorite-editor-title" @keydown.tab="trapFocus" @submit.prevent="emit('dispatch', 'favorites.draft.save')">
         <h2 id="favorite-editor-title">{{ props.snapshot.favoriteDraft.mode === 'create-group' ? '新建分组' : props.snapshot.favoriteDraft.mode === 'create-target' ? '新增目标' : props.snapshot.favoriteDraft.mode === 'move-parent' ? '移动父级' : '编辑收藏' }}</h2>
         <label v-if="(props.snapshot.favoriteDraft.mode === 'edit' || props.snapshot.favoriteDraft.mode === 'create-target') && props.snapshot.favoriteDraft.kind !== 'group'">
           类型
@@ -903,7 +890,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
           </template>
         </fieldset>
         <div class="dialog-actions">
-          <button type="button" @click="emit('cancelFavoriteDraft')">取消</button>
+          <button type="button" @click="emit('dispatch', 'favorites.draft.cancel')">取消</button>
           <button type="submit">保存</button>
         </div>
       </form>
