@@ -283,11 +283,13 @@ function snapshot(overrides: Partial<FloatSnapshot> = {}): FloatSnapshot {
   }
 }
 
-function loadPreloadHarness() {
+function loadPreloadHarness(options: { leftoverWindows?: Array<Record<string, any>> } = {}) {
+  const leftoverWindows = options.leftoverWindows || []
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const ipcHandlers = new Map<string, (...args: unknown[]) => void>()
   const sent: Array<{ channel: string; payload: unknown }> = []
   const pluginOutListeners: Array<(isKill: boolean) => void> = []
+  const pluginEnterListeners: Array<(action: { code?: string } | null) => void> = []
   const displays = [
     { id: 'left', workArea: { x: -1280, y: 0, width: 1280, height: 800 }, bounds: { x: -1280, y: 0, width: 1280, height: 800 } },
     { id: 'right', workArea: { x: 1920, y: -100, width: 1440, height: 900 }, bounds: { x: 1920, y: -100, width: 1440, height: 900 } }
@@ -317,6 +319,7 @@ function loadPreloadHarness() {
       floatBounds = { x: options.x, y: options.y, width: options.width, height: options.height }
       return floatWindow
     }),
+    onPluginEnter: (listener: (action: { code?: string } | null) => void) => { pluginEnterListeners.push(listener) },
     onPluginOut: (listener: (isKill: boolean) => void) => { pluginOutListeners.push(listener) }
   }
   const sandbox: Record<string, any> = {
@@ -338,7 +341,12 @@ function loadPreloadHarness() {
       if (name === 'node:fs') return fs
       if (name === 'node:os') return os
       if (name === 'node:path') return path
-      if (name === 'electron') return { ipcRenderer: { on: (channel: string, listener: (...args: unknown[]) => void) => ipcHandlers.set(channel, listener) } }
+      if (name === 'electron') return {
+        ipcRenderer: { on: (channel: string, listener: (...args: unknown[]) => void) => ipcHandlers.set(channel, listener) },
+        BrowserWindow: {
+          getAllWindows: () => leftoverWindows.filter((win) => win && win.isDestroyed?.() !== true)
+        }
+      }
       // The entry loads its own module groups (float-bridge.cjs etc.) by
       // relative path under RAW-169. This shim stands in for the module
       // system, so it has to resolve those the way the real one does --
@@ -378,6 +386,7 @@ function loadPreloadHarness() {
     bounds: () => floatBounds as Rect,
     createCount: () => utools.createBrowserWindow.mock.calls.length,
     triggerPluginOut: (isKill: boolean) => pluginOutListeners.forEach((listener) => listener(isKill)),
+    triggerPluginEnter: (action: { code?: string } | null = { code: 'eypc-main' }) => pluginEnterListeners.forEach((listener) => listener(action)),
     isFloatDestroyed: () => floatDestroyed
   }
 }
@@ -812,6 +821,70 @@ describe('Codex float preload sizing', () => {
     expect(sent.at(-1)).toMatchObject({ channel: 'eypc-float:heartbeat', payload: { sequence: 1 } })
     ipcHandlers.get('eypc-float:heartbeat-ack')?.({}, { sequence: 1, receivedAt: Date.now() })
     expect(bridge.getHealth()).toMatchObject({ heartbeatSequence: 1, lastHeartbeatAckAt: expect.any(Number) })
+  })
+
+  it('closes a leftover EyPc Codex window when preload is reconstructed after reload', () => {
+    const leftover = {
+      getTitle: () => 'EyPc Codex',
+      isDestroyed: () => leftover.__closed === true,
+      close: vi.fn(() => { leftover.__closed = true }),
+      __closed: false,
+      webContents: { send: vi.fn() }
+    }
+    loadPreloadHarness({ leftoverWindows: [leftover] })
+    expect(leftover.close).toHaveBeenCalled()
+  })
+
+  it('recreates a persistent float on workbench re-enter and identity mismatch', async () => {
+    vi.useFakeTimers()
+    const { bridge, createCount, triggerPluginEnter, ipcHandlers } = loadPreloadHarness()
+    const position = { displayId: 'right', x: 3244, y: 120, edge: 'right' }
+    expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
+    expect(createCount()).toBe(1)
+
+    triggerPluginEnter({ code: 'eypc-window-slot-1' })
+    expect(createCount()).toBe(1)
+
+    triggerPluginEnter({ code: 'eypc-main' })
+    expect(createCount()).toBe(2)
+
+    triggerPluginEnter({ code: 'eypc-ports' })
+    expect(createCount()).toBe(2)
+
+    await vi.advanceTimersByTimeAsync(5_001)
+    ipcHandlers.get('eypc-float:recreate')?.({}, { code: 'identity-mismatch' })
+    expect(createCount()).toBe(3)
+  })
+
+  it('recreates when the main renderer identity changes or the float reports a newer revision than the host', async () => {
+    vi.useFakeTimers()
+    const { bridge, createCount, ipcHandlers, taskKernel } = loadPreloadHarness()
+    const position = { displayId: 'right', x: 3244, y: 120, edge: 'right' }
+    const withIdentity = (rendererAssetId: string) => ({
+      ...snapshot({ baseRevision: 1 }),
+      version: 2 as const,
+      runtimeIdentity: {
+        status: 'host-loaded',
+        expected: { rendererAssetId },
+        actual: { hostAssetId: 'host-test-current' }
+      }
+    })
+
+    expect(bridge.sync({ visible: true, snapshot: withIdentity('renderer-old'), position })).toBe(true)
+    expect(createCount()).toBe(1)
+    expect(bridge.sync({ visible: true, snapshot: withIdentity('renderer-new'), position })).toBe(true)
+    expect(createCount()).toBe(2)
+
+    await vi.advanceTimersByTimeAsync(5_001)
+    taskKernel.publishEvidence(companionDraft(1))
+    ipcHandlers.get('eypc-float:task-package-ack')?.({}, {
+      revision: 1,
+      sentRevision: 1,
+      currentRevision: 9,
+      stage: 'rejected',
+      reason: 'older-revision'
+    })
+    expect(createCount()).toBe(3)
   })
 
   it('closes the float only on sync(visible:false) or kill pluginOut', () => {

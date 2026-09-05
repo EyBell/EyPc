@@ -185,6 +185,7 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 - [RAW-200](../codex-raw-200.md#L1) — `active`
 - [RAW-203](../codex-raw-203.md#L1) — `active`
 - [RAW-209](../codex-raw-209.md#L1) — `active`
+- [RAW-212](../codex-raw-212.md#L1) — `active` · 插窗口失效/工作台再进自动重建
 
 ## Related Requirements
 

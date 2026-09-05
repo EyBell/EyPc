@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: renderer-change-lands-in-the-repacked-asar-and-the-user-still-sees-the-old-ui__the-detached-float-BrowserWindow-is-persistent-so-an-ordinary-plugin-reload-never-recreates-it__it-keeps-serving-the-bundle-it-loaded-at-creation-time
 first_seen: 2026-08-28
-last_verified: 2026-08-28
+last_verified: 2026-09-05
 review_after: 2027-02-28
 evidence:
   - vibe/specs/260828/claude-ball-centre-dual-weekly/raw-requirement.md
@@ -38,7 +38,7 @@ if (isKill) { …; codexFloatPersistent = false; closeCodexFloat(); return }
 if (!codexFloatPersistent) closeCodexFloat()
 ```
 
-普通退出（`isKill === false`）且 `codexFloatPersistent === true` 时**一行都不执行**。诊断日志里的 `plugin-lifecycle/plugin-out {"isKill":false,"floatPersistent":true}` 就是这一支。
+普通退出（`isKill === false`）且 `codexFloatPersistent === true` 时**一行都不执行**。诊断日志里的 `plugin-lifecycle/plugin-out {"isKill":false,"floatPersistent":true}` 就是这一支。uTools 开发工具「重载」还会**重跑 Preload** 但通常不 kill：新闭包里 `codexFloatWindow === null`，旧 `BrowserWindow` 仍留在桌面上。RAW-212 在新 Preload 构造时按标题 `EyPc Codex` 关掉残留窗，再交给 `sync` 建新窗。
 
 于是：uTools 重打包 asar、重载主窗口，**那个悬浮窗自始至终没被销毁**，仍在跑它创建那一刻加载的 renderer bundle。只有 `sync({ visible: false })`（关掉悬浮球）或真正 kill 插件才会 `closeCodexFloat()`，下次 `createCodexFloat` 才会加载新的 `float.html`。
 
@@ -78,7 +78,7 @@ runtimeIdentityCompatible = runtimeIdentityArtifact?.revision === RUNTIME_IDENTI
 
 **「重载插件」不等于「换掉了所有渲染进程」。凡是 `createBrowserWindow` 出来的持久化窗口，都必须单独走一次销毁重建才会换 bundle。**
 
-- 交付涉及悬浮窗渲染的改动时，验收指引要写「关掉悬浮球再打开」或「彻底结束插件后重进」，**不能只写「重载 uTools」**——后者对持久化窗口是空操作。
+- 交付涉及悬浮窗渲染的改动时，工作台再进（`eypc-main` 等可见入口）会自动重建插窗口（RAW-212）。验收仍须确认匿名 `runtime-identity-handshake` 为 `host-loaded`；若 Host Preload 还是旧进程，重建后仍可能 `reload-required`，那时才结束后台进程。静默 `mainHide` 快捷键不会拆窗。诊断时**不能把「重载了主窗」当成 Float 已换 bundle**——比较对象必须有窗口外的一端。
 - 在二进制（asar、LevelDB、日志归档）里找字符串一律用 `grep -a` 或结构化解析；`grep` 的静默无命中会被误读成事实，而这个误读会把排查引向完全错误的一层。
 - **自洽性守卫不能替代新鲜度守卫。** 凡是「A 与 B 是否一致」的版本判据，都要先问 A 和 B 会不会**一起**变旧；会的话它对整体陈旧完全失明。要真正覆盖，比较的另一端必须来自窗口之外（当前磁盘产物或宿主 preload），而不是同一个窗口里的另一半。
 
@@ -86,4 +86,4 @@ runtimeIdentityCompatible = runtimeIdentityArtifact?.revision === RUNTIME_IDENTI
 
 本记录讲**窗口生命周期导致新 bundle 未被加载**。它与 [runtime identity 握手不一致](modules/runtime-and-packaging.md#L1) 路线不同：那条是产物身份链本身不一致、界面会显示 `reload-required`；本条里身份链完全自洽、没有任何告警，只是某个渲染进程比产物老。
 
-用户侧的预防已在 [用户帮助](../../../src/help/guides/codex.md#L101) 写明（「手动结束旧插件后台进程后重新进入，再重开悬浮窗」）；本记录补的是**为什么不能指望 `reload-required` 自动提醒**。产品侧是否要把 Float 的期望端换成宿主产物身份，是一条尚未裁决的独立条款，不在本记录范围内。
+用户帮助现为工作台再进自动重建；本记录补的是**为什么主窗重载不等于 Float 已换 bundle**，以及自洽性守卫为何对整体陈旧失明。RAW-212 已把「失效 / 重新接入 / 关闭工作台再进」做成自动重建；`reload-required` 只在重建后仍不一致时出现。诊断顺序不变。

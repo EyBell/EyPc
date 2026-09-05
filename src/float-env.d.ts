@@ -26,6 +26,7 @@ declare global {
       onActivate?(listener: (payload: { requestedAt?: number; command?: 'new-thread' | 'quick' }) => void): () => void
       setExpansion(expanded: boolean, pinned?: boolean): boolean
       returnFocus(): boolean
+      requestRecreate?(code?: string): boolean
       action(actionId: string, args?: Record<string, unknown>): boolean
       createThread(request: CodexNewThreadRequest): Promise<CodexNewThreadResult>
       reopenThread(actionAlias: string): Promise<CodexThreadOpenResult>

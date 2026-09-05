@@ -12336,6 +12336,7 @@ try {
       runtimeDiagnostics,
       process,
       electronIpcRenderer,
+      requireElectron: () => { try { return require('electron') } catch { return null } },
       createCodexThread,
       openCodexBlank,
       copyText,
@@ -13284,6 +13285,7 @@ if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') 
   globalThis.utools.onPluginEnter((action) => {
     ensureCodexInventoryMembershipWatchers({ reconcile: false })
     requestCodexInventoryMembershipReconciliation('plugin-enter', { forceTasksOnly: true })
+    codexFloatBridge?.handlePluginEnter?.(action)
     // 快速任务查看的载体是宿主自己拥有的悬浮子窗口，不依赖 Renderer 挂载。
     // 冷启动直接激活，避免"全局快捷键第一次按没反应、第二次才生效"。
     const quickEntryConsumed = (action && action.code === 'eypc-companion-quick')

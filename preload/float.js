@@ -75,7 +75,8 @@ const CHANNELS = {
   resizeCancel: 'eypc-float:resize-cancel',
   interactionCancel: 'eypc-float:interaction-cancel',
   heartbeat: 'eypc-float:heartbeat',
-  heartbeatAck: 'eypc-float:heartbeat-ack'
+  heartbeatAck: 'eypc-float:heartbeat-ack',
+  recreate: 'eypc-float:recreate'
 }
 
 let lastSnapshot = null
@@ -295,6 +296,9 @@ window.eypcFloat = {
   },
   setExpansion: (expanded, pinned = false) => sendToParent(CHANNELS.expansion, { expanded: expanded === true, pinned: expanded === true && pinned === true }),
   returnFocus: () => sendToParent(CHANNELS.returnFocus, {}),
+  requestRecreate: (code) => sendToParent(CHANNELS.recreate, {
+    code: typeof code === 'string' && /^[A-Za-z0-9:_-]{1,80}$/.test(code) ? code : 'identity-mismatch'
+  }),
   action: (actionId, args = {}) => runtimeIdentityCompatible && sendToParent(CHANNELS.action, { actionId, args }),
   createThread: (request) => runtimeIdentityCompatible
     ? transientRequest(CHANNELS.threadCreate, { request })

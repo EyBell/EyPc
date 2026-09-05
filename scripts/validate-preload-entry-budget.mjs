@@ -167,7 +167,11 @@ const BUDGET = Object.freeze({
   // stubs and public pin methods deleted (-13), producers share
   // `companionProviderPinFields` (-4), Desktop pin-mirror change detection on
   // the unread watcher (+24) and the CodexHost store watcher wiring (+6).
-  lines: 14402,
+  // 2026-09-05 (RAW-212): HEAD already measured 14416 against the previous
+  // ratchet 14402; this task adds +1 for `onPluginEnter` → float
+  // `handlePluginEnter`, then +1 for `requireElectron` so a reconstructed
+  // preload can close leftover `EyPc Codex` BrowserWindows.
+  lines: 14418,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

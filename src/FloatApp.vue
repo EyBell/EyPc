@@ -3206,6 +3206,9 @@ onMounted(() => {
       errorCode: 'identity-handshake-failed'
     }
   }
+  if (floatRuntimeIdentity.value?.status === 'reload-required') {
+    window.eypcFloat?.requestRecreate?.('identity-mismatch')
+  }
   const applySnapshot = (value: CodexFloatSnapshotV1 | null) => {
     if (!value) return false
     const baseRevision = value.baseRevision || 0
@@ -3244,6 +3247,7 @@ onMounted(() => {
     return true
   }
   applySnapshot(window.eypcFloat?.getSnapshot() || null)
+  if (runtimeReloadRequired.value) window.eypcFloat?.requestRecreate?.('identity-mismatch')
   floatState.value = window.eypcFloat?.getState() || floatState.value
   expanded.value = floatState.value.expanded
   desiredExpanded = expanded.value
@@ -3271,6 +3275,9 @@ onMounted(() => {
     requestExpansion(true)
     void nextTick(() => payload.command === 'new-thread' ? openComposer() : focusCurrent())
   }) || null
+  watch(runtimeReloadRequired, (needed) => {
+    if (needed) window.eypcFloat?.requestRecreate?.('identity-mismatch')
+  })
   window.addEventListener('keydown', onWindowKeydown, true)
   window.addEventListener('keyup', onWindowKeyup, true)
   window.addEventListener('blur', onWindowBlur)

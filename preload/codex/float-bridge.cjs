@@ -36,6 +36,8 @@
 const { createCodexFloatWindowSize } = require('./float-window-size.cjs')
 
 const CODEX_FLOAT_BRIDGE_REVISION = 'codex-float-bridge-v1'
+const CODEX_FLOAT_WINDOW_TITLE = 'EyPc Codex'
+const CODEX_FLOAT_WINDOW_SLOT = '__eypcCodexFloatWindow'
 
 const CODEX_FLOAT_CHANNELS = {
   snapshot: 'eypc-float:snapshot',
@@ -63,7 +65,8 @@ const CODEX_FLOAT_CHANNELS = {
   resizeCancel: 'eypc-float:resize-cancel',
   interactionCancel: 'eypc-float:interaction-cancel',
   heartbeat: 'eypc-float:heartbeat',
-  heartbeatAck: 'eypc-float:heartbeat-ack'
+  heartbeatAck: 'eypc-float:heartbeat-ack',
+  recreate: 'eypc-float:recreate'
 }
 
 const CODEX_FLOAT_WATER_SIZE = { width: 104, height: 104 }
@@ -78,6 +81,14 @@ const CODEX_FLOAT_HEARTBEAT_MS = 2_000
 const CODEX_FLOAT_STALL_MS = 6_000
 const CODEX_FLOAT_RECOVERY_MS = 10_000
 const CODEX_FLOAT_RECREATE_COOLDOWN_MS = 60_000
+const CODEX_FLOAT_LIFECYCLE_RECREATE_COOLDOWN_MS = 5_000
+const CODEX_FLOAT_LIFECYCLE_RECREATE_CODES = new Set([
+  'plugin-enter',
+  'host-identity-changed',
+  'task-package-identity-mismatch',
+  'task-package-invalid-payload',
+  'task-revision-desync'
+])
 
 function createCodexFloatBridge(dependencies = {}) {
   const utools = dependencies.utools
@@ -124,6 +135,7 @@ function createCodexFloatBridge(dependencies = {}) {
   let codexFloatExpandedSizes = []
   let codexFloatPositionDisplayId = ''
   let codexFloatPersistent = false
+  let codexFloatBoundMainRendererId = ''
   let codexFloatWorkspaceDiagnostics = {
     supported: process.platform === 'darwin',
     alwaysOnTop: false,
@@ -503,7 +515,45 @@ function createCodexFloatBridge(dependencies = {}) {
       : ''
   }
 
+  function listBrowserWindows() {
+    try {
+      const electron = typeof dependencies.requireElectron === 'function' ? dependencies.requireElectron() : null
+      if (typeof electron?.BrowserWindow?.getAllWindows === 'function') return electron.BrowserWindow.getAllWindows() || []
+      if (typeof electron?.remote?.BrowserWindow?.getAllWindows === 'function') return electron.remote.BrowserWindow.getAllWindows() || []
+    } catch {}
+    return []
+  }
+
+  function windowTitle(win) {
+    try {
+      return typeof win?.getTitle === 'function' ? String(win.getTitle() || '') : ''
+    } catch {
+      return ''
+    }
+  }
+
+  function stashCodexFloatWindow(win) {
+    try { globalThis[CODEX_FLOAT_WINDOW_SLOT] = win || null } catch {}
+  }
+
+  function closeExistingCodexFloatWindows(keep) {
+    const seen = new Set()
+    const stashed = (() => { try { return globalThis[CODEX_FLOAT_WINDOW_SLOT] || null } catch { return null } })()
+    const candidates = [stashed, ...listBrowserWindows()]
+    for (const win of candidates) {
+      if (!win || seen.has(win) || win === keep) continue
+      seen.add(win)
+      if (win !== stashed && windowTitle(win) !== CODEX_FLOAT_WINDOW_TITLE) continue
+      try {
+        if (typeof win.isDestroyed === 'function' && win.isDestroyed()) continue
+      } catch {}
+      try { win.close() } catch {}
+    }
+    if (!keep) stashCodexFloatWindow(null)
+  }
+
   function createCodexFloat(position) {
+    closeExistingCodexFloatWindows(null)
     if (!utools || typeof utools.createBrowserWindow !== 'function') return false
     const initial = initialCodexFloatBounds(position)
     const developmentEntry = codexFloatDevelopmentEntry()
@@ -520,7 +570,7 @@ function createCodexFloatBridge(dependencies = {}) {
       codexFloatEdge = initial.edge
       codexFloatWindow = utools.createBrowserWindow('float.html', {
         show: false,
-        title: 'EyPc Codex',
+        title: CODEX_FLOAT_WINDOW_TITLE,
         x: initial.bounds.x,
         y: initial.bounds.y,
         width: initial.bounds.width,
@@ -556,16 +606,41 @@ function createCodexFloatBridge(dependencies = {}) {
       try { codexFloatWindow?.webContents?.on?.('render-process-gone', () => requestCodexFloatRecreate('render-process-gone')) } catch {}
       try { codexFloatWindow?.webContents?.on?.('did-fail-load', () => requestCodexFloatRecreate('did-fail-load')) } catch {}
       applyCodexFloatWorkspaceVisibility()
+      stashCodexFloatWindow(codexFloatWindow)
       return true
     } catch {
       codexFloatWindow = null
+      stashCodexFloatWindow(null)
       return false
     }
   }
 
+  function isLifecycleRecreateCode(code) {
+    const key = typeof code === 'string' ? code : ''
+    return CODEX_FLOAT_LIFECYCLE_RECREATE_CODES.has(key) || key.startsWith('float-')
+  }
+
+  function isSilentPluginEnter(action) {
+    const code = typeof record(action).code === 'string' ? record(action).code : ''
+    if (!code) return false
+    if (/-slot-\d+$/.test(code) || /-action-\d+$/.test(code)) return true
+    return code.endsWith('-toggle')
+      || code.endsWith('-activate')
+      || code.endsWith('-quick')
+      || code.endsWith('-input')
+      || code.endsWith('-unread')
+      || code.endsWith('-archive')
+      || code.includes('-task-')
+      || code === 'eypc-codex-action-runner'
+  }
+
   function requestCodexFloatRecreate(code = 'heartbeat-stall') {
     const now = Date.now()
-    if (!codexFloatPersistent || (codexFloatLastRecreateAt > 0 && now - codexFloatLastRecreateAt < CODEX_FLOAT_RECREATE_COOLDOWN_MS)) return false
+    if (!codexFloatPersistent) return false
+    const cooldown = isLifecycleRecreateCode(code)
+      ? CODEX_FLOAT_LIFECYCLE_RECREATE_COOLDOWN_MS
+      : CODEX_FLOAT_RECREATE_COOLDOWN_MS
+    if (codexFloatLastRecreateAt > 0 && now - codexFloatLastRecreateAt < cooldown) return false
     codexFloatLastRecreateAt = now
     const expanded = codexFloatExpanded
     const edge = codexFloatEdge
@@ -582,6 +657,12 @@ function createCodexFloatBridge(dependencies = {}) {
     codexFloatEdge = edge
     const created = createCodexFloat(position)
     if (created && expanded) resizeCodexFloat(true, false)
+    if (created) {
+      applyCodexFloatWorkspaceVisibility()
+      pushCodexFloatSnapshot()
+      const taskPackage = codexFloatSnapshot?.taskSnapshot
+      if (codexFloatTaskPackageRevision(taskPackage) > 0) pushCodexFloatTaskPackage(taskPackage, { force: true })
+    }
     codexFloatRecoveryDeadline = now + CODEX_FLOAT_RECOVERY_MS
     codexFloatRecoveryReported = false
     runtimeDiagnostics.record({
@@ -592,6 +673,21 @@ function createCodexFloatBridge(dependencies = {}) {
       code
     })
     return created
+  }
+
+  function handlePluginEnter(action) {
+    if (isSilentPluginEnter(action)) return false
+    if (codexFloatPersistent && codexFloatAlive()) return requestCodexFloatRecreate('plugin-enter')
+    closeExistingCodexFloatWindows(null)
+    return false
+  }
+
+  function incomingMainRendererIdentity(snapshot) {
+    const identity = record(record(snapshot).runtimeIdentity)
+    const expectedId = record(identity.expected).rendererAssetId
+    const actualId = record(identity.actual).hostAssetId
+    if (typeof expectedId === 'string' && expectedId) return expectedId
+    return typeof actualId === 'string' ? actualId : ''
   }
 
   function scheduleCodexFloatHealthCheck() {
@@ -658,9 +754,13 @@ function createCodexFloatBridge(dependencies = {}) {
   }
 
   function closeCodexFloat() {
+    const closing = codexFloatWindow
     if (codexFloatAlive()) {
       try { codexFloatWindow.close() } catch {}
     }
+    try {
+      if (globalThis[CODEX_FLOAT_WINDOW_SLOT] === closing) stashCodexFloatWindow(null)
+    } catch {}
     codexFloatWindow = null
     codexFloatExpanded = false
     codexFloatPinned = false
@@ -698,6 +798,18 @@ function createCodexFloatBridge(dependencies = {}) {
       return true
     }
     const rendererSnapshot = source.snapshot && typeof source.snapshot === 'object' ? source.snapshot : null
+    const incomingIdentity = incomingMainRendererIdentity(rendererSnapshot)
+    const identityChanged = Boolean(
+      incomingIdentity
+      && codexFloatBoundMainRendererId
+      && incomingIdentity !== codexFloatBoundMainRendererId
+      && codexFloatAlive()
+    )
+    if (identityChanged && requestCodexFloatRecreate('host-identity-changed')) {
+      codexFloatBoundMainRendererId = incomingIdentity
+    } else if (incomingIdentity) {
+      codexFloatBoundMainRendererId = incomingIdentity
+    }
     const hostTaskPackage = companionTaskKernel?.getPackage?.()
     codexFloatSnapshot = rendererSnapshot && hostTaskPackage
       ? { ...rendererSnapshot, taskSnapshot: hostTaskPackage }
@@ -708,7 +820,7 @@ function createCodexFloatBridge(dependencies = {}) {
     if (!codexFloatAlive() && !createCodexFloat(position)) return false
     applyCodexFloatWorkspaceVisibility()
     if (!codexFloatResize) resizeCodexFloat(codexFloatExpanded, false)
-    const snapshotSent = pushCodexFloatSnapshot()
+    const snapshotSent = pushCodexFloatSnapshot({ force: identityChanged })
     const taskPackage = codexFloatSnapshot?.taskSnapshot
     if (codexFloatTaskPackageRevision(taskPackage) > codexFloatTaskLastSentRevision) {
       pushCodexFloatTaskPackage(taskPackage)
@@ -836,6 +948,15 @@ function createCodexFloatBridge(dependencies = {}) {
       }
       if (stage !== 'rejected') return
       if (source.reason === 'older-revision' && currentRevision >= sentRevision) {
+        const hostRevision = Number(
+          companionTaskKernel?.getLatest?.()?.packageRevision
+          || companionTaskKernel?.getPackage?.()?.packageRevision
+          || sentRevision
+        )
+        if (currentRevision > hostRevision) {
+          requestCodexFloatRecreate('task-revision-desync')
+          return
+        }
         codexFloatTaskAppliedRevision = Math.max(codexFloatTaskAppliedRevision, currentRevision)
         companionTaskKernel?.acknowledge?.({ consumer: 'float', revision: currentRevision })
         if (codexFloatTaskAppliedRevision >= codexFloatTaskPendingRevision) {
@@ -984,8 +1105,16 @@ function createCodexFloatBridge(dependencies = {}) {
       pushCodexFloatState()
     })
     ipc.on(CODEX_FLOAT_CHANNELS.interactionCancel, () => cancelCodexFloatInteraction(true))
+    ipc.on(CODEX_FLOAT_CHANNELS.recreate, (_event, payload) => {
+      const code = record(payload).code
+      const safe = typeof code === 'string' && /^[A-Za-z0-9:_-]{1,80}$/.test(code) ? code : 'request'
+      requestCodexFloatRecreate(`float-${safe}`)
+    })
     ipc.on(CODEX_FLOAT_CHANNELS.heartbeat, (_event, payload) => {
-      if (!codexFloatAlive()) return
+      if (!codexFloatAlive()) {
+        closeExistingCodexFloatWindows(null)
+        return
+      }
       const source = record(payload)
       const sequence = Number.isInteger(source.sequence) && source.sequence > 0 ? source.sequence : 0
       codexFloatLastHeartbeatAt = Date.now()
@@ -1030,6 +1159,7 @@ function createCodexFloatBridge(dependencies = {}) {
     })
   }
 
+  closeExistingCodexFloatWindows(null)
   installCodexFloatIpc()
   scheduleCodexFloatHealthCheck()
 
@@ -1052,6 +1182,7 @@ function createCodexFloatBridge(dependencies = {}) {
       return () => codexFloatActionListeners.delete(listener)
     },
     handleHostVisibility,
+    handlePluginEnter,
     // Test-only escape hatch, mirrors the entry's former
     // `window.__codexFloatGeometry` hook -- exposes internal geometry and
     // interaction helpers that have no public IPC-facing method of their own.
