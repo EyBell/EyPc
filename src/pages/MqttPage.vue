@@ -33,9 +33,9 @@ import {
   Unplug,
   X
 } from '@lucide/vue'
-import type { MqttConfigDraft, MqttConnectionGroupDraft, MqttFavoriteDraft, MqttPublishDraftHistoryEditDraft, MqttRecordEditDraft, MqttSubscriptionEditorDraft, MqttSubscriptionEditorField, MqttSubscriptionEditorItem } from '../runtime/appRuntime'
+import type { MqttConfigDraft, MqttConnectionGroupDraft, MqttPublishDraftHistoryEditDraft, MqttRecordEditDraft, MqttSubscriptionEditorDraft, MqttSubscriptionEditorField, MqttSubscriptionEditorItem } from '../runtime/appRuntime'
 import type { MqttRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
-import type { MqttConnectionGroup, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos } from '../domain/types'
+import type { MqttConnectionGroup, MqttMessageRecord, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos } from '../domain/types'
 import { DEFAULT_MQTT_TOPIC_COLORS, buildMqttWebSocketUrl, mqttEndpointHostPortLabel, mqttPublishTemplateOperationTime, mqttTopicVisualForMessage, normalizeMqttTopicColor } from '../domain/mqtt'
 import { buildMqttInlinePayloadPreviewSegments, buildMqttPayloadPreviewSegments } from '../domain/mqttPayloadPreview'
 import { layoutShortcutHints } from '../domain/shortcutHintLayout'
@@ -58,19 +58,6 @@ type MqttConnectionDropPosition = 'before' | 'inside' | 'after'
 
 const props = defineProps<{ snapshot: MqttRuntimeSliceV7; showShortcutHints?: boolean; shiftPreview?: boolean }>()
 const emit = defineEmits<{
-  search: [value: string]
-  focusConfig: [id: string]
-  focusConnectionGroup: [id: string]
-  focusSession: [id: string]
-  focusMessage: [id: string]
-  focusLog: [id: string]
-  updateConfigDraft: [input: Partial<Omit<MqttConfigDraft, 'mode' | 'targetId' | 'activeField'>>]
-  updateConnectionGroupDraft: [input: Partial<Omit<MqttConnectionGroupDraft, 'mode' | 'targetId'>>]
-  updateSubscriptionDraft: [input: Partial<Omit<MqttSubscriptionEditorDraft, 'connectionId'>>]
-  updateFavoriteDraft: [input: Partial<Pick<MqttFavoriteDraft, 'title' | 'activeField'>>]
-  updateRecordEditDraft: [input: Partial<Omit<MqttRecordEditDraft, 'mode' | 'targetKind' | 'targetId'>>]
-  updatePublishDraftHistoryEditDraft: [input: Partial<Pick<MqttPublishDraftHistoryEditDraft, 'title' | 'note' | 'topic' | 'payload' | 'activeField'>>]
-  updatePublishDraft: [input: Partial<MqttPublishDraft>]
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
@@ -682,11 +669,11 @@ function commandArgs(kind: MqttCommandTargetKind, id: string, list?: 'messages' 
 }
 
 function updateConfigDraft(input: Partial<Omit<MqttConfigDraft, 'mode' | 'targetId' | 'activeField'>>) {
-  emit('updateConfigDraft', input)
+  emit('dispatch', 'mqtt.config.draft.update', input)
 }
 
 function updateConnectionGroupDraft(input: Partial<Omit<MqttConnectionGroupDraft, 'mode' | 'targetId'>>) {
-  emit('updateConnectionGroupDraft', input)
+  emit('dispatch', 'mqtt.connectionGroup.draft.update', input)
 }
 
 function connectionGroupOptionLabel(group: MqttConnectionGroup) {
@@ -712,7 +699,7 @@ function createSubscriptionEditorItem(): MqttSubscriptionEditorItem {
 }
 
 function updateSubscriptionDraft(input: Partial<Omit<MqttSubscriptionEditorDraft, 'connectionId'>>) {
-  emit('updateSubscriptionDraft', input)
+  emit('dispatch', 'mqtt.subscription.draft.update', input)
 }
 
 function addSubscriptionEditorItem() {
@@ -773,11 +760,11 @@ function handleSubscriptionEditorKeydown(event: KeyboardEvent) {
 }
 
 function updateRecordEditDraft(input: Partial<Omit<MqttRecordEditDraft, 'mode' | 'targetKind' | 'targetId'>>) {
-  emit('updateRecordEditDraft', input)
+  emit('dispatch', 'mqtt.record.edit.draft.update', input)
 }
 
 function updatePublishDraftHistoryEditDraft(input: Partial<Pick<MqttPublishDraftHistoryEditDraft, 'title' | 'note' | 'topic' | 'payload' | 'activeField'>>) {
-  emit('updatePublishDraftHistoryEditDraft', input)
+  emit('dispatch', 'mqtt.publish.draft.history.edit.update', input)
 }
 
 function handleRecordEditorKeydown(event: KeyboardEvent) {
@@ -1035,12 +1022,12 @@ function detailRecordCommandArgs(): Record<string, unknown> {
 }
 
 function selectRecord(kind: 'config' | 'connection-group' | 'subscription' | 'session' | 'message' | 'log', id: string, list: 'messages' | 'history' = 'messages') {
-  if (kind === 'config') emit('focusConfig', id)
-  if (kind === 'connection-group') emit('focusConnectionGroup', id)
+  if (kind === 'config') emit('dispatch', 'mqtt.config.focus', { id })
+  if (kind === 'connection-group') emit('dispatch', 'mqtt.connectionGroup.focus', { id })
   if (kind === 'subscription') emit('dispatch', 'mqtt.subscription.focus', { topic: id })
-  if (kind === 'session') emit('focusSession', id)
+  if (kind === 'session') emit('dispatch', 'mqtt.session.focus', { id })
   if (kind === 'message') emit('dispatch', 'mqtt.record.focus', commandArgs('message', id, list))
-  if (kind === 'log') emit('focusLog', id)
+  if (kind === 'log') emit('dispatch', 'mqtt.log.focus', { id })
 }
 
 function recordSelected(kind: 'config' | 'connection-group' | 'subscription' | 'session' | 'message' | 'log' | 'publish-template', id: string) {
@@ -1052,7 +1039,7 @@ function connectionSelected(id: string) {
 }
 
 function focusConfigAndDispatch(configId: string, actionId: string) {
-  emit('focusConfig', configId)
+  emit('dispatch', 'mqtt.config.focus', { id: configId })
   emit('dispatch', actionId, commandArgs('config', configId))
 }
 
@@ -1074,8 +1061,8 @@ function selectConnectionRow(row: MqttConnectionRow) {
 }
 
 function focusConnectionRow(row: MqttConnectionRow) {
-  if (row.kind === 'group') emit('focusConnectionGroup', row.id)
-  else emit('focusConfig', row.id)
+  if (row.kind === 'group') emit('dispatch', 'mqtt.connectionGroup.focus', { id: row.id })
+  else emit('dispatch', 'mqtt.config.focus', { id: row.id })
 }
 
 function openConnectionRowMenu(row: MqttConnectionRow) {
@@ -1277,7 +1264,7 @@ function searchActiveRecordList(query: string) {
     searchPublishRecords('history', query)
     return
   }
-  emit('search', query)
+  emit('dispatch', 'mqtt.search.set', { query })
 }
 
 function closeToolbarSearchIfEmpty() {
@@ -1984,7 +1971,7 @@ onUnmounted(() => {
           role="mqtt-search"
           placeholder="搜索连接、日志、消息"
           :shortcut-hint="ctrlCommandLabel('mqtt.search.focus')"
-          @update:model-value="emit('search', $event)"
+          @update:model-value="emit('dispatch', 'mqtt.search.set', { query: $event })"
         />
         <button type="button" class="mqtt-icon-button add-folder-button" v-bind="commandTooltip('新建连接', 'mqtt.config.create', 'c-n')" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.config.create')" @click="emit('dispatch', 'mqtt.config.create', { groupId: null })">
           <MqttIcon name="add" />
@@ -2779,7 +2766,7 @@ onUnmounted(() => {
               data-mqtt-publish-field="topic"
               :value="publishDraft.topic || activeConfig?.publishTopic || ''"
               placeholder="发布 topic"
-              @input="emit('updatePublishDraft', { topic: ($event.target as HTMLInputElement).value })"
+              @input="emit('dispatch', 'mqtt.publish.draft.update', { topic: ($event.target as HTMLInputElement).value })"
             />
             <span class="mqtt-publish-options-anchor">
               <button
@@ -2935,7 +2922,7 @@ onUnmounted(() => {
             :value="publishDraft.payload"
             rows="8"
             placeholder="payload"
-            @input="emit('updatePublishDraft', { payload: ($event.target as HTMLTextAreaElement).value })"
+            @input="emit('dispatch', 'mqtt.publish.draft.update', { payload: ($event.target as HTMLTextAreaElement).value })"
           ></textarea>
 
         </section>
@@ -3236,7 +3223,7 @@ onUnmounted(() => {
             <small>{{ formatTime(log.timestamp) }}</small>
             <strong>{{ log.message }}</strong>
             <code>{{ log.detail || logConfigName(log) }}</code>
-            <button type="button" class="mqtt-icon-button" v-bind="plainTooltip('清理日志', '清理日志')" @click.stop="emit('focusLog', log.id); emit('dispatch', 'mqtt.log.delete')">
+            <button type="button" class="mqtt-icon-button" v-bind="plainTooltip('清理日志', '清理日志')" @click.stop="emit('dispatch', 'mqtt.log.focus', { id: log.id }); emit('dispatch', 'mqtt.log.delete')">
               <MqttIcon name="delete" />
             </button>
           </article>
