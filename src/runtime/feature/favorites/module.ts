@@ -1,7 +1,7 @@
 import { commandProfilesFromRecord } from '../../keybinding/commandProfile'
 import { createFeatureModuleV7, defaultShouldSubscribeV7 } from '../featureModule'
 import { selectFavoritesRuntimeSliceV7, type FavoritesRuntimeSliceV7 } from '../featureRuntimeSlices'
-import { registerFavoritesActions } from './actions'
+import { registerFavoritesActions, focusFavoritesSearch } from './actions'
 import { FAVORITES_COMMAND_PROFILES } from './commands'
 import { bindFavoritesPage } from './pageBind'
 import { FAVORITES_ROUTES } from './routes'
@@ -19,6 +19,7 @@ export const favoritesFeatureModuleV7 = createFeatureModuleV7<'favorites', Favor
   selectView: selectFavoritesRuntimeSliceV7,
   shouldSubscribe: (ctx) => defaultShouldSubscribeV7('favorites', lifecycle, ctx),
   registerActions: registerFavoritesActions,
+  focusSearch: focusFavoritesSearch,
   bindPage: bindFavoritesPage,
   confirmRestoreFocusSelectors: (snapshot) => [...new Set([
     `[data-role="favorite-${snapshot.activeFavoritePane}"]`,

@@ -40,7 +40,7 @@ import { actionMenuDispatchArgsV7, buildActionMenuItemV7, type ActionMenuItemV7 
 import type { RuntimeActionContext } from './action/types'
 import type { KeybindingLayerId } from './command/types'
 import type { FeatureActionHostV7 } from './feature/featureActionHost'
-import { FEATURE_MODULES_V7 } from './feature/featureModules'
+import { FEATURE_MODULES_V7, featureModuleV7 } from './feature/featureModules'
 import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feature/featureRegistry'
 import { buildCommandCatalogV7, buildEffectiveKeybindings, normalizeShortcutId } from './keybinding/keybindingRuntime'
 import type { KeybindingContext } from './keybinding/keybindingRuntime'
@@ -6290,18 +6290,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function focusSearch() {
-    if (state.activeTab === 'ports') {
-      return focusPortSearch()
-    } else if (state.activeTab === 'mqtt') {
-      searchFocusTarget = 'mqtt'
-      searchFocusRequestId += 1
-      notify()
-      return true
-    } else if (state.activeTab === 'favorites') {
-      return focusFavoriteSearch()
-    } else {
-      searchFocusTarget = 'ports'
-    }
+    if (featureModuleV7(state.activeTab).focusSearch?.(featureActionHost) === true) return true
+    searchFocusTarget = 'ports'
     searchFocusRequestId += 1
     notify()
     return true

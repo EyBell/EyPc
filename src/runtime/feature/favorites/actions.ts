@@ -1,5 +1,9 @@
 import type { FeatureActionHostV7 } from '../featureActionHost'
 
+export function focusFavoritesSearch(host: FeatureActionHostV7): boolean {
+  return host.focusFavoriteSearch()
+}
+
 export function registerFavoritesActions(host: FeatureActionHostV7): void {
   const { register, activateFavoriteSlot, addSelectedDirectoryEntries, applyFocusedFavoriteContainer, applySuggestedFavoriteRunner, assignFavoriteSlot, beginFavoriteDraft, blurSearchFocus, cancelFavoritePickReview, cancelFavoriteRunPrompt, clearFavoriteSlot, closeFavoriteDrawer, closeFavoriteSlotManager, commitFavoritePickReview, configureFavoriteSlotHotkey, copyDirectoryTargetPaths, copyFavoriteItems, copyFavoritePath, copyFavoriteRunCommand, copyFavoriteRunLogPath, cycleFavoriteDraftField, cycleFavoritePane, cycleFavoritePickReview, directoryPathsFromArgs, executeFavoriteDrawerItem, executeQuickFavoriteAt, favoriteActionTargetKind, favoriteIdFromArgs, favoritePickKindFromArgs, focusDuplicateFavorite, focusFavoriteActionTarget, focusFavoriteGroupSearch, focusFavoriteSearch, loadSelectedFavoriteDirectory, moveFavoriteDrawer, notify, openDirectoryTargets, openFavorite, openFavoriteDrawer, openFavoriteRunLog, openFavoriteSlotManager, pickFavoriteDraftPath, pickFavoritesForReview, refreshFavoritePathInspections, removeFavorite, removeFavoriteNow, reorderFavoriteMetadata, resetFavoriteLearning, revealDirectoryTargets, revealFavorite, revealFavoriteRunLog, save, saveFavoriteDraft, selectedFavoriteMetadataIds, submitFavoriteRunPrompt, undoFavoriteRemoval } = host
     register({ id: 'favorites.pane.toggleNext', title: '切换收藏栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => cycleFavoritePane(1) })

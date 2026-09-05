@@ -1,7 +1,7 @@
 import { commandProfilesFromRecord } from '../../keybinding/commandProfile'
 import { createFeatureModuleV7, defaultShouldSubscribeV7 } from '../featureModule'
 import { selectMqttRuntimeSliceV7, type MqttRuntimeSliceV7 } from '../featureRuntimeSlices'
-import { registerMqttActions, enterMqttTab } from './actions'
+import { registerMqttActions, enterMqttTab, focusMqttSearch } from './actions'
 import { MQTT_COMMAND_PROFILES } from './commands'
 import { bindMqttPage } from './pageBind'
 import { MQTT_ROUTES } from './routes'
@@ -21,5 +21,6 @@ export const mqttFeatureModuleV7 = createFeatureModuleV7<'mqtt', MqttRuntimeSlic
   shouldSubscribe: (ctx) => defaultShouldSubscribeV7('mqtt', lifecycle, ctx, (view) => connectedStates.has(view.mqttConnectionStatus.state)),
   registerActions: registerMqttActions,
   onTabEnter: enterMqttTab,
+  focusSearch: focusMqttSearch,
   bindPage: bindMqttPage
 })

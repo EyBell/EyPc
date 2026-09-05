@@ -53,7 +53,7 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
 - Documentation level: `standard`
 - Execution: `main-only` until a worktree is authorized
 - Automation lane: `not-applicable`
-- Status: `in-progress / slice-2`
+- Status: `in-progress / slice-3`
 
 ## Explicit non-goals
 
@@ -65,7 +65,7 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
 
 1. **ActionHost + 按前缀搬家。** 已接线：`FeatureActionHostV7` + 各包 `actions.ts`；Shell 只留全局命令。零语义。
 2. **`onTabEnter`。** 已接线：`setTab` 遍历各包可选钩子；mqtt archive / windows refresh / codex `syncActivation` 在对应包；缺省 no-op。`syncActivation` 仍对每次切 Tab 调用（离开 Codex 传 `false`）。
-3. **`focusSearch`。** `focusSearch()` 的 Tab 分支改模块贡献，缺省 false。
+3. **`focusSearch`。** 已接线：全局 `search.focus` 问当前 Tab 的 `focusSearch?(host)`；ports / mqtt / favorites 返回 true；缺省 false 时 Shell 仍回退到端口搜索框（与原 `else` 一致）。
 4. **壳旁路。** App.vue ports/windows DOM 对焦 watch 与 CommandHints 文案改为模块可选贡献。可与第 3 刀分开。
 
 禁止把 1–4 揉成单 commit。每刀独立可回退。
@@ -83,7 +83,7 @@ interface FeatureModuleV7 {
   // 现有贡献保留
   registerActions?(host: FeatureActionHostV7): void
   onTabEnter?(tab: AppTabId, options: { refreshWindows?: boolean }, host: FeatureActionHostV7): void
-  focusSearch?(): boolean
+  focusSearch?(host: FeatureActionHostV7): boolean
 }
 ```
 
@@ -91,8 +91,8 @@ interface FeatureModuleV7 {
 
 ## VerificationImpactTrace
 
-- 变更面：动作登记所有权、切 Tab 副作用、后续搜焦点 / DOM 对焦
-- 直接消费者：`setTab`、mqtt archive、windows refresh、codex `syncActivation`
-- 选中命令（第 2 刀）：`tests/runtime/featureModule.test.ts`、`pnpm exec vue-tsc --noEmit`
+- 变更面：动作登记所有权、切 Tab 副作用、全局搜焦点（第 3 刀）、后续 DOM 对焦
+- 直接消费者：`search.focus`、端口抽屉「聚焦搜索」、uTools `focusSearch` 路由（ports 仍派全局命令）
+- 选中命令（第 3 刀）：`tests/runtime/featureModule.test.ts`、`tests/runtime/action.test.ts` 中 `search.focus` 端口用例、`pnpm exec vue-tsc --noEmit`
 - 不选：整份 `action.test.ts`、MQTT 套件、仓库级 `pnpm test`、`pnpm run serve` / 真 uTools
-- 行为闸门：mqtt 仅在 `tab === 'mqtt'` 加载 archive；windows 仅 `refreshWindows === true` 刷新；codex 每次切 Tab 调用 `syncActivation`
+- 行为闸门：ports 走 `focusPortSearch`；mqtt 全局命令仍固定 `'mqtt'`（与 `mqtt.search.focus` 的 templates/history 分流不同）；favorites 走 `focusFavoriteSearch`；windows/codex/settings 仍回退端口搜索框
