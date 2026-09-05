@@ -288,8 +288,9 @@ describe('favorites page dialogs, focus and states', () => {
     expect(document.activeElement).toBe(rename.element)
     await rename.setValue('项目归档')
     await rename.trigger('keydown', { key: 'Enter' })
-    expect(wrapper.emitted('updateFavoriteDraft')?.at(-1)).toEqual([{ name: '项目归档' }])
-    expect(wrapper.emitted('saveFavoriteDraft')).toHaveLength(1)
+    const dispatched = wrapper.emitted('dispatch') || []
+    expect(dispatched.filter((entry) => entry[0] === 'favorites.draft.update').at(-1)).toEqual(['favorites.draft.update', { name: '项目归档' }])
+    expect(dispatched.filter((entry) => entry[0] === 'favorites.draft.save')).toHaveLength(1)
 
     await wrapper.setProps({ snapshot: { ...base, focusedFavoriteId: folder.id, favoriteDraft: null } })
     await nextTick()

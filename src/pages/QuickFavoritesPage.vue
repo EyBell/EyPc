@@ -7,8 +7,6 @@ import type { QuickFavoritesRuntimeSliceV7 } from '../runtime/feature/featureRun
 
 const props = defineProps<{ snapshot: QuickFavoritesRuntimeSliceV7; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
-  search: [value: string]
-  focus: [id: string]
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
@@ -140,7 +138,7 @@ watch(() => [
       :status="`${props.snapshot.favoriteItemRows.length} 项`"
       :shortcut-hint="ctrlCommandLabel('favorites.search.focus', 'c-f')"
       @focus="emit('dispatch', 'favorites.search.focus')"
-      @update:model-value="emit('search', $event)"
+      @update:model-value="emit('dispatch', 'favorites.search.set', { query: $event })"
     />
     <div
       class="list-surface quick-favorite-list"
@@ -163,9 +161,9 @@ watch(() => [
         :aria-selected="props.snapshot.selectedFavoriteIds.includes(item.id)"
         :class="{ focused: props.snapshot.focusedFavoriteId === item.id, selected: props.snapshot.selectedFavoriteIds.includes(item.id), 'path-error': pathStatusIsError(item.path) }"
         :style="{ '--node-color': item.color }"
-        @click="emit('focus', item.id)"
+        @click="emit('dispatch', 'favorites.item.focus', { id: item.id })"
         @dblclick="emit('dispatch', 'favorites.open', { favoriteId: item.id })"
-        @contextmenu.prevent="emit('focus', item.id); emit('dispatch', 'favorites.drawer.open', { favoriteId: item.id })"
+        @contextmenu.prevent="emit('dispatch', 'favorites.item.focus', { id: item.id }); emit('dispatch', 'favorites.drawer.open', { favoriteId: item.id })"
       >
         <kbd v-if="index < 10" class="quick-favorite-number" role="gridcell" :aria-label="`Ctrl+${shortcutNumber(index)} 打开第 ${index + 1} 项`">{{ shortcutNumber(index) }}</kbd>
         <span v-else class="quick-favorite-number-placeholder" role="gridcell" aria-hidden="true" />
