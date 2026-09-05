@@ -54,7 +54,7 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
 - Documentation level: `standard`
 - Execution: `main-only` until a worktree is authorized
 - Automation lane: `not-applicable`
-- Status: `implementation-landed / focused-automated-verified`
+- Status: `implementation-landed / focused-automated-verified / artifact-ready / host-loaded-slice-3`
 
 ## Explicit non-goals
 
@@ -97,5 +97,6 @@ interface FeatureModuleV7 {
 - 变更面：动作登记所有权、切 Tab 副作用、全局搜焦点、壳 DOM 对焦 watch、CommandHints 文案
 - 直接消费者：`search.focus`、端口/窗口壳对焦、TabShell `?` 帮助文案
 - 选中命令（第 4 刀）：`tests/runtime/featureModule.test.ts`、`tests/ui/commandHints.test.ts`、`pnpm exec vue-tsc --noEmit`
-- 不选：整份 `action.test.ts`、MQTT 套件、仓库级 `pnpm test`、`pnpm run serve` / 真 uTools、production build
+- 不选：整份 `action.test.ts`、MQTT 套件、仓库级 `pnpm test`、`pnpm run serve`
+- 第 3 刀产物 `host-13eeb115891c9342c49a` / `renderer-d6c95840edb106984087`（builtAt `2026-09-05T09:36:55.537Z`）已由匿名 `runtime-identity-handshake` 于 `2026-09-05T09:48:53.829Z` 报告 `host-loaded`；第 4 刀源码不在该包内
 - 行为闸门：ports/windows 对焦条件与选择器与迁出前一致；CommandHints 缺省仍是 settings 文案；search 框 DOM 映射仍在 App.vue

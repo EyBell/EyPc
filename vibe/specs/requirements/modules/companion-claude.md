@@ -10,6 +10,7 @@ Claude Code 库存、App 相位、原生未读、打开与归档权威，以及 
 - StopFailure 父 Turn 当前合同：[install-runtime-diagnostics/spec.md](../../260810/1155-install-runtime-diagnostics/spec.md#L168)
 - 条款正文：[raw-requirement.md](../../260807/claude-code-companion-authority-reset/raw-requirement.md#L1) 与 [RAW-174](../../260810/1155-install-runtime-diagnostics/raw-requirement.md#L120)
 - CLI 中断相位与 Host 线程权威（事后补登记，`proposed`）：[claude-host-thread-authority/spec.md](../../260901/claude-host-thread-authority/spec.md#L1)
+- unique live Hook 不被历史完成态盖掉：[companion-status-archive-sync/spec.md](../../260905/companion-status-archive-sync/spec.md#L1)
 
 ## Primary Requirements
 
@@ -52,6 +53,7 @@ Claude Code 库存、App 相位、原生未读、打开与归档权威，以及 
 - [RAW-197](../claude-raw-197.md#L1) — `proposed` · `agent-transcribed`
 - [RAW-198](../claude-raw-198.md#L1) — `proposed` · `agent-transcribed`
 - [RAW-204](../claude-raw-204.md#L1) — `active`
+- [RAW-210](../claude-raw-210.md#L1) — `active`
 
 ### 编号条款
 
