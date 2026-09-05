@@ -89,6 +89,9 @@ function createCodexArchiveBridge(dependencies = {}) {
   const codexhostLane = typeof dependencies.codexhostDiscovery === 'function'
     ? dependencies.codexhostDiscovery
     : () => null
+  const codexDesktopHostManaged = typeof dependencies.codexDesktopHostManaged === 'function'
+    ? dependencies.codexDesktopHostManaged
+    : async () => false
 
   if (typeof record !== 'function' || typeof timestampMs !== 'function' || typeof error !== 'function'
     || typeof threadKey !== 'function' || typeof validThreadId !== 'function' || !crypto
@@ -305,7 +308,10 @@ function createCodexArchiveBridge(dependencies = {}) {
       // thread/read there fails as protocol-error and the transaction used to
       // die at this line six times a day. The Host CLI is its archive surface.
       const hostLane = codexhostLane()
-      if (hostLane?.isExternalThreadId?.(entry.threadId) === true) {
+      if (entry.codexhostExternal === true || hostLane?.isExternalThreadId?.(entry.threadId) === true) {
+        if (!hostLane || typeof hostLane.codexhostReadThread !== 'function') {
+          return retainCodexArchiveTask(context, 'failed', 'codexhost-failed', 'CodexHost 未能读取该额外进程，任务已保留')
+        }
         return await archiveCodexhostThread(context, entry, evidence, hostLane, operationId)
       }
       const [threadResult, turnPage] = await Promise.all([
@@ -399,9 +405,18 @@ function createCodexArchiveBridge(dependencies = {}) {
         const nativeAck = await waitForCodexArchiveNativeAck(entry.threadId)
         context.nativeAckOutcome = nativeAck ? `acknowledged:${nativeAck.source}` : 'timeout'
         if (!nativeAck) {
-          return retainCodexArchiveTask(context, 'indeterminate', 'archive-native-ack-timeout', 'Codex 原生归档确认超时，任务已保留')
+          const hostManaged = await Promise.resolve(codexDesktopHostManaged())
+          if (hostManaged === true) {
+            context.nativeAckOutcome = 'not-required'
+            recordCodexArchiveStage('archive-native-ack', 'not-required', context, {
+              details: { reason: 'host-managed-desktop' }
+            })
+          } else {
+            return retainCodexArchiveTask(context, 'indeterminate', 'archive-native-ack-timeout', 'Codex 原生归档确认超时，任务已保留')
+          }
+        } else {
+          recordCodexArchiveStage('archive-native-ack', 'acknowledged', context)
         }
-        recordCodexArchiveStage('archive-native-ack', 'acknowledged', context)
       } else if (context.desktopBridgeState === 'not-running') {
         context.desktopSyncOutcome = 'not-running'
         context.nativeAckOutcome = 'not-required'
@@ -433,10 +448,20 @@ function createCodexArchiveBridge(dependencies = {}) {
       }
     } catch (thrown) {
       const source = record(thrown)
+      const code = typeof source.code === 'string' ? source.code : 'archive-failed'
+      if (code === 'protocol-error' && context.providerWriteOutcome !== 'completed') {
+        const hostLane = codexhostLane()
+        if (hostLane && typeof hostLane.codexhostReadThread === 'function') {
+          const probe = await hostLane.codexhostReadThread(entry.threadId)
+          if (probe && probe.ok === true) {
+            return await archiveCodexhostThread(context, entry, evidence, hostLane, operationId)
+          }
+        }
+      }
       return retainCodexArchiveTask(
         context,
         context.providerWriteOutcome === 'completed' ? 'indeterminate' : 'failed',
-        typeof source.code === 'string' ? source.code : 'archive-failed',
+        code,
         'Codex 任务归档失败，任务已保留'
       )
     } finally {
@@ -465,9 +490,10 @@ function createCodexArchiveBridge(dependencies = {}) {
    * rules as the official lane, with the Host CLI in every seat the official
    * app-server held: `thread read` is the preflight, `thread archive` the
    * provider write, and the live/archived `thread list` pair the two
-   * persistence verifications. There is no Desktop leg — the Host broadcasts
-   * `thread/archived` to Desktop itself, the same frame a sidebar archive
-   * produces — so the transaction never waits for a native ACK.
+   * persistence verifications. Host already broadcasts `thread/archived` on
+   * its writer; EyPc also dispatches the Desktop companion frame so the APP
+   * sidebar drops in real time. The transaction still does not wait for a
+   * native ACK — the two Host lists are the persistence evidence.
    */
   async function archiveCodexhostThread(context, entry, evidence, hostLane, operationId) {
     const lane = { lane: 'codexhost' }
@@ -517,9 +543,28 @@ function createCodexArchiveBridge(dependencies = {}) {
     recordCodexArchiveStage('archive-server-verify-1', 'verified', context, { details: lane })
 
     context.lastStage = 'archive-desktop-sync'
-    context.desktopSyncOutcome = 'host-broadcast'
     context.nativeAckOutcome = 'not-required'
-    recordCodexArchiveStage('archive-desktop-sync', 'not-required', context, { details: lane })
+    let companionOutcome = 'not-started'
+    try {
+      const desktopBridge = codexEnsureDesktopBridge()
+      if (desktopBridge && typeof desktopBridge.notifyThreadArchived === 'function') {
+        companionOutcome = await desktopBridge.notifyThreadArchived(
+          entry.threadId,
+          typeof entry.cwd === 'string' ? entry.cwd : ''
+        )
+      }
+    } catch {
+      companionOutcome = 'failed'
+    }
+    if (companionOutcome === 'dispatched') {
+      context.desktopSyncOutcome = 'host-broadcast+companion'
+      recordCodexArchiveStage('archive-desktop-sync', 'dispatched', context, { details: lane })
+    } else {
+      context.desktopSyncOutcome = 'host-broadcast'
+      recordCodexArchiveStage('archive-desktop-sync', 'not-required', context, {
+        details: { ...lane, companionOutcome }
+      })
+    }
 
     await waitCodexArchiveVerificationDelay()
     context.lastStage = 'archive-server-verify-2'
@@ -541,7 +586,7 @@ function createCodexArchiveBridge(dependencies = {}) {
     return {
       outcome: 'archived',
       operationId,
-      desktopSync: 'host-broadcast',
+      desktopSync: context.desktopSyncOutcome || 'host-broadcast',
       nativeAck: 'not-required',
       message: `已确认 CodexHost 归档（操作 ${codexArchiveShortOperationId(operationId)}）`
     }

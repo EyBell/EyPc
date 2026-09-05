@@ -160,6 +160,7 @@ interface BridgeHarness {
   listAllCodexThreads: ReturnType<typeof vi.fn>
   emitCodexActivityDelta: ReturnType<typeof vi.fn>
   commitArchived: ReturnType<typeof vi.fn>
+  notifyThreadArchived: ReturnType<typeof vi.fn>
   inventory: Map<string, Record<string, unknown>>
   suppressions: Set<string>
   lane: {
@@ -171,11 +172,22 @@ interface BridgeHarness {
   }
 }
 
-function bridgeHarness(laneOverrides: Partial<BridgeHarness['lane']> = {}): BridgeHarness {
+function bridgeHarness(
+  laneOverrides: Partial<BridgeHarness['lane']> = {},
+  extras: { codexhostExternal?: boolean; notifyOutcome?: string } = {}
+): BridgeHarness {
   const key = THREAD_KEY(EXT_ID)
   const alias = `ct_${crypto.randomBytes(18).toString('base64url')}`
   const now = Date.now()
-  const threadActions = new Map([[alias, { key, threadId: EXT_ID, expiresAt: now + 60_000, projectKey: 'chats', sourceFingerprint: FINGERPRINT, cwd: '' }]])
+  const threadActions = new Map([[alias, {
+    key,
+    threadId: EXT_ID,
+    expiresAt: now + 60_000,
+    projectKey: 'chats',
+    sourceFingerprint: FINGERPRINT,
+    cwd: '',
+    ...(extras.codexhostExternal === true ? { codexhostExternal: true } : {})
+  }]])
   const inventory = new Map<string, Record<string, unknown>>([[EXT_ID, { key, lastTurnStatus: 'completed', lastTurnStartedAt: 1_700_000_000_000 }]])
   const suppressions = new Set<string>()
   const diagnostics: Array<Record<string, any>> = []
@@ -191,6 +203,7 @@ function bridgeHarness(laneOverrides: Partial<BridgeHarness['lane']> = {}): Brid
   const listAllCodexThreads = vi.fn(async () => [])
   const emitCodexActivityDelta = vi.fn()
   const commitArchived = vi.fn(() => ({ outcome: 'archived' }))
+  const notifyThreadArchived = vi.fn(async () => extras.notifyOutcome || 'not-running')
   const bridge = archiveBridgeModule.createCodexArchiveBridge({
     utools: undefined,
     record: (value: unknown) => (value && typeof value === 'object' ? value : {}),
@@ -209,7 +222,7 @@ function bridgeHarness(laneOverrides: Partial<BridgeHarness['lane']> = {}): Brid
     codexNormalizeNativeRoot: (value: unknown) => value,
     codexThreadAlias: () => ({ key, alias }),
     listAllCodexThreads,
-    codexEnsureDesktopBridge: () => ({ state: 'not-running', activityForThread: () => null, notifyThreadArchived: async () => 'not-running' }),
+    codexEnsureDesktopBridge: () => ({ state: 'not-running', activityForThread: () => null, notifyThreadArchived }),
     desktopBridgeClientId: () => 'eypc-test',
     companionDiagnosticTaskRef: (_provider: string, threadId: string) => `h:${threadId}`,
     emitCodexActivityDelta,
@@ -226,7 +239,7 @@ function bridgeHarness(laneOverrides: Partial<BridgeHarness['lane']> = {}): Brid
     companionTaskKernel: { commitArchived },
     codexhostDiscovery: () => lane
   })
-  return { bridge, alias, key, diagnostics, requestCodexRpc, listAllCodexThreads, emitCodexActivityDelta, commitArchived, inventory, suppressions, lane }
+  return { bridge, alias, key, diagnostics, requestCodexRpc, listAllCodexThreads, emitCodexActivityDelta, commitArchived, notifyThreadArchived, inventory, suppressions, lane }
 }
 
 function archiveRequest(operationId: string) {
@@ -257,6 +270,7 @@ describe('codexhost archive lane · archive bridge', () => {
     expect(harness.commitArchived).toHaveBeenCalledWith(expect.objectContaining({ provider: 'codex', key: harness.key, operationId: 'archive-ui-test0001-1', verified: true }))
     expect(harness.emitCodexActivityDelta).toHaveBeenCalledWith([], true, 'urgent', [harness.key])
     expect(harness.lane.codexhostForgetThread).toHaveBeenCalledWith(EXT_ID)
+    expect(harness.notifyThreadArchived).toHaveBeenCalledWith(EXT_ID, '')
     expect(harness.inventory.has(EXT_ID)).toBe(false)
     expect(harness.suppressions.size).toBe(0)
     const stages = harness.diagnostics.filter((entry) => entry.scope === 'archive-transaction').map((entry) => `${entry.event}:${entry.outcome}`)
@@ -297,12 +311,126 @@ describe('codexhost archive lane · archive bridge', () => {
   })
 
   it('leaves native Codex rows on the official path', async () => {
-    const harness = bridgeHarness({ isExternalThreadId: vi.fn(() => false) })
+    const harness = bridgeHarness({
+      isExternalThreadId: vi.fn(() => false),
+      codexhostReadThread: vi.fn(async () => ({ ok: false, code: 'THREAD_NOT_FOUND' }))
+    })
     const result = await harness.bridge.archiveCodexThread(harness.alias, archiveRequest('archive-ui-test0005-1'))
     expect(result.outcome).toBe('failed')
     expect(harness.requestCodexRpc).toHaveBeenCalled()
-    expect(harness.lane.codexhostReadThread).not.toHaveBeenCalled()
+    expect(harness.lane.codexhostReadThread).toHaveBeenCalledWith(EXT_ID)
+    expect(harness.lane.codexhostArchiveThread).not.toHaveBeenCalled()
   })
+
+  it('keeps the Host lane when the roster is empty but the alias is stamped external', async () => {
+    const harness = bridgeHarness({ isExternalThreadId: vi.fn(() => false) }, { codexhostExternal: true })
+    const result = await harness.bridge.archiveCodexThread(harness.alias, archiveRequest('archive-ui-test0006-1'))
+    expect(result).toMatchObject({ outcome: 'archived', desktopSync: 'host-broadcast', nativeAck: 'not-required' })
+    expect(harness.requestCodexRpc).not.toHaveBeenCalled()
+    expect(harness.lane.codexhostArchiveThread).toHaveBeenCalledWith(EXT_ID, true)
+    expect(harness.notifyThreadArchived).toHaveBeenCalledWith(EXT_ID, '')
+  })
+
+  it('retries the Host lane after an official protocol-error when Host read succeeds', async () => {
+    const harness = bridgeHarness({ isExternalThreadId: vi.fn(() => false) })
+    const result = await harness.bridge.archiveCodexThread(harness.alias, archiveRequest('archive-ui-test0007-1'))
+    expect(result).toMatchObject({ outcome: 'archived', nativeAck: 'not-required' })
+    expect(harness.requestCodexRpc).toHaveBeenCalled()
+    expect(harness.lane.codexhostReadThread).toHaveBeenCalledWith(EXT_ID)
+    expect(harness.lane.codexhostArchiveThread).toHaveBeenCalledWith(EXT_ID, true)
+    expect(harness.notifyThreadArchived).toHaveBeenCalledWith(EXT_ID, '')
+  })
+
+  it('records companion dispatch after Host verification without waiting for a native ACK', async () => {
+    const harness = bridgeHarness({}, { notifyOutcome: 'dispatched' })
+    const result = await harness.bridge.archiveCodexThread(harness.alias, archiveRequest('archive-ui-test0008-1'))
+    expect(result).toMatchObject({
+      outcome: 'archived',
+      desktopSync: 'host-broadcast+companion',
+      nativeAck: 'not-required'
+    })
+    expect(harness.notifyThreadArchived).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('codex native archive · host-managed Desktop ACK', () => {
+  it('commits when Host-managed Desktop never ACKs after two inventory verifies', async () => {
+    const at = 1_700_000_000_000
+    const key = THREAD_KEY(NATIVE_ID)
+    const alias = `ct_${crypto.randomBytes(18).toString('base64url')}`
+    const now = Date.now()
+    const threadActions = new Map([[alias, {
+      key,
+      threadId: NATIVE_ID,
+      expiresAt: now + 60_000,
+      projectKey: 'chats',
+      sourceFingerprint: FINGERPRINT,
+      cwd: '/repo/eypc'
+    }]])
+    const inventory = new Map<string, Record<string, unknown>>([[NATIVE_ID, { key, lastTurnStatus: 'completed', lastTurnStartedAt: at }]])
+    const suppressions = new Set<string>()
+    const commitArchived = vi.fn(() => ({ outcome: 'archived' }))
+    const notifyThreadArchived = vi.fn(async () => 'dispatched')
+    const listAllCodexThreads = vi.fn(async (archived: boolean) => archived ? [{ id: NATIVE_ID }] : [])
+    const requestCodexRpc = vi.fn(async (method: string) => {
+      if (method === 'thread/read') {
+        return { thread: { id: NATIVE_ID, status: { type: 'idle' }, recencyAt: at, cwd: '/repo/eypc' } }
+      }
+      if (method === 'thread/turns/list') {
+        return { data: [{ startedAt: at, completedAt: at, status: 'completed' }] }
+      }
+      if (method === 'thread/archive') return {}
+      throw Object.assign(new Error(method), { code: 'protocol-error' })
+    })
+    const lane = {
+      isExternalThreadId: vi.fn(() => false),
+      codexhostReadThread: vi.fn(async () => ({ ok: false, code: 'THREAD_NOT_FOUND' })),
+      codexhostArchiveThread: vi.fn(),
+      codexhostArchiveState: vi.fn(),
+      codexhostForgetThread: vi.fn()
+    }
+    const bridge = archiveBridgeModule.createCodexArchiveBridge({
+      utools: undefined,
+      record: (value: unknown) => (value && typeof value === 'object' ? value : {}),
+      timestampMs: (value: unknown) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 0),
+      error: (code: string, message: string) => Object.assign(new Error(message), { code }),
+      threadKey: THREAD_KEY,
+      validThreadId: (value: unknown) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value),
+      crypto,
+      runtimeDiagnostics: { record: () => {} },
+      requestCodexRpc,
+      readCodexNativeRegistry: () => ({ fingerprint: FINGERPRINT }),
+      codexDesktopIsRunning: async () => true,
+      sanitizeCodexTurnStatusPage: () => ({ startedAt: at, completedAt: at, status: 'completed' }),
+      codexIsConfirmedTurnEvidence: () => true,
+      codexThreadNativeProject: () => ({ project: { key: 'chats' } }),
+      codexNormalizeNativeRoot: (value: unknown) => value,
+      codexThreadAlias: () => ({ key, alias }),
+      listAllCodexThreads,
+      codexEnsureDesktopBridge: () => ({ state: 'connected', activityForThread: () => null, notifyThreadArchived }),
+      desktopBridgeClientId: () => 'eypc-test',
+      companionDiagnosticTaskRef: (_provider: string, threadId: string) => `h:${threadId}`,
+      emitCodexActivityDelta: vi.fn(),
+      threadTurnStatusTimeoutMs: 1_000,
+      threadActions,
+      projectActions: new Map(),
+      activityInventory: () => inventory,
+      localArchiveRecoverySuppressions: suppressions,
+      activityKeyForArchivedThread: (threadId: string) => {
+        const known = inventory.get(threadId)
+        inventory.delete(threadId)
+        return typeof known?.key === 'string' ? known.key : ''
+      },
+      companionTaskKernel: { commitArchived },
+      codexhostDiscovery: () => lane,
+      codexDesktopHostManaged: async () => true
+    })
+    const result = await bridge.archiveCodexThread(alias, archiveRequest('archive-ui-test0009-1'))
+    expect(result).toMatchObject({ outcome: 'archived', desktopSync: 'dispatched', nativeAck: 'not-required' })
+    expect(commitArchived).toHaveBeenCalled()
+    expect(lane.codexhostArchiveThread).not.toHaveBeenCalled()
+    expect(notifyThreadArchived).toHaveBeenCalledWith(NATIVE_ID, '/repo/eypc')
+  }, 10_000)
 })
 
 describe('codexhost pin lane · discovery', () => {

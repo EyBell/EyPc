@@ -15,6 +15,7 @@ const pinModule = require('../../preload/codex/pin-bridge.cjs') as {
 const PINNED = pinModule.CODEX_PINNED_SECTION_ID
 const NATIVE_ID = '01a052cb-77fa-7fd3-8acd-cb7e45f659ee'
 const EXT_ID = '9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f'
+const STAMPED_ID = 'aaaaaaaa-1111-2222-3333-444444444444'
 
 describe('codex pin lane · reading the Pinned section', () => {
   it('answers pinned only from the app-server section and reports absence as unknown', () => {
@@ -74,6 +75,7 @@ describe('codex pin lane · outbound write', () => {
     const threadActions = new Map([
       ['ct_native_alias_000000001', { threadId: NATIVE_ID, key: 'codex:native', expiresAt: Number.MAX_SAFE_INTEGER }],
       ['ct_ext_alias_000000000001', { threadId: EXT_ID, key: 'codex:ext', expiresAt: Number.MAX_SAFE_INTEGER }],
+      ['ct_stamped_ext_alias_00001', { threadId: STAMPED_ID, key: 'codex:stamped', expiresAt: Number.MAX_SAFE_INTEGER, codexhostExternal: true }],
       ['ct_stale_alias_00000000001', { threadId: NATIVE_ID, key: 'codex:stale', expiresAt: 1 }]
     ])
     const verified: Array<[string, boolean, string]> = []
@@ -172,5 +174,16 @@ describe('codex pin lane · outbound write', () => {
       errorCode: 'unsupported'
     })
     expect(rpc).toEqual([])
+  })
+
+  it('keeps the Host pin lane when the roster is empty but the alias is stamped external', async () => {
+    const { bridge, rpc, verified } = harness()
+    await expect(bridge.setCompanionPin('ct_stamped_ext_alias_00001', { pinned: true })).resolves.toMatchObject({
+      outcome: 'completed',
+      providerPin: true,
+      method: 'codexhost thread pin'
+    })
+    expect(rpc).toEqual([])
+    expect(verified).toEqual([[STAMPED_ID, true, 'codexhost']])
   })
 })
