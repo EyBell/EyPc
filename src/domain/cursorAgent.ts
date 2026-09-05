@@ -123,18 +123,22 @@ export function cursorSubagentsRunning(observation: CursorAgentObservation): boo
 }
 
 /**
- * Hook Turn beats disk. Never invents `waiting-approval`. Disk `status` cannot
- * override an open Turn, and cannot invent a terminal from silence. A live
- * fork outranks the parent's own terminal hook phase but not its waiting-input.
+ * Live cold markers beat disk. An open Hook Turn still beats aborted/empty
+ * disk, but disk `completed` with no live cold run does not stay running on a
+ * stale `hookTurnOpen` / hookPhase running. Never invents `waiting-approval`.
+ * A live fork outranks the parent's own terminal hook phase but not its waiting-input.
  */
 export function resolveCursorAgentPhase(observation: CursorAgentObservation): ClaudeCodePhase {
   // Cursor's blocking user decision (AskQuestion / plan question / terminal
   // approval) is 待输入 and outranks an open Turn, like Claude's waiting-input.
   if (observation.hasBlockingPendingActions) return 'waiting-input'
-  if (observation.hookTurnOpen) return 'running'
+  const coldLive = observation.unfinishedRunAt > 0 || cursorSubagentsRunning(observation)
+  const diskSettledCompleted = observation.diskStatus === 'completed'
+  if (observation.hookTurnOpen && (coldLive || !diskSettledCompleted)) return 'running'
   if (observation.hasPendingPlan) return 'waiting-input'
   if (cursorSubagentsRunning(observation)) return 'running'
-  if (observation.hookPhase === 'running' || observation.hookPhase === 'completed' || observation.hookPhase === 'stopped') {
+  if (observation.hookPhase === 'running' && (coldLive || !diskSettledCompleted)) return 'running'
+  if (observation.hookPhase === 'completed' || observation.hookPhase === 'stopped') {
     return observation.hookPhase
   }
   if (observation.unfinishedRunAt > 0) return 'running'

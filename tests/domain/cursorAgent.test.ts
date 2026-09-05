@@ -39,11 +39,21 @@ describe('cursor agent cold inventory', () => {
     expect(resolveCursorAgentPhase(observation({ diskStatus: 'aborted', unfinishedRunAt: 9_000 })!)).toBe('running')
   })
 
-  it('lets an open hook turn beat disk status and never invents waiting-approval', () => {
+  it('lets an open hook turn beat aborted disk, but not a settled completed disk without a live cold run', () => {
     expect(resolveCursorAgentPhase(observation({
       diskStatus: 'aborted',
       hookTurnOpen: true,
       hookPhase: 'running'
+    })!)).toBe('running')
+    expect(resolveCursorAgentPhase(observation({
+      diskStatus: 'completed',
+      hookTurnOpen: true,
+      hookPhase: 'running'
+    })!)).toBe('completed')
+    expect(resolveCursorAgentPhase(observation({
+      diskStatus: 'completed',
+      hookTurnOpen: true,
+      unfinishedRunAt: 9_000
     })!)).toBe('running')
     expect(resolveCursorAgentPhase(observation({
       unfinishedRunAt: 9_000,
