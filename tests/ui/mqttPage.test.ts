@@ -123,7 +123,7 @@ describe('mqtt page layout', () => {
     expect(page).not.toContain('当前连接地址')
     expect(page).not.toContain('mqtt-endpoint-preview')
     expect(page).toContain('mqtt-log-drawer')
-    expect(page).toContain('focusLog')
+    expect(page).toContain('mqtt.log.focus')
     expect(page).toContain('mqtt.log.clearAll')
     expect(page).toContain('mqtt.log.clearCurrentConfig')
     expect(page).toContain('mqtt.log.delete')
