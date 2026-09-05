@@ -59,7 +59,7 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
 ## Explicit non-goals
 
 - 不是热插拔。动作文件仍由 `createAppRuntime` 在构造时调用，闭包仍吃同一份 state。
-- 不把 `bindPage` 的事件改成 dispatch-only（那是再下一刀）。
+- 不把 `bindPage` 的事件改成 dispatch-only；后继 [feature-bindpage-dispatch](../260905/feature-bindpage-dispatch/task-card.md#L1)。
 - 前驱壳层任务 [feature-contrib-shell](../feature-contrib-shell/task-card.md#L1) 已完成；本卡不重做 commands/routes/bindPage。
 
 ## Construction slices

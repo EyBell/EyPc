@@ -18,17 +18,6 @@ watch(() => props.snapshot.portGroupDraft, (draft) => {
 }, { immediate: true })
 
 const emit = defineEmits<{
-  search: [value: string]
-  groupSearch: [value: string]
-  scan: []
-  focus: [id: string]
-  toggle: [id: string]
-  focusGroup: [id: string]
-  focusGroupTarget: [target: PortGroupTarget]
-  moveGroupToFolder: [groupId: string, folderId: string | null]
-  saveGroupDraft: [input: { name: string; entriesText: string; color: string; folderId: string | null }]
-  updateGroupDraft: [input: { name?: string; entriesText?: string; color?: string; folderId?: string | null }]
-  cancelGroupDraft: []
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
@@ -71,7 +60,7 @@ watch(() => props.snapshot.portDrawer.open ? 'actions' : props.snapshot.portDeta
 })
 
 function updateDraft(input: { name?: string; entriesText?: string; color?: string; folderId?: string | null }) {
-  emit('updateGroupDraft', input)
+  emit('dispatch', 'ports.group.draft.update', input)
 }
 
 function clearGroupDraftFolder() {
@@ -80,7 +69,7 @@ function clearGroupDraftFolder() {
 }
 
 function dispatchPortRowAction(id: string, actionId: string) {
-  emit('focus', id)
+  emit('dispatch', 'ports.port.focus', { portId: id })
   if (actionId === 'ports.drawer.open' && props.snapshot.selectedPortIds.includes(id) && props.snapshot.selectedPortIds.length > 0) {
     emit('dispatch', actionId)
     return
@@ -150,11 +139,11 @@ function groupDetailRows() {
 }
 
 function focusGroupRow(target: PortGroupTarget) {
-  emit('focusGroupTarget', target)
+  emit('dispatch', 'ports.groupTarget.focus', targetArgs(target))
 }
 
 function openGroupContextMenu(target: PortGroupTarget) {
-  emit('focusGroupTarget', target)
+  emit('dispatch', 'ports.groupTarget.focus', targetArgs(target))
   emit('dispatch', 'ports.drawer.open', targetArgs(target))
 }
 
@@ -164,7 +153,7 @@ function dragGroup(target: PortGroupTarget) {
 
 function dropGroup(folderId: string | null) {
   if (!draggingGroupId) return
-  emit('moveGroupToFolder', draggingGroupId, folderId)
+  emit('dispatch', 'ports.group.moveToFolder', { groupId: draggingGroupId, folderId })
   draggingGroupId = ''
 }
 
@@ -264,7 +253,7 @@ function groupSearchStatus() {
           :status="groupSearchStatus()"
           :shortcut-hint="ctrlCommandLabel('ports.groupSearch.focus')"
           @focus="emit('dispatch', 'ports.groupSearch.focus')"
-          @update:model-value="emit('groupSearch', $event)"
+          @update:model-value="emit('dispatch', 'ports.groupSearch.set', { query: $event })"
         />
         <button
           type="button"
@@ -375,7 +364,7 @@ function groupSearchStatus() {
           :status="portSearchStatus()"
           :shortcut-hint="ctrlCommandLabel('ports.search.focus')"
           @focus="emit('dispatch', 'ports.search.focus')"
-          @update:model-value="emit('search', $event)"
+          @update:model-value="emit('dispatch', 'ports.search.set', { query: $event })"
         />
       </div>
       <SelectableList
@@ -383,8 +372,8 @@ function groupSearchStatus() {
         :selected-ids="props.snapshot.selectedPortIds"
         :focused-id="props.snapshot.focusedPortId"
         :show-selection="props.snapshot.selectedPortIds.length > 0"
-        @focus="emit('focus', $event)"
-        @toggle="emit('toggle', $event)"
+        @focus="emit('dispatch', 'ports.port.focus', { portId: $event })"
+        @toggle="emit('dispatch', 'ports.port.toggle', { portId: $event })"
         @action="dispatchPortRowAction"
       />
     </section>
@@ -547,8 +536,8 @@ function groupSearchStatus() {
           </select>
         </label>
         <div class="confirm-actions">
-          <button type="button" @click="emit('cancelGroupDraft')">取消</button>
-          <button type="button" @click="emit('saveGroupDraft', { name: groupForm.name, entriesText: groupForm.entriesText, color: groupForm.color, folderId: groupForm.folderId || null })">保存</button>
+          <button type="button" @click="emit('dispatch', 'ports.group.draft.cancel')">取消</button>
+          <button type="button" @click="emit('dispatch', 'ports.group.draft.save', { name: groupForm.name, entriesText: groupForm.entriesText, color: groupForm.color, folderId: groupForm.folderId || null })">保存</button>
         </div>
       </section>
     </div>

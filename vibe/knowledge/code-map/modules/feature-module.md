@@ -13,7 +13,7 @@ Baseline: 2026-09-04 · 相对当前实现 · 不是第二份 PRD
 | [module.ts](../../../../src/runtime/feature/ports/module.ts#L1) | 组装 ABI（以 ports 为例） |
 | [commands.ts](../../../../src/runtime/feature/ports/commands.ts#L1) | 该 Tab 的快捷键 profile |
 | [routes.ts](../../../../src/runtime/feature/ports/routes.ts#L1) | `plugin.json` feature code 归属 |
-| [pageBind.ts](../../../../src/runtime/feature/ports/pageBind.ts#L1) | 页面组件 + props/事件，不改成 dispatch-only |
+| [pageBind.ts](../../../../src/runtime/feature/ports/pageBind.ts#L1) | 页面组件 + props；ports 的 `on` 只留 `dispatch`。其余包仍具名事件；后继 [feature-bindpage-dispatch](../../../specs/260905/feature-bindpage-dispatch/task-card.md#L1) |
 | [actions.ts](../../../../src/runtime/feature/ports/actions.ts#L1) | 该 Tab 前缀的 `register` / `registerHandler`；实现仍闭包同一份 Runtime state。mqtt / windows / Codex 另贡献 `onTabEnter`；ports / mqtt / favorites 另贡献 `focusSearch` 与 `commandHints`；ports / windows 另贡献 `shellDomFocusWatches` |
 
 合同：[featureModule.ts](../../../../src/runtime/feature/featureModule.ts#L94) `FeatureModuleV7`。登记表：[featureModules.ts](../../../../src/runtime/feature/featureModules.ts#L21) `FEATURE_MODULES_V7`。产品名派生：[featureRegistry.ts](../../../../src/runtime/feature/featureRegistry.ts#L18) `FEATURES = modules.map(definition)`。
@@ -34,7 +34,7 @@ Baseline: 2026-09-04 · 相对当前实现 · 不是第二份 PRD
 ## 明确还不是什么
 
 - **registry-driven ≠ 热插拔**。没有运行时 `registerFeature`，没有独立 npm 包。
-- **动作按包登记，实现仍在 Runtime 闭包**。[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L8906) 的 `registerActions` 只组袋子并调用各包。切 Tab、全局搜焦点、ports/windows 壳 DOM 对焦与 CommandHints 文案已迁到模块可选贡献。`bindPage` 事件不改成 dispatch-only（明确非目标）。
+- **动作按包登记，实现仍在 Runtime 闭包**。[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L8906) 的 `registerActions` 只组袋子并调用各包。切 Tab、全局搜焦点、ports/windows 壳 DOM 对焦与 CommandHints 文案已迁到模块可选贡献。`bindPage` 事件：ports 已 dispatch-only；mqtt / favorites / windows / settings 仍具名事件。后继 [feature-bindpage-dispatch](../../../specs/260905/feature-bindpage-dispatch/task-card.md#L1)。
 - 默认开关/排序单源：[types.ts](../../../../src/domain/types.ts#L13) `DEFAULT_FEATURE_CONFIGS`。
 - 加第 7 个 Tab 还要动 AppState 字段与 Runtime 动作，不能只丢一个文件夹。
 - RAW-179#3 字面要求 QuickFavorites / Action / Float 也走 FeatureModule：**未实施 / 非本刀**。Quick 仍由收藏 `bindPage` 内切换页面。
