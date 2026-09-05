@@ -4,6 +4,7 @@ import type { AppRuntimeSnapshot, RuntimeNotificationDomainV7 } from '../appRunt
 import type { KeybindingLayerId } from '../command/types'
 import type { ShortcutCommandProfile } from '../keybinding/commandProfile'
 import { createRuntimeSliceV7, type RuntimeSliceOwnerV7 } from '../runtimeSlice'
+import type { FeatureActionHostV7 } from './featureActionHost'
 import type { FeatureDefinition } from './featureRegistry'
 import type { FeatureRoute } from './featureRouteHelpers'
 
@@ -77,6 +78,7 @@ export interface FeatureModuleV7<Id extends AppTabId = AppTabId, View = unknown>
   selectView(snapshot: AppRuntimeSnapshot): View
   createSlice(source: FeatureSliceSourceV7): RuntimeSliceOwnerV7<View>
   shouldSubscribe(ctx: FeatureSubscribeContextV7<View>): boolean
+  registerActions(host: FeatureActionHostV7): void
   bindPage(input: {
     runtime: FeaturePageHostV7
     slice: RuntimeSliceOwnerV7<View>

@@ -10,6 +10,15 @@ export interface FeatureConfig {
   sortOrder: number
 }
 
+export const DEFAULT_FEATURE_CONFIGS: readonly FeatureConfig[] = Object.freeze([
+  { id: 'ports', enabled: true, sortOrder: 1 },
+  { id: 'favorites', enabled: false, sortOrder: 2 },
+  { id: 'mqtt', enabled: true, sortOrder: 3 },
+  { id: 'windows', enabled: false, sortOrder: 4 },
+  { id: 'codex', enabled: true, sortOrder: 5 },
+  { id: 'settings', enabled: true, sortOrder: 6 }
+])
+
 export interface PortProcess {
   id: string
   pid: number

@@ -71,7 +71,7 @@ Task: 每个 Tab 自带 definition / commands / routes / bindPage / shouldSubscr
 ## Explicit non-goals
 
 - RAW-179#3 字面「QuickFavorites / Action / Float 也走 FeatureModule」本刀明确 **未实施 / 非本刀**。
-- 登记驱动 ≠ 热插拔。动作实现仍在 AppRuntime。
+- 登记驱动 ≠ 热插拔。动作实现仍在 AppRuntime；后继 [feature-action-extract](../feature-action-extract/task-card.md#L1)。
 - 加第 7 个 Tab 本轮仍不能只丢一个文件夹：还要动 AppState 字段与 Runtime 动作。
 
 ## VerificationImpactTrace

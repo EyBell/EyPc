@@ -1,6 +1,7 @@
 import { commandProfilesFromRecord } from '../../keybinding/commandProfile'
 import { createFeatureModuleV7, defaultShouldSubscribeV7 } from '../featureModule'
 import { selectSettingsRuntimeSliceV7, type SettingsRuntimeSliceV7 } from '../featureRuntimeSlices'
+import { registerSettingsActions } from './actions'
 import { SETTINGS_COMMAND_PROFILES } from './commands'
 import { bindSettingsPage } from './pageBind'
 import { SETTINGS_ROUTES } from './routes'
@@ -18,5 +19,6 @@ export const settingsFeatureModuleV7 = createFeatureModuleV7<'settings', Setting
   alwaysEnabled: true,
   selectView: selectSettingsRuntimeSliceV7,
   shouldSubscribe: (ctx) => defaultShouldSubscribeV7('settings', lifecycle, ctx),
+  registerActions: registerSettingsActions,
   bindPage: bindSettingsPage
 })

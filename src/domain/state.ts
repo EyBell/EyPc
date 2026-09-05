@@ -1,4 +1,4 @@
-import { FEATURE_MODULE_IDS, type AppState, type AppTabId, type FavoriteKind, type FavoriteNode, type FavoriteSearchAffinity, type FavoriteSlot, type FeatureConfig, type KeybindingOverride, type PortGroup, type PortGroupFolder, type RuntimeDiagnosticsSettings, type ShortcutProfileId, type ShortcutProfileMap } from './types'
+import { DEFAULT_FEATURE_CONFIGS, FEATURE_MODULE_IDS, type AppState, type AppTabId, type FavoriteKind, type FavoriteNode, type FavoriteSearchAffinity, type FavoriteSlot, type FeatureConfig, type KeybindingOverride, type PortGroup, type PortGroupFolder, type RuntimeDiagnosticsSettings, type ShortcutProfileId, type ShortcutProfileMap } from './types'
 import { normalizeMqttState } from './mqtt'
 import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistory'
 import { normalizeShortcutId } from './shortcuts'
@@ -11,14 +11,10 @@ import { fileManagerGroupKey } from './windowTree'
 
 const VALID_TABS = new Set<AppTabId>(FEATURE_MODULE_IDS)
 const TAB_IDS: AppTabId[] = [...FEATURE_MODULE_IDS]
-const DEFAULT_FEATURE_SORT_ORDER: Record<AppTabId, number> = {
-  ports: 1,
-  favorites: 2,
-  mqtt: 3,
-  windows: 4,
-  codex: 5,
-  settings: 6
-}
+const DEFAULT_FEATURE_SORT_ORDER = Object.fromEntries(
+  DEFAULT_FEATURE_CONFIGS.map((item) => [item.id, item.sortOrder])
+) as Record<AppTabId, number>
+const DEFAULT_FEATURE_CONFIG_BY_ID = new Map(DEFAULT_FEATURE_CONFIGS.map((item) => [item.id, item]))
 const VALID_FAVORITE_KINDS = new Set<FavoriteKind>(['file', 'folder', 'group'])
 const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', ...FEATURE_MODULE_IDS]
 const RUNTIME_DIAGNOSTICS_DEFAULTS_REVISION = 3 as const
@@ -219,7 +215,7 @@ function normalizeSearchHistories(value: unknown, legacyPortHistory: string[], l
 function defaultFeatureConfig(id: AppTabId, sortOrder: number): FeatureConfig {
   return {
     id,
-    enabled: id === 'favorites' || id === 'windows' ? false : true,
+    enabled: DEFAULT_FEATURE_CONFIG_BY_ID.get(id)?.enabled !== false,
     sortOrder
   }
 }

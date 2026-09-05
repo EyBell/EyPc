@@ -25,7 +25,7 @@
 | [command/commandCatalog.ts](../../../../src/runtime/command/commandCatalog.ts#L24) | 命令描述唯一表 |
 | [command/layerStack.ts](../../../../src/runtime/command/layerStack.ts#L210) | 模态 / Escape / 层优先级 |
 | [command/types.ts](../../../../src/runtime/command/types.ts#L1) | 命令类型 |
-| [feature/featureRegistry.ts](../../../../src/runtime/feature/featureRegistry.ts#L18) | 从模块 definition 派生 FEATURES 与默认开关 |
+| [feature/featureRegistry.ts](../../../../src/runtime/feature/featureRegistry.ts#L18) | 从模块 definition 派生 FEATURES；默认开关/排序转口 `DEFAULT_FEATURE_CONFIGS` |
 | [feature/featureModules.ts](../../../../src/runtime/feature/featureModules.ts#L21) | 六个贡献包冻结登记 |
 | [feature/featureModule.ts](../../../../src/runtime/feature/featureModule.ts#L66) | 贡献型 FeatureModule ABI |
 | [feature/feature-module.md](feature-module.md#L1) | Tab 贡献边界导读（命令/路由/挂页/订阅） |
