@@ -14,3 +14,5 @@
 | `vibe/specs/requirements/claude-raw-210.md` | 登记 unique live Hook |
 | `vibe/specs/requirements/codex-raw-199.md` | 注记由 RAW-209 细化，归档真机已过 |
 | 产物身份 | `host-13eeb115891c9342c49a` / `renderer-723677a2b5a038e83771`，builtAt `2026-09-05T10:02:52.351Z` |
+| 宿主加载 | 2026-09-05T10:13:49.317Z 匿名 handshake 报告 `host-loaded`；同会话 `plugin-enter` `eypc-main` |
+| RAW-210 相位 | 重载后用户观测 Claude Code 任务状态已同步 |

@@ -547,7 +547,7 @@
       "source_task": "260905/companion-status-archive-sync",
       "source_path": "vibe/specs/260905/companion-status-archive-sync/raw-requirement.md",
       "spec_id": "SPEC-260905-COMPANION-STATUS-ARCHIVE-SYNC",
-      "content_sha256": "e30aeaf6998fece04fc1d24365ed7c584193a807108f5e47fbab51973fd8c653",
+      "content_sha256": "e284332cf59fea0eb8667e5dde8bb98427fd2d2a28f1418c65e497ca5c0ff9f0",
       "raw_identity_count": 4,
       "ordered_anchor_count": 10,
       "raw_parent_ordered_count": 10,

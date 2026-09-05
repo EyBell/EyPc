@@ -70,9 +70,9 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "617429be5450c4ff540185e2520e2fedc92748eb3ea6dbe2f0c3bf824c292598",
-    "raw_sources": "cb1080c5cb09aad174476540fe10ccc868ea0fdf087969df1ed04afe42d9d76d",
-    "source_anchor_catalog": "66ce4d0827b6abc7a8cf4d3d424e674b29aedf39ca681ef4ac8e6184eb13fe4e",
+    "requirement_registry": "24fb8453ecea02242927aef603bdae7285be88f262f96bdda5e2831bd49899af",
+    "raw_sources": "fc7f3fde5d4dcc8ae928b4e96708e14d38fc25a018d35f64901dc99b132dd4fd",
+    "source_anchor_catalog": "466808c2d7cc4c4fa64ac112a647f8ee904d44a22a9464b16d346c4226eb9160",
     "product_body": "559c3c33e98ae4311696bd51f000fb361b25d4f4081dccda70c20a62a48f2092",
     "architecture": "2439aaac6fb5f1259497ff82dd7badf95fcc18d8daec812cc11d07b91069c6d9",
     "runtime_contract": "bacd0141e769c9ccc35a3c4020273b2b53a762e9692f46a9df777897ed795871"

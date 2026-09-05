@@ -44,7 +44,7 @@ text: >
 clarification_at: 2026-09-05
 clarification: >
 
-  同日双轨的状态轨。唯一关联（`direct-local` / `unique-cli`）的 live Hook 与 App live-append 同类：不得被未递增的 `completedTurns` 或冷启动 `lastActivityAt` 退休。history 只能在 `completedTurns` 相对 previous 增加、且完成水位晚于该 Hook `turnStartedAt` 时退休旧 Turn。无 Hook 的历史 completed 恢复不变。本条 2026-09-05 仅聚焦自动化核验；F-1-a 确认的是归档双向，不是 Cloud Code 相位真机。
+  同日双轨的状态轨。唯一关联（`direct-local` / `unique-cli`）的 live Hook 与 App live-append 同类：不得被未递增的 `completedTurns` 或冷启动 `lastActivityAt` 退休。history 只能在 `completedTurns` 相对 previous 增加、且完成水位晚于该 Hook `turnStartedAt` 时退休旧 Turn。无 Hook 的历史 completed 恢复不变。F-1-a 先确认归档双向；同日重载后用户观测 Claude Code 任务状态已与侧栏同步，本条相位改为 host-verified。
 
 ## 规范化需求
 
@@ -65,4 +65,4 @@ clarification: >
 | unchanged | RAW-200 side 级联 | Codex/CLI 归档主对话仍由 Host 级联 side；本条不改 Host 仓库 |
 | unchanged | Claude D′ 原生侧栏 | 成功只确认 EyPc 收敛；原生侧栏同步仍不受支持 |
 
-Conflict classification: `compatible-update`。Decision status: `explicit-current-request`（F-1-a 归档双向；状态轨保持既有用户截图原话，真机相位仍 host-pending）。
+Conflict classification: `compatible-update`。Decision status: `explicit-current-request`（F-1-a 归档双向；同日重载后用户观测 Claude Code 相位已同步）。
