@@ -64,11 +64,26 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
 
   it('maps a Cursor blocking user decision to an exact user-input interaction, never approval', () => {
     const waiting = cursorSessionObservationV7({ hasBlockingPendingActions: true, lastUpdatedAt: 40, diskStatus: 'completed' }, { turnOpen: true, turnStartedAt: 30 })
-    expect(waiting).toMatchObject({ kind: 'turn-running', exact: true, interactionKind: 'user-input' })
+    expect(waiting).toMatchObject({ kind: 'turn-completed', exact: true, interactionKind: 'user-input' })
     expect(waiting.interactionSequence).toBeGreaterThan(0)
     expect(waiting.candidates[0]).toMatchObject({ exact: true })
     const settled = cursorSessionObservationV7({ hasBlockingPendingActions: true, lastUpdatedAt: 40, diskStatus: 'completed' }, {})
     expect(settled).toMatchObject({ kind: 'turn-completed', exact: true, interactionKind: 'user-input' })
+  })
+
+  it('does not keep a stale open hook turn running after disk completed without a live cold run', () => {
+    expect(cursorSessionObservationV7({ lastUpdatedAt: 40, diskStatus: 'completed' }, { turnOpen: true, turnStartedAt: 30 })).toMatchObject({
+      kind: 'turn-completed'
+    })
+    expect(cursorSessionObservationV7({ lastUpdatedAt: 40, diskStatus: 'completed', unfinishedRunAt: 9_000 }, { turnOpen: true, turnStartedAt: 30 })).toMatchObject({
+      kind: 'turn-running'
+    })
+    expect(cursorSessionObservationV7({ lastUpdatedAt: 40, diskStatus: 'none' }, { turnOpen: true, turnStartedAt: 30 })).toMatchObject({
+      kind: 'turn-running'
+    })
+    expect(cursorSessionObservationV7({ lastUpdatedAt: 40, diskStatus: 'aborted' }, { turnOpen: true, turnStartedAt: 30 })).toMatchObject({
+      kind: 'turn-running'
+    })
   })
 
   it('maps a Cursor Plan artifact without fabricating an input interaction', () => {
