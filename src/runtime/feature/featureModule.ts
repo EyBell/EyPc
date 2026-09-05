@@ -82,6 +82,7 @@ export interface FeatureModuleV7<Id extends AppTabId = AppTabId, View = unknown>
   shouldSubscribe(ctx: FeatureSubscribeContextV7<View>): boolean
   registerActions(host: FeatureActionHostV7): void
   onTabEnter?(tab: AppTabId, options: FeatureTabEnterOptionsV7, host: FeatureActionHostV7): void
+  focusSearch?(host: FeatureActionHostV7): boolean
   bindPage(input: {
     runtime: FeaturePageHostV7
     slice: RuntimeSliceOwnerV7<View>

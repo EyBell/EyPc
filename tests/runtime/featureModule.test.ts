@@ -98,4 +98,39 @@ describe('FeatureModule V7', () => {
     expect(runtime).not.toContain("codexController.syncActivation(state.activeTab === 'codex')")
   })
 
+  it('moves global search.focus tab branches onto optional focusSearch', () => {
+    expect(typeof featureModuleV7('ports').focusSearch).toBe('function')
+    expect(typeof featureModuleV7('mqtt').focusSearch).toBe('function')
+    expect(typeof featureModuleV7('favorites').focusSearch).toBe('function')
+    expect(featureModuleV7('windows').focusSearch).toBeUndefined()
+    expect(featureModuleV7('codex').focusSearch).toBeUndefined()
+    expect(featureModuleV7('settings').focusSearch).toBeUndefined()
+
+    const focusPortSearch = vi.fn(() => true)
+    const focusFavoriteSearch = vi.fn(() => true)
+    const notify = vi.fn()
+    const host = {
+      focusPortSearch,
+      focusFavoriteSearch,
+      notify,
+      searchFocusTarget: 'ports',
+      searchFocusRequestId: 0
+    } as unknown as FeatureActionHostV7
+
+    expect(featureModuleV7('ports').focusSearch?.(host)).toBe(true)
+    expect(focusPortSearch).toHaveBeenCalledTimes(1)
+
+    expect(featureModuleV7('mqtt').focusSearch?.(host)).toBe(true)
+    expect(host.searchFocusTarget).toBe('mqtt')
+    expect(host.searchFocusRequestId).toBe(1)
+    expect(notify).toHaveBeenCalledTimes(1)
+
+    expect(featureModuleV7('favorites').focusSearch?.(host)).toBe(true)
+    expect(focusFavoriteSearch).toHaveBeenCalledTimes(1)
+
+    const runtime = readFileSync(resolve(process.cwd(), 'src/runtime/appRuntime.ts'), 'utf8')
+    expect(runtime).toContain('featureModuleV7(state.activeTab).focusSearch?.(featureActionHost)')
+    expect(runtime).not.toContain("} else if (state.activeTab === 'mqtt') {")
+    expect(runtime).not.toContain("} else if (state.activeTab === 'favorites') {")
+  })
 })

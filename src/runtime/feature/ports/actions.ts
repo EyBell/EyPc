@@ -1,5 +1,9 @@
 import type { FeatureActionHostV7 } from '../featureActionHost'
 
+export function focusPortsSearch(host: FeatureActionHostV7): boolean {
+  return host.focusPortSearch()
+}
+
 export function registerPortsActions(host: FeatureActionHostV7): void {
   const { register, applyFocusedGroup, blurSearchFocus, clearPortSelection, closePortDetail, closePortDrawer, closePortGroupDetail, confirmKill, confirmKillGroup, createGroupFromSelection, createPortGroupFolder, currentPortGroupSelection, deleteFocusedGroup, executePortDrawerItem, focusFocusedGroupMatches, focusPortGroupSearch, focusPortPane, focusPortSearch, folderFromTarget, groupFromTarget, killPortTargets, killPorts, movePortDrawer, movePortGroupDraftField, notify, openFolderRenameDraft, openGroupDraft, openPortDetail, openPortDrawer, openPortGroupDetail, resetPortWorkspace, savePortGroupDraft, scanPorts, targetFromArgs, toggleFocusedGroupFolder, toggleGroupPanel, togglePortPane } = host
     register({ id: 'ports.scan', title: '刷新端口', group: '端口', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'ports', run: () => { void scanPorts(); return true } })

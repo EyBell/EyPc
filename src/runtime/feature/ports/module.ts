@@ -1,7 +1,7 @@
 import { commandProfilesFromRecord } from '../../keybinding/commandProfile'
 import { createFeatureModuleV7, defaultShouldSubscribeV7 } from '../featureModule'
 import { selectPortsRuntimeSliceV7, type PortsRuntimeSliceV7 } from '../featureRuntimeSlices'
-import { registerPortsActions } from './actions'
+import { registerPortsActions, focusPortsSearch } from './actions'
 import { PORTS_COMMAND_PROFILES } from './commands'
 import { bindPortsPage } from './pageBind'
 import { PORTS_ROUTES } from './routes'
@@ -19,5 +19,6 @@ export const portsFeatureModuleV7 = createFeatureModuleV7<'ports', PortsRuntimeS
   selectView: selectPortsRuntimeSliceV7,
   shouldSubscribe: (ctx) => defaultShouldSubscribeV7('ports', lifecycle, ctx),
   registerActions: registerPortsActions,
+  focusSearch: focusPortsSearch,
   bindPage: bindPortsPage
 })
