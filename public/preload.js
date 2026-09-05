@@ -8597,6 +8597,7 @@ function codexThreadAlias(threadId, now, metadata = {}) {
       entry.projectKey = metadata.projectKey || entry.projectKey || ''
       entry.sourceFingerprint = metadata.sourceFingerprint || entry.sourceFingerprint || ''
       entry.cwd = metadata.cwd || entry.cwd || ''
+      if (metadata.codexhostExternal === true) entry.codexhostExternal = true
       return { key, alias }
     }
   }
@@ -8607,7 +8608,8 @@ function codexThreadAlias(threadId, now, metadata = {}) {
     expiresAt: now + CODEX_THREAD_ALIAS_TTL_MS,
     projectKey: metadata.projectKey || '',
     sourceFingerprint: metadata.sourceFingerprint || '',
-    cwd: metadata.cwd || ''
+    cwd: metadata.cwd || '',
+    ...(metadata.codexhostExternal === true ? { codexhostExternal: true } : {})
   })
   return { key, alias }
 }
@@ -9644,7 +9646,12 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       ? statusSource.activeFlags.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput')
       : []
     const project = native.project
-    const action = codexThreadAlias(thread.id, now, { projectKey: project.key, sourceFingerprint: registry.fingerprint, cwd: codexNormalizeNativeRoot(thread.cwd) })
+    const action = codexThreadAlias(thread.id, now, {
+      projectKey: project.key,
+      sourceFingerprint: registry.fingerprint,
+      cwd: codexNormalizeNativeRoot(thread.cwd),
+      ...(thread.codexhostExternal === true ? { codexhostExternal: true } : {})
+    })
     threads.push({
       key: action.key,
       actionAlias: action.alias,
@@ -12258,7 +12265,14 @@ try {
       localArchiveRecoverySuppressions: codexLocalArchiveRecoverySuppressions,
       activityKeyForArchivedThread: codexArchivedActivityKey,
       codexhostDiscovery: () => codexhostDiscovery,
-      companionTaskKernel
+      companionTaskKernel,
+      codexDesktopHostManaged: () => {
+        try {
+          return codexDesktopLaunch?.hostRuntimeState?.() === 'running'
+        } catch {
+          return false
+        }
+      }
     })
   }
 } catch { codexArchiveBridge = null }

@@ -205,7 +205,7 @@ function createCodexPinBridge(dependencies = {}) {
     if (!threadId || (Number.isFinite(entry.expiresAt) && entry.expiresAt <= now())) {
       return { outcome: 'failed', errorCode: 'expired-alias', message: '任务动作已过期，请刷新后重试' }
     }
-    const external = codexhostDiscovery?.isExternalThreadId?.(threadId) === true
+    const external = entry.codexhostExternal === true || codexhostDiscovery?.isExternalThreadId?.(threadId) === true
     const result = await setCodexThreadPin({
       threadId,
       pinned: request.pinned === true,
