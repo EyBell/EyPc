@@ -401,45 +401,13 @@ watch(() => snapshot.value.searchBlurRequestId, () => {
   })
 })
 
-watch(() => snapshot.value.groupPanelFocusRequestId, () => {
-  requestAnimationFrame(() => {
-    if (snapshot.value.state.activeTab !== 'ports' || !snapshot.value.groupSidePanelOpen || snapshot.value.activePortPane !== 'groups') return
-    document.querySelector<HTMLElement>('[data-role="port-groups-panel"]')?.focus()
-  })
-})
-
-watch(() => snapshot.value.listFocusRequestId, () => {
-  requestAnimationFrame(() => {
-    if (snapshot.value.state.activeTab !== 'ports') return
-    const role = snapshot.value.listFocusTarget === 'groups' ? 'port-groups-panel' : 'port-results-list'
-    document.querySelector<HTMLElement>(`[data-role="${role}"]`)?.focus()
-  })
-})
-
-watch(() => snapshot.value.windowFocusRequestId, () => {
-  requestAnimationFrame(() => {
-    if (snapshot.value.state.activeTab !== 'windows') return
-    const draft = snapshot.value.windowDraft
-    if (draft) {
-      document.querySelector<HTMLElement>(`[data-role="window-editor"] [data-field="${draft.activeField}"]`)?.focus()
-      return
-    }
-    // List navigation always owns the keyboard; action-panel focus uses windowActionsFocusRequestId.
-    const list = document.querySelector<HTMLElement>('[data-role="window-list"]')
-    list?.focus()
-    const focusedId = snapshot.value.focusedWindowId
-    if (!focusedId) return
-    const row = document.getElementById(`window-row-${encodeURIComponent(focusedId).replace(/%/g, '_')}`)
-    row?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  })
-})
-
-watch(() => snapshot.value.windowActionsFocusRequestId, () => {
-  requestAnimationFrame(() => {
-    if (snapshot.value.state.activeTab !== 'windows' || !snapshot.value.windowActionsOpen || snapshot.value.windowDraft) return
-    document.querySelector<HTMLElement>('[data-role="window-actions"] button:not([disabled])')?.focus()
-  })
-})
+for (const module of FEATURE_MODULES_V7) {
+  for (const spec of module.shellDomFocusWatches ?? []) {
+    watch(() => spec.requestId(snapshot.value), () => {
+      requestAnimationFrame(() => spec.apply(snapshot.value))
+    })
+  }
+}
 
 watch(companionPresentation, (payload) => {
   platform.float.sync(payload)

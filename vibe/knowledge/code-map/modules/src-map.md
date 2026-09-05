@@ -27,7 +27,7 @@
 | [command/types.ts](../../../../src/runtime/command/types.ts#L1) | 命令类型 |
 | [feature/featureRegistry.ts](../../../../src/runtime/feature/featureRegistry.ts#L18) | 从模块 definition 派生 FEATURES；默认开关/排序转口 `DEFAULT_FEATURE_CONFIGS` |
 | [feature/featureModules.ts](../../../../src/runtime/feature/featureModules.ts#L21) | 六个贡献包冻结登记 |
-| [feature/featureModule.ts](../../../../src/runtime/feature/featureModule.ts#L69) | 贡献型 FeatureModule ABI |
+| [feature/featureModule.ts](../../../../src/runtime/feature/featureModule.ts#L94) | 贡献型 FeatureModule ABI |
 | [feature/feature-module.md](feature-module.md#L1) | Tab 贡献边界导读（命令/路由/挂页/订阅） |
 | [feature/featureRuntimeSlices.ts](../../../../src/runtime/feature/featureRuntimeSlices.ts#L1) | 各 Tab 窄切片选择器 |
 | [feature/featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L59) | 遍历模块 routes：uTools code → Tab/Action |

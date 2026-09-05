@@ -66,6 +66,31 @@ export type FeatureSliceSourceV7 = {
 
 export type FeatureTabEnterOptionsV7 = { refreshWindows?: boolean }
 
+export type FeatureCommandHintsInputV7 = {
+  defaultLabel: (commandId: string, fallback: string) => string
+  modifierHint: string
+  favoriteQuickMode: boolean
+}
+
+export type FeatureShellDomFocusSnapshotV7 = {
+  readonly state: { readonly activeTab: AppTabId }
+  readonly groupPanelFocusRequestId: number
+  readonly groupSidePanelOpen: boolean
+  readonly activePortPane: string
+  readonly listFocusRequestId: number
+  readonly listFocusTarget: string | null
+  readonly windowFocusRequestId: number
+  readonly windowDraft: { readonly activeField: string } | null
+  readonly focusedWindowId: string | null
+  readonly windowActionsFocusRequestId: number
+  readonly windowActionsOpen: boolean
+}
+
+export interface FeatureShellDomFocusWatchV7 {
+  requestId(snapshot: FeatureShellDomFocusSnapshotV7): number
+  apply(snapshot: FeatureShellDomFocusSnapshotV7): void
+}
+
 export interface FeatureModuleV7<Id extends AppTabId = AppTabId, View = unknown> {
   readonly id: Id
   readonly definition: FeatureDefinition & { id: Id }
@@ -83,6 +108,8 @@ export interface FeatureModuleV7<Id extends AppTabId = AppTabId, View = unknown>
   registerActions(host: FeatureActionHostV7): void
   onTabEnter?(tab: AppTabId, options: FeatureTabEnterOptionsV7, host: FeatureActionHostV7): void
   focusSearch?(host: FeatureActionHostV7): boolean
+  commandHints?(input: FeatureCommandHintsInputV7): string
+  shellDomFocusWatches?: readonly FeatureShellDomFocusWatchV7[]
   bindPage(input: {
     runtime: FeaturePageHostV7
     slice: RuntimeSliceOwnerV7<View>
