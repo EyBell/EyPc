@@ -11,9 +11,8 @@ describe('settings layout', () => {
     expect(settingsPage).toContain('settingsTabId')
     expect(settingsPage).toContain('settings-sub-tabs')
     expect(settingsPage).toContain("id: 'maintenance', label: '维护'")
-    expect(app).toContain(':settings="settingsSnapshot.state.settings"')
-    expect(app).toContain('@update-tool-preview-prefs')
-    expect(app).toContain('tool.preview.hover.update')
+    expect(app).toContain('v-on="activePageBinding.on"')
+    expect(settingsPage).toContain("emit('dispatch', 'tool.preview.hover.update'")
   })
 
   it('keeps shortcuts in a single-column compact worktable without the old right inspector', () => {
@@ -70,7 +69,7 @@ describe('settings layout', () => {
 
     expect(settingsPage).toContain('draftShortcutProfiles')
     expect(settingsPage).toContain('shortcutDraftDirty')
-    expect(settingsPage).toContain('saveShortcutProfiles')
+    expect(settingsPage).toContain("emit('dispatch', 'settings.shortcutProfiles.save'")
     expect(settingsPage).toContain('saveShortcutDraft')
     expect(settingsPage).toContain('isConfirmSaveShortcut')
     expect(settingsPage).toContain('discardShortcutDraft')
@@ -129,11 +128,7 @@ describe('settings layout', () => {
     expect(settingsPage).toContain('窗口诊断')
     expect(settingsPage).toContain('功能开关')
     expect(settingsPage).toContain('工具系统')
-    expect(app).toContain(':window-activation-diagnostics="settingsSnapshot.windowActivationDiagnostics"')
-    expect(app).toContain(':window-operation-trace-enabled="settingsSnapshot.windowOperationTraceEnabled"')
-    expect(app).toContain(':window-operation-traces="settingsSnapshot.windowOperationTraces"')
-    expect(app).toContain(':runtime-diagnostics="settingsSnapshot.runtimeDiagnostics"')
-    expect(app).toContain('@dispatch="runtime.dispatch"')
+    expect(app).toContain('v-on="activePageBinding.on"')
     expect(settingsPage).toContain('预览行为')
     expect(settingsPage).toContain('悬浮预览')
     expect(settingsPage).toContain('预览延迟')

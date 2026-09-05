@@ -2,15 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AppWindow, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Folder, FolderOpen, Keyboard, LoaderCircle, Pencil, Pin, Power, RefreshCw, ScrollText, ShieldAlert, SquareArrowOutUpRight, Star, X } from '@lucide/vue'
 import type { WindowRow } from '../domain/windowTree'
-import type { WindowDraft } from '../runtime/appRuntime'
 import type { WindowsRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
 
 const props = defineProps<{ snapshot: WindowsRuntimeSliceV7; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
-  search: [value: string]
-  focus: [id: string]
-  updateDraft: [value: Partial<WindowDraft>]
-  cancelDraft: []
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
@@ -105,7 +100,7 @@ function commandLabel(commandId: string, fallback: string) {
 }
 
 function focus(row: WindowRow) {
-  emit('focus', row.id)
+  emit('dispatch', 'windows.item.focus', { id: row.id })
 }
 
 function activate(row?: WindowRow) {
@@ -508,7 +503,7 @@ function actionTargetsShortLabel(rows: readonly WindowRow[]) {
 
 function updateDraft(field: 'alias', event: Event) {
   const value = (event.target as HTMLInputElement).value
-  emit('updateDraft', { alias: value })
+  emit('dispatch', 'windows.draft.update', { alias: value })
 }
 
 watch(logHasBlocking, (blocking) => {
@@ -552,7 +547,7 @@ onBeforeUnmount(() => {
           :value="snapshot.state.windowSearch"
           :aria-activedescendant="snapshot.focusedWindowId ? rowDomId(snapshot.focusedWindowId) : undefined"
           aria-controls="window-list"
-          @input="$emit('search', ($event.target as HTMLInputElement).value)"
+          @input="$emit('dispatch', 'windows.search.set', { query: ($event.target as HTMLInputElement).value })"
         />
         <kbd v-if="commandLabel('windows.search.focus', 'c-f')">{{ commandLabel('windows.search.focus', 'c-f') }}</kbd>
       </div>
@@ -897,7 +892,7 @@ onBeforeUnmount(() => {
           <p class="eyebrow">{{ snapshot.windowDraft.mode === 'rename' ? '仅 EyPc 别名' : '窗口目标' }}</p>
           <h3>{{ snapshot.windowDraft.mode === 'rename' ? '编辑窗口别名' : '完整编辑窗口目标' }}</h3>
         </div>
-        <button type="button" class="icon-button" aria-label="取消窗口编辑" @click="$emit('cancelDraft')"><X :size="16" /></button>
+        <button type="button" class="icon-button" aria-label="取消窗口编辑" @click="$emit('dispatch', 'windows.draft.cancel')"><X :size="16" /></button>
       </header>
       <label>
         <span>EyPc 别名</span>
@@ -909,7 +904,7 @@ onBeforeUnmount(() => {
       </label>
       <p class="window-editor-meta">应用：{{ snapshot.windowDraft.appName }} · 标题仅用于展示、搜索与人工辨认，不参与窗口身份判断。</p>
       <footer>
-        <button type="button" @click="$emit('cancelDraft')">取消</button>
+        <button type="button" @click="$emit('dispatch', 'windows.draft.cancel')">取消</button>
         <button type="button" class="primary" @click="$emit('dispatch', 'windows.editor.save')">保存 <kbd>{{ commandLabel('windows.editor.save', 'c-s / ↵') }}</kbd></button>
       </footer>
     </section>
