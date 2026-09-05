@@ -208,6 +208,7 @@ export interface FeatureActionHostV7 {
   refreshFavoritePathInspections: (...args: any[]) => any
   refreshMqttConfigClientId: (...args: any[]) => any
   refreshWindows: (...args: any[]) => any
+  ensureWindowsInventory: (...args: any[]) => any
   removeFavorite: (...args: any[]) => any
   removeFavoriteNow: (...args: any[]) => any
   renameMqttTemplate: (...args: any[]) => any

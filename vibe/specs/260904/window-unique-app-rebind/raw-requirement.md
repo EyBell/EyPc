@@ -20,7 +20,7 @@ spec_id: SPEC-260904-WINDOW-UNIQUE-APP-REBIND
 2. 允许自动换绑，当且仅当同时成立：目标 `scope=instance`；同平台同应用持久实例记录恰好 1 条；当前产品清单同应用实时根恰好 1 个；旧 locator 已空，或 `probeInstance` 不是 `live` / `temporarily-unobserved`（`verified-gone` 与 `indeterminate` 均可换绑）。
 3. 自动换绑必须**原地**写回同一条 `WindowTarget` 的 locator / 标题 / app 字段。别名、收藏、置顶、槽位指针不得另造替换目标。
 4. 实时根 ≥2 或同应用记录 ≥2，或探测为 `live` / `temporarily-unobserved`，仍走显式 `confirming`，不得自动选。标题相似的不同应用不得换绑。
-5. macOS `list()` 保持 `partial`，不得用「清单 complete」当自动换绑门禁。进 Tab 仍不自动 `windows.list()`。
+5. macOS `list()` 保持 `partial`，不得用「清单 complete」当自动换绑门禁。同会话再进 Tab 不重复全扫；进程冷启动/重启/重新接入的首次加载由 [RAW-213](../260905/window-tab-auto-refresh/raw-requirement.md#L1) 自动 `windows.list()`。
 6. 残留风险必须写明：开机后同应用两个新根、其中一个在其他 Space、AX 只看见一个、旧 PID 已 gone，会把可见那个绑上。本刀不做 CG 全 Space 根普查。
 
 ## 需求变更评审
@@ -31,4 +31,4 @@ spec_id: SPEC-260904-WINDOW-UNIQUE-APP-REBIND
 | --- | --- | --- |
 | refined | WJ-19「即使只有一个候选也必须 Enter」 | 收窄为：标题/相似度/多窗口/`live` 仍禁；唯一记录+唯一根+非 live 探测允许原地换绑 |
 | unchanged | 身份只认 PID+CGWindowID/HWND | 精确命中路径不变 |
-| unchanged | 进 Tab 不自动 list | 页面重开仍需加载/刷新或槽位激活 |
+| refined | 进 Tab 不自动 list | 同会话再进仍不扫；冷启动/重启首次加载由 RAW-213 自动 list |

@@ -22,7 +22,7 @@ Baseline: 2026-09-04 · 相对当前实现 · 不是第二份 PRD
 
 - 命令：[keybindingRuntime.ts](../../../../src/runtime/keybinding/keybindingRuntime.ts#L140) 拼接 `SHELL_COMMAND_PROFILES` + 六包。`settings.open` 留在 Shell。`tab.select.<id>` 仍由 `visibleFeatures` 生成。
 - 动作：[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L8906) 组 [FeatureActionHostV7](../../../../src/runtime/feature/featureActionHost.ts#L4) 袋子后遍历各包 `registerActions`。Shell 只留 `app.hide` / `runtime.logs.*` / `quickJump.*` / `tab.select.*` / `settings.open` / `search.focus` / `confirm.*`。实现仍闭包同一份 state，未拆 AppState。
-- 切 Tab：[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L2856) `setTab` 遍历可选 `onTabEnter`；mqtt 加载 archive，windows 在 `refreshWindows: true` 时刷新，Codex 每次切 Tab 调用 `syncActivation(tab === 'codex')`。未实现钩子的包缺省 no-op。
+- 切 Tab：[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L2856) `setTab` 遍历可选 `onTabEnter`；mqtt 加载 archive，windows 首次进入走 `ensureWindowsInventory`、显式 `refreshWindows: true` 才强制再扫，Codex 每次切 Tab 调用 `syncActivation(tab === 'codex')`。未实现钩子的包缺省 no-op。
 - 搜焦点：[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L6292) 全局 `search.focus` 问当前包 `focusSearch`；未处理则回退端口搜索框。
 - 壳对焦：[App.vue](../../../../src/App.vue#L404) 遍历可选 `shellDomFocusWatches`；ports 组栏/列表、windows 列表/动作面板。全局 search 框 DOM 映射仍在 App.vue。
 - 帮助文案：[CommandHints.vue](../../../../src/components/CommandHints.vue#L23) 问当前包 `commandHints`；缺省 settings 文案。

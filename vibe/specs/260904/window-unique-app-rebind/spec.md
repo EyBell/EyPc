@@ -64,7 +64,7 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L188)
 
 - 领域门禁：[uniqueSameAppRebindLive](../../../../src/domain/windows.ts#L181) 只判断「同应用实例记录唯一 + 实时根唯一 + 非精确命中」。标题不参与。
 - Runtime：[tryUniqueSameAppRebind](../../../../src/runtime/appRuntime.ts#L1895) 在门禁通过后，locator 已空、或定点探测不是 `live` / `temporarily-unobserved` 时 `rememberVerifiedWindowTarget` 原地写回。`verified-gone` 仍走清 locator；`indeterminate` 直接覆盖（macOS SkyLight 常无法权威证明死亡）。
-- 触发：[refreshWindows](../../../../src/runtime/appRuntime.ts#L1560) 在清单更新后静默换绑（不抢焦点）；[resolveAndActivateWindowTargetForAttempt](../../../../src/runtime/appRuntime.ts#L2135) 在精确未命中后先尝试唯一换绑（即使 `freshOnly`+`partial` 使 candidates 为空），失败且仍有候选才 `confirming`。
+- 触发：[refreshWindows](../../../../src/runtime/appRuntime.ts#L1560) 在清单更新后静默换绑（不抢焦点）；进 Tab / 插件挂载的首次会话加载由 [RAW-213 ensureWindowsInventory](../../../../src/runtime/appRuntime.ts#L1527) 带出这次刷新。[resolveAndActivateWindowTargetForAttempt](../../../../src/runtime/appRuntime.ts#L2135) 在精确未命中后先尝试唯一换绑（即使 `freshOnly`+`partial` 使 candidates 为空），失败且仍有候选才 `confirming`。
 - 槽位恢复「新建 replacement target」不用于这条路径，以免拆掉收藏/别名。
 - macOS `list()` 仍为 `partial`。不得把 complete 当门禁。
 

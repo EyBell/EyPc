@@ -433,6 +433,7 @@ onMounted(() => {
   }) || null
   platform.clearEnterPayload()
   void runtime.scanPorts()
+  void runtime.ensureWindowsInventory()
 })
 
 onUnmounted(() => {

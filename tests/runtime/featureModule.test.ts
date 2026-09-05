@@ -76,8 +76,9 @@ describe('FeatureModule V7', () => {
 
     const ensureMqttArchiveLoaded = vi.fn()
     const refreshWindows = vi.fn()
+    const ensureWindowsInventory = vi.fn()
     const syncActivation = vi.fn()
-    const host = { ensureMqttArchiveLoaded, refreshWindows, codexController: { syncActivation } } as unknown as FeatureActionHostV7
+    const host = { ensureMqttArchiveLoaded, refreshWindows, ensureWindowsInventory, codexController: { syncActivation } } as unknown as FeatureActionHostV7
 
     featureModuleV7('mqtt').onTabEnter?.('mqtt', {}, host)
     featureModuleV7('mqtt').onTabEnter?.('ports', {}, host)
@@ -85,6 +86,7 @@ describe('FeatureModule V7', () => {
 
     featureModuleV7('windows').onTabEnter?.('windows', {}, host)
     featureModuleV7('windows').onTabEnter?.('windows', { refreshWindows: true }, host)
+    expect(ensureWindowsInventory).toHaveBeenCalledTimes(1)
     expect(refreshWindows).toHaveBeenCalledTimes(1)
 
     featureModuleV7('codex').onTabEnter?.('codex', {}, host)

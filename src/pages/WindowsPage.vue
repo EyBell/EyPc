@@ -21,7 +21,7 @@ const currentPlatformLabel = computed(() => props.snapshot.windowCapability.plat
 
 const cacheStatusLabel = computed(() => {
   if (props.snapshot.windowLoading) return '正在加载窗口列表…'
-  if (!props.snapshot.windowListLoaded) return '尚未加载 · 手动加载后可用于全局跳转缓存'
+  if (!props.snapshot.windowListLoaded) return '正在准备窗口列表…'
   if (!props.snapshot.windowCacheUpdatedAt) return '已缓存'
   const stamp = new Date(props.snapshot.windowCacheUpdatedAt)
   const time = `${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}`
@@ -590,7 +590,7 @@ onBeforeUnmount(() => {
       <LoaderCircle v-if="snapshot.windowLoading" :size="14" class="spinning" />
       <template v-else-if="showCandidateHint">正在为「{{ candidateTargetLabel }}」重新选择窗口。<template v-if="candidateTargetLastTitle">上次标题「{{ candidateTargetLastTitle }}」；</template>原窗口实例已失效，下方标题与状态仅供人工辨认。按 Enter 确认，或按 Escape 取消并返回原目标。</template>
       <template v-else-if="latestWindowActivationDiagnostic">{{ latestWindowActivationDiagnostic.message }}</template>
-      <template v-else-if="showUnloadHint">列表未加载。手动加载后写入会话缓存；全局槽位会先静默解析，缓存未命中时自动重扫一次，仅失败才展开本页。</template>
+      <template v-else-if="showUnloadHint">正在加载窗口列表。打开本页、重新启动或重新接入后会自动扫描；Ctrl+R 可立即再刷。全局槽位会先静默解析，缓存未命中时自动重扫一次，仅失败才展开本页。</template>
       <template v-else-if="showEmptyHint">没有匹配窗口。请调整搜索词，或重新加载列表。</template>
       <template v-else>{{ topLevelWindowCount }} 个主项目 · {{ snapshot.windowRows.length }} 个可见树节点 · 仅展示可验证的用户窗口 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
     </p>
@@ -722,7 +722,7 @@ onBeforeUnmount(() => {
               </span>
             </div>
             <p v-if="!snapshot.windowRows.length && !snapshot.windowLoading" class="empty-state">
-              {{ showCandidateHint ? '当前没有可确认的同应用窗口。可刷新重试，或按 Escape 返回原目标。' : showUnloadHint ? '尚未加载实时窗口。可先查看已保存的收藏与稳定槽，再点击加载。' : '没有匹配窗口。请刷新、调整搜索词，或在授权后重试。' }}
+              {{ showCandidateHint ? '当前没有可确认的同应用窗口。可刷新重试，或按 Escape 返回原目标。' : showUnloadHint ? '尚未加载实时窗口。收藏与稳定槽仍可先看；列表会在进入本页或重启后自动扫描。' : '没有匹配窗口。请刷新、调整搜索词，或在授权后重试。' }}
             </p>
             <p v-if="selectionCount && !showCandidateHint" class="window-selection-cue" aria-live="polite">已选 {{ selectionCount }} · Esc 清空 · Space 切换并下移</p>
           </div>

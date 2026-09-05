@@ -25,6 +25,7 @@ Link-only route for native window identity、Space restoration、root/member pro
 - [Window-family projection overwrites logical targets](../window-family-projection-overwrites-logical-targets.md#L1)
 - [Slot hint clips a full-height list](../window-slot-binding-hint-clips-full-height-list.md#L1)
 - [Actions close is not OS close](../windows-actions-close-vs-os-close.md#L1)
+- [「插窗口」是窗口跳转 Tab](../window-jump-spoken-as-inserted-window.md#L1)
 
 ## Related Error Records
 

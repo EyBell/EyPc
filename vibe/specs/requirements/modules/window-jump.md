@@ -12,6 +12,7 @@
 ## Primary Requirements
 
 - [RAW-208](../windows-raw-208.md#L1) — `active`
+- [RAW-213](../windows-raw-213.md#L1) — `active` · 窗口跳转 Tab 会话冷启动自动加载
 
 ## Related Requirements
 

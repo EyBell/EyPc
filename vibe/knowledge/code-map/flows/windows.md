@@ -10,7 +10,7 @@
 
 ## 激活
 
-Runtime 注册 [windows.activate](../../../../src/runtime/appRuntime.ts#L9036)。根行 `root-current`，子行 `member-exact`。单独清 locator 仍只要 `probeInstance` 的 `verified-gone`。同应用唯一记录 + 唯一实时根见 [uniqueSameAppRebindLive](../../../../src/domain/windows.ts#L181) 与 [tryUniqueSameAppRebind](../../../../src/runtime/appRuntime.ts#L1895)（`gone` 或 `indeterminate` 可换绑，`live` 不可）。
+Runtime 注册 [windows.activate](../../../../src/runtime/appRuntime.ts#L9036)。根行 `root-current`，子行 `member-exact`。单独清 locator 仍只要 `probeInstance` 的 `verified-gone`。同应用唯一记录 + 唯一实时根见 [uniqueSameAppRebindLive](../../../../src/domain/windows.ts#L181) 与 [tryUniqueSameAppRebind](../../../../src/runtime/appRuntime.ts#L1895)（`gone` 或 `indeterminate` 可换绑，`live` 不可）。会话清单由 [ensureWindowsInventory](../../../../src/runtime/appRuntime.ts#L1527) 在进 Tab / 插件挂载时加载一次；同会话再进不扫，显式刷新才走 `refreshWindows`。
 
 原生实现只在 [preload/windows/](../../../../preload/windows/index.cjs#L1)，入口 preload 只做守卫和挂载。
 

@@ -1524,6 +1524,13 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     | { kind: 'editor-active' }
     | { kind: 'activation-failed'; outcome: Exclude<WindowActivationOutcome, 'activated'> }
 
+  async function ensureWindowsInventory(): Promise<WindowRefreshOutcome | 'disabled' | 'already-loaded' | 'in-flight'> {
+    if (!isTabEnabled('windows')) return 'disabled'
+    if (windowListLoaded) return 'already-loaded'
+    if (windowLoading) return 'in-flight'
+    return refreshWindows()
+  }
+
   async function refreshWindows({ clearSearch = false, adoptUnique = true }: { clearSearch?: boolean; adoptUnique?: boolean } = {}): Promise<WindowRefreshOutcome> {
     if (clearSearch && state.windowSearch) {
       state.windowSearch = ''
@@ -9232,6 +9239,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       refreshFavoritePathInspections,
       refreshMqttConfigClientId,
       refreshWindows,
+      ensureWindowsInventory,
       removeFavorite,
       removeFavoriteNow,
       renameMqttTemplate,
@@ -9684,6 +9692,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions: actions.all,
     scanPorts,
     refreshWindows,
+    ensureWindowsInventory,
     setTab,
     setWindowSearch(value: string) {
       if (rejectUnavailableWindowInteraction('browse')) return

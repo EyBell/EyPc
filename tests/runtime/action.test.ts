@@ -5696,7 +5696,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().message).toContain('不会自动启动 Finder/Explorer')
   })
 
-  it('does not auto-load windows on tab entry and reuses the session cache for a second slot jump', async () => {
+  it('auto-loads windows on first tab entry and reuses the session cache for a second slot jump', async () => {
     let listCount = 0
     const { state, getHideCount } = installPlatform({
       windows: {
@@ -5718,22 +5718,27 @@ describe('app runtime', () => {
 
     runtime.setTab('windows')
     await flushWindowActions()
-    expect(listCount).toBe(0)
-    expect(runtime.snapshot().windowListLoaded).toBe(false)
+    expect(listCount).toBe(1)
+    expect(runtime.snapshot().windowListLoaded).toBe(true)
+
+    runtime.setTab('ports')
+    runtime.setTab('windows')
+    await flushWindowActions()
+    expect(listCount).toBe(1)
 
     runtime.dispatch('windows.refresh')
     await flushWindowActions()
-    expect(listCount).toBe(1)
+    expect(listCount).toBe(2)
     expect(runtime.snapshot().windowListLoaded).toBe(true)
 
     runtime.dispatch('windows.slot.activate', { slot: 1 })
     await flushWindowActions()
-    expect(listCount).toBe(1)
+    expect(listCount).toBe(2)
     expect(getHideCount()).toBeGreaterThanOrEqual(1)
 
     runtime.dispatch('windows.slot.activate', { slot: 1 })
     await flushWindowActions()
-    expect(listCount).toBe(1)
+    expect(listCount).toBe(2)
     expect(getHideCount()).toBeGreaterThanOrEqual(2)
   })
 
@@ -5794,12 +5799,13 @@ describe('app runtime', () => {
     const runtime = createAppRuntime(state)
 
     runtime.setTab('windows')
+    await flushWindowActions()
     expect(runtime.snapshot().windowRows.some((row) => row.id === 'target:pinned')).toBe(true)
 
     runtime.dispatch('windows.slot.activate', { slot: 3 })
     await flushWindowActions()
 
-    expect(listCount).toBe(1)
+    expect(listCount).toBeGreaterThanOrEqual(1)
     expect(runtime.snapshot().state.activeTab).toBe('windows')
     expect(runtime.snapshot().focusedWindowId).toBe('target:pinned')
     expect(runtime.snapshot().message).toBe('已确认目标窗口已关闭，已清除陈旧引用。')

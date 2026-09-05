@@ -3,7 +3,9 @@ import type { FeatureActionHostV7 } from '../featureActionHost'
 import type { FeatureTabEnterOptionsV7 } from '../featureModule'
 
 export function enterWindowsTab(tab: AppTabId, options: FeatureTabEnterOptionsV7, host: FeatureActionHostV7): void {
-  if (tab === 'windows' && options.refreshWindows === true) void host.refreshWindows()
+  if (tab !== 'windows') return
+  if (options.refreshWindows === true) void host.refreshWindows()
+  else void host.ensureWindowsInventory()
 }
 
 export function registerWindowsActions(host: FeatureActionHostV7): void {
