@@ -765,6 +765,42 @@ describe('Code-mode inventory and correlation', () => {
     expect(row).toMatchObject({ phase: 'completed', stateSource: 'metadata-history' })
   })
 
+  it('keeps a unique live Hook running when completedTurns is stale activity, not a newer Turn', () => {
+    const session = {
+      ...metadata(LOCAL_A, CLI_A),
+      completedTurns: 1,
+      metadataUpdatedAt: 200,
+      lastActivityAt: 200,
+      lastFocusedAt: 190
+    }
+    const hook = events.foldQueueEntries([event(CLI_A, 'UserPromptSubmit', 150)])
+    const row = codeSessions.correlateCodeSessions([session], hook, new Map(), {
+      compatibility: 'compatible', generation: 1, entries: []
+    }).sessions[0]
+    expect(row).toMatchObject({ phase: 'running', stateSource: 'hook', turnStartedAt: 150 })
+  })
+
+  it('lets increased completedTurns retire a unique live Hook from an older Turn', () => {
+    const session = {
+      ...metadata(LOCAL_A, CLI_A),
+      completedTurns: 2,
+      metadataUpdatedAt: 200,
+      lastActivityAt: 200,
+      lastFocusedAt: 190
+    }
+    const previous = new Map([[LOCAL_A, {
+      completedTurns: 1,
+      completedEvidenceAt: 80,
+      lastActivityAt: 80,
+      metadataUpdatedAt: 80
+    }]])
+    const hook = events.foldQueueEntries([event(CLI_A, 'UserPromptSubmit', 50)])
+    const row = codeSessions.correlateCodeSessions([session], hook, previous, {
+      compatibility: 'compatible', generation: 1, entries: []
+    }).sessions[0]
+    expect(row).toMatchObject({ phase: 'completed', stateSource: 'metadata-history' })
+  })
+
   it('lets newer completed metadata retire stale live evidence but not a newer live event', () => {
     const session = {
       ...metadata(LOCAL_A, CLI_A),
@@ -1451,6 +1487,17 @@ describe('metadata activity versus a live App append', () => {
   it('keeps a live-append pending approval authoritative on the first read after reload', () => {
     expect(codeSessions.selectProjectedStateSource(waitingApp('live-append'), null, 'direct-local', historyAt()))
       .toBe('app')
+  })
+
+  it('keeps a unique live Hook authoritative on the first read after reload', () => {
+    const hook = {
+      phase: 'running',
+      phaseUpdatedAt: WAITING_AT,
+      turnStartedAt: WAITING_AT,
+      lastEventAt: WAITING_AT
+    }
+    expect(codeSessions.selectProjectedStateSource(null, hook, 'unique-cli', historyAt()))
+      .toBe('hook')
   })
 
   it('still retires a live phase that was not observed as a live append', () => {

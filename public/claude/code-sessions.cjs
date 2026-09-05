@@ -202,7 +202,7 @@ function terminalEvidenceAt(entry) {
  * running/waiting. A Hook can reactivate only by proving a strictly newer
  * parent Turn start.
  */
-function selectProjectedStateSource(exactApp, hook, correlation, historyAt) {
+function selectProjectedStateSource(exactApp, hook, correlation, historyAt, options) {
   const appAt = stateEvidenceAt(exactApp)
   const hookAt = stateEvidenceAt(hook)
   const livePhase = (entry) => Boolean(entry && isLiveTaskPhase(entry.phase))
@@ -212,8 +212,19 @@ function selectProjectedStateSource(exactApp, hook, correlation, historyAt) {
   // current fact, and `lastActivityAt` churn of that same open turn must not
   // retire it. Cold-replayed live phases are already neutralized upstream.
   const liveObserved = (entry) => entry?.evidenceProvenance === 'live-append'
+  const uniqueLiveHook = livePhase(hook)
+    && (correlation === 'direct-local' || correlation === 'unique-cli')
+  const hookTurnAt = Number(hook && hook.turnStartedAt) || 0
+  const historyConfirmsCompletedTurn = options?.historyConfirmsCompletedTurn === true
   const appSupersededByHistory = livePhase(exactApp) && !liveObserved(exactApp) && historyAt > appAt
-  const hookSupersededByHistory = livePhase(hook) && historyAt > hookAt
+  // Unique live Hook is the same class of current-turn observation as App
+  // live-append. `lastActivityAt` on a cold first read outruns hook timestamps
+  // the same way it outruns App logs; it must not freeze the card on completed.
+  // History may still retire a unique Hook whose parent Turn started before a
+  // later completedTurns increment.
+  const hookSupersededByHistory = livePhase(hook)
+    && historyAt > hookAt
+    && (!uniqueLiveHook || (historyConfirmsCompletedTurn && historyAt > hookTurnAt))
   const hookStartsNewerTurn = (threshold) => hook
     && !hookSupersededByHistory
     && (Number(hook.turnStartedAt) || 0) > threshold
@@ -248,7 +259,14 @@ function projectedState(session, hookState, byCli, previousBySession, appSnapsho
   const hook = lifecycleOnlySessionEnd ? null : hookResult.hook
   const hookCorrelation = lifecycleOnlySessionEnd ? 'none' : hookResult.correlation
   const historyAt = completedEvidenceAt(session, previousBySession)
-  const selected = selectProjectedStateSource(exactApp, hook, hookCorrelation, historyAt)
+  const previous = previousBySession instanceof Map
+    ? previousBySession.get(session.sessionId)
+    : null
+  const historyConfirmsCompletedTurn = Boolean(previous)
+    && nonNegativeInteger(session.completedTurns) > nonNegativeInteger(previous.completedTurns)
+  const selected = selectProjectedStateSource(exactApp, hook, hookCorrelation, historyAt, {
+    historyConfirmsCompletedTurn
+  })
 
   if (selected === 'app') {
     const appAt = stateEvidenceAt(exactApp)
