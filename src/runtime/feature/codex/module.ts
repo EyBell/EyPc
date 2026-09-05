@@ -1,7 +1,7 @@
 import { commandProfilesFromRecord } from '../../keybinding/commandProfile'
 import { createFeatureModuleV7, defaultShouldSubscribeV7 } from '../featureModule'
 import { selectCodexRuntimeSliceV7, type CodexRuntimeSliceV7 } from '../featureRuntimeSlices'
-import { registerCodexActions } from './actions'
+import { registerCodexActions, enterCodexTab } from './actions'
 import { CODEX_COMMAND_PROFILES } from './commands'
 import { bindCodexPage } from './pageBind'
 import { CODEX_ROUTES } from './routes'
@@ -19,5 +19,6 @@ export const codexFeatureModuleV7 = createFeatureModuleV7<'codex', CodexRuntimeS
   selectView: selectCodexRuntimeSliceV7,
   shouldSubscribe: (ctx) => defaultShouldSubscribeV7('codex', lifecycle, ctx),
   registerActions: registerCodexActions,
+  onTabEnter: enterCodexTab,
   bindPage: bindCodexPage
 })

@@ -128,6 +128,7 @@ export interface FeatureActionHostV7 {
   deleteSelectedMqttSubscriptions: (...args: any[]) => any
   directoryPathsFromArgs: (...args: any[]) => any
   disconnectMqtt: (...args: any[]) => any
+  ensureMqttArchiveLoaded: (...args: any[]) => any
   executeFavoriteDrawerItem: (...args: any[]) => any
   executeMqttDrawerItem: (...args: any[]) => any
   executePortDrawerItem: (...args: any[]) => any

@@ -724,6 +724,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
   const runtimeDiagnosticsNeedsDefaultMigration = initialState.settings.runtimeDiagnostics.defaultsRevision !== 3
   let state = normalizeAppState(initialState)
+  let featureActionHost!: FeatureActionHostV7
   let keybindingRevision = 1
   let cachedKeybindingIndex: KeybindingIndexV7 | null = null
   function invalidateKeybindingIndex(): void {
@@ -2854,11 +2855,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function setTab(tab: AppTabId, options: { refreshWindows?: boolean } = {}) {
     state.activeTab = isTabEnabled(tab) ? tab : 'settings'
-    if (state.activeTab === 'mqtt') ensureMqttArchiveLoaded()
-    if (state.activeTab === 'windows' && options.refreshWindows === true) void refreshWindows()
+    for (const module of FEATURE_MODULES_V7) module.onTabEnter?.(state.activeTab, options, featureActionHost)
     save()
     notify()
-    codexController.syncActivation(state.activeTab === 'codex')
   }
 
   function currentVisibleFeatures(): VisibleFeatureDefinition[] {
@@ -9019,7 +9018,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     })
     actions.registerHandler({ commandId: 'quickJump.openForward', scope: 'global', priority: 99, when: (ctx) => !ctx.layerIds.includes('confirm'), run: () => true })
     actions.registerHandler({ commandId: 'quickJump.openBackward', scope: 'global', priority: 99, when: (ctx) => !ctx.layerIds.includes('confirm'), run: () => true })
-    const featureActionHost: FeatureActionHostV7 = {
+    featureActionHost = {
       register: (action) => { actions.register(action) },
       registerHandler: (handler) => { actions.registerHandler(handler) },
       get activeFavoritePane() { return activeFavoritePane },
@@ -9163,6 +9162,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       deleteSelectedMqttSubscriptions,
       directoryPathsFromArgs,
       disconnectMqtt,
+      ensureMqttArchiveLoaded,
       executeFavoriteDrawerItem,
       executeMqttDrawerItem,
       executePortDrawerItem,

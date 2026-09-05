@@ -17,7 +17,7 @@
 
 | 文件 | 含义 |
 | --- | --- |
-| [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L706) | 主运行时：状态、全部 action 注册、Tab 编排（约 1 万行，按 register 块读） |
+| [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L706) | 主运行时：状态、Shell 动作登记、`setTab` 派 `onTabEnter`（约 1 万行，按 register 块读） |
 | [codexController.ts](../../../../src/runtime/codexController.ts#L383) | Companion 订阅 / ACK / 额度环境车道，不做第二套相位 |
 | [action/actionRuntime.ts](../../../../src/runtime/action/actionRuntime.ts#L56) | dispatch 内核 |
 | [action/actionMenu.ts](../../../../src/runtime/action/actionMenu.ts#L1) | 右键 / More 菜单与 Catalog 对齐 |
@@ -27,7 +27,7 @@
 | [command/types.ts](../../../../src/runtime/command/types.ts#L1) | 命令类型 |
 | [feature/featureRegistry.ts](../../../../src/runtime/feature/featureRegistry.ts#L18) | 从模块 definition 派生 FEATURES；默认开关/排序转口 `DEFAULT_FEATURE_CONFIGS` |
 | [feature/featureModules.ts](../../../../src/runtime/feature/featureModules.ts#L21) | 六个贡献包冻结登记 |
-| [feature/featureModule.ts](../../../../src/runtime/feature/featureModule.ts#L66) | 贡献型 FeatureModule ABI |
+| [feature/featureModule.ts](../../../../src/runtime/feature/featureModule.ts#L69) | 贡献型 FeatureModule ABI |
 | [feature/feature-module.md](feature-module.md#L1) | Tab 贡献边界导读（命令/路由/挂页/订阅） |
 | [feature/featureRuntimeSlices.ts](../../../../src/runtime/feature/featureRuntimeSlices.ts#L1) | 各 Tab 窄切片选择器 |
 | [feature/featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L59) | 遍历模块 routes：uTools code → Tab/Action |

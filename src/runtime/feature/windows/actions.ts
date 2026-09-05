@@ -1,4 +1,10 @@
+import type { AppTabId } from '../../../domain/types'
 import type { FeatureActionHostV7 } from '../featureActionHost'
+import type { FeatureTabEnterOptionsV7 } from '../featureModule'
+
+export function enterWindowsTab(tab: AppTabId, options: FeatureTabEnterOptionsV7, host: FeatureActionHostV7): void {
+  if (tab === 'windows' && options.refreshWindows === true) void host.refreshWindows()
+}
 
 export function registerWindowsActions(host: FeatureActionHostV7): void {
   const { register, activateWindowRow, activateWindowSlot, activationAttemptFor, assignWindowSlot, beginWindowDraft, cancelWindowDraft, clearWindowActivationDiagnostics, clearWindowCandidates, clearWindowOperationTraces, clearWindowSelection, clearWindowSlot, closeWindowActions, closeWindowRows, configureWindowSlotHotkey, copyWindowHandle, favoriteWindowRows, finishWindowActivation, focusWindowSlot, moveWindowDraftField, navigateFocusedWindowTree, notify, openWindowActions, openWindowSlotActions, refreshWindows, saveWindowDraft, setWindowAlwaysOnTop, setWindowGroupExpanded, toggleWindowFavorite, toggleWindowPins, whenWindowInteraction } = host
