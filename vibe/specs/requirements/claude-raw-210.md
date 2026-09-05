@@ -4,7 +4,7 @@ qualified_source: SPEC-260905-COMPANION-STATUS-ARCHIVE-SYNC::RAW-210
 status: active
 domain: companion-claude
 authority: user-stated
-source_annotations: "implementation-landed / focused-automated-verified / host-pending"
+source_annotations: "implementation-landed / focused-automated-verified / host-loaded / host-verified-claude-code-phase"
 scoped_relations:
   - kind: refines
     target: eypc-req-claude-raw-174-clause-091

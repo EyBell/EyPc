@@ -3,7 +3,7 @@
 spec_id: `SPEC-260905-COMPANION-STATUS-ARCHIVE-SYNC`
 Tool: cursor
 Date: 2026-09-05
-Status: `implementation-landed / focused-automated-verified / artifact-ready / host-verified-codex-archive-bidirectional / cloud-code-phase-host-pending`
+Status: `implementation-landed / focused-automated-verified / artifact-ready / host-verified-codex-archive-bidirectional / host-loaded / host-verified-claude-code-phase`
 Documentation level: `standard requirement`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
@@ -96,4 +96,4 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L244)
 1. 插件归档额外进程：Host 列表无该 id、archived 列表有；Codex APP 侧栏实时收起。
 2. Codex APP 归档同一额外进程：Host / 插件行消失或进已归档。
 3. 运行中 Host 任务归档仍拒绝。
-4. Cloud Code 唯一 live Hook 进行中时，插件不得只因 `completedTurns=1` 显示已完成（聚焦自动化已钉；真机 host-pending）。
+4. Cloud Code 唯一 live Hook 进行中时，插件不得只因 `completedTurns=1` 显示已完成（聚焦自动化已钉；2026-09-05 重载后用户观测 Claude Code 任务状态已同步）。

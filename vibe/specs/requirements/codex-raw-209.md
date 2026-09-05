@@ -4,7 +4,7 @@ qualified_source: SPEC-260905-COMPANION-STATUS-ARCHIVE-SYNC::RAW-209
 status: active
 domain: companion-codex
 authority: user-stated
-source_annotations: "implementation-landed / focused-automated-verified / host-verified-codex-archive-bidirectional"
+source_annotations: "implementation-landed / focused-automated-verified / host-verified-codex-archive-bidirectional / host-loaded"
 scoped_relations:
   - kind: refines
     target: eypc-req-codex-raw-199
