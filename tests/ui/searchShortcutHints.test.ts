@@ -72,11 +72,15 @@ describe('port search shortcut hints', () => {
 
   it('shows Ctrl-based shortcuts for favorite search boxes with defaults', () => {
     const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+    const favoritesPageBind = readFileSync(resolve(process.cwd(), 'src/runtime/feature/favorites/pageBind.ts'), 'utf8')
     const favoritesPage = readFileSync(resolve(process.cwd(), 'src/pages/FavoritesPage.vue'), 'utf8')
     const quickFavoritesPage = readFileSync(resolve(process.cwd(), 'src/pages/QuickFavoritesPage.vue'), 'utf8')
 
-    expect(app).toMatch(/<QuickFavoritesPage[\s\S]*:show-shortcut-hints="shortcutHints"/)
-    expect(app).toMatch(/<FavoritesPage[\s\S]*:show-shortcut-hints="shortcutHints"/)
+    expect(app).toContain(':is="activePageBinding.page"')
+    expect(app).toContain('v-bind="activePageBinding.props"')
+    expect(app).not.toMatch(/<QuickFavoritesPage/)
+    expect(app).not.toMatch(/<FavoritesPage/)
+    expect(favoritesPageBind.match(/showShortcutHints: input.shell.shortcutHints/g)?.length).toBe(2)
     expect(favoritesPage).toContain('showShortcutHints?: boolean')
     expect(favoritesPage).toContain("ctrlCommandLabel('favorites.search.focus', 'c-f')")
     expect(favoritesPage).toContain("ctrlCommandLabel('favorites.groupSearch.focus', 'c-s-f')")
