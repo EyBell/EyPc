@@ -4,13 +4,17 @@ qualified_source: SPEC-260810-1155-INSTALL-RUNTIME-DIAGNOSTICS::RAW-168
 status: active
 domain: engineering-invariants
 authority: agent-transcribed
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-claude-raw-211
+    scope: "SUPPORTED_APP_VERSIONS 作为版本准入名单的单点定义；不得再引入该名单"
 ---
 
 # RAW-168 · engineering-invariants
 
 > 正文由来源草案保存：[RAW-167 draft](../260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1)。用户于 2026-09-01 确认该草案对原话的转述忠实，五条条款随之转 `active`；`authority` 如实保留 `agent-transcribed`，因为正文仍是转述而非用户逐字原话。
 
-五处重复判断按同一原则收敛：proposal→canonical 接纳判定抽为单一出口；phase 集合抽为命名谓词并被 preload 与 renderer 共用；1 秒漏通知恢复收敛为单一策略常量；SUPPORTED_APP_VERSIONS 与 coalesce 窗口各自单点定义。收敛不得改变任何现行外部行为。
+五处重复判断按同一原则收敛：proposal→canonical 接纳判定抽为单一出口；phase 集合抽为命名谓词并被 preload 与 renderer 共用；1 秒漏通知恢复收敛为单一策略常量；coalesce 窗口单点定义。Claude App 版本准入名单不得再引入（RAW-211）。收敛不得改变任何现行外部行为。
 
 ## 交付状态
 
@@ -21,7 +25,7 @@ authority: agent-transcribed
 | proposal→canonical 接纳 | 4 份 | `recordCompanionProposalOutcome` 单一出口 | — |
 | phase 集合 | 词表 3 份 + live 2 份内联 + settled 2 份 + Kernel 自有谓词 + 渲染层 14 处 | [preload/task-phase.cjs](../../../preload/task-phase.cjs#L1) 与 [companionProvider.ts](../../../src/domain/companionProvider.ts#L121) 两侧各一 | 拒绝 preload 内重现内联集合或第二份谓词；钉住两侧成员一致 |
 | 1 秒漏通知恢复 | 6 常量 / 5 文件 | [preload/timing-policy.cjs](../../../preload/timing-policy.cjs#L1) | 入口两个字面量由用例钉住同步 |
-| `SUPPORTED_APP_VERSIONS` | 2 个独立 Set | [app-state.cjs](../../../preload/claude/app-state.cjs#L1) 单点，archive 引用 | 拒绝 archive 内重新定义 |
+| App 版本准入名单 | 2 个独立 Set | 已删除；用例拒绝 `SUPPORTED_APP_VERSIONS` 回归 | 拒绝再引入版本准入 Set |
 | `DEFAULT_COALESCE_MS` | 2 份 | timing-policy 单点 | 同上 |
 
 ## 2026-08-14 收尾：phase 层的真实规模是词表而非集合

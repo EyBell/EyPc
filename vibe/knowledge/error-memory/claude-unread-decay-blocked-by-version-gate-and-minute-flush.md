@@ -4,8 +4,8 @@ status: verified
 scope: project
 fingerprint: claude-completed-unread-slow-clear__app-log-version-gate-lapsed__leveldb-minute-flush-floor
 first_seen: 2026-08-25
-last_verified: 2026-09-02
-review_after: 2026-12-02
+last_verified: 2026-09-05
+review_after: 2026-12-05
 evidence:
   - preload/claude/app-state.cjs
   - preload/claude/unread.cjs
@@ -34,7 +34,7 @@ Claude Code 任务在 Claude App 内读完后，EyPc 的「已完成未读/未�
 
 三层叠加，前两层决定量级：
 
-1. **快清车道被版本门整体熄火。** [app-state.cjs](../../../preload/claude/app-state.cjs#L26-L27) 的 `SUPPORTED_APP_VERSIONS = {1.26832.0, 1.28929.0, 1.30096.5}`（最后一项 2026-08-15 加入）不含 2026-08-21 自更新的 App `1.34493.1`，`compatibility()` fail closed（[L269-L272](../../../preload/claude/app-state.cjs#L269-L272)），`focused`/`turn-started`/`completed-focused` 热未读提示（[L383-L391](../../../preload/claude/app-state.cjs#L383-L391)）与 app-log phase 证据全部关闭。实测 1.34493.1 日志语法未变：`~/Library/Logs/Claude/main.log` 中锚定正则 `setFocusedSession` 344 行、`[Stop hook] Query completed` 65 行全部命中 v2 语法——只是白名单滞后。
+1. **快清车道被版本门整体熄火（2026-08-25 当时源码）。** 当时 [app-state.cjs](../../../preload/claude/app-state.cjs#L1) 用 `SUPPORTED_APP_VERSIONS` 做准入，不含 2026-08-21 自更新的 App `1.34493.1`，`compatibility()` fail closed，热未读与 app-log phase 证据全部关闭。实测 1.34493.1 日志语法未变——只是白名单滞后。该 Set 已于 2026-09-05 按 RAW-211 删除。
 2. **兜底通道的地板是 Claude App 每分钟一次的刷盘。** LevelDB 镜像（[unread.cjs](../../../preload/claude/unread.cjs#L148-L183) 快照 + 指纹稳定门）本身很快（读取 14–38ms、零失败），但 Claude App 只在每分钟固定秒位把 Local Storage 刷盘（栅格相位随 App 进程而变：08-25 实测 hh:mm:16，09-02 实测 hh:mm:30；leveldb 目录全部 mtime 锁在该秒位，诊断日志 `claude-unread-v7` 推送间隔 59.7–60.3s）。热车道熄火时，未读翻转最快也要等下一个分钟栅格，均值 ~30s、上限 ~60s，再叠加保守 catch-up（相反持久边缘 + 事后快照，规格 RAW-165 条款 72）可再加 1–2 个栅格。
 3. **从 EyPc 打开不构成已读。** [open.cjs](../../../preload/claude/open.cjs#L10-L15) 深链派发永远不报 `confirmsRead`，因此 [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1089-L1094) 为 claude 独设的 `readAcknowledgements` 本地快清路径从未触发过。
 
@@ -44,23 +44,23 @@ Claude Code 任务在 Claude App 内读完后，EyPc 的「已完成未读/未�
 
 ## 检测顺序
 
-1. 先查本机 App 版本与白名单差距：`PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/Claude.app/Contents/Info.plist` 对照 `SUPPORTED_APP_VERSIONS`，并看 Info.plist mtime 定位升级日。
-2. 只数行数验证新版本语法是否仍兼容（锚定正则 grep -c，不打印日志内容），区分「白名单滞后」与「语法真漂移」。
+1. 先看 app-log 热车道是否在解析：未知 App 版本不得整段 `unsupported`。若 `compatibility` 仍因版本号熄火，就是旧白名单回归。
+2. 只数行数验证当前版本语法是否仍兼容（锚定正则 grep -c，不打印日志内容），区分「语法真漂移」与「LevelDB 刷盘地板」。
 3. 看 leveldb 目录 mtime 栅格与诊断日志 `task-push | claude-unread-v7` 间隔，确认兜底通道在按刷盘节奏工作。
 4. 最后才查 EyPc watcher/渲染——渲染层无兜底轮询，凡渲染侧「慢」先回溯 preload 发布。
 
 ## 预防规则
 
-Claude App 升级后，按隐私语法验证流程把新版本及时加入 `SUPPORTED_APP_VERSIONS`（app-state.cjs 是版本门单一 owner，state 与 archive 共享）；用户报「状态消退慢」时先走上面的检测顺序，不得为绕过 60s 刷盘栅格提高轮询频率或增加等待（RAW-165 条款 74 明令禁止）。
+不得把 Claude App 版本号编成准入白名单去整段熄火热车道。行式失配只丢那一行。用户报「状态消退慢」时先走上面的检测顺序，不得为绕过 60s 刷盘栅格提高轮询频率或增加等待（RAW-165 条款 74 明令禁止），也不得把深链派本当成已读。
 
 ## 替代路线
 
-- 状态：`candidate`（`1.34493.1`、`1.37937.0`、`1.40609.1` 均已完成语法核对和自动化；真机 focused 快清 ≤1–2s 仍待插件重载，通过后转 `verified`）。
-- 前置条件：对待加入版本完成隐私边界内的固定行式核对，不输出原始日志或会话身份；相邻未知版本继续 fail closed。`1.37937.0` 已于 2026-08-26 满足，并额外确认固定 usage-limit interrupted 行式。
-- 有序步骤：把已核验版本加入 canonical `SUPPORTED_APP_VERSIONS` → 同步 preload 镜像 → 重跑 app-state/hot-unread/state-lane regressions → 真机验证 focused 快清 ≤1s 恢复。前三步已完成；宿主重载未执行。
-- 验证：`pnpm exec vitest run tests/platform/claudeAppStateBridge.test.ts tests/platform/claudeBridge.test.ts tests/runtime/claudeCompanionWatcherE2E.test.ts`。
-- 适用边界：仅语法未漂移的版本；语法漂移时按 [同类记录](provider-version-whitelist-must-not-gate-generic-capability.md#L1) 的边界重新适配，不得拆掉证据质量版本门。
-- 回退：新版本实测语法漂移时保持熄火（安全方向：只漏熄、不误熄）。
+- 状态：`candidate`（代码已拆除版本准入；真机 focused 快清 ≤1–2s 仍待插件重载，通过后转 `verified`）。
+- 前置条件：热车道只按固定无内容行式匹配；版本字符串只作诊断；冷重放仍不得伪造 live running。
+- 有序步骤：删除 `SUPPORTED_APP_VERSIONS` → 同步 preload 镜像 → 重跑 app-state/hot-unread/state-lane regressions → 真机验证 focused 快清 ≤1s 恢复。前三步为本轮交付；宿主重载未执行。
+- 验证：`pnpm exec vitest run tests/platform/claudeAppStateBridge.test.ts tests/platform/claudeBridge.test.ts tests/runtime/claudeCompanionWatcherE2E.test.ts tests/platform/companionTaskKernel.test.ts`。
+- 适用边界：版本号不得再限制车道。语法漂移时只丢失配行，或改 `parseAppStateLine`；不得回退成版本白名单。
+- 回退：新版本实测语法漂移时保持按行 fail closed（安全方向：只漏那一行、不整段熄火）。
 
 ## 记录历史
 
@@ -69,3 +69,4 @@ Claude App 升级后，按隐私语法验证流程把新版本及时加入 `SUPP
 | 2026-08-25 | 状态消退慢核验 | 用户报 Claude 任务已完成/未读消失特别慢 | 假设 EyPc 轮询/渲染慢 | 定位版本门滞后 + 分钟刷盘地板；同日扩白名单落地（`88/88`、镜像 73 对），真机复验待重载 | verified（根因）/ candidate（路线待真机验收） |
 | 2026-08-26 | V7 已读入口与状态复核 | 快捷方式未立即已读、鼠标点击似乎立即；完成/额度耗尽任务仍进行中 | 把入口观感当成两条已读 mutation，且 inventory delivery 共用 state/unread generation | 证明两入口在相同回执边界汇合；扩 `1.37937.0` 版本门；分离 mutation/state/unread lane；固定 usage-limit 为 stopped | focused automation/current-log replay verified；host reload pending |
 | 2026-09-02 | 跳转已读延迟核验 | 用户报快捷键跳转后「已完成已读」仍有延迟（CodexHost 跳转即已读刚落地） | 第一反应去查 CodexHost 额外进程路径；实际两次真机样本都是 Claude Code 会话，56.2s / 42.9s 才翻转，均卡在 hh:mm:30 刷盘栅格 | App 08-30 自更新 `1.40609.1`，白名单第三次滞后；新版 `setFocusedSession 214 / Query completed 22 / Sending message 27 / permission 3+3 / Stopping 4` 行式逐字兼容，扩版本门（canonical+镜像）并钉测试 | 3 文件 `95/95` 通过；host reload pending |
+| 2026-09-05 | 取消版本白名单 | 用户报 Claude「已完成未读」延迟；随后明确「不应该把版本当白名单限制」「把所有的白名单都给取消限制」 | 第四次准备把 `1.46388.4` 加进名单 | App `1.46388.4` 语法仍匹配，白名单只到 `1.40609.1`；拆除 `SUPPORTED_APP_VERSIONS`，未知版本也走行式车道（RAW-211） | 代码落地；host reload pending |

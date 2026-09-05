@@ -1,13 +1,15 @@
 'use strict'
 
 /**
- * Version-gated, privacy-bounded Claude App Code state.
+ * Privacy-bounded Claude App Code state.
  *
  * Claude Desktop does not expose a supported external state subscription, but
  * its main-process log emits a small set of fixed lifecycle messages carrying
  * the App-local Code session id. This reader accepts only those exact message
- * grammars. Raw lines, tool arguments and conversation text are discarded in
- * this module and can never reach the bridge or Renderer.
+ * grammars on any installed App version. App version is diagnostic metadata
+ * and never an admission whitelist. Unmatched lines fail closed one at a time.
+ * Raw lines, tool arguments and conversation text are discarded in this module
+ * and can never reach the bridge or Renderer.
  */
 
 const { claudeAppDataRoot } = require('./app-paths.cjs')
@@ -15,24 +17,6 @@ const { LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
 
 const CLAUDE_APP_STATE_REVISION = 'claude-app-log-state-v2'
 const CLAUDE_APP_STATE_VERSION = 2
-// Each version is admitted only after its privacy-safe lifecycle grammar has
-// been checked against the installed App logs. 1.28929.0, 1.30096.5,
-// 1.34493.1, 1.37937.0 and 1.40609.1 preserve the exact Code session messages
-// accepted below; unrelated Cowork identifiers and non-local `session_*` ids
-// remain outside LOCAL_SESSION_PATTERN and therefore fail closed.
-// Single owner of the Claude App version gate. The state reader fails closed
-// on an unlisted version, so the list has to be one thing: two copies agreeing
-// today is discipline, not structure, and a version added to one side alone
-// silently splits the gate in half.
-const SUPPORTED_APP_VERSION = '1.26832.0'
-const SUPPORTED_APP_VERSIONS = new Set([
-  SUPPORTED_APP_VERSION,
-  '1.28929.0',
-  '1.30096.5',
-  '1.34493.1',
-  '1.37937.0',
-  '1.40609.1'
-])
 const LOG_FILE_NAMES = ['main1.log', 'main.log']
 const LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024
 const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
@@ -292,8 +276,7 @@ function createAppStateReader(dependencies) {
   }
 
   function compatibility() {
-    const version = appVersion()
-    return { version, status: SUPPORTED_APP_VERSIONS.has(version) ? 'compatible' : 'unsupported' }
+    return { version: appVersion(), status: 'compatible' }
   }
 
   function fileState() {
@@ -423,30 +406,9 @@ function createAppStateReader(dependencies) {
     const before = JSON.stringify([...state.entries()])
     const beforeHotGeneration = hotUnreadGeneration
     const nextFileState = fileState()
-    if (gate.status !== 'compatible') {
-      state = new Map()
-      requests = new Map()
-      seen = new Set()
-      seenOrder = []
-      if (focusedSessionId || hotUnreadHints.size) {
-        focusedSessionId = ''
-        focusUpdatedAt = 0
-        hotUnreadHints = new Map()
-        hotUnreadWatermark = 0
-        hotSeen = new Set()
-        hotSeenOrder = []
-        hotUnreadGeneration += 1
-      }
-      if (before !== '[]' || beforeHotGeneration !== hotUnreadGeneration) generation += 1
-      initialized = true
-      lastAppVersion = gate.version
-      lastFileState = nextFileState
-      lastSignature = signature(nextFileState)
-      return gate
-    }
     const liveAppend = initialized && gate.version === lastAppVersion && appendOnly(lastFileState, nextFileState)
     // Only a verified append may create a realtime unread edge. Rotation,
-    // truncation and compatibility rebuilds still recover phase/focus state,
+    // truncation and App upgrades still recover phase/focus state,
     // but their cold tail must never fabricate a new completion/read event.
     const allowHotHints = liveAppend
     const events = []
@@ -496,7 +458,7 @@ function createAppStateReader(dependencies) {
     const nextSignature = signature()
     const nextVersion = appVersion()
     const gate = initialized && nextSignature === lastSignature && nextVersion === lastAppVersion
-      ? { version: nextVersion, status: SUPPORTED_APP_VERSIONS.has(nextVersion) ? 'compatible' : 'unsupported' }
+      ? { version: nextVersion, status: 'compatible' }
       : rebuild()
     return {
       version: CLAUDE_APP_STATE_VERSION,
@@ -626,8 +588,6 @@ function createAppStateReader(dependencies) {
 module.exports = {
   CLAUDE_APP_STATE_REVISION,
   CLAUDE_APP_STATE_VERSION,
-  SUPPORTED_APP_VERSION,
-  SUPPORTED_APP_VERSIONS,
   LOG_TAIL_MAX_BYTES,
   LOG_RECOVERY_POLL_MS,
   parseAppStateLine,

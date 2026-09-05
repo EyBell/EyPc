@@ -68,7 +68,7 @@ describe('Claude real watcher to Host evidence', () => {
       claudeAppDataRoot: appData,
       claudeCodeRoot: codeRoot,
       claudeLogDirectory: logs,
-      claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0],
+      claudeAppVersion: '9.9.9',
       dataDirectory
     })
     let releaseQuota!: (value: null) => void

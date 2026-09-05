@@ -21,16 +21,10 @@ function warningLine(time: string, message: string) {
   return `${time} [warn] ${message}`
 }
 
-describe('Claude App version-gated state log', () => {
-  it('admits the currently validated Claude App grammar without widening unknown versions', () => {
-    expect(appState.SUPPORTED_APP_VERSIONS.has('1.28929.0')).toBe(true)
-    expect(appState.SUPPORTED_APP_VERSIONS.has('1.30096.5')).toBe(true)
-    expect(appState.SUPPORTED_APP_VERSIONS.has('1.34493.1')).toBe(true)
-    expect(appState.SUPPORTED_APP_VERSIONS.has('1.37937.0')).toBe(true)
-    expect(appState.SUPPORTED_APP_VERSIONS.has('1.40609.1')).toBe(true)
-    expect(appState.SUPPORTED_APP_VERSIONS.has('1.37938.0')).toBe(false)
-    // The staged-but-never-installed sibling build stays closed until its own log is checked.
-    expect(appState.SUPPORTED_APP_VERSIONS.has('1.40609.0')).toBe(false)
+describe('Claude App privacy-bounded state log', () => {
+  it('does not export a version admission whitelist', () => {
+    expect(appState.SUPPORTED_APP_VERSIONS).toBeUndefined()
+    expect(appState.SUPPORTED_APP_VERSION).toBeUndefined()
   })
 
   it('accepts only the fixed privacy-safe lifecycle grammar', () => {
@@ -113,12 +107,15 @@ describe('Claude App version-gated state log', () => {
     })
   })
 
-  it('fails closed on an unvalidated App version and emits no raw log text', () => {
+  it('parses matching grammar on an unknown App version and still emits no raw log text', () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-claude-app-state-'))
     const logs = join(root, 'logs')
     mkdirSync(logs, { recursive: true })
-    writeFileSync(join(logs, 'main.log'), `${line('2026-08-07 10:00:00', `Sending message to session ${LOCAL_A}`)}\n`)
-    const unsupported = appState.createAppStateReader({
+    writeFileSync(join(logs, 'main.log'), [
+      line('2026-08-07 10:00:00', `Sending message to session ${LOCAL_A}`),
+      line('2026-08-07 10:00:01', `Sending message to session ${LOCAL_A} secret prompt`)
+    ].join('\n') + '\n')
+    const snapshot = appState.createAppStateReader({
       fs,
       path,
       os: { homedir: () => root },
@@ -126,24 +123,15 @@ describe('Claude App version-gated state log', () => {
       claudeLogDirectory: logs,
       claudeAppVersion: '9.9.9'
     }).read()
-    expect(unsupported).toMatchObject({ compatibility: 'unsupported', entries: [] })
-    const supportedVersion = [...appState.SUPPORTED_APP_VERSIONS][0]
-    const supported = appState.createAppStateReader({
-      fs,
-      path,
-      os: { homedir: () => root },
-      platform: 'darwin',
-      claudeLogDirectory: logs,
-      claudeAppVersion: supportedVersion
-    }).read()
-    expect(supported.entries).toHaveLength(1)
-    expect(supported.entries[0]).toMatchObject({
+    expect(snapshot).toMatchObject({ compatibility: 'compatible', appVersion: '9.9.9' })
+    expect(snapshot.entries).toHaveLength(1)
+    expect(snapshot.entries[0]).toMatchObject({
       sessionId: LOCAL_A,
       phase: 'unknown',
       evidenceProvenance: 'cold-replay',
       source: 'app-log'
     })
-    expect(JSON.stringify(supported)).not.toContain('prompt')
+    expect(JSON.stringify(snapshot)).not.toContain('prompt')
   })
 
   it('reads the App version once per Info.plist generation instead of for every state event', () => {
@@ -153,7 +141,7 @@ describe('Claude App version-gated state log', () => {
     mkdirSync(logs, { recursive: true })
     writeFileSync(join(logs, 'main.log'), '')
     writeFileSync(infoPath, 'v1')
-    const execFileSync = vi.fn(() => [...appState.SUPPORTED_APP_VERSIONS][0])
+    const execFileSync = vi.fn(() => '9.9.9')
     const reader = appState.createAppStateReader({
       fs,
       path,
@@ -188,7 +176,7 @@ describe('Claude App version-gated state log', () => {
       os: { homedir: () => root },
       platform: 'darwin',
       claudeLogDirectory: logs,
-      claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0]
+      claudeAppVersion: '9.9.9'
     })
     expect(reader.read().entries[0]).toMatchObject({ phase: 'unknown', evidenceProvenance: 'cold-replay' })
   })
@@ -204,7 +192,7 @@ describe('Claude App version-gated state log', () => {
       os: { homedir: () => root },
       platform: 'darwin',
       claudeLogDirectory: logs,
-      claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0]
+      claudeAppVersion: '9.9.9'
     })
 
     expect(reader.read().entries).toEqual([])
@@ -266,7 +254,7 @@ describe('Claude App version-gated state log', () => {
       os: { homedir: () => root },
       platform: 'darwin',
       claudeLogDirectory: logs,
-      claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0]
+      claudeAppVersion: '9.9.9'
     })
 
     expect(reader.read().entries[0]).toMatchObject({ phase: 'completed', evidenceProvenance: 'exact-terminal' })
@@ -284,7 +272,7 @@ describe('Claude App version-gated state log', () => {
       os: { homedir: () => root },
       platform: 'darwin',
       claudeLogDirectory: logs,
-      claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0]
+      claudeAppVersion: '9.9.9'
     })
 
     reader.read()
@@ -337,7 +325,7 @@ describe('Claude App version-gated state log', () => {
       os: { homedir: () => root },
       platform: 'darwin',
       claudeLogDirectory: logs,
-      claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0]
+      claudeAppVersion: '9.9.9'
     })
 
     reader.read()

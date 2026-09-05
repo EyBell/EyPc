@@ -188,12 +188,13 @@ for (const marker of ['mkdtempSync', 'chmodSync', 'cpSync', 'rmSync', "app.asar'
 assert(!claudeUnreadSource.includes("require('leveldown')"), 'claude unread must not package a differently signed native addon')
 assert(claudeUnreadSource.includes('keyText === UNREAD_LEVELDB_KEY'), 'claude unread must match the exact origin-scoped LevelDB key')
 const claudeAppStateSource = preloadModuleSources.get('claude/app-state.cjs') || ''
-for (const marker of ['SUPPORTED_APP_VERSIONS', 'parseAppStateLine', 'parseAppArchiveLine', 'LocalSessions\\.archive', 'permission-response', 'LOG_RECOVERY_POLL_MS']) {
-  assert(claudeAppStateSource.includes(marker), `claude App state compatibility gate is missing: ${marker}`)
+for (const marker of ['never an admission whitelist', 'parseAppStateLine', 'parseAppArchiveLine', 'LocalSessions\\.archive', 'permission-response', 'LOG_RECOVERY_POLL_MS']) {
+  assert(claudeAppStateSource.includes(marker), `claude App state grammar gate is missing: ${marker}`)
 }
+assert(!claudeAppStateSource.includes('SUPPORTED_APP_VERSIONS'), 'claude App state must not keep a version admission whitelist')
 const claudeArchiveSource = preloadModuleSources.get('claude/archive.cjs') || ''
 for (const marker of [
-  'SUPPORTED_APP_VERSION',
+  'not version-gated',
   'readSessionState',
   'readCurrentSessionPhase',
   "['completed', 'stopped'].includes(current.phase)",

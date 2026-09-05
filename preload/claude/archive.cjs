@@ -15,7 +15,6 @@
 const { LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
 
 const CLAUDE_ARCHIVE_REVISION = 'claude-metadata-archive-v2'
-const { SUPPORTED_APP_VERSION, SUPPORTED_APP_VERSIONS } = require('./app-state.cjs')
 
 function normalizedSessionId(value) {
   const sessionId = typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -98,7 +97,5 @@ function createArchiveAdapter(dependencies) {
 
 module.exports = {
   CLAUDE_ARCHIVE_REVISION,
-  SUPPORTED_APP_VERSION,
-  SUPPORTED_APP_VERSIONS,
   createArchiveAdapter
 }
