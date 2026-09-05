@@ -4,11 +4,14 @@ qualified_source: SPEC-260901-CODEXHOST-EXTERNAL-COMPLETION::RAW-199
 status: active
 domain: companion-codex
 authority: user-stated
-source_annotations: "implementation-landed / focused-automated-verified / host-restart-pending"
+source_annotations: "implementation-landed / focused-automated-verified / host-verified-codex-archive-bidirectional / refined-by-RAW-209"
 scoped_relations:
   - kind: refines
     target: eypc-req-codex-raw-190
     scope: "额外进程的归档必须真实到达 CodexHost：走 Host 委派 CLI，而不是插件私有的官方 app-server"
+  - kind: refined-by
+    target: eypc-req-codex-raw-209
+    scope: "实时收起 Codex APP、别名钉死、protocol-error 改道与 Host Desktop ACK 不 fail-closed 由 RAW-209 承接"
 ---
 
 # RAW-199 · companion-codex

@@ -10,6 +10,7 @@ Link-only route for CodexHost extra-process (Pi / Claude Code / Grok / OMP / DSH
 
 - [Product requirements — CodexHost extra processes](../../../specs/PRODUCT_REQUIREMENTS.md#L307)
 - [RAW-190…RAW-200 spec](../../../specs/260901/codexhost-external-completion/spec.md#L1)
+- [RAW-209 归档双向实时](../../../specs/260905/companion-status-archive-sync/spec.md#L1)
 - [RAW-203 / RAW-204 spec](../../../specs/260903/codexhost-read-memory-and-claude-quota-org/spec.md#L1)
 - [Architecture](../../ARCHITECTURE.md#L1)
 

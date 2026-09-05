@@ -2,7 +2,7 @@
 
 Tool: pi
 Date: 2026-09-01
-Status: `confirmed` · implementation-landed / focused-automated-verified / artifact-ready / host-pending
+Status: `confirmed` · implementation-landed / focused-automated-verified / artifact-ready / host-verified-codex-archive-bidirectional
 Documentation level: `standard requirement`
 
 Raw source: `raw-requirement.md`
@@ -93,7 +93,7 @@ Canonical target: `vibe/specs/PRODUCT_REQUIREMENTS.md` Codex Companion
 - Add: 额外进程 Host `hasUnreadTurn` 在有值时就是真实未读，不再跟 Desktop 未读-true 比对。偏差时以 Codex APP「已读」为准：Desktop unread *event* false，或快捷键/跳转打开 Codex APP。Desktop snapshot false 不是已读。RAW-193.
 - Add: 插件重启后必须能从 Host `thread list` 读到已有额外进程，包括已完成/空闲，不得只在新建或变为进行中时才出现。Host 进行中在 Desktop follow 到达前也是进行中。会合点失败不得把空列表缓存成成功快照。RAW-194.
 - Add: 额外进程从进行中变为 Host `completed` + unread 时，EyPc 必须离开进行中并进入已完成未读。Desktop follow 残留的 live inProgress 不得压住 Host 已确认终态。RAW-195.
-- Add: 额外进程的归档必须真实到达 CodexHost。EyPc 归档桥对 `codexhostExternal` 行改走 Host 委派 CLI：`thread read` 预检（running/creating 保留）、`thread archive` 写入、live/archived `thread list` 双核验；不得再向插件私有的官方 app-server 发这些 id 的 `thread/read` / `thread/archive`。Host 自己向 Desktop 广播 `thread/archived`，EyPc 不补发 Desktop 同步，也不等原生 ACK。RAW-199.
+- Add: 额外进程的归档必须真实到达 CodexHost。EyPc 归档桥对 `codexhostExternal` 行改走 Host 委派 CLI：`thread read` 预检（running/creating 保留）、`thread archive` 写入、live/archived `thread list` 双核验；不得再向插件私有的官方 app-server 发这些 id 的 `thread/read` / `thread/archive`。Host 自己向 Desktop 广播 `thread/archived`。实时 companion 通知见 RAW-209。RAW-199.
 - Add: side 子对话（Host 里 `ephemeral` 的 fork 记录，任何列表都不列）的活动必须算到主任务：Host `thread list` 的 `status` / `attention` 汇总运行中或挂起的子对话到主行，EyPc 据此显示进行中 / 待输入 / 待确认，不再把子对话在跑的主任务判成已完成未读；Codex 或 CLI 归档主对话时 Host 级联归档其 side 子对话。EyPc 侧不改代码。RAW-200.
 - Clarify: 官方 App Server `notLoaded` 仍不是完成；禁止再把 CLI completed 映射成 `notLoaded`。
 - Pending decisions: 无。Host 仍报 `running` 时不得用 Desktop 空闲外观或刷新间隔发明完成。
@@ -110,7 +110,7 @@ Acceptance:
 8. Host 未读有值时直接用；Desktop 未读-true 不得覆盖 Host 已读。Codex APP 已读（unread event false 或跳转 dispatch）可清未读；snapshot false 不是已读。RAW-193.
 9. 重启后 Host list 里已有的额外进程必须进库存；进行中以 Host connector 为 live，不等 Desktop follow。官方 follow 不得针对这些 id；Desktop `notLoaded`/idle 不得把 Host running/completed 打成 unknown。官方回答不了的 id 不得以 `verifying` 占位：额外进程 id 的 Goal 证据固定 `none/fresh`，不发 `thread/goal/get`。RAW-194.
 10. Host `completed` + unread 必须盖过 Desktop 残留 live inProgress，进入已完成未读。RAW-195.
-11. 额外进程归档：预检 Host `thread read`（running/creating 或写入 `THREAD_BUSY` → 保留为 active-task）；写入 `thread archive`；两次核验 live 列表无该 id 且 archived 列表有；Kernel 提交后立刻剔除 Host 花名册中的该行。官方 app-server 不得收到这些 id 的 `thread/read` 或 `thread/archive`。CLI 令牌只经子进程环境，不进参数与诊断。RAW-199.
+11. 额外进程归档：预检 Host `thread read`（running/creating 或写入 `THREAD_BUSY` → 保留为 active-task）；写入 `thread archive`；两次核验 live 列表无该 id 且 archived 列表有；Kernel 提交后立刻剔除 Host 花名册中的该行。官方 app-server 不得收到这些 id 的 `thread/read` 或 `thread/archive`。CLI 令牌只经子进程环境，不进参数与诊断。别名钉 `codexhostExternal`；Host verify-1 后补发 companion `thread-archived`。RAW-199 / RAW-209.
 12. side 子对话：主任务自身空闲而子对话在跑时，Host 列表主行为 `running`，EyPc 显示进行中；子对话挂起提问 / 审批时主行带 `attention`；子对话结束后主行回到自身终态。Codex 或 CLI 归档主对话时其 side 子对话记录同步 `archived`。RAW-200.
 
 ## Prior Task Overlap

@@ -49,6 +49,15 @@ const appSupersededByHistory = livePhase(exactApp) && !liveObserved(exactApp) &&
 
 不要改成「把 ExitPlanMode 加进某张工具白名单」——分类本来就是对的，那样只会在没坏的地方加一处硬编码，并留下一组永远绿的回归。
 
+## Alternative Route
+
+- Status: `verified`（聚焦 `claudeBridge`；Cloud Code 相位真机仍 host-pending）
+- Preconditions: 唯一关联 live Hook（`direct-local` / `unique-cli`）仍为 running/waiting。
+- Steps: `uniqueLiveHook` 对齐 App `live-append`；`historyConfirmsCompletedTurn`（`completedTurns` 相对 previous 增加且水位晚于 `turnStartedAt`）才允许 history 退休。
+- Verification: `tests/platform/claudeBridge.test.ts` running 保留与旧 Turn 退休。
+- Applicability boundary: Claude Code / Cloud Code 本机相位来源选择。不含未读、不含 D′ 归档。
+- Fallback: 无 Hook 或关联歧义时，既有 `completedTurns` 历史恢复不变。
+
 ## Detection Order
 
 1. 先确认信号是否真的到达：查 `~/Library/Logs/Claude/main.log` 的 `Emitted tool permission request` 行型，以及 hook 队列 `eypc-claude-events.jsonl` 的事件序列。
@@ -59,4 +68,4 @@ const appSupersededByHistory = livePhase(exactApp) && !liveObserved(exactApp) &&
 ## Occurrence History
 
 - 2026-08-13：用户在计划待批准窗口现场发现。先由 App 日志与 hook 队列取证推翻分类假设，再以 `tests/platform/claudeBridge.test.ts` 的 `metadata activity versus a live App append` RED 回归钉死来源选择，修复后 12 文件 472 项定向矩阵全通过。
-- 2026-09-05：Cloud Code 本机行侧栏仍开着，插件把 `completedTurns=1` 的行打成已完成。App live-append 盾仍有效，但 `hookSupersededByHistory` 仍是 `historyAt > hookAt`，冷启动 `lastActivityAt` 继续退休唯一关联 live Hook。对齐：唯一关联 live Hook 不得被未递增的 completedTurns 退休；`completedTurns` 递增且水位晚于该 Hook `turnStartedAt` 时仍可退休旧 Turn。
+- 2026-09-05：Cloud Code 本机行侧栏仍开着，插件把 `completedTurns=1` 的行打成已完成。App live-append 盾仍有效，但 `hookSupersededByHistory` 仍是 `historyAt > hookAt`，冷启动 `lastActivityAt` 继续退休唯一关联 live Hook。对齐：唯一关联 live Hook 不得被未递增的 completedTurns 退休；`completedTurns` 递增且水位晚于该 Hook `turnStartedAt` 时仍可退休旧 Turn。F-1-a 未另报相位真机。

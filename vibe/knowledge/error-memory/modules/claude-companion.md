@@ -12,6 +12,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 - [Controlled task-state specification](../../../specs/260810/1155-install-runtime-diagnostics/spec.md#L1)
 - [Architecture](../../ARCHITECTURE.md#L1)
 - [Project status](../../../specs/PROJECT_STATUS.md#L1)
+- [RAW-210 unique live Hook](../../../specs/260905/companion-status-archive-sync/spec.md#L1)
 
 ## Primary Error Records
 

@@ -123,7 +123,9 @@ EyPc is a high-frequency uTools workbench. Its interaction taste follows the glo
 - 2026-08-29 置顶列表、快捷编号与旧 Plan 消费修正（RAW-189）：Selected behavior 把已完成已读置顶项当作用户亲自排好的稳定暂存架，后台活动、完成时间和成员 revision 都不能让它跳位；置顶分组可折叠，折叠时只用一个编号表达「可展开」，展开后编号立即回到当前可见任务，避免 `Alt+数字` 为隐藏行保留空号。已完成 Plan 后的更新 default Turn 只有出现结构化文件变更才消费旧 artifact，使真实完成不再被覆盖成待继续；纯解释/追问仍保留 Plan。Avoided behavior 是按后台更新时间偷偷重排置顶、折叠后仍保留每条隐藏任务的角标、让一个编号既可能展开又可能打开任务，或用任意新 Turn/最终 AgentMessage 猜 Plan 已执行。Evidence label: `user-request + exact task structure + explicit correction`。
 - 2026-08-29 running / waiting 直接切换修正（RAW-189）：Selected behavior 是任何精确当前普通输入、审批或 Plan interaction 都直接覆盖潜在 terminal（无论已读或未读），关闭后直接回到因果当前 running 或真实终态；App Server running 已按统一 sequence 胜出时，旧 Desktop refollow waiting 不得回弹。Avoided behavior 是 Plan-only 或 unread-only 特判、把“已完成未读”发布成切换中间帧，或让旧 shadow 看起来像状态同步很慢。Evidence label: `user-runtime-correction + sanitized host timeline + focused reducer regression`。
 - 2026-08-29 构建身份可见性（RAW-189）：Selected behavior 在 Codex「运行」页显示当前宿主实际加载 artifact 自带的打包时间、包版本与 identity 状态，并把磁盘 `dist/runtime-identity.cjs` 作为打包侧凭据。Avoided behavior 是用源码 mtime、进程启动时间或一次 build 成功猜“宿主已是最新版”，也不把 `artifact-ready` 宣称成 `host-loaded`。Evidence label: `user-request + Runtime Identity artifact metadata + dist readback`。
-- The water motion should communicate quota level without becoming the work surface. Reduced-motion keeps the level and percentage readable while removing continuous rotation; missing quota buckets collapse cleanly instead of leaving empty gauges.
+- 2026-09-05 额外进程归档实时收起：Selected behavior 是插件归档后 Codex APP 侧栏立刻收起、APP 归档同一额外进程时插件/Host 也跟上；Avoided behavior 是把额外进程 id 交给官方 `thread/archive`、Host 成功后不通知 companion、或把 Claude D′ `isArchived` 扇出到 Host。Evidence label: `user-request + F-1-a bidirectional live confirm`。
+
+The water motion should communicate quota level without becoming the work surface. Reduced-motion keeps the level and percentage readable while removing continuous rotation; missing quota buckets collapse cleanly instead of leaving empty gauges.
 
 ## Window Jump Taste
 

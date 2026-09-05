@@ -86,6 +86,11 @@ clarification: >
 
   用户选择 D-1：打通 Host 通道——codex-host 委派 CLI 增加 thread archive/unarchive，EyPc 归档桥对额外进程改走 CLI，预检用 Host thread read，核验用 Host 列表消失
 
+clarification_at: 2026-09-05
+clarification: >
+
+  用户 F-1-a：插件与 Codex APP 归档双向已执行通。实时收起、别名钉死、protocol-error 改道与 Host Desktop ACK 不 fail-closed 由 [RAW-209](../../260905/companion-status-archive-sync/raw-requirement.md#L1) 细化，本条仍是 Host CLI 写面合同。
+
 ## RAW-200
 
 captured_at: 2026-09-02
