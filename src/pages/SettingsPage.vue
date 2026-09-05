@@ -23,7 +23,7 @@ import { blockHandledShortcutEvent } from '../runtime/keyboardEvent'
 import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutFromEvent as shortcutFromKeyboardEvent } from '../domain/shortcuts'
 
 type SettingsTabId = 'shortcuts' | 'maintenance'
-type ShortcutScopeId = 'all' | 'global' | 'ports' | 'mqtt' | 'favorites' | 'windows' | 'codex' | 'settings'
+type ShortcutScopeId = 'all' | ShortcutProfileId
 type MaintenanceSectionId = 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations' | 'runtime-logs' | 'window-diagnostics'
 
 interface KeybindingUpdatePayload {
@@ -321,13 +321,7 @@ watch([settingsTabId, maintenanceSectionId], ([tab, section]) => {
 
 function matchesShortcutScope(row: ShortcutCommandRow, id: ShortcutScopeId): boolean {
   if (id === 'all') return true
-  if (id === 'global') return row.profileId === 'global'
-  if (id === 'ports') return row.profileId === 'ports'
-  if (id === 'mqtt') return row.profileId === 'mqtt'
-  if (id === 'favorites') return row.profileId === 'favorites'
-  if (id === 'windows') return row.profileId === 'windows'
-  if (id === 'codex') return row.profileId === 'codex'
-  return row.profileId === 'settings'
+  return row.profileId === id
 }
 
 function isMaintenanceShortcutRow(row: ShortcutCommandRow): boolean {

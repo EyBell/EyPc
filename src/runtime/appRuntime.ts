@@ -39,6 +39,8 @@ import { createActionRuntime } from './action/actionRuntime'
 import { actionMenuDispatchArgsV7, buildActionMenuItemV7, type ActionMenuItemV7 } from './action/actionMenu'
 import type { RuntimeActionContext } from './action/types'
 import type { KeybindingLayerId } from './command/types'
+import type { FeatureActionHostV7 } from './feature/featureActionHost'
+import { FEATURE_MODULES_V7 } from './feature/featureModules'
 import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feature/featureRegistry'
 import { buildCommandCatalogV7, buildEffectiveKeybindings, normalizeShortcutId } from './keybinding/keybindingRuntime'
 import type { KeybindingContext } from './keybinding/keybindingRuntime'
@@ -9017,6 +9019,296 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     })
     actions.registerHandler({ commandId: 'quickJump.openForward', scope: 'global', priority: 99, when: (ctx) => !ctx.layerIds.includes('confirm'), run: () => true })
     actions.registerHandler({ commandId: 'quickJump.openBackward', scope: 'global', priority: 99, when: (ctx) => !ctx.layerIds.includes('confirm'), run: () => true })
+    const featureActionHost: FeatureActionHostV7 = {
+      register: (action) => { actions.register(action) },
+      registerHandler: (handler) => { actions.registerHandler(handler) },
+      get activeFavoritePane() { return activeFavoritePane },
+      set activeFavoritePane(value) { activeFavoritePane = value },
+      get activeMqttPane() { return activeMqttPane },
+      set activeMqttPane(value) { activeMqttPane = value },
+      get activeMqttRecordList() { return activeMqttRecordList },
+      get codexController() { return codexController },
+      get favoriteAddMenuOpen() { return favoriteAddMenuOpen },
+      set favoriteAddMenuOpen(value) { favoriteAddMenuOpen = value },
+      get favoriteCapabilities() { return favoriteCapabilities },
+      get favoriteContainerPanelOpen() { return favoriteContainerPanelOpen },
+      set favoriteContainerPanelOpen(value) { favoriteContainerPanelOpen = value },
+      get favoriteDraft() { return favoriteDraft },
+      set favoriteDraft(value) { favoriteDraft = value },
+      get favoriteRemovalUndo() { return favoriteRemovalUndo },
+      get focusedFavoriteGroupId() { return focusedFavoriteGroupId },
+      get lastCodexFloatToggleAt() { return lastCodexFloatToggleAt },
+      set lastCodexFloatToggleAt(value) { lastCodexFloatToggleAt = value },
+      get lastCodexFloatToggleSource() { return lastCodexFloatToggleSource },
+      set lastCodexFloatToggleSource(value) { lastCodexFloatToggleSource = value },
+      get mqttConfigDraft() { return mqttConfigDraft },
+      set mqttConfigDraft(value) { mqttConfigDraft = value },
+      get mqttFavoriteDraft() { return mqttFavoriteDraft },
+      set mqttFavoriteDraft(value) { mqttFavoriteDraft = value },
+      get mqttLogDrawer() { return mqttLogDrawer },
+      set mqttLogDrawer(value) { mqttLogDrawer = value },
+      get mqttPanelOpen() { return mqttPanelOpen },
+      set mqttPanelOpen(value) { mqttPanelOpen = value },
+      get mqttReceiveFilter() { return mqttReceiveFilter },
+      set mqttReceiveFilter(value) { mqttReceiveFilter = value },
+      get mqttSubscriptionPanelOpen() { return mqttSubscriptionPanelOpen },
+      set mqttSubscriptionPanelOpen(value) { mqttSubscriptionPanelOpen = value },
+      get mqttWorkspaceLayout() { return mqttWorkspaceLayout },
+      get platform() { return platform },
+      get portGroupDraft() { return portGroupDraft },
+      set portGroupDraft(value) { portGroupDraft = value },
+      get searchFocusRequestId() { return searchFocusRequestId },
+      set searchFocusRequestId(value) { searchFocusRequestId = value },
+      get searchFocusTarget() { return searchFocusTarget },
+      set searchFocusTarget(value) { searchFocusTarget = value },
+      get selectedWindowIds() { return selectedWindowIds },
+      get state() { return state },
+      get windowActionsMode() { return windowActionsMode },
+      get windowActionsOpen() { return windowActionsOpen },
+      set windowActionsOpen(value) { windowActionsOpen = value },
+      get windowOperationTraceEnabled() { return windowOperationTraceEnabled },
+      activateFavoriteSlot,
+      activateWindowRow,
+      activateWindowSlot,
+      activationAttemptFor,
+      addSelectedDirectoryEntries,
+      applyFocusedFavoriteContainer,
+      applyFocusedGroup,
+      applyMqttPublishDraftHistory,
+      applyMqttPublishTemplate,
+      applyMqttSubscriptionFilter,
+      applySuggestedFavoriteRunner,
+      assignFavoriteSlot,
+      assignWindowSlot,
+      beginFavoriteDraft,
+      beginMqttConfigDraft,
+      beginMqttConnectionGroupDraft,
+      beginMqttPublishDraftHistoryEdit,
+      beginMqttRecordEdit,
+      beginMqttSubscriptionDraft,
+      beginWindowDraft,
+      blurMqttPublishEditor,
+      blurSearchFocus,
+      cancelFavoritePickReview,
+      cancelFavoriteRunPrompt,
+      cancelMqttConnectionGroupDraft,
+      cancelMqttFavoriteDraft,
+      cancelMqttPublishDraftHistoryEditDraft,
+      cancelMqttRecordEditDraft,
+      cancelMqttSubscriptionDraft,
+      cancelWindowDraft,
+      clearAllMqttSubscriptions,
+      clearCurrentMqttPublishDraftHistory,
+      clearFavoriteSlot,
+      clearMqttLogs,
+      clearMqttRailSelection,
+      clearMqttRecordList,
+      clearPortSelection,
+      clearWindowActivationDiagnostics,
+      clearWindowCandidates,
+      clearWindowOperationTraces,
+      clearWindowSelection,
+      clearWindowSlot,
+      closeFavoriteDrawer,
+      closeFavoriteSlotManager,
+      closeMqttCommandFocusSurfaces,
+      closeMqttDrawer,
+      closeMqttPreview,
+      closeMqttPublishDraftHistory,
+      closeMqttPublishOptions,
+      closeMqttTopicFilter,
+      closePortDetail,
+      closePortDrawer,
+      closePortGroupDetail,
+      closeWindowActions,
+      closeWindowRows,
+      commitFavoritePickReview,
+      configureFavoriteSlotHotkey,
+      configureWindowSlotHotkey,
+      confirmKill,
+      confirmKillGroup,
+      connectMqtt,
+      copyDirectoryTargetPaths,
+      copyFavoriteItems,
+      copyFavoritePath,
+      copyFavoriteRunCommand,
+      copyFavoriteRunLogPath,
+      copyMqttConnectionAddress,
+      copyMqttRecordAll,
+      copyMqttRecordPayload,
+      copyMqttRecordTopic,
+      copyMqttSubscriptionTopic,
+      copySelectedMqttRecordPayloads,
+      copySelectedMqttRecordTopics,
+      copySelectedMqttRecordsAsMergedJson,
+      copyWindowHandle,
+      createGroupFromSelection,
+      createPortGroupFolder,
+      currentPortGroupSelection,
+      cycleFavoriteDraftField,
+      cycleFavoritePane,
+      cycleFavoritePickReview,
+      deleteFocusedGroup,
+      deleteFocusedMqttConnection,
+      deleteFocusedMqttSubscription,
+      deleteMqttConfigPublishRow,
+      deleteMqttConfigSubscriptionRow,
+      deleteMqttConnectionGroupById,
+      deleteMqttPublishDraftHistoryEntry,
+      deleteMqttSubscriptionDraftRow,
+      deleteMqttTemplate,
+      deleteSelectedMqttConnections,
+      deleteSelectedMqttLog,
+      deleteSelectedMqttRecord,
+      deleteSelectedMqttSubscriptions,
+      directoryPathsFromArgs,
+      disconnectMqtt,
+      executeFavoriteDrawerItem,
+      executeMqttDrawerItem,
+      executePortDrawerItem,
+      executeQuickFavoriteAt,
+      favoriteActionTargetKind,
+      favoriteIdFromArgs,
+      favoriteMqttPublishDraftHistory,
+      favoritePickKindFromArgs,
+      favoriteWindowRows,
+      fillMqttPublishDraftFromSelection,
+      finishWindowActivation,
+      focusDuplicateFavorite,
+      focusFavoriteActionTarget,
+      focusFavoriteGroupSearch,
+      focusFavoriteSearch,
+      focusFocusedGroupMatches,
+      focusMqttConfigPublishEditor,
+      focusMqttConfigSubscriptionEditor,
+      focusMqttPublishDraftHistory,
+      focusMqttPublishEditor,
+      focusMqttRecordFromArgs,
+      focusMqttRecordList,
+      focusMqttSubscription,
+      focusMqttTopicFilter,
+      focusPortGroupSearch,
+      focusPortPane,
+      focusPortSearch,
+      focusWindowSlot,
+      folderFromTarget,
+      groupFromTarget,
+      isTabEnabled,
+      killPortTargets,
+      killPorts,
+      loadSelectedFavoriteDirectory,
+      moveFavoriteDrawer,
+      moveMqttConfigDraftField,
+      moveMqttConfigPublishRow,
+      moveMqttConfigSubscriptionRow,
+      moveMqttConnectionGroupDraftField,
+      moveMqttConnectionTreeFromArgs,
+      moveMqttDrawer,
+      moveMqttPane,
+      moveMqttPublishDraftHistory,
+      moveMqttPublishDraftHistoryEditField,
+      moveMqttPublishField,
+      moveMqttPublishOptions,
+      moveMqttRecordEditDraftField,
+      moveMqttSubscriptionDraftField,
+      moveMqttSubscriptionDraftRow,
+      moveMqttTopicFilter,
+      movePortDrawer,
+      movePortGroupDraftField,
+      moveWindowDraftField,
+      mqttFocusedGroupIdFromArgs,
+      mqttPublishTemplateIdFromArgs,
+      mqttSubscriptionTopicFromArgs,
+      navigateFocusedWindowTree,
+      notify,
+      openDirectoryTargets,
+      openFavorite,
+      openFavoriteDrawer,
+      openFavoriteRunLog,
+      openFavoriteSlotManager,
+      openFolderRenameDraft,
+      openGroupDraft,
+      openMqttDrawer,
+      openMqttPreview,
+      openMqttPublishOptions,
+      openPortDetail,
+      openPortDrawer,
+      openPortGroupDetail,
+      openWindowActions,
+      openWindowSlotActions,
+      persistMqttLayoutPrefs,
+      pickFavoriteDraftPath,
+      pickFavoritesForReview,
+      refreshFavoritePathInspections,
+      refreshMqttConfigClientId,
+      refreshWindows,
+      removeFavorite,
+      removeFavoriteNow,
+      renameMqttTemplate,
+      renameSelectedMqttRecord,
+      reorderFavoriteMetadata,
+      repeatMqttPublishRecords,
+      requestMqttFocus,
+      resetFavoriteLearning,
+      resetMqttLayoutRatio,
+      resetPortWorkspace,
+      resizeMqttLayout,
+      revealDirectoryTargets,
+      revealFavorite,
+      revealFavoriteRunLog,
+      save,
+      saveCurrentMqttPublishDraftHistory,
+      saveCurrentMqttPublishTemplate,
+      saveFavoriteDraft,
+      saveMqttConfigDraft,
+      saveMqttConnectionGroupDraft,
+      saveMqttFavoriteDraft,
+      saveMqttPublishDraftHistoryEditDraft,
+      saveMqttRecordEditDraft,
+      saveMqttSubscriptionDraft,
+      savePortGroupDraft,
+      saveSelectedMqttRecordsAsMergedJson,
+      saveWindowDraft,
+      scanPorts,
+      scrollMqttPreview,
+      selectMqttPublishOption,
+      selectMqttSubscription,
+      selectMqttTopicFilter,
+      selectedFavoriteMetadataIds,
+      sendMqttPublishDraft,
+      sendMqttPublishDraftHistory,
+      sendMqttPublishTemplate,
+      setMessage,
+      setMqttConnectionGroupCollapsed,
+      setMqttHistorySearch,
+      setMqttPreviewScroll,
+      setMqttTemplateSearch,
+      setMqttTopicFilterSearch,
+      setMqttWorkspaceLayout,
+      setTab,
+      setWindowAlwaysOnTop,
+      setWindowGroupExpanded,
+      submitFavoriteRunPrompt,
+      targetFromArgs,
+      toggleFocusedGroupFolder,
+      toggleGroupPanel,
+      toggleMqttConnectionGroupCollapse,
+      toggleMqttConnectionSelection,
+      toggleMqttFollowLatest,
+      toggleMqttPublishDraftHistory,
+      toggleMqttPublishDraftHistorySelection,
+      toggleMqttRecordFavorite,
+      toggleMqttRecordSelectionFromArgs,
+      toggleMqttSubscriptionSelection,
+      togglePortPane,
+      toggleWindowFavorite,
+      toggleWindowPins,
+      undoFavoriteRemoval,
+      updateToolPreviewPrefs,
+      useMqttSubscriptionAsPublishTopic,
+      whenWindowInteraction,
+    }
+    for (const module of FEATURE_MODULES_V7) module.registerActions(featureActionHost)
     for (const feature of FEATURES) {
       const tabActionId = `tab.select.${feature.id}`
       actions.register({
@@ -9031,891 +9323,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         run: () => { setTab(feature.id); return true }
       })
     }
-    actions.register({ id: 'windows.refresh', title: '刷新窗口列表', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => whenWindowInteraction(ctx, 'always'), run: () => { void refreshWindows({ clearSearch: true }); return true } })
-    actions.register({ id: 'windows.search.focus', title: '聚焦窗口搜索', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: () => { searchFocusTarget = 'windows'; searchFocusRequestId += 1; notify(); return true } })
-    actions.register({ id: 'windows.activate', title: '展开并前置当前窗口', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Enter', when: (ctx) => whenWindowInteraction(ctx, 'always', { outsideEditor: true }), run: (_ctx, args) => {
-      void activateWindowRow(typeof args?.rowId === 'string' ? args.rowId : undefined).catch(() => {
-        finishWindowActivation(activationAttemptFor('manual'), 'activate', 'activation-failed', 'blocking')
-      })
-      return true
-    } })
-    actions.register({ id: 'windows.actions.open', title: '打开窗口操作面板', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Ctrl+ArrowRight', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => openWindowActions(typeof args?.rowId === 'string' ? args.rowId : undefined) })
-    actions.register({ id: 'windows.actions.close', title: '返回窗口列表', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-actions'), run: () => closeWindowActions() })
-    actions.register({ id: 'windows.tree.expand', title: '展开主窗口或进入首个子节点', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'ArrowRight', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }) && !ctx.layerIds.includes('window-actions'), run: () => navigateFocusedWindowTree('expand') })
-    actions.register({ id: 'windows.tree.collapse', title: '返回父节点或收起主窗口', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'ArrowLeft', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }) && !ctx.layerIds.includes('window-actions'), run: () => navigateFocusedWindowTree('collapse') })
-    actions.register({ id: 'windows.tree.toggle', title: '切换窗口树节点展开状态', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 99, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => setWindowGroupExpanded(typeof args?.rowId === 'string' ? args.rowId : undefined, typeof args?.expanded === 'boolean' ? args.expanded : undefined) })
-    actions.register({ id: 'windows.layer.toggle', title: '切换窗口列表与操作层', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, shortcut: 'Tab', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: () => windowActionsOpen ? closeWindowActions() : openWindowActions() })
-    actions.register({ id: 'windows.layer.togglePrev', title: '反向切换窗口列表与操作层', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, shortcut: 'Shift+Tab', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: () => windowActionsOpen ? closeWindowActions() : openWindowActions() })
-    actions.register({ id: 'windows.favorite.toggle', title: '收藏或取消收藏窗口', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => {
-      if (typeof args?.rowId === 'string' || windowActionsMode === 'single' || selectedWindowIds.length <= 1) {
-        return toggleWindowFavorite(typeof args?.rowId === 'string' ? args.rowId : undefined)
-      }
-      return favoriteWindowRows()
-    } })
-    actions.register({ id: 'windows.alwaysOnTop', title: '页面置顶', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => {
-      void setWindowAlwaysOnTop(typeof args?.rowId === 'string' ? args.rowId : undefined).catch(() => {
-        finishWindowActivation(activationAttemptFor('manual', null, 'always-on-top'), 'topmost', 'topmost-failed', 'blocking')
-      })
-      return true
-    } })
-    actions.register({ id: 'windows.pin.toggle', title: '切换窗口列表置顶', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => toggleWindowPins(typeof args?.rowId === 'string' ? args.rowId : undefined) })
-    actions.register({ id: 'windows.close', title: '关闭窗口', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 97, shortcut: 'Ctrl+Delete', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => { void closeWindowRows(typeof args?.rowId === 'string' ? args.rowId : undefined, false); return true } })
-    actions.register({ id: 'windows.close.force', title: '强制关闭窗口', group: '窗口跳转', risk: 'destructive', scope: 'tab', priority: 97, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => { void closeWindowRows(typeof args?.rowId === 'string' ? args.rowId : undefined, true); return true } })
-    actions.register({ id: 'windows.selection.clear', title: '清空窗口多选', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: () => clearWindowSelection() })
-    actions.register({ id: 'windows.rename', title: '编辑窗口别名', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, shortcut: 'Shift+F2', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => beginWindowDraft('rename', typeof args?.rowId === 'string' ? args.rowId : undefined) })
-    actions.register({ id: 'windows.edit', title: '编辑窗口目标', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, shortcut: 'F2', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => beginWindowDraft('edit', typeof args?.rowId === 'string' ? args.rowId : undefined) })
-    actions.register({ id: 'windows.editor.save', title: '保存窗口目标', group: '窗口跳转', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-editor'), run: () => saveWindowDraft() })
-    actions.register({ id: 'windows.editor.cancel', title: '取消窗口编辑', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-editor'), run: () => cancelWindowDraft() })
-    actions.register({ id: 'windows.editor.nextField', title: '窗口编辑下一个字段', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-editor'), run: () => moveWindowDraftField(1) })
-    actions.register({ id: 'windows.editor.prevField', title: '窗口编辑上一个字段', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-editor'), run: () => moveWindowDraftField(-1) })
-    actions.register({ id: 'windows.slot.activate', title: '跳转窗口槽位', group: '窗口跳转', risk: 'normal', scope: 'global', priority: 101, when: () => true, run: (_ctx, args) => {
-      const slot = Math.trunc(Number(args?.slot))
-      if (slot < 1 || slot > 10) return false
-      void activateWindowSlot(slot).catch(() => {
-        finishWindowActivation(activationAttemptFor('slot', slot), 'activate', 'activation-failed', 'blocking')
-      })
-      return true
-    } })
-    actions.register({ id: 'windows.activation.diagnostics.clear', title: '清空本次窗口激活诊断', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 94, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: () => clearWindowActivationDiagnostics() })
-    actions.register({ id: 'windows.operation.traces.clear', title: '清空开发窗口操作追踪', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 94, when: (ctx) => whenWindowInteraction(ctx, 'browse') && windowOperationTraceEnabled, run: () => clearWindowOperationTraces() })
-    actions.register({ id: 'windows.slot.assign', title: '分配窗口槽位', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => assignWindowSlot(Math.trunc(Number(args?.slot)), typeof args?.rowId === 'string' ? args.rowId : undefined) })
-    for (let slot = 1; slot <= 10; slot += 1) {
-      actions.register({
-        id: `windows.slot.assign.${slot}`,
-        title: `分配窗口到槽 ${slot}`,
-        group: '窗口跳转',
-        risk: 'data-write',
-        scope: 'row',
-        priority: 95,
-        shortcut: slot === 10 ? 'Ctrl+0' : `Ctrl+${slot}`,
-        when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }),
-        run: () => assignWindowSlot(slot)
-      })
-    }
-    actions.register({ id: 'windows.slot.clear', title: '清除窗口槽关联', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => clearWindowSlot(Math.trunc(Number(args?.slot))) })
-    actions.register({ id: 'windows.slot.focus', title: '聚焦窗口槽目标', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => focusWindowSlot(Math.trunc(Number(args?.slot))) })
-    actions.register({ id: 'windows.slot.actions.open', title: '打开窗口槽操作面板', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 97, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => openWindowSlotActions(Math.trunc(Number(args?.slot))) })
-    actions.register({ id: 'windows.slot.configure', title: '配置窗口槽全局快捷键', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => configureWindowSlotHotkey(Math.trunc(Number(args?.slot))) })
-    actions.register({ id: 'windows.hwnd.copy', title: '复制 Windows HWND', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => { void copyWindowHandle(typeof args?.rowId === 'string' ? args.rowId : undefined); return true } })
-    actions.register({ id: 'windows.permission.settings', title: '打开 macOS 辅助功能设置', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'always'), run: () => { void platform.windows.openPermissionSettings?.(); return true } })
-    actions.register({ id: 'windows.candidates.clear', title: '退出窗口候选筛选', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'rebind'), run: () => clearWindowCandidates() })
-    actions.register({ id: 'ports.scan', title: '刷新端口', group: '端口', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'ports', run: () => { void scanPorts(); return true } })
-    actions.register({ id: 'ports.groups.togglePanel', title: '展开/收起端口组栏', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'ports', run: () => toggleGroupPanel() })
-    actions.register({ id: 'ports.search.focus', title: '聚焦端口搜索', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'ports', run: () => focusPortSearch() })
-    actions.register({ id: 'ports.groupSearch.focus', title: '聚焦端口组搜索', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+Shift+F', when: (ctx) => ctx.tab === 'ports', run: () => focusPortGroupSearch() })
-    actions.register({ id: 'ports.search.blur', title: '退出端口搜索焦点', group: '端口', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'Escape', when: (ctx) => ctx.tab === 'ports', run: () => blurSearchFocus() })
-    actions.register({ id: 'ports.kill.confirm', title: '终止选中进程', group: '端口', risk: 'data-write', scope: 'tab', priority: 100, shortcut: 'Delete', when: (ctx) => ctx.tab === 'ports', run: () => { confirmKill(); return true } })
-    actions.register({ id: 'ports.kill.force', title: '强杀选中进程', group: '端口', risk: 'destructive', scope: 'tab', priority: 100, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'ports', run: () => { void killPorts(true); return true } })
-    actions.register({ id: 'ports.killGroup.confirm', title: '终止端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => { confirmKillGroup(targetFromArgs(args)); return true } })
-    actions.register({ id: 'ports.killGroup.force', title: '强杀端口组', group: '端口', risk: 'destructive', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => { void killPortTargets(currentPortGroupSelection(targetFromArgs(args)), true, '组内端口当前无监听进程'); return true } })
-    actions.register({ id: 'ports.pane.toggleNext', title: '切换端口栏', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Tab', when: (ctx) => ctx.tab === 'ports', run: () => togglePortPane() })
-    actions.register({ id: 'ports.pane.togglePrev', title: '反向切换端口栏', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'ports', run: () => togglePortPane() })
-    actions.register({ id: 'ports.pane.groups', title: '聚焦端口组栏', group: '端口', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'Alt+ArrowLeft', when: (ctx) => ctx.tab === 'ports', run: () => { focusPortPane('groups'); notify(); return true } })
-    actions.register({ id: 'ports.pane.results', title: '聚焦端口结果栏', group: '端口', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'Alt+ArrowRight', when: (ctx) => ctx.tab === 'ports', run: () => { focusPortPane('results'); notify(); return true } })
-    actions.register({ id: 'ports.group.apply', title: '应用端口组过滤', group: '端口', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'Enter', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => applyFocusedGroup(targetFromArgs(args)) })
-    actions.register({ id: 'ports.group.focusMatches', title: '聚焦组内端口', group: '端口', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => focusFocusedGroupMatches(targetFromArgs(args)) })
-    actions.register({ id: 'ports.group.kill.confirm', title: '终止当前端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+Enter', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => { confirmKillGroup(targetFromArgs(args)); return true } })
-    actions.register({ id: 'ports.group.kill.force', title: '强杀当前端口组', group: '端口', risk: 'destructive', scope: 'tab', priority: 94, shortcut: 'Ctrl+Shift+Enter', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => { void killPortTargets(currentPortGroupSelection(targetFromArgs(args)), true, '组内端口当前无监听进程'); return true } })
-    actions.register({ id: 'ports.group.createFromSelection', title: '选中端口收藏为组', group: '端口', risk: 'data-write', scope: 'tab', priority: 93, shortcut: 'Ctrl+G', when: (ctx) => ctx.tab === 'ports', run: () => createGroupFromSelection() })
-    actions.register({ id: 'ports.group.create', title: '新建端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'ports', run: () => { openGroupDraft(null); return true } })
-    actions.register({ id: 'ports.groupFolder.create', title: '新增分组夹', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Ctrl+T', when: (ctx) => ctx.tab === 'ports', run: () => createPortGroupFolder() })
-    actions.register({ id: 'ports.group.rename', title: '重命名端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => {
-      const target = targetFromArgs(args)
-      const folder = folderFromTarget(target)
-      if (folder) {
-        openFolderRenameDraft(folder)
-        return true
-      }
-      const group = groupFromTarget(target)
-      if (!group) return false
-      openGroupDraft(group, 'rename')
-      return true
-    } })
-    actions.register({ id: 'ports.group.moveFolder', title: '变更端口组分组夹', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Ctrl+F2', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => {
-      const group = groupFromTarget(targetFromArgs(args))
-      if (!group) return false
-      openGroupDraft(group, 'move-folder')
-      return true
-    } })
-    actions.register({ id: 'ports.group.edit', title: '编辑端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'F2', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => {
-      const target = targetFromArgs(args)
-      const folder = folderFromTarget(target)
-      if (folder) {
-        openFolderRenameDraft(folder)
-        return true
-      }
-      const group = groupFromTarget(target)
-      if (!group) return false
-      openGroupDraft(group, 'edit')
-      return true
-    } })
-    actions.register({ id: 'ports.group.save', title: '保存端口组编辑', group: '端口', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => savePortGroupDraft(portGroupDraft || { name: '', entriesText: '', color: '#00A676', folderId: null }) })
-    actions.register({ id: 'ports.group.edit.nextField', title: '编辑层下一个字段', group: '端口', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => movePortGroupDraftField(1) })
-    actions.register({ id: 'ports.group.edit.prevField', title: '编辑层上一个字段', group: '端口', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => movePortGroupDraftField(-1) })
-    actions.register({ id: 'ports.group.delete', title: '删除端口组/夹', group: '端口', risk: 'data-write', scope: 'tab', priority: 91, shortcut: 'Delete', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => deleteFocusedGroup(false, targetFromArgs(args)) })
-    actions.register({ id: 'ports.group.delete.force', title: '强制删除端口组/夹', group: '端口', risk: 'destructive', scope: 'tab', priority: 91, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => deleteFocusedGroup(true, targetFromArgs(args)) })
-    actions.register({ id: 'ports.groupTarget.toggle', title: '折叠/展开端口组夹', description: '折叠或展开当前高亮分组夹。', icon: 'toggle', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder() })
-    actions.register({ id: 'ports.groupTarget.collapse', title: '折叠端口组夹', description: '折叠当前高亮分组夹。', icon: 'left', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder(false) })
-    actions.register({ id: 'ports.groupTarget.expand', title: '展开端口组夹', description: '展开当前高亮分组夹。', icon: 'right', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder(true) })
-    actions.register({ id: 'ports.groupDetail.open', title: '打开端口组详情抽屉', description: '展示当前分组或分组夹的规则和快捷操作。', icon: 'detail', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => openPortGroupDetail(args) })
-    actions.register({ id: 'ports.groupDetail.close', title: '关闭端口组详情抽屉', description: '关闭左侧端口组详情抽屉。', icon: 'close', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => closePortGroupDetail() })
-    actions.register({ id: 'ports.drawer.open', title: '打开端口动作抽屉', description: '展示当前端口、选中端口或端口组的可执行动作。', icon: 'drawer', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => openPortDrawer(args) })
-    actions.register({ id: 'ports.drawer.close', title: '关闭端口动作抽屉', description: '关闭右侧动作抽屉。', icon: 'close', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => closePortDrawer() })
-    actions.register({ id: 'ports.detail.open', title: '打开端口详情抽屉', description: '展示当前高亮进程的端口、PID、命令和快捷操作。', icon: 'detail', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => openPortDetail(args) })
-    actions.register({ id: 'ports.detail.close', title: '关闭端口详情抽屉', description: '关闭左侧进程详情抽屉。', icon: 'close', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => closePortDetail() })
-    actions.register({ id: 'ports.drawer.next', title: '抽屉内下移', description: '移动到下一个抽屉动作。', icon: 'down', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => movePortDrawer(1) })
-    actions.register({ id: 'ports.drawer.prev', title: '抽屉内上移', description: '移动到上一个抽屉动作。', icon: 'up', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => movePortDrawer(-1) })
-    actions.register({ id: 'ports.drawer.select', title: '执行抽屉当前动作', description: '执行右侧抽屉中当前高亮的动作。', icon: 'enter', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => executePortDrawerItem() })
-    actions.register({ id: 'ports.selection.clear', title: '清空端口多选', description: '清空当前端口多选并关闭多选抽屉。', icon: 'clear', group: '端口', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'ports', run: () => clearPortSelection() })
-    for (let index = 1; index <= 9; index += 1) {
-      actions.register({
-        id: `ports.drawer.select.${index}`,
-        title: `执行抽屉第 ${index} 个动作`,
-        description: '执行右侧抽屉中的指定序号动作。',
-        icon: 'number',
-        group: '端口',
-        risk: 'normal',
-        scope: 'layer',
-        priority: 90 - index,
-        shortcut: `Ctrl+${index}`,
-        when: (ctx) => ctx.tab === 'ports',
-        run: () => executePortDrawerItem(index - 1)
-      })
-      actions.register({
-        id: `ports.drawer.action.${index}`,
-        title: `直接执行第 ${index} 个端口动作`,
-        description: '不打开抽屉，直接执行当前端口上下文的指定动作。',
-        icon: 'number',
-        group: '端口',
-        risk: 'normal',
-        scope: 'tab',
-        priority: 80 - index,
-        shortcut: `Ctrl+Alt+${index}`,
-        when: (ctx) => ctx.tab === 'ports',
-        run: () => executePortDrawerItem(index - 1, true)
-      })
-    }
-    actions.register({ id: 'mqtt.connection.connect', title: '连接/重连 MQTT', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'mqtt', run: () => { void connectMqtt(); return true } })
-    actions.register({ id: 'mqtt.connection.disconnect', title: '断开 MQTT', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+Shift+R', when: (ctx) => ctx.tab === 'mqtt', run: () => disconnectMqtt() })
-    actions.register({ id: 'mqtt.connection.toggleSelect', title: '多选 MQTT 连接', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Space', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttConnectionSelection(args) })
-    actions.register({ id: 'mqtt.connection.copyAddress', title: '复制 MQTT 连接地址', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+C', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copyMqttConnectionAddress(args) })
-    actions.register({ id: 'mqtt.connection.delete', title: '删除当前 MQTT 连接', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Delete', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => deleteFocusedMqttConnection(args) })
-    actions.register({ id: 'mqtt.connection.deleteSelected', title: '删除选中 MQTT 连接', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'mqtt', run: () => deleteSelectedMqttConnections() })
-    actions.register({ id: 'mqtt.selection.clear', title: '清空 MQTT 多选', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttRailSelection() })
-    actions.register({ id: 'mqtt.connectionTree.move', title: '移动 MQTT 连接树节点', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => moveMqttConnectionTreeFromArgs(args) })
-    actions.register({ id: 'mqtt.connectionGroup.create', title: '新建 MQTT 连接分组', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+G', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConnectionGroupDraft('create', args, ctx) })
-    actions.register({ id: 'mqtt.connectionGroup.edit', title: '编辑 MQTT 连接分组', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'F2', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConnectionGroupDraft('edit', args, ctx) })
-    actions.register({ id: 'mqtt.connectionGroup.rename', title: '重命名 MQTT 连接分组', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConnectionGroupDraft('rename', args, ctx) })
-    actions.register({ id: 'mqtt.connectionGroup.moveParent', title: '移动 MQTT 连接分组父级', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Ctrl+F2', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConnectionGroupDraft('move-parent', args, ctx) })
-    actions.register({ id: 'mqtt.connectionGroup.delete', title: '删除 MQTT 连接分组', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Delete', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => { const id = mqttFocusedGroupIdFromArgs(args); return id ? deleteMqttConnectionGroupById(id) : false } })
-    actions.register({ id: 'mqtt.connectionGroup.toggleCollapse', title: '折叠/展开 MQTT 连接分组', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 94, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttConnectionGroupCollapse(args) })
-    actions.register({ id: 'mqtt.connectionGroup.collapse', title: '折叠 MQTT 连接分组', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 94, shortcut: 'ArrowLeft', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => setMqttConnectionGroupCollapsed(args, true) })
-    actions.register({ id: 'mqtt.connectionGroup.expand', title: '展开 MQTT 连接分组', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 94, shortcut: 'ArrowRight', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => setMqttConnectionGroupCollapsed(args, false) })
-    actions.register({ id: 'mqtt.connectionGroup.save', title: '保存 MQTT 连接分组', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-connection-group-editor'), run: () => saveMqttConnectionGroupDraft() })
-    actions.register({ id: 'mqtt.connectionGroup.cancel', title: '取消 MQTT 分组编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-connection-group-editor'), run: () => cancelMqttConnectionGroupDraft() })
-    actions.register({ id: 'mqtt.connectionGroup.nextField', title: 'MQTT 分组编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-connection-group-editor'), run: () => moveMqttConnectionGroupDraftField(1) })
-    actions.register({ id: 'mqtt.connectionGroup.prevField', title: 'MQTT 分组编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-connection-group-editor'), run: () => moveMqttConnectionGroupDraftField(-1) })
-    actions.register({ id: 'mqtt.config.create', title: '新建 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+N', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConfigDraft('create', args, ctx) })
-    actions.register({ id: 'mqtt.config.edit', title: '编辑 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'F2', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConfigDraft('edit', args, ctx) })
-    actions.register({ id: 'mqtt.config.rename', title: '重命名 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConfigDraft('rename', args, ctx) })
-    actions.register({ id: 'mqtt.config.save', title: '保存 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => saveMqttConfigDraft() })
-    actions.register({ id: 'mqtt.config.cancel', title: '取消 MQTT 编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => { mqttConfigDraft = null; notify(); return true } })
-    actions.register({ id: 'mqtt.config.clientId.refresh', title: '刷新 MQTT Client ID', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => refreshMqttConfigClientId() })
-    actions.register({ id: 'mqtt.config.nextField', title: 'MQTT 编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => moveMqttConfigDraftField(1) })
-    actions.register({ id: 'mqtt.config.prevField', title: 'MQTT 编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => moveMqttConfigDraftField(-1) })
-    actions.register({ id: 'mqtt.config.subscription.focus', title: '聚焦 MQTT 配置订阅行', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 99, when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: (_ctx, args) => focusMqttConfigSubscriptionEditor(args) })
-    actions.register({ id: 'mqtt.config.subscription.nextRow', title: 'MQTT 配置订阅下移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'ArrowDown', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => moveMqttConfigSubscriptionRow(1) })
-    actions.register({ id: 'mqtt.config.subscription.prevRow', title: 'MQTT 配置订阅上移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'ArrowUp', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => moveMqttConfigSubscriptionRow(-1) })
-    actions.register({ id: 'mqtt.config.subscription.deleteRow', title: '删除 MQTT 配置订阅行', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 99, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: (_ctx, args) => deleteMqttConfigSubscriptionRow(args) })
-    actions.register({ id: 'mqtt.config.publish.focus', title: '聚焦 MQTT 配置发布 topic 行', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 99, when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: (_ctx, args) => focusMqttConfigPublishEditor(args) })
-    actions.register({ id: 'mqtt.config.publish.nextRow', title: 'MQTT 配置发布 topic 下移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'ArrowDown', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => moveMqttConfigPublishRow(1) })
-    actions.register({ id: 'mqtt.config.publish.prevRow', title: 'MQTT 配置发布 topic 上移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'ArrowUp', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => moveMqttConfigPublishRow(-1) })
-    actions.register({ id: 'mqtt.config.publish.deleteRow', title: '删除 MQTT 配置发布 topic 行', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 99, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: (_ctx, args) => deleteMqttConfigPublishRow(args) })
-    actions.register({ id: 'mqtt.record.rename', title: '编辑 MQTT 记录别名', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'F2', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => args?.title || args?.note ? renameSelectedMqttRecord({ title: typeof args.title === 'string' ? args.title : undefined, note: typeof args.note === 'string' ? args.note : undefined }) : beginMqttRecordEdit('rename', args) })
-    actions.register({ id: 'mqtt.record.edit', title: '完整编辑 MQTT 记录', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => beginMqttRecordEdit('edit', args) })
-    actions.register({ id: 'mqtt.record.edit.save', title: '保存 MQTT 记录编辑', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-record-editor'), run: (_ctx, args) => saveMqttRecordEditDraft(args) })
-    actions.register({ id: 'mqtt.record.edit.cancel', title: '取消 MQTT 记录编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-record-editor'), run: () => cancelMqttRecordEditDraft() })
-    actions.register({ id: 'mqtt.record.edit.nextField', title: 'MQTT 记录编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-record-editor'), run: () => moveMqttRecordEditDraftField(1) })
-    actions.register({ id: 'mqtt.record.edit.prevField', title: 'MQTT 记录编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-record-editor'), run: () => moveMqttRecordEditDraftField(-1) })
-    actions.register({ id: 'mqtt.record.delete', title: '删除 MQTT 记录', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 93, shortcut: 'Delete', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => deleteSelectedMqttRecord(args) })
-    actions.register({ id: 'mqtt.messages.clearAll', title: '清空 MQTT 消息', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttRecordList('messages') })
-    actions.register({ id: 'mqtt.history.clearAll', title: '清空 MQTT 历史', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttRecordList('history') })
-    actions.register({ id: 'mqtt.log.delete', title: '删除当前 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 93, when: (ctx) => ctx.tab === 'mqtt', run: () => deleteSelectedMqttLog() })
-    actions.register({ id: 'mqtt.log.clearCurrentConfig', title: '清空当前连接 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttLogs('current') })
-    actions.register({ id: 'mqtt.log.clearAll', title: '清空全部 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttLogs('all') })
-    actions.register({ id: 'mqtt.subscription.add', title: '新增 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Ctrl+T', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttSubscriptionDraft(true) })
-    actions.register({ id: 'mqtt.subscription.editor.open', title: '管理 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'F2', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttSubscriptionDraft(false) })
-    actions.register({ id: 'mqtt.subscription.editor.save', title: '保存 MQTT 订阅编辑', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => saveMqttSubscriptionDraft() })
-    actions.register({ id: 'mqtt.subscription.editor.cancel', title: '取消 MQTT 订阅编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => cancelMqttSubscriptionDraft() })
-    actions.register({ id: 'mqtt.subscription.editor.nextField', title: 'MQTT 订阅编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => moveMqttSubscriptionDraftField(1) })
-    actions.register({ id: 'mqtt.subscription.editor.prevField', title: 'MQTT 订阅编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => moveMqttSubscriptionDraftField(-1) })
-    actions.register({ id: 'mqtt.subscription.editor.nextRow', title: 'MQTT 订阅编辑下移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'ArrowDown', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => moveMqttSubscriptionDraftRow(1) })
-    actions.register({ id: 'mqtt.subscription.editor.prevRow', title: 'MQTT 订阅编辑上移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'ArrowUp', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => moveMqttSubscriptionDraftRow(-1) })
-    actions.register({ id: 'mqtt.subscription.editor.deleteRow', title: '删除 MQTT 订阅编辑行', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: (_ctx, args) => deleteMqttSubscriptionDraftRow(args) })
-    actions.register({ id: 'mqtt.pane.next', title: '切换 MQTT 区域', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 93, shortcut: 'Tab', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttPane(1) })
-    actions.register({ id: 'mqtt.pane.prev', title: '反向切换 MQTT 区域', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 93, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttPane(-1) })
-    actions.register({ id: 'mqtt.subscription.panel.toggle', title: '折叠/展开 MQTT 订阅栏', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, shortcut: 'Ctrl+Shift+T', when: (ctx) => ctx.tab === 'mqtt', run: () => {
-      mqttSubscriptionPanelOpen = !mqttSubscriptionPanelOpen
-      closeMqttCommandFocusSurfaces()
-      activeMqttPane = mqttSubscriptionPanelOpen ? 'subscriptions' : 'messages'
-      requestMqttFocus(mqttSubscriptionPanelOpen ? 'subscriptions' : 'records')
-      persistMqttLayoutPrefs()
-      notify()
-      return true
-    } })
-    actions.register({ id: 'mqtt.subscription.select', title: '选择 MQTT 订阅筛选', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => selectMqttSubscription(typeof args?.topic === 'string' ? args.topic : null) })
-    actions.register({ id: 'mqtt.subscription.focus', title: '聚焦 MQTT 订阅', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => focusMqttSubscription(typeof args?.topic === 'string' ? args.topic : null) })
-    actions.register({ id: 'mqtt.subscription.toggleSelect', title: '多选 MQTT 订阅', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Space', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttSubscriptionSelection(mqttSubscriptionTopicFromArgs(args) || undefined) })
-    actions.register({ id: 'mqtt.subscription.applyFilter', title: '应用 MQTT 订阅筛选', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Enter', when: (ctx) => ctx.tab === 'mqtt', run: () => applyMqttSubscriptionFilter() })
-    actions.register({ id: 'mqtt.subscription.copyTopic', title: '复制 MQTT 订阅 topic', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+C', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copyMqttSubscriptionTopic(args) })
-    actions.register({ id: 'mqtt.subscription.useAsPublishTopic', title: '填入 MQTT 发布 topic', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => useMqttSubscriptionAsPublishTopic(args) })
-    actions.register({ id: 'mqtt.subscription.delete', title: '删除当前 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 91, shortcut: 'Delete', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => deleteFocusedMqttSubscription(mqttSubscriptionTopicFromArgs(args) || undefined) })
-    actions.register({ id: 'mqtt.subscription.deleteSelected', title: '删除选中 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'mqtt', run: () => deleteSelectedMqttSubscriptions() })
-    actions.register({ id: 'mqtt.subscription.clearAll', title: '清空 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: () => clearAllMqttSubscriptions() })
-    actions.register({ id: 'mqtt.layout.toggle', title: '切换 MQTT 收发布局', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+Shift+S', when: (ctx) => ctx.tab === 'mqtt', run: () => { setMqttWorkspaceLayout(mqttWorkspaceLayout === 'stack' ? 'split' : 'stack'); notify(); return true } })
-    actions.register({ id: 'mqtt.followLatest.toggle', title: '切换跟随最新消息', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: () => toggleMqttFollowLatest() })
-    actions.register({ id: 'mqtt.layout.resize', title: '调整 MQTT 收发比例', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => resizeMqttLayout(args) })
-    actions.register({ id: 'mqtt.layout.reset', title: '重置 MQTT 收发比例', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => resetMqttLayoutRatio(args) })
-    actions.register({ id: 'tool.preview.hover.update', title: '更新工具悬浮预览设置', group: '工具系统', risk: 'normal', scope: 'global', priority: 91, when: () => true, run: (_ctx, args) => updateToolPreviewPrefs(args) })
-    actions.register({ id: 'mqtt.log.drawer.open', title: '打开 MQTT 日志抽屉', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttLogDrawer = { open: true }; notify(); return true } })
-    actions.register({ id: 'mqtt.log.drawer.close', title: '关闭 MQTT 日志抽屉', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 91, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-log-drawer'), run: () => { mqttLogDrawer = { open: false }; notify(); return true } })
-    actions.register({ id: 'mqtt.receive.filter.all', title: 'MQTT 接收筛选全部', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+1', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttReceiveFilter = 'all'; focusMqttRecordList('messages'); return true } })
-    actions.register({ id: 'mqtt.receive.filter.in', title: 'MQTT 接收筛选已接收', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+2', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttReceiveFilter = 'incoming'; focusMqttRecordList('messages'); return true } })
-    actions.register({ id: 'mqtt.receive.filter.out', title: 'MQTT 接收筛选已发送', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+3', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttReceiveFilter = 'outgoing'; focusMqttRecordList('messages'); return true } })
-    actions.register({ id: 'mqtt.topicFilter.focus', title: '聚焦 MQTT topic 筛选', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+Shift+F', when: (ctx) => ctx.tab === 'mqtt', run: () => focusMqttTopicFilter() })
-    actions.register({ id: 'mqtt.topicFilter.search.set', title: '更新 MQTT topic 筛选搜索', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => setMqttTopicFilterSearch(args) })
-    actions.register({ id: 'mqtt.topicFilter.next', title: 'MQTT topic 筛选下移', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'ArrowDown', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttTopicFilter(1) })
-    actions.register({ id: 'mqtt.topicFilter.prev', title: 'MQTT topic 筛选上移', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'ArrowUp', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttTopicFilter(-1) })
-    actions.register({ id: 'mqtt.topicFilter.select', title: '选择 MQTT topic 筛选', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Enter', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => selectMqttTopicFilter(args) })
-    actions.register({ id: 'mqtt.topicFilter.close', title: '关闭 MQTT topic 筛选', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Escape', when: (ctx) => ctx.tab === 'mqtt', run: () => closeMqttTopicFilter() })
-    actions.register({ id: 'mqtt.publish.send', title: '发送 MQTT 消息', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => sendMqttPublishDraft(args) })
-    actions.register({ id: 'mqtt.publish.draft.toggle', title: '打开/关闭 MQTT 发送草稿', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+H', when: (ctx) => ctx.tab === 'mqtt', run: () => toggleMqttPublishDraftHistory() })
-    actions.register({ id: 'mqtt.publish.records.toggle', title: '打开/关闭 MQTT 发送草稿', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: () => toggleMqttPublishDraftHistory() })
-    actions.register({ id: 'mqtt.publish.draft.saveDraft', title: '保存当前 MQTT 发送草稿', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 91, shortcut: 'Ctrl+Shift+H', when: (ctx) => ctx.tab === 'mqtt', run: () => saveCurrentMqttPublishDraftHistory() })
-    actions.register({ id: 'mqtt.publish.draft.close', title: '关闭 MQTT 发送草稿', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 91, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: () => closeMqttPublishDraftHistory() })
-    actions.register({ id: 'mqtt.publish.draft.next', title: 'MQTT 发送草稿下移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 91, shortcut: 'ArrowDown', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: () => moveMqttPublishDraftHistory(1) })
-    actions.register({ id: 'mqtt.publish.draft.prev', title: 'MQTT 发送草稿上移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 91, shortcut: 'ArrowUp', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: () => moveMqttPublishDraftHistory(-1) })
-    actions.register({ id: 'mqtt.publish.draft.apply', title: '应用 MQTT 发送草稿', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 91, shortcut: 'Enter', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: (_ctx, args) => applyMqttPublishDraftHistory(args) })
-    actions.register({ id: 'mqtt.publish.draft.send', title: '发送 MQTT 发送草稿', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 91, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: (_ctx, args) => sendMqttPublishDraftHistory(args) })
-    actions.register({ id: 'mqtt.publish.draft.toggleSelect', title: '多选 MQTT 发送草稿', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 91, shortcut: 'Space', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: (_ctx, args) => toggleMqttPublishDraftHistorySelection(args) })
-    actions.register({ id: 'mqtt.publish.draft.focus', title: '聚焦 MQTT 发送草稿项', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 91, when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: (_ctx, args) => focusMqttPublishDraftHistory(args) })
-    actions.register({ id: 'mqtt.publish.draft.favorite', title: '收藏 MQTT 发送草稿', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 91, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: (_ctx, args) => favoriteMqttPublishDraftHistory(args) })
-    actions.register({ id: 'mqtt.publish.draft.edit', title: '完整编辑 MQTT 发送草稿', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 91, shortcut: 'Shift+F2', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: (_ctx, args) => beginMqttPublishDraftHistoryEdit('edit', args) })
-    actions.register({ id: 'mqtt.publish.draft.rename', title: '编辑 MQTT 发送草稿别名', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 91, shortcut: 'F2', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: (_ctx, args) => beginMqttPublishDraftHistoryEdit('rename', args) })
-    actions.register({ id: 'mqtt.publish.draft.edit.save', title: '保存 MQTT 发送草稿编辑', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 92, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft-editor'), run: () => saveMqttPublishDraftHistoryEditDraft() })
-    actions.register({ id: 'mqtt.publish.draft.edit.cancel', title: '取消 MQTT 发送草稿编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 92, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft-editor'), run: () => cancelMqttPublishDraftHistoryEditDraft() })
-    actions.register({ id: 'mqtt.publish.draft.edit.nextField', title: 'MQTT 发送草稿编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 92, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft-editor'), run: () => moveMqttPublishDraftHistoryEditField(1) })
-    actions.register({ id: 'mqtt.publish.draft.edit.prevField', title: 'MQTT 发送草稿编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 92, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft-editor'), run: () => moveMqttPublishDraftHistoryEditField(-1) })
-    actions.register({ id: 'mqtt.publish.draft.delete', title: '删除 MQTT 发送草稿', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 91, shortcut: 'Delete', when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: (_ctx, args) => deleteMqttPublishDraftHistoryEntry(args) })
-    actions.register({ id: 'mqtt.publish.draft.clear', title: '清空 MQTT 发送草稿', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-publish-draft'), run: () => clearCurrentMqttPublishDraftHistory() })
-    actions.register({ id: 'mqtt.focus.messages', title: '聚焦 MQTT 消息区', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: () => focusMqttRecordList('messages') })
-    actions.register({ id: 'mqtt.focus.templates', title: '聚焦 MQTT 收藏区', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+M', when: (ctx) => ctx.tab === 'mqtt', run: () => focusMqttRecordList('templates') })
-    actions.register({ id: 'mqtt.focus.publish', title: '聚焦 MQTT 发送区', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+P', when: (ctx) => ctx.tab === 'mqtt', run: () => focusMqttPublishEditor() })
-    actions.register({ id: 'mqtt.publish.blur', title: '退出 MQTT 发送编辑', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Escape', when: (ctx) => ctx.tab === 'mqtt', run: () => blurMqttPublishEditor() })
-    actions.register({ id: 'mqtt.publish.nextField', title: 'MQTT 发送编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Tab', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttPublishField(1) })
-    actions.register({ id: 'mqtt.publish.prevField', title: 'MQTT 发送编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttPublishField(-1) })
-    actions.register({ id: 'mqtt.publish.options.open', title: '编辑 MQTT 发送选项', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: () => openMqttPublishOptions() })
-    actions.register({ id: 'mqtt.publish.options.close', title: '关闭 MQTT 发送选项', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Escape', when: (ctx) => ctx.tab === 'mqtt', run: () => closeMqttPublishOptions() })
-    actions.register({ id: 'mqtt.publish.options.next', title: 'MQTT 发送选项下移', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'ArrowDown', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttPublishOptions(1) })
-    actions.register({ id: 'mqtt.publish.options.prev', title: 'MQTT 发送选项上移', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'ArrowUp', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttPublishOptions(-1) })
-    actions.register({ id: 'mqtt.publish.options.select', title: '选择 MQTT 发送选项', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Enter', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => selectMqttPublishOption(args) })
-    actions.register({ id: 'mqtt.record.focus', title: '聚焦 MQTT 记录', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => focusMqttRecordFromArgs(args) })
-    actions.register({ id: 'mqtt.template.search.set', title: '筛选 MQTT 模板', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => setMqttTemplateSearch(args) })
-    actions.register({ id: 'mqtt.history.search.set', title: '筛选 MQTT 历史', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => setMqttHistorySearch(args) })
-    actions.register({ id: 'mqtt.publish.template.save', title: '保存 MQTT 发送模板', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => saveCurrentMqttPublishTemplate(args) })
-    actions.register({ id: 'mqtt.publish.template.apply', title: '应用 MQTT 发送模板', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => applyMqttPublishTemplate(mqttPublishTemplateIdFromArgs(args)) })
-    actions.register({ id: 'mqtt.publish.template.send', title: '直接发送 MQTT 模板', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => sendMqttPublishTemplate(mqttPublishTemplateIdFromArgs(args)) })
-    actions.register({ id: 'mqtt.publish.template.rename', title: '重命名 MQTT 发送模板', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => renameMqttTemplate(mqttPublishTemplateIdFromArgs(args), args) })
-    actions.register({ id: 'mqtt.publish.template.delete', title: '删除 MQTT 发送模板', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => deleteMqttTemplate(mqttPublishTemplateIdFromArgs(args)) })
-    actions.register({ id: 'mqtt.record.resendDraft', title: '从记录填充 MQTT 发布草稿', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Enter', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => fillMqttPublishDraftFromSelection(args) })
-    actions.register({ id: 'mqtt.record.repeatSend', title: '重复发送 MQTT 记录', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => repeatMqttPublishRecords(args) })
-    actions.register({ id: 'mqtt.record.toggleSelect', title: '多选 MQTT 发送记录', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttRecordSelectionFromArgs(args) })
-    actions.register({ id: 'mqtt.record.export.copyMergedJson', title: '全都复制多选 MQTT 融合 JSON', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copySelectedMqttRecordsAsMergedJson(args) })
-    actions.register({ id: 'mqtt.record.export.copyTopics', title: '只复制多选 MQTT topic', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copySelectedMqttRecordTopics(args) })
-    actions.register({ id: 'mqtt.record.export.copyPayloads', title: '只复制多选 MQTT payload', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copySelectedMqttRecordPayloads(args) })
-    actions.register({ id: 'mqtt.record.export.saveMergedJson', title: '导出多选 MQTT 融合 JSON 文件', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => saveSelectedMqttRecordsAsMergedJson(args) })
-    actions.register({ id: 'mqtt.record.copyTopic', title: '复制 MQTT topic', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, shortcut: 'Ctrl+Shift+C', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copyMqttRecordTopic(args) })
-    actions.register({ id: 'mqtt.record.copyPayload', title: '复制 MQTT payload', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, shortcut: 'Ctrl+C', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copyMqttRecordPayload(args) })
-    actions.register({ id: 'mqtt.record.copyAll', title: '全都复制 MQTT 记录', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copyMqttRecordAll(args) })
-    actions.register({ id: 'mqtt.record.favorite', title: '收藏/取消收藏 MQTT 消息', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 89, shortcut: 'Ctrl+S', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttRecordFavorite(args) })
-    actions.register({ id: 'mqtt.record.favorite.save', title: '保存 MQTT 消息收藏', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-favorite-editor'), run: (_ctx, args) => saveMqttFavoriteDraft(args) })
-    actions.register({ id: 'mqtt.record.favorite.cancel', title: '取消 MQTT 消息收藏', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-favorite-editor'), run: () => cancelMqttFavoriteDraft() })
-    actions.register({ id: 'mqtt.record.favorite.nextField', title: 'MQTT 收藏下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-favorite-editor'), run: () => { if (!mqttFavoriteDraft) return false; mqttFavoriteDraft = { ...mqttFavoriteDraft, activeField: 'title' }; notify(); return true } })
-    actions.register({ id: 'mqtt.record.favorite.prevField', title: 'MQTT 收藏上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-favorite-editor'), run: () => { if (!mqttFavoriteDraft) return false; mqttFavoriteDraft = { ...mqttFavoriteDraft, activeField: 'title' }; notify(); return true } })
-    actions.register({ id: 'mqtt.preview.open', title: '打开 MQTT 预览', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 88, shortcut: 'Ctrl+I', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => openMqttPreview(args) })
-    actions.register({ id: 'mqtt.preview.close', title: '关闭 MQTT 预览', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-preview'), run: () => closeMqttPreview() })
-    actions.register({ id: 'mqtt.preview.scroll.up', title: 'MQTT 预览上滚', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+ArrowUp', when: (ctx) => ctx.layerIds.includes('mqtt-preview'), run: () => scrollMqttPreview(-1) })
-    actions.register({ id: 'mqtt.preview.scroll.down', title: 'MQTT 预览下滚', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+ArrowDown', when: (ctx) => ctx.layerIds.includes('mqtt-preview'), run: () => scrollMqttPreview(1) })
-    actions.register({ id: 'mqtt.preview.scroll.set', title: '同步 MQTT 预览滚动', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 99, when: (ctx) => ctx.layerIds.includes('mqtt-preview'), run: (_ctx, args) => setMqttPreviewScroll(args) })
-    actions.register({ id: 'mqtt.search.focus', title: '聚焦 MQTT 搜索', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'mqtt', run: () => {
-      searchFocusTarget = activeMqttRecordList === 'templates'
-        ? 'mqtt-templates'
-        : activeMqttRecordList === 'history'
-          ? 'mqtt-history'
-          : 'mqtt'
-      searchFocusRequestId += 1
-      notify()
-      return true
-    } })
-    actions.register({ id: 'mqtt.search.blur', title: '退出 MQTT 搜索', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'Escape', when: (ctx) => ctx.tab === 'mqtt', run: () => blurSearchFocus() })
-    actions.register({ id: 'mqtt.panel.toggle', title: '折叠/展开 MQTT 侧栏', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'mqtt', run: () => {
-      mqttPanelOpen = !mqttPanelOpen
-      closeMqttCommandFocusSurfaces()
-      activeMqttPane = mqttPanelOpen ? 'connections' : 'messages'
-      requestMqttFocus(mqttPanelOpen ? 'connections' : 'records')
-      persistMqttLayoutPrefs()
-      notify()
-      return true
-    } })
-    actions.register({ id: 'mqtt.detail.open', title: '打开 MQTT 详情', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => openMqttDrawer(false, args) })
-    actions.register({ id: 'mqtt.detail.close', title: '关闭 MQTT 详情', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-detail'), run: () => closeMqttDrawer() })
-    actions.register({ id: 'mqtt.drawer.open', title: '打开 MQTT 动作抽屉', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => openMqttDrawer(true, args) })
-    actions.register({ id: 'mqtt.drawer.close', title: '关闭 MQTT 动作抽屉', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-drawer') || ctx.layerIds.includes('mqtt-detail'), run: () => closeMqttDrawer() })
-    actions.register({ id: 'mqtt.drawer.next', title: 'MQTT 抽屉内下移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, shortcut: 'ArrowDown', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttDrawer(1) })
-    actions.register({ id: 'mqtt.drawer.prev', title: 'MQTT 抽屉内上移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, shortcut: 'ArrowUp', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttDrawer(-1) })
-    actions.register({ id: 'mqtt.drawer.select', title: '执行 MQTT 抽屉当前动作', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, shortcut: 'Enter', when: (ctx) => ctx.tab === 'mqtt', run: () => executeMqttDrawerItem() })
-    for (let index = 1; index <= 9; index += 1) {
-      actions.register({
-        id: `mqtt.drawer.select.${index}`,
-        title: `执行 MQTT 抽屉第 ${index} 个动作`,
-        group: 'MQTT',
-        risk: 'normal',
-        scope: 'layer',
-        priority: 80 - index,
-        shortcut: `Ctrl+${index}`,
-        when: (ctx) => ctx.tab === 'mqtt',
-        run: () => executeMqttDrawerItem(index - 1)
-      })
-      actions.register({
-        id: `mqtt.drawer.action.${index}`,
-        title: `直接执行第 ${index} 个 MQTT 动作`,
-        group: 'MQTT',
-        risk: 'normal',
-        scope: 'tab',
-        priority: 70 - index,
-        shortcut: `Ctrl+Alt+${index}`,
-        when: (ctx) => ctx.tab === 'mqtt',
-        run: () => executeMqttDrawerItem(index - 1, true)
-      })
-    }
-    actions.register({ id: 'favorites.pane.toggleNext', title: '切换收藏栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => cycleFavoritePane(1) })
-    actions.register({ id: 'favorites.pane.togglePrev', title: '反向切换收藏栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => cycleFavoritePane(-1) })
-    actions.register({ id: 'favorites.search.focus', title: '聚焦收藏搜索', group: '收藏', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'favorites', run: () => focusFavoriteSearch() })
-    actions.register({ id: 'favorites.groupSearch.focus', title: '聚焦收藏分组搜索', group: '收藏', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+Shift+F', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => focusFavoriteGroupSearch() })
-    actions.register({ id: 'favorites.group.apply', title: '应用收藏容器', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => applyFocusedFavoriteContainer(favoriteIdFromArgs(args) || focusedFavoriteGroupId) })
-    actions.register({ id: 'favorites.target.create', title: '新增收藏目标', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+N', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args, true); favoriteAddMenuOpen = false; return beginFavoriteDraft('create-target') } })
-    actions.register({ id: 'favorites.group.create', title: '新增收藏分组', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+G', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args, true); favoriteAddMenuOpen = false; return beginFavoriteDraft('create-group') } })
-    actions.register({ id: 'favorites.group.moveParent', title: '移动收藏父级', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+F2', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => beginFavoriteDraft('move-parent', args) })
-    actions.register({ id: 'favorites.group.collapse', title: '折叠收藏分组', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'ArrowLeft', when: (ctx) => ctx.tab === 'favorites', run: () => { if (!focusedFavoriteGroupId) return false; state.collapsedFavoriteGroupIds = [...new Set([...state.collapsedFavoriteGroupIds, focusedFavoriteGroupId])]; save(); notify(); return true } })
-    actions.register({ id: 'favorites.group.expand', title: '展开收藏分组', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'ArrowRight', when: (ctx) => ctx.tab === 'favorites', run: () => { if (!focusedFavoriteGroupId) return false; state.collapsedFavoriteGroupIds = state.collapsedFavoriteGroupIds.filter((id) => id !== focusedFavoriteGroupId); save(); notify(); return true } })
-    actions.register({ id: 'favorites.open', title: '打开或运行收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.tab === 'favorites' && (favoriteCapabilities.open || favoriteCapabilities.run === true), run: (_ctx, args) => { if (favoriteActionTargetKind(args) === 'directory') void openDirectoryTargets(directoryPathsFromArgs(args)); else void openFavorite(args); return true } })
-    actions.register({ id: 'favorites.reveal', title: '定位收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'favorites' && favoriteCapabilities.reveal, run: (_ctx, args) => { if (favoriteActionTargetKind(args) === 'directory') void revealDirectoryTargets(directoryPathsFromArgs(args)); else void revealFavorite(args); return true } })
-    actions.register({ id: 'favorites.copyPath', title: '复制收藏路径', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'favorites' && favoriteCapabilities.copyPath, run: (_ctx, args) => { if (favoriteActionTargetKind(args) === 'directory') void copyDirectoryTargetPaths(directoryPathsFromArgs(args)); else void copyFavoritePath(args); return true } })
-    actions.register({ id: 'favorites.copyItems', title: '复制真实文件或文件夹', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'Ctrl+Shift+C', when: (ctx) => ctx.tab === 'favorites' && Boolean(platform.files.capabilities?.copyItems), run: (_ctx, args) => { void copyFavoriteItems(args); return true } })
-    actions.register({ id: 'favorites.pick.files', title: '选择文件并审核收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+O', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.pickFiles, run: () => { favoriteAddMenuOpen = false; void pickFavoritesForReview('file'); return true } })
-    actions.register({ id: 'favorites.pick.folders', title: '选择文件夹并审核收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Ctrl+Shift+O', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.pickFolders, run: () => { favoriteAddMenuOpen = false; void pickFavoritesForReview('folder'); return true } })
-    actions.register({ id: 'favorites.draft.pickPath', title: '为收藏草稿选择路径', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: (_ctx, args) => { void pickFavoriteDraftPath(favoritePickKindFromArgs(args)); return true } })
-    actions.register({ id: 'favorites.runner.applySuggestion', title: '填入常见脚本运行器建议', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => applySuggestedFavoriteRunner() })
-    actions.register({ id: 'favorites.add.duplicateFocus', title: '定位重复收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 80, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => focusDuplicateFavorite(typeof args?.id === 'string' ? args.id : null) })
-    actions.register({ id: 'favorites.remove', title: '移出收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => removeFavorite(selectedFavoriteMetadataIds(args)) })
-    actions.register({ id: 'favorites.remove.force', title: '直接移出收藏元数据', group: '收藏', risk: 'destructive', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => removeFavoriteNow(selectedFavoriteMetadataIds(args)) })
-    actions.register({ id: 'favorites.reorder', title: '调整收藏顺序', group: '收藏', risk: 'data-write', scope: 'row', priority: 100, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => reorderFavoriteMetadata(String(args?.nodeId || ''), typeof args?.parentId === 'string' ? args.parentId : null, typeof args?.beforeNodeId === 'string' ? args.beforeNodeId : null) })
-    actions.register({ id: 'favorites.remove.undo', title: '撤销移出收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 101, shortcut: 'Ctrl+Z', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && Boolean(favoriteRemovalUndo?.removed.length), run: () => undoFavoriteRemoval() })
-    actions.register({ id: 'favorites.edit', title: '编辑收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'F2', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => beginFavoriteDraft('edit', args) })
-    actions.register({ id: 'favorites.rename', title: '重命名收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => beginFavoriteDraft('rename', args) })
-    actions.register({ id: 'favorites.refresh', title: '刷新目录和路径状态', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'favorites', run: () => { void loadSelectedFavoriteDirectory(); void refreshFavoritePathInspections(); return true } })
-    actions.register({ id: 'favorites.containers.togglePanel', title: '展开或收起收藏容器栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => { favoriteContainerPanelOpen = !favoriteContainerPanelOpen; activeFavoritePane = favoriteContainerPanelOpen ? 'containers' : 'items'; notify(); return true } })
-    actions.register({ id: 'favorites.addMenu.toggle', title: '打开或关闭添加菜单', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => { favoriteAddMenuOpen = !favoriteAddMenuOpen; notify(); return true } })
-    actions.register({ id: 'favorites.addMenu.close', title: '关闭添加菜单', group: '收藏', risk: 'normal', scope: 'layer', priority: 97, when: (ctx) => ctx.tab === 'favorites', run: () => { favoriteAddMenuOpen = false; notify(); return true } })
-    actions.register({ id: 'favorites.save', title: '保存收藏编辑', group: '收藏', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => saveFavoriteDraft() })
-    actions.register({ id: 'favorites.edit.nextField', title: '收藏编辑下一个字段', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => cycleFavoriteDraftField(1) })
-    actions.register({ id: 'favorites.edit.prevField', title: '收藏编辑上一个字段', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => cycleFavoriteDraftField(-1) })
-    actions.register({ id: 'favorites.cancel', title: '取消收藏编辑', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => { favoriteDraft = null; notify(); return true } })
-    actions.register({ id: 'favorites.slot.manager.open', title: '打开文件槽管理器', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => openFavoriteSlotManager(args) })
-    actions.register({ id: 'favorites.slot.manager.close', title: '关闭文件槽管理器', group: '收藏', risk: 'normal', scope: 'layer', priority: 101, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: () => closeFavoriteSlotManager() })
-    actions.register({ id: 'favorites.run.prompt.submit', title: '确认运行参数', group: '收藏', risk: 'normal', scope: 'layer', priority: 103, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-run-prompt'), run: () => submitFavoriteRunPrompt() })
-    actions.register({ id: 'favorites.run.prompt.cancel', title: '取消本次运行', group: '收藏', risk: 'normal', scope: 'layer', priority: 103, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-run-prompt'), run: () => cancelFavoriteRunPrompt() })
-    actions.register({ id: 'favorites.run.openLog', title: '打开运行日志', group: '收藏', risk: 'normal', scope: 'row', priority: 93, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void openFavoriteRunLog(args); return true } })
-    actions.register({ id: 'favorites.run.revealLog', title: '定位运行日志', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void revealFavoriteRunLog(args); return true } })
-    actions.register({ id: 'favorites.run.copyLogPath', title: '复制运行日志路径', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void copyFavoriteRunLogPath(args); return true } })
-    actions.register({ id: 'favorites.run.openDeclaredLog', title: '打开脚本自身日志', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void openFavoriteRunLog({ ...(args || {}), declared: true }); return true } })
-    actions.register({ id: 'favorites.run.copyCommand', title: '复制实际执行的命令行', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void copyFavoriteRunCommand(args); return true } })
-    actions.register({ id: 'favorites.learning.reset', title: '重置全部收藏搜索学习', group: '收藏', risk: 'data-write', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => resetFavoriteLearning() })
-    actions.register({ id: 'favorites.learning.resetItem', title: '重置当前收藏搜索学习', group: '收藏', risk: 'data-write', scope: 'row', priority: 91, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => resetFavoriteLearning(args) })
-    for (let slot = 1; slot <= 10; slot += 1) {
-      actions.register({ id: `favorites.slot.assign.${slot}`, title: `分配到文件槽 ${slot}`, group: '收藏', risk: 'data-write', scope: 'layer', priority: 90, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: (_ctx, args) => assignFavoriteSlot(slot, args) })
-      actions.register({ id: `favorites.slot.clear.${slot}`, title: `清除文件槽 ${slot}`, group: '收藏', risk: 'data-write', scope: 'layer', priority: 89, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: () => clearFavoriteSlot(slot) })
-      actions.register({ id: `favorites.slot.test.${slot}`, title: `测试文件槽 ${slot}`, group: '收藏', risk: 'normal', scope: 'layer', priority: 88, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: () => { void activateFavoriteSlot(slot); return true } })
-      actions.register({ id: `favorites.slot.hotkey.${slot}`, title: `配置文件槽 ${slot} 全局快捷键`, group: '收藏', risk: 'normal', scope: 'layer', priority: 87, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: () => configureFavoriteSlotHotkey(slot) })
-      actions.register({ id: `favorites.slot.activate.${slot}`, title: `执行文件槽 ${slot}`, group: '收藏', risk: 'normal', scope: 'global', priority: 102, when: () => true, run: () => { void activateFavoriteSlot(slot); return true } })
-      const numberShortcut = slot === 10 ? 'Ctrl+0' : `Ctrl+${slot}`
-      actions.register({ id: `favorites.quick.open.${slot}`, title: `打开快速收藏第 ${slot} 项`, group: '收藏', risk: 'normal', scope: 'tab', priority: 100 - slot, shortcut: numberShortcut, when: (ctx) => ctx.tab === 'favorites' && ctx.favoriteQuickMode === true && !ctx.layerIds.includes('favorites-drawer'), run: () => { void executeQuickFavoriteAt(slot - 1); return true } })
-    }
-    actions.register({ id: 'favorites.pickReview.commit', title: '保存点选收藏', group: '收藏', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-pick-review'), run: () => commitFavoritePickReview() })
-    actions.register({ id: 'favorites.pickReview.cancel', title: '取消点选收藏', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-pick-review'), run: () => cancelFavoritePickReview() })
-    actions.register({ id: 'favorites.pickReview.next', title: '点选审核下一个项目', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-pick-review'), run: () => cycleFavoritePickReview(1) })
-    actions.register({ id: 'favorites.pickReview.prev', title: '点选审核上一个项目', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-pick-review'), run: () => cycleFavoritePickReview(-1) })
-    actions.register({ id: 'favorites.search.blur', title: '退出收藏搜索焦点', group: '收藏', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites', run: () => blurSearchFocus() })
-    actions.register({ id: 'favorites.detail.open', title: '打开收藏详情', description: '展示当前收藏节点或实际目录项详情。', icon: 'detail', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => openFavoriteDrawer(false, args) })
-    actions.register({ id: 'favorites.detail.close', title: '关闭收藏详情', description: '关闭左侧收藏详情面板。', icon: 'close', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites', run: () => closeFavoriteDrawer() })
-    actions.register({ id: 'favorites.drawer.open', title: '打开收藏动作抽屉', description: '展示当前收藏节点或实际目录行可执行动作。', icon: 'drawer', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => openFavoriteDrawer(true, args) })
-    actions.register({ id: 'favorites.drawer.close', title: '关闭收藏动作抽屉', description: '关闭右侧收藏动作抽屉。', icon: 'close', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites', run: () => closeFavoriteDrawer() })
-    actions.register({ id: 'favorites.drawer.next', title: '收藏抽屉下移', description: '移动到下一个收藏抽屉动作。', icon: 'down', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites', run: () => moveFavoriteDrawer(1) })
-    actions.register({ id: 'favorites.drawer.prev', title: '收藏抽屉上移', description: '移动到上一个收藏抽屉动作。', icon: 'up', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites', run: () => moveFavoriteDrawer(-1) })
-    actions.register({ id: 'favorites.drawer.select', title: '执行收藏抽屉动作', description: '执行当前高亮的收藏抽屉动作。', icon: 'enter', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites', run: () => executeFavoriteDrawerItem() })
-    actions.register({ id: 'favorites.directory.open', title: '打开实际目录项', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.open, run: (_ctx, args) => { void openDirectoryTargets(directoryPathsFromArgs(args)); return true } })
-    actions.register({ id: 'favorites.directory.reveal', title: '定位实际目录项', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.reveal, run: (_ctx, args) => { void revealDirectoryTargets(directoryPathsFromArgs(args)); return true } })
-    actions.register({ id: 'favorites.directory.copyPath', title: '复制实际目录项路径', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.copyPath, run: (_ctx, args) => { void copyDirectoryTargetPaths(directoryPathsFromArgs(args)); return true } })
-    actions.register({ id: 'favorites.directory.addSelected', title: '添加实际目录项到收藏', group: '收藏', risk: 'data-write', scope: 'row', priority: 91, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => addSelectedDirectoryEntries(directoryPathsFromArgs(args)) })
-    for (let index = 1; index <= 10; index += 1) {
-      actions.register({
-        id: `favorites.drawer.select.${index}`,
-        title: `执行收藏抽屉第 ${index} 个动作`,
-        description: '执行右侧收藏抽屉中的指定序号动作。',
-        icon: 'number',
-        group: '收藏',
-        risk: 'normal',
-        scope: 'layer',
-        priority: 90 - index,
-        shortcut: index === 10 ? 'Ctrl+0' : `Ctrl+${index}`,
-        when: (ctx) => ctx.tab === 'favorites',
-        run: () => executeFavoriteDrawerItem(index - 1)
-      })
-    }
-    // Registering the Claude bridge writes into the user's own Claude settings
-    // file, so it is modelled as a confirmed data-write action rather than a
-    // silent side effect of enabling the provider.
-    actions.register({
-      id: 'codex.claude.register',
-      title: '注册 Claude 事件钩子',
-      group: 'Codex',
-      risk: 'data-write',
-      scope: 'global',
-      priority: 97,
-      when: () => true,
-      run: (_ctx, args) => {
-        const register = (args as { register?: boolean } | undefined)?.register !== false
-        const statusline = (args as { statusline?: boolean } | undefined)?.statusline !== false
-        void codexController.setClaudeRegistration(register, { statusline })
-        return true
-      }
-    })
-    actions.register({
-      id: 'codex.cursor.register',
-      title: '注册 Cursor 事件钩子',
-      group: 'Codex',
-      risk: 'data-write',
-      scope: 'global',
-      priority: 96,
-      when: () => true,
-      run: (_ctx, args) => {
-        const register = (args as { register?: boolean } | undefined)?.register !== false
-        void codexController.setCursorRegistration(register)
-        return true
-      }
-    })
-    actions.register({ id: 'codex.inspect-environment', title: '检测 Codex 连接环境', group: 'Codex', risk: 'normal', scope: 'global', priority: 99, when: () => true, run: () => { void codexController.inspectEnvironment(); return true } })
-    actions.register({ id: 'codex.set-launch-path', title: '设置 Codex CLI 位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
-      const value = args?.path
-      if (typeof value !== 'string' || !value.trim()) return false
-      void codexController.setLaunchPath(value)
-      return true
-    } })
-    actions.register({ id: 'codex.pick-launch-path', title: '从磁盘选择 Codex CLI', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => {
-      void (async () => {
-        const picked = await platform.files.pickFavorite?.()
-        if (!picked) return
-        await codexController.setLaunchPath(picked.path)
-      })()
-      return true
-    } })
-    actions.register({ id: 'codex.clear-launch-path', title: '恢复 Codex CLI 自动发现', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => { void codexController.clearLaunchPath(); return true } })
-    actions.register({ id: 'codex.set-codexhost-path', title: '设置 codexhost 命令位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
-      const value = args?.path
-      if (typeof value !== 'string' || !value.trim()) return false
-      void codexController.setCodexhostPath(value)
-      return true
-    } })
-    actions.register({ id: 'codex.pick-codexhost-path', title: '从磁盘选择 codexhost 命令', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => {
-      void (async () => {
-        const picked = await platform.files.pickFavorite?.()
-        if (!picked) return
-        await codexController.setCodexhostPath(picked.path)
-      })()
-      return true
-    } })
-    actions.register({ id: 'codex.clear-codexhost-path', title: '恢复 codexhost 自动查找', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => { void codexController.clearCodexhostPath(); return true } })
-    actions.register({ id: 'codex.settings.open', title: '打开 Codex 配置', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => { setTab('codex'); return true } })
-    actions.register({ id: 'codex.quickJump.activate', title: '执行 Quick Jump 目标', group: 'Codex', risk: 'normal', scope: 'global', priority: 1, when: () => true, run: () => true })
-    actions.registerHandler({ commandId: 'codex.thread.createFocused', scope: 'global', priority: 99, when: () => true, run: () => {
-      const enabled = state.codex.settings.floatEnabled || codexController.updateSettings({ floatEnabled: true })
-      if (!enabled) return false
-      queueMicrotask(() => platform.float.activate?.({ command: 'new-thread' }))
-      return true
-    } })
-    actions.register({ id: 'codex.settings.update', title: '更新 Codex 悬浮球配置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
-      const source = args?.settings && typeof args.settings === 'object' ? args.settings : args
-      return codexController.updateSettings((source || {}) as Partial<CodexSettings>)
-    } })
-    actions.register({ id: 'codex.task.open', title: '打开 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const source = args?.source === 'manual-quick-jump' || args?.source === 'card-click' || args?.source === 'manual-row-open'
-        ? args.source
-        : 'manual-row-open'
-      void codexController.openThread(key, source, typeof args?.operationId === 'string' ? args.operationId : undefined)
-      return Boolean(key)
-    } })
-    actions.register({ id: 'codex.input.open', title: '打开 Codex 待输入任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.openFirstInput(typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'attention-shortcut') })
-    actions.register({ id: 'codex.completed-unread.openFirst', title: '依次打开 Codex 已完成未读任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.openFirstCompletedUnread(typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'attention-shortcut') })
-    actions.register({ id: 'codex.task.previous', title: '上一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.cycleTask(-1, typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'global-shortcut') })
-    actions.register({ id: 'codex.task.next', title: '下一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.cycleTask(1, typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'global-shortcut') })
-    actions.registerHandler({ commandId: 'codex.task.archiveFocused', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.archiveFocusedTask(typeof args?.operationId === 'string' ? args.operationId : undefined) })
-    actions.register({ id: 'codex.task.focus', title: '同步 Companion 聚焦任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 1, when: () => true, run: (_ctx, args) => codexController.setFocusedTask(
-      typeof args?.key === 'string' ? args.key : '',
-      typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
-    ) })
-    actions.register({ id: 'codex.task.hide', title: '隐藏 Codex 任务到 Companion 已隐藏区', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
-        ? args.revisionAt
-        : typeof args?.updatedAt === 'number' && Number.isFinite(args.updatedAt) ? args.updatedAt : undefined
-      return key && revisionAt !== undefined ? codexController.hide(key, revisionAt) : false
-    } })
-    actions.register({ id: 'codex.task.manualPhase', title: '手动指定状态未知的 Companion 任务状态', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      // An empty phase is the documented clear signal, so it is a valid value
-      // rather than a missing one; only an unrecognized string is rejected.
-      const phase = args?.phase === '' || CODEX_MANUAL_PHASE_VALUES.includes(args?.phase as CodexManualPhaseValue)
-        ? args?.phase as CodexManualPhaseValue | ''
-        : undefined
-      return key && phase !== undefined ? codexController.setManualPhase(key, phase) : false
-    } })
-    actions.register({ id: 'codex.task.dismiss', title: '隐藏 Codex 任务到 Companion 已隐藏区', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
-        ? args.revisionAt
-        : typeof args?.updatedAt === 'number' && Number.isFinite(args.updatedAt) ? args.updatedAt : undefined
-      return key && revisionAt !== undefined ? codexController.hide(key, revisionAt) : false
-    } })
-    actions.register({ id: 'codex.task.restore', title: '从 Companion 已隐藏区释放 Codex 任务', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
-        ? args.revisionAt
-        : typeof args?.updatedAt === 'number' && Number.isFinite(args.updatedAt) ? args.updatedAt : undefined
-      const kind = args?.kind === 'task' || args?.kind === 'activity' || args?.kind === 'pending' ? args.kind : undefined
-      return key && revisionAt !== undefined && kind ? codexController.restore(key, revisionAt, kind) : false
-    } })
-    actions.register({ id: 'codex.task.pausePlan', title: '暂停 Codex Plan', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
-      if (!key || revisionAt === undefined) return false
-      void codexController.pausePlan(key, revisionAt)
-      return true
-    } })
-    actions.register({ id: 'codex.task.resumePlan', title: '恢复 Codex Plan', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
-      if (!key || revisionAt === undefined) return false
-      void codexController.resumePlan(key, revisionAt)
-      return true
-    } })
-    actions.register({ id: 'codex.task.executePlan', title: '执行 Codex 原 Plan', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
-      if (!key || revisionAt === undefined) return false
-      void codexController.executePlan(key, revisionAt)
-      return true
-    } })
-    for (const [actionId, paused] of [['codex.tasks.pausePlan', true], ['codex.tasks.resumePlan', false]] as const) {
-      actions.register({ id: actionId, title: paused ? '批量暂停 Codex Plan' : '批量恢复 Codex Plan', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
-        const items = Array.isArray(args?.items) ? args.items.flatMap((value) => {
-          if (!value || typeof value !== 'object') return []
-          const item = value as Record<string, unknown>
-          return typeof item.key === 'string' && typeof item.revisionAt === 'number' && Number.isFinite(item.revisionAt)
-            ? [{ key: item.key, revisionAt: item.revisionAt }]
-            : []
-        }) : []
-        if (!items.length) return false
-        for (const item of items) {
-          void (paused
-            ? codexController.pausePlan(item.key, item.revisionAt, 'batch-pause')
-            : codexController.resumePlan(item.key, item.revisionAt, 'batch-resume'))
-        }
-        return true
-      } })
-    }
-    actions.register({ id: 'codex.archive.confirmation', title: '记录 Codex 归档确认阶段', group: 'Codex', risk: 'normal', scope: 'global', priority: 1, when: () => true, run: (_ctx, args) => {
-      const stage = args?.stage === 'created' || args?.stage === 'confirmed' || args?.stage === 'expired' ? args.stage : ''
-      const operationId = typeof args?.operationId === 'string' ? args.operationId : ''
-      const source = typeof args?.source === 'string' ? args.source : 'archive-button'
-      if (!stage || !operationId) return false
-      platform.diagnostics?.record({
-        level: stage === 'expired' ? 'error' : 'info',
-        scope: 'archive-transaction',
-        event: `archive-confirmation-${stage}`,
-        outcome: stage,
-        operationId,
-        source,
-        provider: 'codex'
-      })
-      return true
-    } })
-    actions.register({ id: 'codex.task.archive', title: '归档 Codex 任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
-        ? args.revisionAt
-        : typeof args?.updatedAt === 'number' && Number.isFinite(args.updatedAt) ? args.updatedAt : undefined
-      if (!key || revisionAt === undefined) return false
-      void codexController.archive(
-        key,
-        revisionAt,
-        'card',
-        typeof args?.operationId === 'string' ? args.operationId : undefined,
-        args?.confirmationRecorded === true
-      )
-      return true
-    } })
-    actions.register({ id: 'codex.tasks.archive', title: '批量归档 Codex 任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
-      const items = Array.isArray(args?.items) ? args.items.flatMap((value) => {
-        if (!value || typeof value !== 'object') return []
-        const item = value as Record<string, unknown>
-        return typeof item.key === 'string' && typeof item.revisionAt === 'number' && Number.isFinite(item.revisionAt)
-          ? [{ key: item.key, revisionAt: item.revisionAt }]
-          : []
-      }) : []
-      if (!items.length) return false
-      const operationId = typeof args?.operationId === 'string' ? args.operationId : undefined
-      if (items.length === 1 && args?.source === 'archive-button') {
-        void codexController.archive(items[0].key, items[0].revisionAt, 'card', operationId, args?.confirmationRecorded === true)
-      } else {
-        void codexController.archiveMany(items, operationId, args?.confirmationRecorded === true)
-      }
-      return true
-    } })
-    actions.register({ id: 'codex.tab.set', title: '切换 Codex 会话页签', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
-      const tab = typeof args?.tab === 'string' ? args.tab : ''
-      return codexController.setTaskTab(tab as 'all' | 'input' | 'ongoing' | 'completed' | 'hidden' | 'projects')
-    } })
-    actions.registerHandler({ commandId: 'codex.tab.prev', scope: 'global', priority: 96, when: () => true, run: () => {
-      const tabs = ['ongoing', 'completed', 'hidden', 'projects'] as const
-      const current = tabs.includes(state.codex.lastTaskTab as typeof tabs[number]) ? state.codex.lastTaskTab as typeof tabs[number] : 'ongoing'
-      return codexController.setTaskTab(tabs[(tabs.indexOf(current) - 1 + tabs.length) % tabs.length])
-    } })
-    actions.registerHandler({ commandId: 'codex.tab.next', scope: 'global', priority: 96, when: () => true, run: () => {
-      const tabs = ['ongoing', 'completed', 'hidden', 'projects'] as const
-      const current = tabs.includes(state.codex.lastTaskTab as typeof tabs[number]) ? state.codex.lastTaskTab as typeof tabs[number] : 'ongoing'
-      return codexController.setTaskTab(tabs[(tabs.indexOf(current) + 1) % tabs.length])
-    } })
-    actions.register({ id: 'codex.project.collapse', title: '折叠或展开 Codex 项目', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
-      return typeof args?.key === 'string' && typeof args?.collapsed === 'boolean'
-        ? codexController.setProjectCollapsed(args.key, args.collapsed)
-        : false
-    } })
-    actions.register({ id: 'codex.alias.set', title: '设置 Codex 本地别名', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
-      const kind = args?.kind === 'task' || args?.kind === 'project' ? args.kind : ''
-      return kind && typeof args?.key === 'string' && typeof args?.alias === 'string'
-        ? codexController.setAlias(kind, args.key, args.alias)
-        : false
-    } })
-    actions.register({ id: 'codex.pin.toggle', title: '切换 Codex 本地置顶', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
-      const kind = args?.kind === 'task' || args?.kind === 'project' ? args.kind : ''
-      return kind && typeof args?.key === 'string' ? codexController.toggleLocalPin(kind, args.key) : false
-    } })
-    actions.register({ id: 'codex.pin.move', title: '调整 Codex 本地置顶顺序', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
-      const kind = args?.kind === 'task' || args?.kind === 'project' ? args.kind : ''
-      const direction = args?.direction === -1 || args?.direction === 1 ? args.direction : 0
-      return kind && direction && typeof args?.key === 'string' ? codexController.moveLocalPin(kind, args.key, direction) : false
-    } })
-    actions.register({ id: 'codex.project.hide', title: '隐藏 Codex 项目分组', group: 'Codex', risk: 'data-write', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => typeof args?.key === 'string' ? codexController.hideProject(args.key) : false })
-    actions.register({ id: 'codex.project.show', title: '恢复 Codex 项目分组', group: 'Codex', risk: 'data-write', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => typeof args?.key === 'string' ? codexController.showProject(args.key) : false })
-    actions.register({ id: 'codex.project.remove', title: '从 Codex 侧栏移除项目', group: 'Codex', risk: 'destructive', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
-      const sourceFingerprint = typeof args?.sourceFingerprint === 'string' ? args.sourceFingerprint : ''
-      if (!key || !actionAlias || !sourceFingerprint) return false
-      void codexController.removeProject(key, actionAlias, sourceFingerprint)
-      return true
-    } })
-    actions.register({ id: 'codex.project.archive', title: '归档 Codex 项目全部已完成任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
-      if (!key || !actionAlias) return false
-      void codexController.archiveProject(
-        key,
-        actionAlias,
-        typeof args?.operationId === 'string' ? args.operationId : undefined,
-        args?.confirmationRecorded === true
-      )
-      return true
-    } })
-    actions.register({ id: 'codex.float.position.save', title: '保存 Codex 悬浮球位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 92, when: () => true, run: (_ctx, args) => {
-      const position = args?.position
-      return position && typeof position === 'object' ? codexController.updateSettings({ position: position as CodexFloatPosition }) : false
-    } })
-    actions.register({ id: 'codex.float.geometry.save', title: '保存 Codex 展开尺寸与位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 92, when: () => true, run: (_ctx, args) => {
-      const position = args?.position
-      const expandedSize = args?.expandedSize
-      return position && typeof position === 'object' && expandedSize && typeof expandedSize === 'object'
-        ? codexController.saveGeometry(position as CodexFloatPosition, expandedSize as { displayId?: string; width: number; height: number; updatedAt?: number })
-        : false
-    } })
-    // A quota reading is also its own refresh trigger (RAW-201): the float's chips dispatch this.
-    actions.register({ id: 'codex.quota.refresh', title: '立即刷新额度读数', group: 'Codex', risk: 'normal', scope: 'global', priority: 90, when: () => true, run: () => { void codexController.refreshQuota(); return true } })
-    actions.register({ id: 'codex.float.position.reset', title: '重置 Codex 悬浮球位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 91, when: () => true, run: () => codexController.resetPosition() })
-    actions.register({ id: 'codex.float.size.reset', title: '恢复 Codex 自适应展开尺寸', group: 'Codex', risk: 'data-write', scope: 'global', priority: 91, when: () => true, run: (_ctx, args) => codexController.resetExpandedSize(typeof args?.displayId === 'string' ? args.displayId : undefined) })
-    actions.registerHandler({ commandId: 'codex.float.toggle', scope: 'global', priority: 1000, when: () => true, run: (_ctx, args) => {
-      if (!isTabEnabled('codex')) {
-        setMessage('请先在总设置中启用 Codex Companion')
-        return false
-      }
-      const now = Date.now()
-      const source = args?.source === 'utools-feature' ? 'utools-feature' : args?.source === 'in-app-shortcut' ? 'in-app-shortcut' : 'runtime'
-      if (lastCodexFloatToggleSource && source !== lastCodexFloatToggleSource && now - lastCodexFloatToggleAt < 300) {
-        lastCodexFloatToggleAt = 0
-        lastCodexFloatToggleSource = ''
-        return true
-      }
-      lastCodexFloatToggleAt = now
-      lastCodexFloatToggleSource = source
-      return codexController.updateSettings({ floatEnabled: !state.codex.settings.floatEnabled })
-    } })
-    actions.registerHandler({ commandId: 'codex.float.activate', scope: 'global', priority: 1001, when: () => true, run: () => {
-      if (!isTabEnabled('codex')) {
-        setMessage('请先在总设置中启用 Codex Companion')
-        return false
-      }
-      const enabled = state.codex.settings.floatEnabled || codexController.updateSettings({ floatEnabled: true })
-      if (!enabled) return false
-      queueMicrotask(() => platform.float.activate?.())
-      return true
-    } })
-    actions.registerHandler({ commandId: 'codex.quick.activate', scope: 'global', priority: 1002, when: () => true, run: () => {
-      if (!isTabEnabled('codex')) {
-        setMessage('请先在总设置中启用 Codex Companion')
-        return false
-      }
-      const enabled = state.codex.settings.floatEnabled || codexController.updateSettings({ floatEnabled: true })
-      if (!enabled) return false
-      queueMicrotask(() => platform.float.activate?.({ command: 'quick' }))
-      return true
-    } })
-    actions.register({ id: 'codex.float.hide', title: '隐藏 Codex 悬浮球', group: 'Codex', risk: 'data-write', scope: 'global', priority: 90, when: () => true, run: () => codexController.updateSettings({ floatEnabled: false }) })
-    actions.register({ id: 'codex.actionRunner.activate', title: '打开 Codex Action 执行工作台', group: 'Codex', risk: 'normal', scope: 'global', priority: 1000, when: () => true, run: (_ctx, args) => {
-      void codexController.activateActionRunner(typeof args?.laneId === 'string' ? args.laneId : '')
-      return true
-    } })
-    actions.register({ id: 'codex.actionRunner.run', title: '执行 Runner Action', group: 'Codex', risk: 'data-write', scope: 'global', priority: 999, when: () => true, run: (_ctx, args) => {
-      if (typeof args?.laneId !== 'string') return false
-      void codexController.runActionRunnerLane(args.laneId, args.restartIfRunning === true)
-      return true
-    } })
-    actions.register({ id: 'codex.actionRunner.stop', title: '停止 Runner Action', group: 'Codex', risk: 'data-write', scope: 'global', priority: 999, when: () => true, run: (_ctx, args) => {
-      if (typeof args?.laneId !== 'string') return false
-      void codexController.stopActionRunnerLane(args.laneId)
-      return true
-    } })
-    actions.register({ id: 'codex.actionRunner.run.archive', title: '归档 Action 执行记录', group: 'Codex', risk: 'data-write', scope: 'global', priority: 998, when: () => true, run: (_ctx, args) => {
-      if (typeof args?.runId !== 'string') return false
-      void codexController.setActionRunnerRunArchived(args.runId, true)
-      return true
-    } })
-    actions.register({ id: 'codex.actionRunner.run.restore', title: '恢复 Action 执行记录', group: 'Codex', risk: 'data-write', scope: 'global', priority: 998, when: () => true, run: (_ctx, args) => {
-      if (typeof args?.runId !== 'string') return false
-      void codexController.setActionRunnerRunArchived(args.runId, false)
-      return true
-    } })
-    actions.register({ id: 'codex.actionRunner.preference.update', title: '更新 Action Runner 窗口偏好', group: 'Codex', risk: 'data-write', scope: 'global', priority: 997, when: () => true, run: (_ctx, args) => codexController.updateActionRunnerPreference({ pinned: typeof args?.pinned === 'boolean' ? args.pinned : undefined, view: args?.view === 'records' || args?.view === 'archived' ? args.view : undefined, selectedLaneId: typeof args?.selectedLaneId === 'string' ? args.selectedLaneId : undefined }) })
-    actions.register({ id: 'codex.actionRunner.runtime.update', title: '更新 Action Runner 项目 Node', group: 'Codex', risk: 'data-write', scope: 'global', priority: 997, when: () => true, run: (_ctx, args) => {
-      if (typeof args?.projectKey !== 'string' || (args?.mode !== 'auto' && args?.mode !== 'manual')) return false
-      return codexController.updateActionRunnerPreference({
-        runtime: {
-          projectKey: args.projectKey,
-          mode: args.mode,
-          candidateId: typeof args?.candidateId === 'string' ? args.candidateId : undefined
-        }
-      })
-    } })
-    actions.register({ id: 'codex.actionRunner.project.reorder', title: '调整 Action Runner 项目顺序', group: 'Codex', risk: 'data-write', scope: 'global', priority: 997, when: () => true, run: (_ctx, args) => codexController.reorderActionRunnerProjects(Array.isArray(args?.projectKeys) ? args.projectKeys.filter((key): key is string => typeof key === 'string') : []) })
-    actions.register({ id: 'codex.actionRunner.hotkey.configure', title: '配置 Action Runner 全局快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 997, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('打开 Action 执行工作台') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“打开 Action 执行工作台”绑定快捷键')
-      return opened
-    } })
-    // 每一行配置它自己：这条对应「直接展开卡片」，悬浮球开关另有 codex.float.toggle.hotkey.configure。
-    // 旧行为把本动作放在「悬浮球开关」行上，标题与它实际配置的功能是错位的。
-    actions.register({ id: 'codex.hotkey.configure', title: '配置进入 Codex 卡片快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('直接展开 Codex 卡片') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“直接展开 Codex 卡片”绑定快捷键')
-      return opened
-    } })
-    actions.register({ id: 'codex.float.toggle.hotkey.configure', title: '配置悬浮球开关快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('切换 Codex 悬浮球') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“切换 Codex 悬浮球”绑定快捷键')
-      return opened
-    } })
-    actions.register({ id: 'codex.archive.hotkey.configure', title: '配置归档当前任务快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('归档当前 Companion 任务') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“归档当前 Companion 任务”绑定快捷键')
-      return opened
-    } })
-    actions.register({ id: 'codex.quick.hotkey.configure', title: '配置快速任务查看快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('快速任务查看') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“快速任务查看”绑定快捷键')
-      return opened
-    } })
-    actions.register({ id: 'codex.input.hotkey.configure', title: '配置 Codex 待输入快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('打开 Codex 待输入任务') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“打开 Codex 待输入任务”绑定快捷键')
-      return opened
-    } })
-    actions.register({ id: 'codex.completed-unread.hotkey.configure', title: '配置 Codex 已完成未读快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('依次打开 Codex 已完成未读任务') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“依次打开 Codex 已完成未读任务”绑定快捷键')
-      return opened
-    } })
-    actions.register({ id: 'codex.task.previous.hotkey.configure', title: '配置上一个 Codex 任务快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('上一个 Codex 任务') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“上一个 Codex 任务”绑定快捷键')
-      return opened
-    } })
-    actions.register({ id: 'codex.task.next.hotkey.configure', title: '配置下一个 Codex 任务快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('下一个 Codex 任务') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“下一个 Codex 任务”绑定快捷键')
-      return opened
-    } })
-    for (let slot = 1; slot <= 5; slot += 1) {
-      const slotIndex = slot - 1
-      const label = `Codex Action 槽 ${slot}`
-      actions.registerHandler({
-        commandId: `codex.action.run.${slot}`,
-        scope: 'global',
-        priority: 88,
-        when: () => true,
-        run: () => {
-          void codexController.runEnvironmentActionSlot(slotIndex)
-          return true
-        }
-      })
-      actions.register({
-        id: `codex.action.run.${slot}.hotkey.configure`,
-        title: `配置 Codex Action 槽 ${slot} 快捷键`,
-        group: 'Codex',
-        risk: 'normal',
-        scope: 'global',
-        priority: 89,
-        when: () => true,
-        run: () => {
-          const opened = platform.app.configureHotkey?.(label) === true
-          if (!opened) setMessage(`请在 uTools 设置 → 全局功能中，为“${label}”绑定快捷键`)
-          return opened
-        }
-      })
-    }
     actions.register({ id: 'settings.open', title: '打开设置', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+Alt+S', when: () => true, run: () => { setTab('settings'); return true } })
     actions.register({ id: 'search.focus', title: '聚焦搜索', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+F', when: () => true, run: () => focusSearch() })
     actions.register({ id: 'confirm.cancel', title: '关闭确认弹窗', group: '全局', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('confirm'), run: () => { confirm = null; notify(); return true } })
     actions.register({ id: 'confirm.accept', title: '确认当前弹窗', group: '全局', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.layerIds.includes('confirm'), run: () => confirmNowInternal() })
-    actions.register({ id: 'ports.workspace.reset', title: '重置端口工作区', group: '端口', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Escape', when: (ctx) => ctx.tab === 'ports', run: () => { resetPortWorkspace(); return true } })
   }
 
   registerActions()

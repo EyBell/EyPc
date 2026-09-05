@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_FEATURE_CONFIGS, FEATURE_MODULE_IDS } from '../../src/domain/types'
 import { FEATURES } from '../../src/runtime/feature/featureRegistry'
 import { FEATURE_MODULES_V7, featureModuleV7 } from '../../src/runtime/feature/featureModules'
 
@@ -18,10 +19,20 @@ describe('FeatureModule V7', () => {
     expect(featureModuleV7('ports').routes.length).toBeGreaterThan(0)
     expect(featureModuleV7('settings').alwaysEnabled).toBe(true)
     expect(typeof featureModuleV7('ports').bindPage).toBe('function')
+    expect(typeof featureModuleV7('ports').registerActions).toBe('function')
+    expect(typeof featureModuleV7('settings').registerActions).toBe('function')
     expect(typeof featureModuleV7('mqtt').shouldSubscribe).toBe('function')
+    expect(readFileSync(resolve(process.cwd(), 'src/runtime/appRuntime.ts'), 'utf8')).toContain('module.registerActions(featureActionHost)')
+    expect(readFileSync(resolve(process.cwd(), 'src/runtime/feature/ports/actions.ts'), 'utf8')).toContain("id: 'ports.scan'")
     expect(featureModuleV7('favorites').menuKinds).toContain('drawer')
     expect(featureModuleV7('codex').diagnosticDomains).toContain('companion.kernel')
     expect(featureModuleV7('ports').helpGuideId).toBe('ports')
+    expect(new Set(DEFAULT_FEATURE_CONFIGS.map((item) => item.id))).toEqual(new Set(FEATURE_MODULE_IDS))
+    expect(DEFAULT_FEATURE_CONFIGS.map((item) => item.sortOrder)).toEqual([1, 2, 3, 4, 5, 6])
+    const settingsPage = readFileSync(resolve(process.cwd(), 'src/pages/SettingsPage.vue'), 'utf8')
+    expect(settingsPage).toContain("type ShortcutScopeId = 'all' | ShortcutProfileId")
+    expect(settingsPage).toContain('return row.profileId === id')
+    expect(settingsPage).not.toContain("if (id === 'ports') return row.profileId === 'ports'")
   })
 
   it('prevents pages and TabShell from depending on the complete AppRuntimeSnapshot contract', () => {
