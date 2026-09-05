@@ -2,9 +2,11 @@ import { commandProfilesFromRecord } from '../../keybinding/commandProfile'
 import { createFeatureModuleV7, defaultShouldSubscribeV7 } from '../featureModule'
 import { selectPortsRuntimeSliceV7, type PortsRuntimeSliceV7 } from '../featureRuntimeSlices'
 import { registerPortsActions, focusPortsSearch } from './actions'
+import { portsCommandHints } from './commandHints'
 import { PORTS_COMMAND_PROFILES } from './commands'
 import { bindPortsPage } from './pageBind'
 import { PORTS_ROUTES } from './routes'
+import { portsShellDomFocusWatches } from './shellFocus'
 
 const lifecycle = { backgroundPolicy: 'visible-only' as const, startOnVisible: true, retainWhileHidden: true }
 
@@ -20,5 +22,7 @@ export const portsFeatureModuleV7 = createFeatureModuleV7<'ports', PortsRuntimeS
   shouldSubscribe: (ctx) => defaultShouldSubscribeV7('ports', lifecycle, ctx),
   registerActions: registerPortsActions,
   focusSearch: focusPortsSearch,
+  commandHints: portsCommandHints,
+  shellDomFocusWatches: portsShellDomFocusWatches,
   bindPage: bindPortsPage
 })

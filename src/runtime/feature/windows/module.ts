@@ -5,6 +5,7 @@ import { registerWindowsActions, enterWindowsTab } from './actions'
 import { WINDOWS_COMMAND_PROFILES } from './commands'
 import { bindWindowsPage } from './pageBind'
 import { WINDOWS_ROUTES } from './routes'
+import { windowsShellDomFocusWatches } from './shellFocus'
 
 const lifecycle = { backgroundPolicy: 'visible-only' as const, startOnVisible: true, retainWhileHidden: true }
 
@@ -20,5 +21,6 @@ export const windowsFeatureModuleV7 = createFeatureModuleV7<'windows', WindowsRu
   shouldSubscribe: (ctx) => defaultShouldSubscribeV7('windows', lifecycle, ctx),
   registerActions: registerWindowsActions,
   onTabEnter: enterWindowsTab,
+  shellDomFocusWatches: windowsShellDomFocusWatches,
   bindPage: bindWindowsPage
 })

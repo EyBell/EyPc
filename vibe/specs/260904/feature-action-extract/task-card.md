@@ -11,7 +11,7 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
 - Group key: `dsg:eypc:260904-feature-action-extract`
 - Group owner: this `task-card.md`
 - Git document prefixes: `vibe/specs/260904/feature-action-extract/` · `vibe/knowledge/`
-- Durable document members: `vibe/specs/260904/feature-action-extract/task-card.md` · `vibe/knowledge/ARCHITECTURE.md` · `vibe/knowledge/technical-details.md` · `vibe/knowledge/code-map/modules/feature-module.md`
+- Durable document members: `vibe/specs/260904/feature-action-extract/task-card.md` · `vibe/knowledge/ARCHITECTURE.md` · `vibe/knowledge/technical-details.md` · `vibe/knowledge/code-map/modules/feature-module.md` · `vibe/knowledge/code-map/modules/src-map.md`
 - Declared code/config dependencies: `src/runtime/appRuntime.ts` · `src/runtime/feature/` · `src/App.vue`
 - Linked current/canonical/rule/memory authorities: `vibe/knowledge/ARCHITECTURE.md` · `vibe/specs/260904/feature-contrib-shell/task-card.md`
 - Excluded unrelated dirty documents: `vite.config.*` 与本地代理
@@ -26,7 +26,8 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
     "vibe/specs/260904/feature-action-extract/task-card.md",
     "vibe/knowledge/ARCHITECTURE.md",
     "vibe/knowledge/technical-details.md",
-    "vibe/knowledge/code-map/modules/feature-module.md"
+    "vibe/knowledge/code-map/modules/feature-module.md",
+    "vibe/knowledge/code-map/modules/src-map.md"
   ],
   "dependencies": [
     "src/runtime/appRuntime.ts",
@@ -44,7 +45,7 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
 ## Goal And Scope
 
 - Goal: 加第 7 个 Tab 时不再往 `registerActions()` 巨函数追加；命令 id、when、shortcut、run 行为逐字保持。
-- In scope: `FeatureActionHostV7` 袋子；各包 `actions.ts` 接收袋子后 `register` / `registerHandler`；`onTabEnter` 承接 `setTab` 的 mqtt/windows/codex 副作用；后续切片再迁 `focusSearch` 与 App.vue DOM 对焦旁路。
+- In scope: `FeatureActionHostV7` 袋子；各包 `actions.ts` 接收袋子后 `register` / `registerHandler`；`onTabEnter` 承接 `setTab` 的 mqtt/windows/codex 副作用；`focusSearch` 承接全局搜焦点；App.vue 端口/窗口 DOM 对焦 watch 与 CommandHints 文案改模块可选贡献。
 - Out of scope: 拆 AppState / 每模块 store；开放 `KeybindingLayerId`；改 `keyboardEvent.ts` 穷举；QuickFavorites / Float / Action 升格 FeatureModule；运行时 `registerFeature`；改写 `plugin.json` cmds；用户帮助 md；PRD。
 - Success evidence: 现有 `tests/runtime/action.test.ts` 与 `tests/runtime/keybinding.test.ts` 命令 id / 默认绑定 / when 期望不变；`vue-tsc --noEmit` 绿。
 
@@ -53,7 +54,7 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
 - Documentation level: `standard`
 - Execution: `main-only` until a worktree is authorized
 - Automation lane: `not-applicable`
-- Status: `in-progress / slice-3`
+- Status: `implementation-landed / focused-automated-verified`
 
 ## Explicit non-goals
 
@@ -66,7 +67,7 @@ Task: 把 `actions.register` 与切 Tab / 搜焦点副作用从 `createAppRuntim
 1. **ActionHost + 按前缀搬家。** 已接线：`FeatureActionHostV7` + 各包 `actions.ts`；Shell 只留全局命令。零语义。
 2. **`onTabEnter`。** 已接线：`setTab` 遍历各包可选钩子；mqtt archive / windows refresh / codex `syncActivation` 在对应包；缺省 no-op。`syncActivation` 仍对每次切 Tab 调用（离开 Codex 传 `false`）。
 3. **`focusSearch`。** 已接线：全局 `search.focus` 问当前 Tab 的 `focusSearch?(host)`；ports / mqtt / favorites 返回 true；缺省 false 时 Shell 仍回退到端口搜索框（与原 `else` 一致）。
-4. **壳旁路。** App.vue ports/windows DOM 对焦 watch 与 CommandHints 文案改为模块可选贡献。可与第 3 刀分开。
+4. **壳旁路。** 已接线：App.vue 遍历可选 `shellDomFocusWatches`（ports 组栏/列表、windows 列表/动作面板）；CommandHints 问当前包 `commandHints?`，缺省仍是原 settings 文案（windows / Codex 无贡献，与原 `v-else` 一致）。全局 search 框 DOM 对焦仍在 App.vue。
 
 禁止把 1–4 揉成单 commit。每刀独立可回退。
 
@@ -84,6 +85,8 @@ interface FeatureModuleV7 {
   registerActions?(host: FeatureActionHostV7): void
   onTabEnter?(tab: AppTabId, options: { refreshWindows?: boolean }, host: FeatureActionHostV7): void
   focusSearch?(host: FeatureActionHostV7): boolean
+  commandHints?(input: { defaultLabel: (id: string, fallback: string) => string; modifierHint: string; favoriteQuickMode: boolean }): string
+  shellDomFocusWatches?: readonly { requestId(snapshot): number; apply(snapshot): void }[]
 }
 ```
 
@@ -91,8 +94,8 @@ interface FeatureModuleV7 {
 
 ## VerificationImpactTrace
 
-- 变更面：动作登记所有权、切 Tab 副作用、全局搜焦点（第 3 刀）、后续 DOM 对焦
-- 直接消费者：`search.focus`、端口抽屉「聚焦搜索」、uTools `focusSearch` 路由（ports 仍派全局命令）
-- 选中命令（第 3 刀）：`tests/runtime/featureModule.test.ts`、`tests/runtime/action.test.ts` 中 `search.focus` 端口用例、`pnpm exec vue-tsc --noEmit`
-- 不选：整份 `action.test.ts`、MQTT 套件、仓库级 `pnpm test`、`pnpm run serve` / 真 uTools
-- 行为闸门：ports 走 `focusPortSearch`；mqtt 全局命令仍固定 `'mqtt'`（与 `mqtt.search.focus` 的 templates/history 分流不同）；favorites 走 `focusFavoriteSearch`；windows/codex/settings 仍回退端口搜索框
+- 变更面：动作登记所有权、切 Tab 副作用、全局搜焦点、壳 DOM 对焦 watch、CommandHints 文案
+- 直接消费者：`search.focus`、端口/窗口壳对焦、TabShell `?` 帮助文案
+- 选中命令（第 4 刀）：`tests/runtime/featureModule.test.ts`、`tests/ui/commandHints.test.ts`、`pnpm exec vue-tsc --noEmit`
+- 不选：整份 `action.test.ts`、MQTT 套件、仓库级 `pnpm test`、`pnpm run serve` / 真 uTools、production build
+- 行为闸门：ports/windows 对焦条件与选择器与迁出前一致；CommandHints 缺省仍是 settings 文案；search 框 DOM 映射仍在 App.vue

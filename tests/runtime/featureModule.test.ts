@@ -133,4 +133,37 @@ describe('FeatureModule V7', () => {
     expect(runtime).not.toContain("} else if (state.activeTab === 'mqtt') {")
     expect(runtime).not.toContain("} else if (state.activeTab === 'favorites') {")
   })
+
+  it('moves ports/windows shell DOM focus watches and CommandHints copy onto optional module contributions', () => {
+    expect(featureModuleV7('ports').shellDomFocusWatches?.length).toBe(2)
+    expect(featureModuleV7('windows').shellDomFocusWatches?.length).toBe(2)
+    expect(featureModuleV7('mqtt').shellDomFocusWatches).toBeUndefined()
+    expect(featureModuleV7('favorites').shellDomFocusWatches).toBeUndefined()
+    expect(featureModuleV7('codex').shellDomFocusWatches).toBeUndefined()
+    expect(featureModuleV7('settings').shellDomFocusWatches).toBeUndefined()
+    expect(typeof featureModuleV7('ports').commandHints).toBe('function')
+    expect(typeof featureModuleV7('mqtt').commandHints).toBe('function')
+    expect(typeof featureModuleV7('favorites').commandHints).toBe('function')
+    expect(featureModuleV7('windows').commandHints).toBeUndefined()
+    expect(featureModuleV7('codex').commandHints).toBeUndefined()
+    expect(featureModuleV7('settings').commandHints).toBeUndefined()
+
+    const defaultLabel = (commandId: string, fallback: string) => commandId
+    expect(featureModuleV7('ports').commandHints?.({ defaultLabel, modifierHint: 'hint', favoriteQuickMode: false })).toContain('端口默认')
+    expect(featureModuleV7('mqtt').commandHints?.({ defaultLabel, modifierHint: 'hint', favoriteQuickMode: false })).toContain('MQTT 默认')
+    expect(featureModuleV7('favorites').commandHints?.({ defaultLabel, modifierHint: 'hint', favoriteQuickMode: true })).toContain('快速收藏')
+    expect(featureModuleV7('favorites').commandHints?.({ defaultLabel, modifierHint: 'hint', favoriteQuickMode: false })).toContain('收藏默认')
+
+    const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+    expect(app).toContain('module.shellDomFocusWatches')
+    expect(app).not.toContain('watch(() => snapshot.value.groupPanelFocusRequestId')
+    expect(app).not.toContain('watch(() => snapshot.value.listFocusRequestId')
+    expect(app).not.toContain('watch(() => snapshot.value.windowFocusRequestId')
+    expect(app).not.toContain('watch(() => snapshot.value.windowActionsFocusRequestId')
+
+    const hints = readFileSync(resolve(process.cwd(), 'src/components/CommandHints.vue'), 'utf8')
+    expect(hints).toContain('commandHints?.({')
+    expect(hints).not.toContain("snapshot.state.activeTab === 'ports'")
+    expect(hints).not.toContain("snapshot.state.activeTab === 'favorites'")
+  })
 })
