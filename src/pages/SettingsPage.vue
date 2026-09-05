@@ -51,12 +51,6 @@ const props = defineProps<{
   windowOperationTraces?: WindowOperationDebugRecord[]
 }>()
 const emit = defineEmits<{
-  updateKeybinding: [payload: KeybindingUpdatePayload]
-  resetKeybinding: [commandId: string]
-  saveShortcutProfiles: [profiles: ShortcutProfileMap]
-  saveFeatureConfigs: [configs: FeatureConfig[]]
-  updateToolPreviewPrefs: [input: { enabled?: boolean; delayMs?: number }]
-  updateSettingsPath: [tabId: SettingsTabId, sectionId: MaintenanceSectionId]
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
@@ -316,7 +310,7 @@ watch(() => props.initialMaintenanceSection, (section) => {
 }, { immediate: true })
 
 watch([settingsTabId, maintenanceSectionId], ([tab, section]) => {
-  emit('updateSettingsPath', tab, section)
+  emit('dispatch', 'settings.path.set', { tabId: tab, sectionId: section })
 })
 
 function matchesShortcutScope(row: ShortcutCommandRow, id: ShortcutScopeId): boolean {
@@ -424,7 +418,7 @@ function closeFeatureHelp() {
 }
 
 function saveFeatureDraft() {
-  emit('saveFeatureConfigs', orderedFeatureConfigs())
+  emit('dispatch', 'settings.featureConfigs.save', { configs: orderedFeatureConfigs() })
 }
 
 function discardFeatureDraft() {
@@ -432,7 +426,7 @@ function discardFeatureDraft() {
 }
 
 function updateToolPreviewPrefs(input: { enabled?: boolean; delayMs?: number }) {
-  emit('updateToolPreviewPrefs', input)
+  emit('dispatch', 'tool.preview.hover.update', input)
 }
 
 function shortcutIdsEqual(left: string[], right: string[]) {
@@ -870,7 +864,7 @@ function inferShortcutProfileId(commandId: string): ShortcutProfileId {
 }
 
 function saveShortcutDraft() {
-  emit('saveShortcutProfiles', cloneShortcutProfiles(draftShortcutProfiles.value))
+  emit('dispatch', 'settings.shortcutProfiles.save', { profiles: cloneShortcutProfiles(draftShortcutProfiles.value) })
 }
 
 function discardShortcutDraft() {

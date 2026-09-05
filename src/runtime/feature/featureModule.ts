@@ -45,12 +45,14 @@ export interface FeaturePageShellV7 {
 
 export type FeaturePageHostV7 = {
   dispatch: (actionId: string, args?: Record<string, unknown>) => unknown
-} & Record<string, unknown>
+}
 
 export interface FeaturePageBindingV7 {
   page: Component
   props: Record<string, unknown>
-  on: Record<string, (...args: any[]) => unknown>
+  on: {
+    dispatch: (actionId: string, args?: Record<string, unknown>) => unknown
+  }
 }
 
 export interface FeatureSubscribeContextV7<View> {

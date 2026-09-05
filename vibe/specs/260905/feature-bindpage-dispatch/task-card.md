@@ -60,7 +60,7 @@ Task: 页面只 `emit('dispatch', actionId, args)`；各包 `pageBind` 的 `on` 
 - Documentation level: `standard`
 - Execution: `main-only` until a worktree is authorized
 - Automation lane: `not-applicable`
-- Status: `implementation-in-progress`
+- Status: `implementation-landed`
 
 ## Explicit non-goals
 
@@ -71,12 +71,12 @@ Task: 页面只 `emit('dispatch', actionId, args)`；各包 `pageBind` 的 `on` 
 
 ## Construction slices
 
-现状：App.vue 仍 `v-on="activePageBinding.on"`。Codex 与 ports 已是 `{ dispatch }`。mqtt / favorites / windows / settings 的 `pageBind` 仍把具名事件接到 Runtime 方法。
+现状：App.vue 仍 `v-on="activePageBinding.on"`。六个 `pageBind.on` 都是 `{ dispatch }`。
 
 1. **ports。** 已接线：`PortsPage` 具名 emit → `dispatch`；`bindPortsPage.on` 只留 `dispatch`。`search` / `groupSearch` / `focus` / `toggle` / 组草稿等未入 catalog 的，包内适配到现有 `setPortSearch` / `focusPort` / `savePortGroupDraft` 等。已有 command id 走 `runtime.dispatch`。`ports.group.save` / `ports.group.edit.cancel` 不走 catalog（前者 `when` 绑编辑层，后者未 `register`）。
-2. **mqtt。** 同上：`search` 与 `focus-*` / `update-*-draft` 走适配器；已有 mqtt command id 走 catalog。
-3. **favorites + QuickFavorites。** 管理页与 Quick 页一并改；`reorder` 已是 dispatch 包装，改为页面直接 `dispatch`。
-4. **windows + settings + ABI。** 两包同样收口；`FeaturePageHostV7` 去掉 `Record<string, unknown>`；适配器只许具名交叉。测试与架构同步。
+2. **mqtt。** 已接线：`MqttPage` 具名 emit → `dispatch`；`bindMqttPage.on` 只留 `dispatch`。`search` 与 `focus-*` / `update-*-draft` 走适配器；已有 mqtt command id 走 catalog。未使用的 `focusMessage` / `updateFavoriteDraft` 旁路已删。
+3. **favorites + QuickFavorites。** 已接线：管理页与 Quick 页具名 emit → `dispatch`；`bindFavoritesPage.on` 只留 `dispatch`（Quick / 完整页共用同一适配器）。`search` / `groupSearch` / `focus*` / `toggle*` / `collapse` / pick-review / 草稿走适配器；`favorites.reorder` 由页面直接 `dispatch` 进 catalog。`favorites.save` / `favorites.cancel` 不走 catalog（`when` 绑 `favorites-editor` 层；行内重命名未必有该层）。未使用的 `add` / `remove` 旁路已删。
+4. **windows + settings + ABI。** 已接线：`WindowsPage` / `SettingsPage` 具名 emit → `dispatch`；两包 `on` 只留 `dispatch`。窗口搜索/焦点/草稿走适配器；`windows.editor.save` 仍走 catalog；`windows.editor.cancel` 不走 catalog（`when` 绑 `window-editor` 层）。设置路径/配置保存走适配器；`tool.preview.hover.update` 由页面直接 `dispatch` 进 catalog。未使用的 `updateKeybinding` / `resetKeybinding` 旁路已删。`FeaturePageHostV7` 去掉 `Record<string, unknown>`；`FeaturePageBindingV7.on` 只留 `dispatch`。
 
 禁止把 1–4 揉成单 commit。每刀独立可回退。
 
@@ -109,6 +109,6 @@ dispatch: (actionId, args) => {
 
 - 变更面：六包页面事件形状、`pageBind.on`、`FeaturePageHostV7`
 - 直接消费者：App.vue `v-on`、各 `*Page.vue` / `QuickFavoritesPage.vue`
-- 选中命令：`tests/runtime/featureModule.test.ts`、触及 `pageBind` 源码断言的 `tests/ui/mqttPage.test.ts`（若仍断言具名 `on` 键则改期望）、`pnpm exec vue-tsc --noEmit`
+- 选中命令：`tests/runtime/featureModule.test.ts`、触及 `pageBind` 源码断言的 `tests/ui/mqttPage.test.ts`、`tests/ui/favoritesBehavior.test.ts`、`tests/ui/favoritesContainerWorkbench.test.ts`、`tests/ui/windowsDiagnostics.test.ts`、`tests/ui/settingsLayout.test.ts`、`pnpm exec vue-tsc --noEmit`
 - 不选：整份 `action.test.ts`、MQTT 业务套件、仓库级 `pnpm test`、`pnpm run serve` / 真 uTools、production build（本卡规划阶段不跑）
 - 行为闸门：搜索/焦点/草稿/扫描/保存的 Runtime 方法与迁出前同一函数；默认快捷键与 `when` 不变；设置命令表不因本卡变长
