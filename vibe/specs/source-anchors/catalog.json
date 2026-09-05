@@ -4,12 +4,12 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 54,
-    "ordered_anchors": 306,
-    "raw_parent_ordered": 180,
+    "source_documents": 55,
+    "ordered_anchors": 310,
+    "raw_parent_ordered": 184,
     "unparented_ordered": 126,
     "registered_requirements": 105,
-    "registry_review_required": 75,
+    "registry_review_required": 79,
     "source_addressable_not_registered": 126
   },
   "documents": [
@@ -541,6 +541,16 @@
       "raw_identity_count": 1,
       "ordered_anchor_count": 6,
       "raw_parent_ordered_count": 6,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260905/claude-no-version-whitelist",
+      "source_path": "vibe/specs/260905/claude-no-version-whitelist/raw-requirement.md",
+      "spec_id": "SPEC-260905-CLAUDE-NO-VERSION-WHITELIST",
+      "content_sha256": "0a736c80b26de268ee591de6d39fc73b6585ce9b99b3280d0432c7e0453652f2",
+      "raw_identity_count": 5,
+      "ordered_anchor_count": 4,
+      "raw_parent_ordered_count": 4,
       "unparented_ordered_count": 0
     },
     {
@@ -7069,6 +7079,94 @@
       "parent_raw_id": "RAW-208",
       "qualified_source": "SPEC-260904-WINDOW-UNIQUE-APP-REBIND::RAW-208#6",
       "clause_sha256": "aee7baf8af8a8fc40989c350a473be2041b8157aec3f6799626a1d211439f11e",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-4CD8954C8C55FA50F96B",
+      "source_task": "260905/claude-no-version-whitelist",
+      "source_path": "vibe/specs/260905/claude-no-version-whitelist/raw-requirement.md",
+      "line": 29,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-211：取消 App 版本白名单准入",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "1",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-211",
+      "qualified_source": "SPEC-260905-CLAUDE-NO-VERSION-WHITELIST::RAW-211#1",
+      "clause_sha256": "4cbf321abb12d6830cecedb4c62a791f1ef66c4e0896166ef000cf6239f3046a",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-E542735EDD35028E8E2C",
+      "source_task": "260905/claude-no-version-whitelist",
+      "source_path": "vibe/specs/260905/claude-no-version-whitelist/raw-requirement.md",
+      "line": 30,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-211：取消 App 版本白名单准入",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "2",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-211",
+      "qualified_source": "SPEC-260905-CLAUDE-NO-VERSION-WHITELIST::RAW-211#2",
+      "clause_sha256": "cb256404dd305c19f133c24b7ebfc6124b09c0083964682d05d9f14c0d021d76",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-AB3EEF7553E41924E221",
+      "source_task": "260905/claude-no-version-whitelist",
+      "source_path": "vibe/specs/260905/claude-no-version-whitelist/raw-requirement.md",
+      "line": 31,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-211：取消 App 版本白名单准入",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "3",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-211",
+      "qualified_source": "SPEC-260905-CLAUDE-NO-VERSION-WHITELIST::RAW-211#3",
+      "clause_sha256": "9086e3d7912961b16d7c5f4fb378159e1c958d81de587d1774422fe937ea924b",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-43120861F3B89E1C1F9D",
+      "source_task": "260905/claude-no-version-whitelist",
+      "source_path": "vibe/specs/260905/claude-no-version-whitelist/raw-requirement.md",
+      "line": 32,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-211：取消 App 版本白名单准入",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "4",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-211",
+      "qualified_source": "SPEC-260905-CLAUDE-NO-VERSION-WHITELIST::RAW-211#4",
+      "clause_sha256": "a9ada714b35a62feaaa0902d37c53321ac55d36ddf87198dc8efa8ef0a03d2b6",
       "classification": "raw-child-requirement",
       "disposition": "registry-review-required",
       "semantic_module": null,

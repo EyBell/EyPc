@@ -1133,7 +1133,7 @@ describe('exact App-history jump', () => {
   })
 })
 
-describe('version-gated Claude metadata archive', () => {
+describe('Claude metadata archive', () => {
   function archiveBridge(options: {
     version?: string
     phase?: 'completed' | 'stopped' | 'running'

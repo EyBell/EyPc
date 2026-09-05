@@ -3143,12 +3143,12 @@ describe('phase sets and lane units stay single-owner', () => {
     }
   })
 
-  it('states the supported Claude App versions exactly once', () => {
+  it('must not reintroduce a Claude App version admission whitelist', () => {
     const appState = readFileSync(resolve(process.cwd(), 'preload/claude/app-state.cjs'), 'utf8')
     const archive = readFileSync(resolve(process.cwd(), 'preload/claude/archive.cjs'), 'utf8')
-    expect(appState).toMatch(/const SUPPORTED_APP_VERSIONS = new Set\(/)
-    expect(archive).not.toMatch(/const SUPPORTED_APP_VERSIONS = new Set\(/)
-    expect(archive).toContain("require('./app-state.cjs')")
+    expect(appState).not.toMatch(/SUPPORTED_APP_VERSIONS/)
+    expect(archive).not.toMatch(/SUPPORTED_APP_VERSION/)
+    expect(archive).not.toContain("require('./app-state.cjs')")
   })
 
   it('never seeds a counter lane from wall-clock time', () => {

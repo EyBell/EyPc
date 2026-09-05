@@ -13,6 +13,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 - [Architecture](../../ARCHITECTURE.md#L1)
 - [Project status](../../../specs/PROJECT_STATUS.md#L1)
 - [RAW-210 unique live Hook](../../../specs/260905/companion-status-archive-sync/spec.md#L1)
+- [RAW-211 no version whitelist](../../../specs/260905/claude-no-version-whitelist/spec.md#L1)
 
 ## Primary Error Records
 

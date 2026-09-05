@@ -4,8 +4,8 @@ status: verified
 scope: project
 fingerprint: companion-archive-capability__version-whitelist-hard-gate__breaks-on-provider-autoupdate
 first_seen: 2026-08-21
-last_verified: 2026-08-21
-review_after: 2026-11-21
+last_verified: 2026-09-05
+review_after: 2026-12-05
 evidence:
   - preload/claude/archive.cjs
   - preload/cursor/archive.cjs
@@ -42,7 +42,7 @@ tags:
 
 ## 预防规则
 
-资格门禁只允许状态筛选（进行中阻断；待继续/已完成放行；unknown 因证据不足暂缓），对所有 Provider 同一条规则。Provider/版本差异只允许出现在执行层，且必须表达为「派发时结构化重验 + 写后回读」的三态结果（archived/failed/indeterminate），不得表达为资格白名单。新增 Provider 时，能力位默认跟随状态，执行通道未实现要暴露为「模块不支持」的运行时提示，而不是投影层写死 false。
+资格门禁只允许状态筛选（进行中阻断；待继续/已完成放行；unknown 因证据不足暂缓），对所有 Provider 同一条规则。Provider/版本差异只允许出现在执行层，且必须表达为「派发时结构化重验 + 写后回读」的三态结果（archived/failed/indeterminate），不得表达为资格白名单。证据质量车道同样不得用版本号整段熄火；失配按行丢弃。新增 Provider 时，能力位默认跟随状态，执行通道未实现要暴露为「模块不支持」的运行时提示，而不是投影层写死 false。
 
 ## 替代路线
 
@@ -50,12 +50,13 @@ tags:
 - 前置条件：执行事务具备目标重验与写后复验（Claude `archiveSessionMetadata`；Cursor `archive.cjs` 单行 UPDATE 内守卫）。
 - 有序步骤：状态门禁放行 → 派发适配器重验目标仍非进行中 → 单目标写入 → 回读复验 → 三态上报。
 - 验证：`pnpm exec vitest run tests/platform/cursorArchive.test.ts tests/platform/claudeBridge.test.ts tests/domain/claudeCode.test.ts tests/domain/cursorAgent.test.ts tests/runtime/claudeCompanionController.test.ts tests/runtime/codexController.test.ts`。
-- 适用边界：EyPc companion 所有任务级能力位（归档、打开、暂停等）；不适用于确需版本判定的证据质量分层（stateCompatibility 仍可标注证据来源质量）。
-- 回退：若某版本实测出现写入结构漂移，修执行层校验或按新结构适配，仍不得回退成资格白名单。
+- 适用边界：EyPc companion 所有任务级能力位（归档、打开、暂停等）以及证据质量车道（含 Claude app-log 热未读）。版本字符串可以出现在诊断里，不得编译成准入 Set。
+- 回退：若某版本实测出现写入结构或日志语法漂移，修执行层校验或按新行式适配，仍不得回退成版本资格/证据质量白名单。
 
 ## 记录历史
 
 | 日期 | 任务 | 触发 | 失败路线 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-21 | 归档统一为状态门禁 | 用户报 Claude/Cursor 归档全部被拒 | Claude 版本白名单硬闸 + Cursor 投影写死不可归档 | 拆白名单、Cursor 落地写库归档、门禁改状态筛选 | verified |
-| 2026-08-25 | 状态消退慢核验 | 用户报 Claude 已完成/未读消失特别慢 | 同一白名单滞后（1.34493.1 未入 `SUPPORTED_APP_VERSIONS`）令 app-log 热未读快清车道熄火，落到 LevelDB 分钟刷盘地板；属证据质量门的合法形态，症状换成延迟而非拒绝 | 诊断链沉淀至 [claude-unread-decay-blocked-by-version-gate-and-minute-flush](claude-unread-decay-blocked-by-version-gate-and-minute-flush.md#L1)，扩白名单为 candidate 路线 | verified |
+| 2026-08-25 | 状态消退慢核验 | 用户报 Claude 已完成/未读消失特别慢 | 同一白名单滞后（1.34493.1 未入 `SUPPORTED_APP_VERSIONS`）令 app-log 热未读快清车道熄火，落到 LevelDB 分钟刷盘地板；当时误标为「证据质量门的合法形态」 | 诊断链沉淀至 [claude-unread-decay-blocked-by-version-gate-and-minute-flush](claude-unread-decay-blocked-by-version-gate-and-minute-flush.md#L1)，扩白名单为当时 candidate | verified |
+| 2026-09-05 | 取消全部版本准入 | 用户明确不要把版本当白名单限制 | 第四次复现后仍想扩名单 | 拆除 app-log 版本准入（RAW-211）；本记录不再把证据质量车道当例外 | verified |

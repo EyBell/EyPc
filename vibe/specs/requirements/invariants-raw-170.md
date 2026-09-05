@@ -4,6 +4,10 @@ qualified_source: SPEC-260810-1155-INSTALL-RUNTIME-DIAGNOSTICS::RAW-170
 status: active
 domain: engineering-invariants
 authority: agent-transcribed
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-claude-raw-211
+    scope: "校验层把 SUPPORTED_APP_VERSIONS 当 fail-closed 版本门；现改为行式匹配"
 ---
 
 # RAW-170 · engineering-invariants
@@ -16,6 +20,6 @@ authority: agent-transcribed
 
 **已交付（2026-08-14）。** 三层各自收口，且各有拒绝回归的门禁。
 
-- **校验层**：`SUPPORTED_APP_VERSIONS` 由 [app-state.cjs](../../../preload/claude/app-state.cjs#L1) 单点定义并显式导出，archive 引用；用例拒绝 archive 内重新定义。
+- **校验层**：Claude App 日志按行式 `parseAppStateLine` fail closed，版本号不是准入；用例拒绝 `SUPPORTED_APP_VERSIONS` 回归（RAW-211）。
 - **筛选层**：preload 与渲染层均无内联 phase 字符串集合，由 [preload/task-phase.cjs](../../../preload/task-phase.cjs#L1) 与 [companionProvider.ts](../../../src/domain/companionProvider.ts#L121) 各自拥有；门禁拒绝重新引入，并钉住两侧成员集合一致。详见 [RAW-168](invariants-raw-168.md#L1)。
 - **防抖层**：「原生回调快路」与「定时漏通知恢复」在 [timing-policy.cjs](../../../preload/timing-policy.cjs#L1) 各自单点表达，恢复间隔的语义写在定义处并明说提高频率不是加速手段。
