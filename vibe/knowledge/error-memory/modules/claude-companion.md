@@ -30,6 +30,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 - [Exact topology must retract absent children](../claude-exact-topology-must-retract-absent-children.md#L1)
 - [Readiness must not depend on an unneeded capability](../claude-readiness-gated-on-unneeded-capability.md#L1)
 - [Session family、open route and state authority are distinct](../claude-session-family-open-route-and-state-authority-conflation.md#L1)
+- [Foreign provider project fields must reach Kernel metadata](../companion-foreign-project-fields-not-published.md#L1)
 
 ## Related Error Records
 

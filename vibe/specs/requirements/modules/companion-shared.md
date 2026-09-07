@@ -41,6 +41,7 @@
 - [RAW-214](../shared-raw-214.md#L1) — `active` · Cursor 钩子终态后忽略会话残留 unfinishedRunAt；活分叉与 aborted 开 Turn 仍进行中
 - [RAW-215](../shared-raw-215.md#L1) — `active` · 状态分组压过置顶泊位；图钉只留行标记；已完成已读与 unknown 仍停置顶分组
 - [RAW-216](../shared-raw-216.md#L1) — `active` · Claude 精确拓扑下子代理名单为全家快照；缺席成员必须撤回，不得残留抬升 liveCount
+- [RAW-217](../shared-raw-217.md#L1) — `active` · 悬浮卡片任务行第二行压缩为 CC/CX/CS + 项目 + sub+N + 状态 + 短时；Claude cwd / Cursor workspace.json 进入 Kernel 项目名；默认 chats 名省略，悬停给完整说明
 
 
 ### 编号条款

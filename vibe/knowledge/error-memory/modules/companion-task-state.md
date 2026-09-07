@@ -57,6 +57,7 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 - [Display clock zero is missing, not a reset](../companion-display-clock-zero-is-missing.md#L1)
 - [Exact topology must retract absent children](../claude-exact-topology-must-retract-absent-children.md#L1)
 - [Pin group is a parking lot, not live status](../pin-group-is-parking-lot-not-live-status.md#L1)
+- [Foreign provider project fields must reach Kernel metadata](../companion-foreign-project-fields-not-published.md#L1)
 
 ## Historical Or Migration Sources
 

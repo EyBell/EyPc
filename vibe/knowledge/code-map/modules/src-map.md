@@ -80,7 +80,7 @@
 | [companionProvider.ts](../../../../src/domain/companionProvider.ts#L1) | Provider id / pin 策略 |
 | [companionTaskTopology.ts](../../../../src/domain/companionTaskTopology.ts#L1) | Topology 类型镜像 |
 | [companionTaskPackage.ts](../../../../src/domain/companionTaskPackage.ts#L1) | Snapshot → 公开包 |
-| [companionPresentation.ts](../../../../src/domain/companionPresentation.ts#L1) | 水球/额度条/行标记 |
+| [companionPresentation.ts](../../../../src/domain/companionPresentation.ts#L1) | 水球/额度条/行标记/任务第二行 |
 | [companionAggregate.ts](../../../../src/domain/companionAggregate.ts#L1) | 虚拟项目聚合 |
 | [generated/companionContractsV7.ts](../../../../src/domain/generated/companionContractsV7.ts#L1) | 生成：V7 合同 |
 | [generated/claudeQuotaVocabulary.ts](../../../../src/domain/generated/claudeQuotaVocabulary.ts#L1) | 生成：额度词汇 |
