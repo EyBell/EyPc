@@ -22,7 +22,7 @@ Examples: `260907-CN-规则精简修复`, `260907-CN-WT-导入映射修复`.
 
 ## Worktree Segment
 
-- At first naming/switch/resume, resolve this task's execution root from the lifecycle owner and `git worktree list --porcelain`; verify top-level path, Git directory and common directory. Cwd, branch/path names alone are insufficient.
+- At first naming/switch/resume, resolve this task's execution root from the lifecycle owner (central dependency unavailable: `process/worktree-tasks.md`) and `git worktree list --porcelain`; verify top-level path, Git directory and common directory. Cwd, branch/path names alone are insufficient.
 - Add `-WT` after date/project for linked-worktree execution, including starts and resumes there. Worktree-focused topics use the functional task goal.
 - Retain it across follow-ups and temporary main-checkout reads. Inspection or supervision of another task's worktree alone does not add it.
 - A verified execution switch into/out of a worktree triggers a same-turn update even without topic drift. Drop only on verified return to main; repair missing/wrong segments. Hand-set titles remain protected; unavailable metadata/API means unverified, never guessed.
@@ -41,4 +41,4 @@ Separate request acceptance, exact canonical readback, visible title and refresh
 
 ## Adapter Duty
 
-Link to the owner; record `rename-supported`, `convention-only` or `unmeasured` in adapters. Guard delivery needs measured model-visible output; automatic-load acceptance needs a fresh-session canary.
+Link to the owner; record `rename-supported`, `convention-only` or `unmeasured` in adapters. [Guard delivery](global-router.generated.md#guard-delivery) needs measured model-visible output; automatic-load acceptance needs a fresh-session canary.

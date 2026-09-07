@@ -32,11 +32,11 @@ Blank lines between blocks; one citable point per item. Keep stable module lette
 
 ### 8.2 Hierarchical Option Selection
 
-Ask only when necessary or useful; give self-contained choices/tradeoffs. References do not authorize actions: action gates apply. An optional renderer consumes the same action data once.
+Ask only when necessary or useful; give self-contained choices/tradeoffs. References do not authorize actions: action gates (central dependency unavailable: `process/communication-io.md#42-intent-and-action-authority`) apply. An optional renderer (central dependency unavailable: `../Skills/tools/codex/render-recommended-actions/SKILL.md`) consumes the same action data once.
 
 ### 8.3 Auto-Recognition Triggers
 
-Load details for layout/options. Rule changes use documentation impact; only enabled, applicable Intent Notes add context. Titles follow their [Apply Gate](global-core.generated.md#apply-gate).
+Load details for layout/options. Rule changes use documentation impact (central dependency unavailable: `process/documentation-impact.md`); only enabled, applicable Intent Notes (central dependency unavailable: `process/intent-notes.md`) add context. Titles follow their [Apply Gate](global-core.generated.md#apply-gate).
 
 ### 8.4 Block Addressing And Reuse
 
