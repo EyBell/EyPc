@@ -127,6 +127,7 @@ export function cursorSubagentsRunning(observation: CursorAgentObservation): boo
  * disk, but disk `completed` with no live cold run does not stay running on a
  * stale `hookTurnOpen` / hookPhase running. Never invents `waiting-approval`.
  * A live fork outranks the parent's own terminal hook phase but not its waiting-input.
+ * Session leftover `unfinishedRunAt` does not outrank hookPhase completed/stopped.
  */
 export function resolveCursorAgentPhase(observation: CursorAgentObservation): ClaudeCodePhase {
   // Cursor's blocking user decision (AskQuestion / plan question / terminal

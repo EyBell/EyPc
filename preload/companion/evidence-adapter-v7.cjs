@@ -274,11 +274,14 @@ function cursorSessionObservationV7(value = {}, hookValue = {}) {
   const hook = record(hookValue)
   const subagents = Array.isArray(session.subagents) ? session.subagents.map(record) : []
   let kind = 'unknown'
-  const liveCold = subagents.some((child) => integer(child.unfinishedRunAt) > 0)
-    || integer(session.unfinishedRunAt) > 0
+  const liveFork = subagents.some((child) => integer(child.unfinishedRunAt) > 0)
+  const liveSession = integer(session.unfinishedRunAt) > 0
+  const hookTerminal = hook.phase === 'completed' || hook.phase === 'stopped'
   // An open Hook Turn still beats aborted/empty disk. Disk `completed` with
   // no live cold run must not stay running on a stale turnOpen.
-  if (liveCold || (hook.turnOpen === true && session.diskStatus !== 'completed')) kind = 'turn-running'
+  // A hook terminal fold beats leftover session unfinishedRunAt; a live fork
+  // still keeps the parent running.
+  if (liveFork || (!hookTerminal && liveSession) || (hook.turnOpen === true && session.diskStatus !== 'completed')) kind = 'turn-running'
   else if (hook.phase === 'completed' || session.hasUnreadMessages === true || session.diskStatus === 'completed') kind = 'turn-completed'
   else if (hook.phase === 'stopped' || session.diskStatus === 'aborted') kind = 'turn-interrupted'
   else if (session.hasPendingPlan === true) kind = 'turn-completed'

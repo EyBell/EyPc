@@ -55,7 +55,7 @@ V7 Cursor 适配器把 `turnOpen` 与冷路径 `unfinishedRunAt` 并列写成进
 - Steps: 活冷路径或（`turnOpen` 且磁盘不是 completed）才标 running；否则落到磁盘 completed。
 - Verification: 聚焦上述两套件；`aborted` + `turnOpen` 仍 running。
 - Applicability boundary: Cursor 证据适配与域相位。不含 Claude Hook、不含队列旋转扩容。
-- Fallback: 若 Plan 模式进行中被误标完成，先核磁盘是否真是 completed，而不是恢复无条件 turnOpen 优先。
+- Fallback: 若 Plan 模式进行中被误标完成，先核磁盘是否真是 completed，而不是恢复无条件 turnOpen 优先。钩子已终态但会话 `unfinishedRunAt` 残留时走 [钩子终态压过残留 unfinishedRunAt](cursor-hook-terminal-beats-stale-unfinished-run.md#L1)，不要把 aborted 开 Turn 改成完成。
 
 ## Occurrence History
 

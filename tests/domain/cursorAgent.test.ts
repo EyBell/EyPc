@@ -60,6 +60,16 @@ describe('cursor agent cold inventory', () => {
       hookPhase: 'completed'
     })!)).toBe('completed')
     expect(resolveCursorAgentPhase(observation({
+      diskStatus: 'aborted',
+      unfinishedRunAt: 9_000,
+      hookPhase: 'completed'
+    })!)).toBe('completed')
+    expect(resolveCursorAgentPhase(observation({
+      diskStatus: 'aborted',
+      unfinishedRunAt: 9_000,
+      hookPhase: 'stopped'
+    })!)).toBe('stopped')
+    expect(resolveCursorAgentPhase(observation({
       hookPhase: 'stopped',
       diskStatus: 'completed'
     })!)).toBe('stopped')

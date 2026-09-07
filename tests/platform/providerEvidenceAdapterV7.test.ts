@@ -86,6 +86,38 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
     })
   })
 
+  it('does not keep leftover session unfinishedRunAt running after a hook terminal fold', () => {
+    expect(cursorSessionObservationV7({
+      lastUpdatedAt: 50,
+      diskStatus: 'aborted',
+      unfinishedRunAt: 9_000
+    }, { turnOpen: false, phase: 'completed', lastStopAt: 50 })).toMatchObject({
+      kind: 'turn-completed'
+    })
+    expect(cursorSessionObservationV7({
+      lastUpdatedAt: 50,
+      diskStatus: 'aborted',
+      unfinishedRunAt: 9_000
+    }, { turnOpen: false, phase: 'stopped', lastStopAt: 50 })).toMatchObject({
+      kind: 'turn-interrupted'
+    })
+    expect(cursorSessionObservationV7({
+      lastUpdatedAt: 50,
+      diskStatus: 'aborted',
+      unfinishedRunAt: 9_000
+    }, { turnOpen: true, phase: 'running', turnStartedAt: 40 })).toMatchObject({
+      kind: 'turn-running'
+    })
+    expect(cursorSessionObservationV7({
+      lastUpdatedAt: 50,
+      diskStatus: 'completed',
+      unfinishedRunAt: 0,
+      subagents: [{ unfinishedRunAt: 9_000 }]
+    }, { turnOpen: false, phase: 'completed', lastStopAt: 50 })).toMatchObject({
+      kind: 'turn-running'
+    })
+  })
+
   it('maps a Cursor Plan artifact without fabricating an input interaction', () => {
     expect(cursorSessionObservationV7({ hasPendingPlan: true, lastUpdatedAt: 40 }, {})).toMatchObject({
       kind: 'turn-completed',
