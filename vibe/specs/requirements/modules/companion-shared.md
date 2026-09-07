@@ -38,6 +38,9 @@
 - [RAW-206](../shared-raw-206.md#L1) — `active` · Cursor Plan 模式会话纳入库存；阻塞待决展示为待输入并可一键跳转
 - [RAW-207](../shared-raw-207.md#L1) — `active` · 同一 Turn 仍 running 的精确提问/审批公开为待输入；Cursor kind 送进 Kernel
 - [RAW-208](../shared-raw-208.md#L1) — `active` · Claude/Cursor 行上时钟在 Turn 关闭后回退完成/活动时间；入站 0 不覆盖；Cloud Agent 仍排除
+- [RAW-214](../shared-raw-214.md#L1) — `active` · Cursor 钩子终态后忽略会话残留 unfinishedRunAt；活分叉与 aborted 开 Turn 仍进行中
+- [RAW-215](../shared-raw-215.md#L1) — `active` · 状态分组压过置顶泊位；图钉只留行标记；已完成已读与 unknown 仍停置顶分组
+- [RAW-216](../shared-raw-216.md#L1) — `active` · Claude 精确拓扑下子代理名单为全家快照；缺席成员必须撤回，不得残留抬升 liveCount
 
 
 ### 编号条款

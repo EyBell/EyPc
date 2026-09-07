@@ -14,6 +14,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 - [Project status](../../../specs/PROJECT_STATUS.md#L1)
 - [RAW-210 unique live Hook](../../../specs/260905/companion-status-archive-sync/spec.md#L1)
 - [RAW-211 no version whitelist](../../../specs/260905/claude-no-version-whitelist/spec.md#L1)
+- [RAW-216 exact topology retract](../../../specs/260907/status-over-pin-and-stale-claude-child/spec.md#L1)
 
 ## Primary Error Records
 
@@ -26,6 +27,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 - [New phase must outrank previous cache](../claude-new-phase-must-outrank-previous-cache.md#L1)
 - [Unread decay blocked by version gate and minute flush](../claude-unread-decay-blocked-by-version-gate-and-minute-flush.md#L1)
 - [Orphan active subagent pins family running](../claude-orphan-active-subagent-pins-family-running.md#L1)
+- [Exact topology must retract absent children](../claude-exact-topology-must-retract-absent-children.md#L1)
 - [Readiness must not depend on an unneeded capability](../claude-readiness-gated-on-unneeded-capability.md#L1)
 - [Session family、open route and state authority are distinct](../claude-session-family-open-route-and-state-authority-conflation.md#L1)
 

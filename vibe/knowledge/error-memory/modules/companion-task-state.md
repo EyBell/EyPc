@@ -44,7 +44,7 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 - [Plan lifecycle and interrupted causality](../companion-plan-lifecycle-and-interrupted-causality.md#L1)
 - [Independent authorities must not share full refresh](../independent-authorities-coupled-by-full-refresh.md#L1)
 - [Watcher callback latency is not publication latency](../watcher-callback-latency-is-not-end-to-end-publication-latency.md#L1)
-- [Display clock zero is missing, not a reset](../companion-display-clock-zero-is-missing.md#L1)
+- [Cursor hook terminal beats leftover unfinishedRunAt](../cursor-hook-terminal-beats-stale-unfinished-run.md#L1)
 
 ## Related Error Records
 
@@ -54,6 +54,9 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 - [Cursor workspace pin cache ignores WAL unpin](../cursor-workspace-pin-cache-ignores-wal.md#L1)
 - [Cursor disk completed stale hook turnOpen](../cursor-disk-completed-stale-hook-turnopen.md#L1)
 - [Codex Desktop pin sqlite not JSON mirror](../codex-desktop-pin-sqlite-not-json-mirror.md#L1)
+- [Display clock zero is missing, not a reset](../companion-display-clock-zero-is-missing.md#L1)
+- [Exact topology must retract absent children](../claude-exact-topology-must-retract-absent-children.md#L1)
+- [Pin group is a parking lot, not live status](../pin-group-is-parking-lot-not-live-status.md#L1)
 
 ## Historical Or Migration Sources
 

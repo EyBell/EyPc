@@ -10,6 +10,7 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 
 - [Product requirements](../../../specs/PRODUCT_REQUIREMENTS.md#L1)
 - [Controlled task-state specification](../../../specs/260810/1155-install-runtime-diagnostics/spec.md#L1)
+- [RAW-215 status groups beat pin parking](../../../specs/260907/status-over-pin-and-stale-claude-child/spec.md#L1)
 - [Architecture](../../ARCHITECTURE.md#L1)
 
 ## Primary Error Records
@@ -41,12 +42,14 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Cursor disk completed stale hook turnOpen](../cursor-disk-completed-stale-hook-turnopen.md#L1)
 - [Codex Desktop pin sqlite not JSON mirror](../codex-desktop-pin-sqlite-not-json-mirror.md#L1)
 - [Plain cold start bypasses CodexHost; open readiness launches through the Host first](../codexhost-plain-cold-start-bypasses-host.md#L1)
+- [Display clock zero is missing, not a reset](../companion-display-clock-zero-is-missing.md#L1)
+- [Pin group is a parking lot, not live status](../pin-group-is-parking-lot-not-live-status.md#L1)
 
 ## Related Error Records
 
 - [Task count/list projection convergence](../codex-task-count-list-projection-divergence.md#L1)
 - [Consumer cache and Float applied ACK](../companion-consumer-cache-and-float-applied-ack.md#L1)
-- [Display clock zero is missing, not a reset](../companion-display-clock-zero-is-missing.md#L1)
+- [Cursor hook terminal beats leftover unfinishedRunAt](../cursor-hook-terminal-beats-stale-unfinished-run.md#L1)
 
 ## Historical Or Migration Sources
 
