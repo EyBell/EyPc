@@ -652,6 +652,24 @@ describe('Codex Companion V4 UI contract', () => {
     ]))
   })
 
+  it('renders a compressed task meta line and keeps the full owner phrase for readers', async () => {
+    vi.useFakeTimers({ now: NOW })
+    const { wrapper } = mountFloat(true, floatSnapshot())
+    await wrapper.vm.$nextTick()
+    const active = wrapper.get(`[data-focus-key="task:${TASK_ACTIVE}"]`)
+    expect(active.get('.task-provider-marker').text()).toBe('CX')
+    expect(active.get('.task-meta-button').text()).toBe('CodeNote 进行中 RECENT')
+    expect(active.attributes('aria-label')).toContain('归属 Codex')
+    expect(active.attributes('aria-label')).toContain('CodeNote')
+
+    const hidden = mountFloat(true, floatSnapshot('hidden')).wrapper
+    await hidden.vm.$nextTick()
+    const chatsRow = hidden.get(`[data-focus-key="task:${TASK_HIDDEN}"]`)
+    expect(chatsRow.get('.task-provider-marker').text()).toBe('CX')
+    expect(chatsRow.get('.task-meta-button').text()).not.toMatch(/Chats/i)
+    expect(chatsRow.get('.task-meta-button').text()).toMatch(/已完成 RECENT$/)
+  })
+
   it('filters virtual projects by provider and keeps textual ownership plus action capabilities', async () => {
     const source = floatSnapshot('projects')
     const seed = source.conversations.all.find((task) => task.key === TASK_FAILED)!
@@ -696,7 +714,7 @@ describe('Codex Companion V4 UI contract', () => {
     expect(filters.map((filter) => filter.text())).toEqual(['全部', '只显示 Codex', '只显示 Claude'])
     expect(filters[0].attributes('aria-selected')).toBe('true')
     expect(wrapper.findAll('.float-project-row').some((row) => row.text().includes('归属 Codex + Claude'))).toBe(true)
-    expect(wrapper.findAll('.task-provider-marker').map((marker) => marker.text())).toEqual(expect.arrayContaining(['归属 Codex', '归属 Claude']))
+    expect(wrapper.findAll('.task-provider-marker').map((marker) => marker.text())).toEqual(expect.arrayContaining(['CX', 'CC']))
 
     await filters[1].trigger('click')
     await wrapper.vm.$nextTick()

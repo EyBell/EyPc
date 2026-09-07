@@ -11120,6 +11120,27 @@ function companionSyntheticInteractionBundleV7(input = {}) {
   }
 }
 
+function companionProjectLeafName(value) {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  const trimmed = value.trim().replace(/[\\/]+$/, '')
+  const segments = trimmed.split(/[\\/]/).filter(Boolean)
+  const last = segments.at(-1) || ''
+  if (!last || last === '.' || last === '..' || /^[0-9a-f]{32}$/i.test(last)) return ''
+  return last.slice(0, 240)
+}
+
+function companionProviderProjectFields(source = {}) {
+  const record = codexRecord(source)
+  const projectKey = typeof record.projectKey === 'string' ? record.projectKey.trim() : ''
+  const named = typeof record.projectName === 'string' ? record.projectName.trim() : ''
+  const projectName = named || companionProjectLeafName(record.originCwd || record.cwd)
+  if (!projectKey && !projectName) return {}
+  return {
+    ...(projectKey ? { projectKey: projectKey.slice(0, 256) } : {}),
+    ...(projectName ? { projectName: projectName.slice(0, 240), projectKind: 'project' } : {})
+  }
+}
+
 function companionProviderMetadataV7(input = {}) {
   const source = codexRecord(input)
   const revisionAt = companionEvidenceSequenceV7(source.revisionAt, 1)
@@ -11581,7 +11602,8 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
       dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.turnStartedAt, session.lastActivityAt) >= input.dynamicCutoff,
       displayName: alias || originalTitle,
       originalTitle,
-      alias
+      alias,
+      ...companionProviderProjectFields(session)
     }),
     capabilities,
     standaloneEligible: true
@@ -11730,7 +11752,8 @@ function companionCursorEvidenceV7(sessionValue, hookValue, input = {}) {
       dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.lastUpdatedAt, session.unfinishedRunAt) >= input.dynamicCutoff,
       displayName: alias || originalTitle,
       originalTitle,
-      alias
+      alias,
+      ...companionProviderProjectFields(session)
     }),
     capabilities: ['open', ...(terminal ? ['archive'] : []), ...(observation.planState === 'available' ? ['execute-plan'] : [])],
     standaloneEligible: true

@@ -22,6 +22,11 @@ import {
   resolveCompanionProjectMarker,
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation,
+  companionTaskElapsedCompact,
+  companionTaskMetaProjectName,
+  companionTaskTopologyCompact,
+  companionTaskTopologyDetail,
+  buildCompanionTaskMetaLine,
   type CompanionCodexQuotaWindow,
   type CompanionSnapshotSlice,
   companionQuotaRefreshReceiptText
@@ -188,10 +193,10 @@ describe('water ball presentation', () => {
 
 describe('row markers', () => {
   it.each([
-    ['Codex', { provider: 'codex' as const }, { provider: 'codex', label: '归属 Codex', tooltip: '归属 Codex' }],
-    ['Claude', { provider: 'claude' as const }, { provider: 'claude', label: '归属 Claude', tooltip: '归属 Claude' }],
-    ['Cursor', { provider: 'cursor' as const }, { provider: 'cursor', label: '归属 Cursor', tooltip: '归属 Cursor' }],
-    ['legacy Codex', {}, { provider: 'codex', label: '归属 Codex', tooltip: '归属 Codex' }]
+    ['Codex', { provider: 'codex' as const }, { provider: 'codex', label: 'CX', tooltip: '归属 Codex' }],
+    ['Claude', { provider: 'claude' as const }, { provider: 'claude', label: 'CC', tooltip: '归属 Claude' }],
+    ['Cursor', { provider: 'cursor' as const }, { provider: 'cursor', label: 'CS', tooltip: '归属 Cursor' }],
+    ['legacy Codex', {}, { provider: 'codex', label: 'CX', tooltip: '归属 Codex' }]
   ])('always exposes one textual owner cue for %s cards', (_name, task, expected) => {
     expect(resolveCompanionRowMarker(task)).toEqual(expected)
   })
@@ -213,6 +218,60 @@ describe('row markers', () => {
   it('derives a legacy project provider from its tasks', () => {
     expect(resolveCompanionProjectMarker({ tasks: [{ provider: 'claude' }] }))
       .toMatchObject({ providers: ['claude'], label: '归属 Claude', claudeOnly: true })
+  })
+
+  it('omits default chats container names from the compact project slot', () => {
+    expect(companionTaskMetaProjectName({ projectName: 'CodeNote', projectKind: 'project' })).toBe('CodeNote')
+    expect(companionTaskMetaProjectName({ projectName: 'Claude Chats', projectKind: 'chats' })).toBe('')
+    expect(companionTaskMetaProjectName({ projectName: 'Cursor Chats' })).toBe('')
+    expect(companionTaskMetaProjectName({ projectName: 'Chats' })).toBe('')
+    expect(companionTaskMetaProjectName({ projectName: 'Codex Chats' })).toBe('')
+    expect(companionTaskMetaProjectName({ projectName: 'Cursor Agent', projectKind: 'project' })).toBe('')
+    expect(companionTaskMetaProjectName({ projectName: '79413102b893919eccbe60ee4c8fbcca', projectKind: 'project' })).toBe('')
+  })
+
+  it('compresses subtask counts and keeps live/attention for the hover line', () => {
+    expect(companionTaskTopologyCompact({ memberCount: 1 })).toBe('')
+    expect(companionTaskTopologyCompact({ memberCount: 4 })).toBe('sub+3')
+    expect(companionTaskTopologyDetail({ memberCount: 4, liveCount: 1, attentionCount: 0, errorCount: 0 }))
+      .toBe('3 子任务 · 1 活动')
+  })
+
+  it('compresses elapsed time into RECENT / m / h / d buckets', () => {
+    const now = 100 * 86_400_000
+    expect(companionTaskElapsedCompact(now - 20_000, now)).toBe('RECENT')
+    expect(companionTaskElapsedCompact(now - 35 * 60_000, now)).toBe('35m')
+    expect(companionTaskElapsedCompact(now - 12 * 3_600_000, now)).toBe('12h')
+    expect(companionTaskElapsedCompact(now - 150 * 60_000, now)).toBe('2.5h')
+    expect(companionTaskElapsedCompact(now - 33 * 86_400_000, now)).toBe('33d')
+    expect(companionTaskElapsedCompact(undefined, now)).toBe('时间缺失')
+  })
+
+  it('assembles the compact second line and a fuller hover detail', () => {
+    const now = 100 * 86_400_000
+    expect(buildCompanionTaskMetaLine({
+      task: {
+        provider: 'claude',
+        projectName: 'CodeNote',
+        projectKind: 'project',
+        companionTopology: { memberCount: 4, liveCount: 1, attentionCount: 0, errorCount: 0 },
+        lastQuestionAt: now - 150 * 60_000
+      },
+      statusLabel: '已完成',
+      now,
+      elapsedDetail: '2.5 小时前',
+      timestampDetail: '2026/09/07 09:01:00'
+    })).toEqual({
+      membershipLabel: 'CC',
+      membershipTooltip: '归属 Claude',
+      rest: 'CodeNote sub+3 已完成 2.5h',
+      detail: '归属 Claude · 项目 CodeNote · 3 子任务 · 1 活动 · 已完成 · 2.5 小时前 · 2026/09/07 09:01:00'
+    })
+    expect(buildCompanionTaskMetaLine({
+      task: { provider: 'claude', projectName: 'Claude Chats', projectKind: 'chats', lastQuestionAt: now - 20_000 },
+      statusLabel: '已完成',
+      now
+    }).rest).toBe('已完成 RECENT')
   })
 
   it('describes Cursor cold-inventory source status without quota language', () => {

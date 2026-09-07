@@ -809,7 +809,8 @@ button.float-search-glyph { cursor: pointer; }
   font-weight: 750;
   /* Matches the metadata line box so the row stays at its established height. */
   line-height: 13px;
-  letter-spacing: .03em;
+  letter-spacing: 0;
+  white-space: nowrap;
 }
 .float-quota-chip span { color: var(--codex-muted); font-size: 9px; font-weight: 750; letter-spacing: .02em; }
 .float-quota-chip strong { font-size: 13px; font-weight: 800; line-height: 1; }

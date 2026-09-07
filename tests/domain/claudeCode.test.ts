@@ -130,6 +130,16 @@ describe('Claude App Code domain', () => {
     })
   })
 
+  it('names the project from the cwd leaf, not the platform', () => {
+    expect(projectClaudeCodeTaskCards([observation('completed')])[0]).toMatchObject({
+      projectName: 'project',
+      originalProjectName: 'project',
+      projectKind: 'project'
+    })
+    expect(projectClaudeCodeTaskCards([observation('completed', { originCwd: '/work/CodeNote', cwd: '/tmp' })])[0])
+      .toMatchObject({ projectName: 'CodeNote' })
+  })
+
   it('keeps duplicate App rows and excludes archived rows', () => {
     const cards = projectClaudeCodeTaskCards([
       observation('running'),

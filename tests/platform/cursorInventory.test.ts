@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { createRequire } from 'node:module'
 import { DatabaseSync } from 'node:sqlite'
-import fs, { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import fs, { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import * as nodePath from 'node:path'
 
 const require_ = createRequire(import.meta.url)
 const inventoryModule = require_(resolve(process.cwd(), 'preload/cursor/inventory.cjs'))
@@ -190,6 +191,37 @@ describe('cursor inventory reader', () => {
       const opened = await bridge.openTask(LOCAL)
       expect(opened.outcome).toBe('unavailable')
       expect(opened.confirmsRead).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('maps workspaceStorage workspace.json folder onto the session project name', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-workspace-'))
+    const dbPath = join(root, 'User', 'globalStorage', 'state.vscdb')
+    mkdirSync(dirname(dbPath), { recursive: true })
+    writeFixture(dbPath)
+    const wsId = '79413102b893919eccbe60ee4c8fbcca'
+    const wsDir = join(root, 'User', 'workspaceStorage', wsId)
+    mkdirSync(wsDir, { recursive: true })
+    writeFileSync(join(wsDir, 'workspace.json'), JSON.stringify({ folder: 'file:///work/CodeNote' }))
+    try {
+      const snapshot = inventoryModule.createInventoryReader({
+        fs,
+        path: nodePath,
+        os: { homedir: () => root },
+        platform: 'darwin',
+        env: {},
+        stateDbPath: dbPath,
+        workspaceStorageDir: join(root, 'User', 'workspaceStorage'),
+        DatabaseSync
+      }).readInventory()
+      const local = snapshot.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)
+      expect(local).toMatchObject({
+        projectName: 'CodeNote',
+        projectKey: inventoryModule.projectKeyForWorkspaceRoot({ fs, path: nodePath, platform: 'darwin' }, '/work/CodeNote')
+      })
+      expect(local.projectKey).toMatch(/^[a-f0-9]{32}$/)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

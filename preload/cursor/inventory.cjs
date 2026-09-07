@@ -16,7 +16,7 @@
  * nested forks still attach to the root conversation the App shows.
  */
 
-const CURSOR_INVENTORY_REVISION = 'cursor-agent-inventory-v5'
+const CURSOR_INVENTORY_REVISION = 'cursor-agent-inventory-v6'
 /**
  * Unified modes that run a real Turn and therefore become cards. `plan` is a
  * first-class run mode since Cursor 3.17 (tools, hooks, its own Turn); `chat`,
@@ -91,6 +91,87 @@ function textOf(value) {
 
 function flagOf(value) {
   return value === true || value === 1 || value === '1' || value === 'true'
+}
+
+function fileUrlToFsPath(value) {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  if (!/^file:/i.test(value)) return value.trim()
+  try {
+    const url = new URL(value)
+    let pathname = decodeURIComponent(url.pathname || '')
+    if (/^\/[A-Za-z]:\//.test(pathname)) pathname = pathname.slice(1)
+    return pathname
+  } catch { return '' }
+}
+
+function projectLeafName(value) {
+  const pathValue = fileUrlToFsPath(value).replace(/[\\/]+$/, '')
+  if (!pathValue) return ''
+  const segments = pathValue.split(/[\\/]/).filter(Boolean)
+  let name = segments.at(-1) || ''
+  if (/\.code-workspace$/i.test(name)) name = name.replace(/\.code-workspace$/i, '')
+  if (!name || name === '.' || name === '..' || /^[0-9a-f]{32}$/i.test(name)) return ''
+  return name
+}
+
+function workspaceProjectFromJson(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { root: '', name: '' }
+  if (typeof parsed.folder === 'string' && parsed.folder.trim()) {
+    return { root: fileUrlToFsPath(parsed.folder), name: projectLeafName(parsed.folder) }
+  }
+  if (typeof parsed.workspace === 'string' && parsed.workspace.trim()) {
+    return { root: '', name: projectLeafName(parsed.workspace) }
+  }
+  return { root: '', name: '' }
+}
+
+function isAbsolutePath(pathApi, value) {
+  if (typeof pathApi.isAbsolute === 'function') return pathApi.isAbsolute(value)
+  return value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value)
+}
+
+function normalizedProjectRoot(fs, pathApi, platform, value) {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  const api = platform === 'win32' && pathApi.win32 ? pathApi.win32 : pathApi
+  if (!isAbsolutePath(api, value)) return ''
+  let normalized = typeof api.normalize === 'function' ? api.normalize(value) : value
+  try {
+    if (fs && typeof fs.existsSync === 'function' && fs.existsSync(normalized)
+      && typeof fs.realpathSync === 'function') {
+      normalized = fs.realpathSync(normalized)
+    }
+  } catch {}
+  if (typeof api.normalize === 'function') normalized = api.normalize(normalized)
+  normalized = String(normalized).replace(/[\\/]+$/, '') || (typeof api.parse === 'function' ? api.parse(normalized).root : normalized)
+  return platform === 'win32' ? String(normalized).toLowerCase() : normalized
+}
+
+function projectKeyForWorkspaceRoot(dependencies, root) {
+  const fs = dependencies && dependencies.fs
+  const pathApi = (dependencies && dependencies.path) || {}
+  const platform = (dependencies && dependencies.platform) || (typeof process !== 'undefined' ? process.platform : 'darwin')
+  const normalized = normalizedProjectRoot(fs, pathApi, platform, root)
+  if (!normalized) return ''
+  try {
+    const crypto = (dependencies && dependencies.crypto) || require('node:crypto')
+    return crypto.createHash('sha256').update(`codex-project\0${normalized}`).digest('hex').slice(0, 32)
+  } catch { return '' }
+}
+
+function readWorkspaceProjects(fs, pathModule, storageDir) {
+  const byId = new Map()
+  if (!storageDir || typeof fs.readdirSync !== 'function' || typeof fs.readFileSync !== 'function') return byId
+  let names = []
+  try { names = fs.readdirSync(storageDir) } catch { return byId }
+  for (const name of names) {
+    const jsonPath = pathModule.join(storageDir, String(name), 'workspace.json')
+    try {
+      const parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf8'))
+      const project = workspaceProjectFromJson(parsed)
+      if (project.name || project.root) byId.set(String(name), project)
+    } catch {}
+  }
+  return byId
 }
 
 function defaultStateDbPath(os, pathModule, platform, env) {
@@ -174,9 +255,17 @@ function collectSubagentsByParent(rows) {
   return { byParent, truncated }
 }
 
-function projectRow(row, subagents, pinnedOrder) {
+function projectRow(row, subagents, pinnedOrder, workspaces, dependencies) {
   const composerId = textOf(row.composerId).trim()
   const order = pinnedOrder instanceof Map ? pinnedOrder.get(composerId.toLowerCase()) : undefined
+  const workspaceIdentifier = textOf(row.workspaceIdentifier).trim() || textOf(row.workspaceId).trim()
+  const mapped = workspaces instanceof Map
+    ? workspaces.get(workspaceIdentifier) || workspaces.get(textOf(row.workspaceId).trim())
+    : null
+  const folderUri = /^file:/i.test(workspaceIdentifier) ? workspaceIdentifier : ''
+  const root = (mapped && mapped.root) || fileUrlToFsPath(folderUri)
+  const projectName = (mapped && mapped.name) || projectLeafName(folderUri)
+  const projectKey = root ? projectKeyForWorkspaceRoot(dependencies, root) : ''
   return {
     composerId,
     // Sidebar pin from workspace storage. `pinned` is always a boolean once a
@@ -184,7 +273,9 @@ function projectRow(row, subagents, pinnedOrder) {
     pinned: Number.isInteger(order),
     ...(Number.isInteger(order) ? { pinnedOrder: order } : {}),
     unifiedMode: textOf(row.unifiedMode).trim(),
-    workspaceIdentifier: textOf(row.workspaceIdentifier).trim() || textOf(row.workspaceId).trim(),
+    workspaceIdentifier,
+    ...(projectName ? { projectName } : {}),
+    ...(projectKey ? { projectKey } : {}),
     name: textOf(row.name).trim(),
     subtitle: textOf(row.subtitle).trim(),
     createdAt: Number(row.createdAt) || 0,
@@ -383,10 +474,17 @@ function createInventoryReader(dependencies) {
       const allRows = Array.isArray(rows) ? rows : []
       const topology = collectSubagentsByParent(allRows)
       const pinned = readPinnedComposers()
+      const workspaces = readWorkspaceProjects(fs, path, resolveWorkspaceStorageDir())
       const sessions = []
       for (const row of allRows) {
         if (!isInventoryRow(row)) continue
-        sessions.push(projectRow(row, topology.byParent.get(textOf(row.composerId).trim().toLowerCase()), pinned.order))
+        sessions.push(projectRow(
+          row,
+          topology.byParent.get(textOf(row.composerId).trim().toLowerCase()),
+          pinned.order,
+          workspaces,
+          { fs, path, platform, crypto: dependencies.crypto }
+        ))
         if (sessions.length >= MAX_ROWS) break
       }
       return {
@@ -538,5 +636,6 @@ module.exports = {
   PINNED_COMPOSERS_KEY,
   parsePinnedComposers,
   INVENTORY_UNIFIED_MODES,
-  createInventoryReader
+  createInventoryReader,
+  projectKeyForWorkspaceRoot
 }

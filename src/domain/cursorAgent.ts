@@ -37,6 +37,8 @@ export interface CursorAgentObservation {
   hasBlockingPendingActions: boolean
   unfinishedRunAt: number
   diskStatus: CursorAgentDiskStatus
+  projectName?: string
+  projectKey?: string
   subagents?: readonly CursorAgentSubagentObservation[]
   /** Hook-reconciled fork liveness; when absent, cold fork evidence decides. */
   subagentRunning?: boolean
@@ -100,6 +102,8 @@ export function normalizeCursorAgentObservation(raw: unknown): CursorAgentObserv
     hasBlockingPendingActions: flagOf(source.hasBlockingPendingActions),
     unfinishedRunAt: timeOf(source.unfinishedRunAt),
     diskStatus: diskStatusOf(source.diskStatus),
+    ...(textOf(source.projectName).trim() ? { projectName: textOf(source.projectName).trim() } : {}),
+    ...(textOf(source.projectKey).trim() ? { projectKey: textOf(source.projectKey).trim() } : {}),
     ...(subagents.length ? { subagents } : {}),
     ...(typeof source.subagentRunning === 'boolean' ? { subagentRunning: source.subagentRunning } : {}),
     ...(source.hookTurnOpen === true ? { hookTurnOpen: true } : {}),
@@ -205,9 +209,10 @@ export function projectCursorAgentTaskCard(
   const originalName = cursorAgentDisplayName(observation)
   const alias = options.aliases?.[key]
   const workspace = observation.workspaceIdentifier || 'local'
-  const originalProjectName = workspace
-  const projectKey = companionTaskKey('cursor', `project:${workspace.normalize('NFKC').toLocaleLowerCase()}`)
-  const projectName = options.projectAliases?.[projectKey] || 'Cursor Agent'
+  const originalProjectName = observation.projectName || workspace
+  const projectKey = observation.projectKey
+    || companionTaskKey('cursor', `project:${workspace.normalize('NFKC').toLocaleLowerCase()}`)
+  const projectName = options.projectAliases?.[projectKey] || observation.projectName || 'Cursor Agent'
   const updatedAt = observation.lastUpdatedAt || observation.unfinishedRunAt || observation.createdAt
   const completedAt = resolved.phase === 'completed' ? (observation.lastUpdatedAt || observation.createdAt) : 0
   const questionAt = observation.unfinishedRunAt || completedAt || updatedAt

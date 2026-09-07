@@ -570,6 +570,12 @@ describe('CompanionTaskKernel', () => {
     )
     expect(cursorEvidence).toContain('kind: observation.interactionKind')
     expect(cursorEvidence).toContain("branchRef: 'root'")
+    expect(cursorEvidence).toContain('companionProviderProjectFields(session)')
+    const claudeEvidence = hostSource.slice(
+      hostSource.indexOf('function companionClaudeEvidenceV7'),
+      hostSource.indexOf('function companionCursorEvidenceV7')
+    )
+    expect(claudeEvidence).toContain('companionProviderProjectFields(session)')
   })
 
   it('keeps the Plan lifecycle across a supplementary default Turn, interruption and pause until an explicit execution-start edge', async () => {

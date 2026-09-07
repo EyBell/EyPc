@@ -173,7 +173,12 @@ const BUDGET = Object.freeze({
   // preload can close leftover `EyPc Codex` BrowserWindows.
   // 2026-09-07 (RAW-216): +2 -- Claude `topologyComplete` is copied onto node
   // metadata so Kernel family snapshots can retract absent live children.
-  lines: 14420,
+  // 2026-09-07 (RAW-217 follow-up): +23 -- Claude/Cursor evidence copies
+  // cwd/workspace folder into Kernel projectName/projectKey instead of
+  // letting the package fill * Chats. Helpers live next to
+  // companionProviderMetadataV7; Cursor workspace.json mapping lives in
+  // preload/cursor/inventory.cjs.
+  lines: 14443,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

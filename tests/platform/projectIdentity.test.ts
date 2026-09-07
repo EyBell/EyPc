@@ -10,6 +10,9 @@ const require_ = createRequire(import.meta.url)
 const codeSessions = require_(resolve(process.cwd(), 'preload/claude/code-sessions.cjs')) as {
   projectKeyForMetadata(dependencies: Record<string, unknown>, metadata: Record<string, unknown>): string
 }
+const cursorInventory = require_(resolve(process.cwd(), 'preload/cursor/inventory.cjs')) as {
+  projectKeyForWorkspaceRoot(dependencies: Record<string, unknown>, root: string): string
+}
 
 const NUL = String.fromCharCode(0)
 
@@ -40,6 +43,7 @@ describe('project identity agrees across providers', () => {
     const claudeKey = codeSessions.projectKeyForMetadata(dependencies, { originCwd: root })
     expect(claudeKey).toHaveLength(32)
     expect(claudeKey).toBe(codexProjectKey([root]))
+    expect(cursorInventory.projectKeyForWorkspaceRoot(dependencies, root)).toBe(claudeKey)
   })
 
   it('prefers originCwd over cwd, matching the Codex root normalization', () => {
@@ -69,7 +73,12 @@ describe('project identity agrees across providers', () => {
     expect(owners, 'exactly one Codex-side definition of the project-key recipe').toHaveLength(1)
 
     const readerSource = readFileSync(resolve(process.cwd(), 'preload/claude/code-sessions.cjs'), 'utf8')
-    for (const source of [codexSide.find((candidate) => candidate.name === owners[0])!.source, readerSource]) {
+    const cursorSource = readFileSync(resolve(process.cwd(), 'preload/cursor/inventory.cjs'), 'utf8')
+    for (const source of [
+      codexSide.find((candidate) => candidate.name === owners[0])!.source,
+      readerSource,
+      cursorSource
+    ]) {
       expect(source).toMatch(recipe)
       expect(source).toMatch(/digest\('hex'\)\.slice\(0, 32\)/)
     }

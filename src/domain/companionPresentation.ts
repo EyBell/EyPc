@@ -213,9 +213,26 @@ export interface CompanionProjectMarker {
   claudeOnly: boolean
 }
 
+/** Task-row membership tokens. Project rows keep the full「归属 …」label. */
+export const COMPANION_PROVIDER_ABBREVS = Object.freeze({
+  claude: 'CC',
+  codex: 'CX',
+  cursor: 'CS'
+} as const) satisfies Record<CompanionProviderId, string>
+
+const COMPANION_GENERIC_CHATS_NAMES = new Set([
+  'chats',
+  'codex chats',
+  'claude chats',
+  'cursor chats',
+  'cursor agent'
+])
+
 /**
  * Every status row carries a textual owner cue. Color remains supplementary,
  * so compatibility mode and forced-colors users receive the same information.
+ * Task rows compress the cue to `CC` / `CX` / `CS`; tooltip and ARIA keep
+ * the full「归属 …」phrase.
  */
 export function resolveCompanionRowMarker(
   task: { provider?: CompanionProviderId } | null | undefined
@@ -223,7 +240,109 @@ export function resolveCompanionRowMarker(
   if (!task) return null
   const provider = companionTaskProvider(task)
   const label = COMPANION_PROVIDER_LABELS[provider]
-  return { provider, label: `归属 ${label}`, tooltip: `归属 ${label}` }
+  return {
+    provider,
+    label: COMPANION_PROVIDER_ABBREVS[provider],
+    tooltip: `归属 ${label}`
+  }
+}
+
+export function companionTaskMetaProjectName(task: {
+  projectName?: string
+  projectKind?: 'project' | 'chats'
+} | null | undefined): string {
+  if (!task || task.projectKind === 'chats') return ''
+  const name = task.projectName?.trim() || ''
+  if (!name) return ''
+  if (COMPANION_GENERIC_CHATS_NAMES.has(name.toLocaleLowerCase())) return ''
+  if (/^[0-9a-f]{32}$/i.test(name)) return ''
+  return name
+}
+
+export function companionTaskTopologyCompact(topology: { memberCount?: number } | null | undefined): string {
+  const count = topology?.memberCount
+  if (typeof count !== 'number' || count <= 1) return ''
+  return `sub+${count - 1}`
+}
+
+export function companionTaskTopologyDetail(topology: {
+  memberCount?: number
+  liveCount?: number
+  attentionCount?: number
+  errorCount?: number
+} | null | undefined): string {
+  const count = topology?.memberCount
+  if (typeof count !== 'number' || count <= 1) return ''
+  const parts = [`${count - 1} 子任务`]
+  if ((topology?.liveCount || 0) > 0) parts.push(`${topology!.liveCount} 活动`)
+  if ((topology?.attentionCount || 0) > 0) parts.push(`${topology!.attentionCount} 注意`)
+  if ((topology?.errorCount || 0) > 0) parts.push(`${topology!.errorCount} 异常`)
+  return parts.join(' · ')
+}
+
+/**
+ * Compact elapsed clock for the task meta line. Quota/registration copy keeps
+ * the Chinese「N 分钟前」vocabulary in `elapsedText`.
+ */
+export function companionTaskElapsedCompact(from: number | undefined, now: number): string {
+  if (typeof from !== 'number' || !Number.isFinite(from) || from <= 0) return '时间缺失'
+  const delta = Math.max(0, now - from)
+  if (delta < 60_000) return 'RECENT'
+  const totalMinutes = Math.floor(delta / 60_000)
+  if (totalMinutes < 60) return `${totalMinutes}m`
+  if (totalMinutes < 1440) {
+    const tenths = Math.round((totalMinutes / 60) * 10) / 10
+    return `${Number.isInteger(tenths) ? String(tenths) : tenths.toFixed(1)}h`
+  }
+  return `${Math.floor(totalMinutes / 1440)}d`
+}
+
+export interface CompanionTaskMetaLine {
+  membershipLabel: string
+  membershipTooltip: string
+  rest: string
+  detail: string
+}
+
+export function buildCompanionTaskMetaLine(input: {
+  task: {
+    provider?: CompanionProviderId
+    projectName?: string
+    projectKind?: 'project' | 'chats'
+    companionTopology?: {
+      memberCount?: number
+      liveCount?: number
+      attentionCount?: number
+      errorCount?: number
+    } | null
+    lastQuestionAt?: number
+  }
+  statusLabel: string
+  now: number
+  elapsedDetail?: string
+  timestampDetail?: string
+}): CompanionTaskMetaLine {
+  const marker = resolveCompanionRowMarker(input.task)!
+  const rest = [
+    companionTaskMetaProjectName(input.task),
+    companionTaskTopologyCompact(input.task.companionTopology),
+    input.statusLabel,
+    companionTaskElapsedCompact(input.task.lastQuestionAt, input.now)
+  ].filter(Boolean).join(' ')
+  const detail = [
+    marker.tooltip,
+    input.task.projectName ? `项目 ${input.task.projectName}` : '',
+    companionTaskTopologyDetail(input.task.companionTopology),
+    input.statusLabel,
+    input.elapsedDetail || companionTaskElapsedCompact(input.task.lastQuestionAt, input.now),
+    input.timestampDetail || ''
+  ].filter(Boolean).join(' · ')
+  return {
+    membershipLabel: marker.label,
+    membershipTooltip: marker.tooltip,
+    rest,
+    detail
+  }
 }
 
 /** One ownership projection shared by project text, tint, filters and actions. */

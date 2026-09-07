@@ -145,4 +145,18 @@ describe('cursor agent cold inventory', () => {
     expect(running).toMatchObject({ canArchive: false, archiveCapability: 'blocked-active' })
     expect(cursorAgentDisplayName({ name: '', subtitle: 'hint' })).toBe('hint')
   })
+
+  it('uses the workspace folder name when inventory resolved one', () => {
+    const card = projectCursorAgentTaskCard(observation({
+      diskStatus: 'completed',
+      projectName: 'CodeNote',
+      projectKey: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    })!)
+    expect(card).toMatchObject({
+      projectName: 'CodeNote',
+      originalProjectName: 'CodeNote',
+      projectKey: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      projectKind: 'project'
+    })
+  })
 })

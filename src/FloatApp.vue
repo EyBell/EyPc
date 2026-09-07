@@ -28,6 +28,7 @@ import {
 import CodexWaterBall from './components/CodexWaterBall.vue'
 import {
   buildCompanionQuotaStrip,
+  buildCompanionTaskMetaLine,
   claudeRealtimeGapNote,
   companionQuotaChipAriaLabel,
   companionQuotaChipHint,
@@ -442,14 +443,14 @@ function taskTooltip(task: CodexTaskCard) {
   return task.originalName || task.name || '未命名任务'
 }
 
-function taskTopologyLabel(task: CodexTaskCard) {
-  const topology = task.companionTopology
-  if (!topology || topology.memberCount <= 1) return ''
-  const parts = [`+${topology.memberCount - 1} 子任务`]
-  if (topology.liveCount > 0) parts.push(`${topology.liveCount} 活动`)
-  if (topology.attentionCount > 0) parts.push(`${topology.attentionCount} 注意`)
-  if (topology.errorCount > 0) parts.push(`${topology.errorCount} 异常`)
-  return parts.join(' · ')
+function taskMetaLine(task: CodexTaskCard) {
+  return buildCompanionTaskMetaLine({
+    task,
+    statusLabel: taskStateLabel(task),
+    now: Date.now(),
+    elapsedDetail: formatTaskTime(task.lastQuestionAt),
+    timestampDetail: formatTaskDateTime(task.lastQuestionAt)
+  })
 }
 
 function displayOrderedTasks(tasks: CodexTaskCard[]) {
@@ -3643,15 +3644,20 @@ onUnmounted(() => {
                     :aria-label="`打开会话 ${taskDisplayLabel(row.task)}`"
                     @click.stop="activateTaskTitle(row.task, $event)"
                   >{{ taskDisplayLabel(row.task) }}</button>
-                  <div class="task-meta-line">
+                  <div
+                    class="task-meta-line"
+                    @pointerenter="queueActionHint($event, taskMetaLine(row.task).detail)"
+                    @pointerleave="clearActionHint"
+                    @focusin="queueActionHint($event, taskMetaLine(row.task).detail)"
+                    @focusout="clearActionHint"
+                  >
                     <span class="task-provider-marker" :class="`provider-${row.marker.provider}`">{{ row.marker.label }}</span>
-                    <span v-if="taskTopologyLabel(row.task)" class="task-topology-summary">{{ taskTopologyLabel(row.task) }}</span>
                     <button
                       type="button"
                       class="task-meta-button"
                       :aria-label="`聚焦会话 ${taskDisplayLabel(row.task)}，以接收会话快捷键`"
                       @click.stop="focusTaskMetadata(row.task)"
-                    >{{ row.task.projectName }} · {{ taskStateLabel(row.task) }} · {{ formatTaskTime(row.task.lastQuestionAt) }}</button>
+                    >{{ taskMetaLine(row.task).rest }}</button>
                   </div>
                 </div>
                 <div class="task-inline-actions" role="toolbar" :aria-label="`${taskDisplayLabel(row.task)} 会话操作`">
