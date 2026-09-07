@@ -1,4 +1,4 @@
-<!-- generated-from: code-note/README.md sha256:1fa90917163b7755b7090eed3c0badf8ada9ff4a6723d75b211e5c1bef7c7da0 -->
+<!-- generated-from: code-note/README.md sha256:189bb826efc0429aee3ba85fe579feabf5b6ff0c8911604e58500add704003a1 -->
 <!-- generated lookup only; edit the canonical source and republish -->
 
 # Portable Contract Ownership Registry
