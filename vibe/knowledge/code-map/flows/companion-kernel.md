@@ -1,6 +1,6 @@
 # 02a Companion Kernel 函数走读
 
-Baseline: 2026-09-04 · 只读走读，不改 Kernel 语义。行号为本会话实测。
+Baseline: 2026-09-07 · 行号为本会话实测。RAW-215 状态组压过置顶泊位；RAW-216 精确拓扑撤回缺席子代理。
 
 读这一篇时顺着两条链：**证据进 Snapshot**，以及 **点开一条任务**。页面、Float、角标都只消费 Snapshot，不要从 Vue 倒推相位。
 
@@ -19,35 +19,35 @@ Baseline: 2026-09-04 · 只读走读，不改 Kernel 语义。行号为本会话
 
 ```text
 Host 适配器 evidence batch
-  → publishEvidence(draft)                         L2396
-      → commitDraft(draft)                         L1938
-          → reconcileInteractions(...)             L1039
-          → refreshInteractionProjections()        L1179
-              → applyInteractionProjection(task)   L1145
-          → materializePrivateTopology()           L1632
-              → aggregateKernelRoot(root, members) L1585
-              → finalizeCanonicalTask              L1292
-                  → finalizeTask                   L697
+  → publishEvidence(draft)                         L2407
+      → commitDraft(draft)                         L1929
+          → reconcileInteractions(...)             L1030
+          → refreshInteractionProjections()        L1170
+              → applyInteractionProjection(task)   L1136
+          → materializePrivateTopology()           L1623
+              → aggregateKernelRoot(root, members) L1576
+              → finalizeCanonicalTask              L1283
+                  → finalizeTask                   L689
               → publicRootTask                     L509
-          → semanticPackage 无变化则不发版          L875
-          → syncConsumers → actions.sync           L1525
-          → emitPackage                            L1331
+          → semanticPackage 无变化则不发版          L866
+          → syncConsumers → actions.sync           L1516
+          → emitPackage                            L1322
 ```
 
 ### 1. 工厂把 Actions / Navigation 接到同一 Snapshot
 
-[createCompanionTaskKernel](../../../../preload/companion/task-kernel.cjs#L894) 持有过程私有图：`nodeStore` / `relationStore` / `interactionStore` / `interactionTombstones`（约 [L932](../../../../preload/companion/task-kernel.cjs#L932)）。对外只暴露根任务。
+[createCompanionTaskKernel](../../../../preload/companion/task-kernel.cjs#L885) 持有过程私有图：`nodeStore` / `relationStore` / `interactionStore` / `interactionTombstones`（约 [L923](../../../../preload/companion/task-kernel.cjs#L923)）。对外只暴露根任务。
 
 它立刻构造：
 
-- [createCompanionTaskActions](../../../../preload/companion/task-actions.cjs#L99)（[L964](../../../../preload/companion/task-kernel.cjs#L964)）
-- [createCompanionNavigation](../../../../preload/companion/navigation.cjs#L1)（[L973](../../../../preload/companion/task-kernel.cjs#L973)），`openTarget` 回调进 `actions.open`
+- [createCompanionTaskActions](../../../../preload/companion/task-actions.cjs#L99)（[L955](../../../../preload/companion/task-kernel.cjs#L955)）
+- [createCompanionNavigation](../../../../preload/companion/navigation.cjs#L1)（[L964](../../../../preload/companion/task-kernel.cjs#L964)），`openTarget` 回调进 `actions.open`
 
-公开 API 在 [L3222](../../../../preload/companion/task-kernel.cjs#L3222)：`publishEvidence` 给 Host，`dispatchCommand` 给 Renderer，`getLatest` / `subscribe` / `acknowledge` 给消费者。
+公开 API 在 [L3233](../../../../preload/companion/task-kernel.cjs#L3233)：`publishEvidence` 给 Host，`dispatchCommand` 给 Renderer，`getLatest` / `subscribe` / `acknowledge` 给消费者。
 
 ### 2. commitDraft 是唯一吃证据的入口
 
-[publishEvidence](../../../../preload/companion/task-kernel.cjs#L2396) 与 Renderer 的 [syncPackage](../../../../preload/companion/task-kernel.cjs#L2376) 都进 [commitDraft](../../../../preload/companion/task-kernel.cjs#L1938)。
+[publishEvidence](../../../../preload/companion/task-kernel.cjs#L2407) 与 Renderer 的 [syncPackage](../../../../preload/companion/task-kernel.cjs#L2387) 都进 [commitDraft](../../../../preload/companion/task-kernel.cjs#L1929)。
 
 关键闸门：
 
@@ -56,11 +56,11 @@ Host 适配器 evidence batch
 - 某个已启用 Provider 的 batch `valid !== true` 时整笔事务拒绝，且**不消耗** producer revision，以便同号重试。
 - 未声明的 membership lane 视为「未变」，不得当成 0 把库存打成旧快照。
 
-然后：更新 `nodeStore` / `relationStore` → [reconcileInteractions](../../../../preload/companion/task-kernel.cjs#L1039) → [refreshInteractionProjections](../../../../preload/companion/task-kernel.cjs#L1179)。
+然后：更新 `nodeStore` / `relationStore`（精确 `metadata.topologyComplete` 的 family 在 [L2050](../../../../preload/companion/task-kernel.cjs#L2050) 撤回本批未出现的私有成员）→ [reconcileInteractions](../../../../preload/companion/task-kernel.cjs#L1030) → [refreshInteractionProjections](../../../../preload/companion/task-kernel.cjs#L1170)。
 
 ### 3. applyInteractionProjection：为什么 running 还能是待输入
 
-[applyInteractionProjection](../../../../preload/companion/task-kernel.cjs#L1145)：
+[applyInteractionProjection](../../../../preload/companion/task-kernel.cjs#L1136)：
 
 1. `basePhase` 取 `activityPhase`（Turn 证据），没有再用 `phase`。
 2. 只要 `interactionStore` 里还有该根的 `state === 'opened'` 实例，公开相位改成 `waiting-approval` 或 `waiting-input`，即使 Turn 仍在跑。
@@ -69,11 +69,11 @@ Host 适配器 evidence batch
 
 这就是 RAW-207 的代码落点：精确提问与 running 可以同时为真，公开分组走 waiting。
 
-墓碑规则：[recordInteractionTombstone](../../../../preload/companion/task-kernel.cjs#L1014) — 已终结的 `interactionRef` 不能被同 id 重新打开，Provider 必须发新实例。
+墓碑规则：[recordInteractionTombstone](../../../../preload/companion/task-kernel.cjs#L1005) — 已终结的 `interactionRef` 不能被同 id 重新打开，Provider 必须发新实例。
 
 ### 4. finalizeTask：所有公开字段过这一道
 
-[finalizeCanonicalTask](../../../../preload/companion/task-kernel.cjs#L1292) 先算活动窗 `dynamicEligible`，再把已读回执应用到 unread，最后调用模块级 [finalizeTask](../../../../preload/companion/task-kernel.cjs#L697)。
+[finalizeCanonicalTask](../../../../preload/companion/task-kernel.cjs#L1283) 先算活动窗 `dynamicEligible`，再把已读回执应用到 unread，最后调用模块级 [finalizeTask](../../../../preload/companion/task-kernel.cjs#L689)。
 
 `finalizeTask` 顺序（不要调换）：
 
@@ -83,44 +83,44 @@ Host 适配器 evidence batch
 | 2 | `manualPhase` | 仅当仍是同一段 `unknown`（`statusEnteredAt <= manualPhaseSetAt`）才顶上 |
 | 3 | Plan artifact | `planReady` → `available`；否则不可执行 |
 | 4 | capabilities.pause/resume/executePlan | 只在 settled/attention 且 Provider 声明 planLifecycle |
-| 5 | [derivedDynamicGroup](../../../../preload/companion/task-kernel.cjs#L674) | **显示**分组；`taskPinned` 则一律 `pinned` |
-| 6 | [derivedCycleTier](../../../../preload/companion/task-kernel.cjs#L650) | **快捷键环**；置顶不剥夺待输入/未读资格 |
+| 5 | [derivedDynamicGroup](../../../../preload/companion/task-kernel.cjs#L670) | **显示**分组；活着的状态组压过置顶泊位 |
+| 6 | [derivedCycleTier](../../../../preload/companion/task-kernel.cjs#L646) | **快捷键环**；置顶不剥夺待输入/未读资格 |
 
-[taskPinned](../../../../preload/companion/task-kernel.cjs#L609)：`localPin || providerPin`。显示进置顶组，角标仍按 [derivedAttentionState](../../../../preload/companion/task-kernel.cjs#L642)。
+[taskPinned](../../../../preload/companion/task-kernel.cjs#L606)：`localPin || providerPin`。图钉是行标记。已完成已读与 `unknown` 才停置顶分组；角标仍按 [derivedAttentionState](../../../../preload/companion/task-kernel.cjs#L638)。
 
-[buildViews](../../../../preload/companion/task-kernel.cjs#L817) 的 counts / attentionKeys 读状态资格，不读显示组。置顶的待输入行人在置顶分组，Ctrl 待输入仍能打到它。
+[buildViews](../../../../preload/companion/task-kernel.cjs#L809) 的 counts / attentionKeys 读状态资格，不读显示组。置顶的待输入行人在待输入分组，Ctrl 待输入仍能打到它。
 
 ### 5. 聚合成根再剥隐私
 
-[aggregateKernelRoot](../../../../preload/companion/task-kernel.cjs#L1585)：live 优先级 `waiting-approval > waiting-input > running`（[L79](../../../../preload/companion/task-kernel.cjs#L79)）。未读：任一 member true → true；全部 known false → false；否则 unknown。
+[aggregateKernelRoot](../../../../preload/companion/task-kernel.cjs#L1576)：live 优先级 `waiting-approval > waiting-input > running`（[L79](../../../../preload/companion/task-kernel.cjs#L79)）。未读：任一 member true → true；全部 known false → false；否则 unknown。
 
 [publicRootTask](../../../../preload/companion/task-kernel.cjs#L509) 剥掉 `activityPhase`、alias token、revision 内场等，Renderer 拿不到子成员 id。
 
-[semanticPackage](../../../../preload/companion/task-kernel.cjs#L875) 只序列化会影响用户语义的字段。health generation 空转不涨 Snapshot。
+[semanticPackage](../../../../preload/companion/task-kernel.cjs#L866) 只序列化会影响用户语义的字段。health generation 空转不涨 Snapshot。
 
 ## 链 2：点开一条任务
 
 ```text
 卡片 / Enter / 角标 / 全局快捷键
-  → dispatchCommand                         L3043
-      → executeCommand                      L2881
-          → commandIntent('open')           L2834
-          → dispatchLegacyIntent            L2670
-              action === 'open'             L2721
+  → dispatchCommand                         L3054
+      → executeCommand                      L2892
+          → commandIntent('open')           L2845
+          → dispatchLegacyIntent            L2681
+              action === 'open'             L2732
               → navigation.open
                   → actions.open            task-actions.cjs L292
                       → adapter.open
                       → normalizeOpenResult open-handoff.cjs L68
-              → acknowledgeOpenedTask       L1282
+              → acknowledgeOpenedTask       L1273
 ```
 
 ### 1. 命令闸门
 
-[dispatchCommand](../../../../preload/companion/task-kernel.cjs#L3043)：revision 必须是 `companion-task-command-v1`；`operationId` 去重；**按任务 key 串行**（`commandQueues`）。
+[dispatchCommand](../../../../preload/companion/task-kernel.cjs#L3054)：revision 必须是 `companion-task-command-v1`；`operationId` 去重；**按任务 key 串行**（`commandQueues`）。
 
-[executeCommand](../../../../preload/companion/task-kernel.cjs#L2881) 先挡未来 revision / 拓扑已变且 key 消失。`open` 不在本函数里直接调 Adapter，而是落到 [commandIntent](../../../../preload/companion/task-kernel.cjs#L2834) → [dispatchLegacyIntent](../../../../preload/companion/task-kernel.cjs#L2670)。
+[executeCommand](../../../../preload/companion/task-kernel.cjs#L2892) 先挡未来 revision / 拓扑已变且 key 消失。`open` 不在本函数里直接调 Adapter，而是落到 [commandIntent](../../../../preload/companion/task-kernel.cjs#L2845) → [dispatchLegacyIntent](../../../../preload/companion/task-kernel.cjs#L2681)。
 
-[L2721](../../../../preload/companion/task-kernel.cjs#L2721)：用当前 Snapshot 的 [actionTargetForTask](../../../../preload/companion/task-kernel.cjs#L1550)（私有 node 的 alias + 公开 phase）。没有公开行时，仅 `trustedResolvedTarget` 允许短暂目标。打开走 `navigation.open`，避免与 cycle 并发抢同一个 Adapter。
+[L2732](../../../../preload/companion/task-kernel.cjs#L2732)：用当前 Snapshot 的 [actionTargetForTask](../../../../preload/companion/task-kernel.cjs#L1541)（私有 node 的 alias + 公开 phase）。没有公开行时，仅 `trustedResolvedTarget` 允许短暂目标。打开走 `navigation.open`，避免与 cycle 并发抢同一个 Adapter。
 
 ### 2. Actions.open：过程快照才是身份
 

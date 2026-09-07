@@ -600,11 +600,8 @@ function compareByLatestQuestion(left, right) {
 }
 
 /**
- * 置顶只搬家：localPin 或 providerPin 任一为真即进 pinned 组，不取消待输入资格。
- * One pin predicate for every display decision. An EyPc-local pin and a
- * provider-side pin (Codex Pinned section, Claude star, Cursor pinned agent)
- * park the row the same way; which one it is only matters to the control
- * that toggles it.
+ * 置顶谓词：localPin 或 providerPin 任一为真。活着的状态组仍按相位显示，
+ * 图钉只作行标记；已完成已读与 unknown 才停在置顶分组。
  */
 function taskPinned(task) {
   return task.localPin === true || task.providerPin === true
@@ -633,11 +630,10 @@ function visibilityAnchor(task) {
 
 /**
  * The state-earned reachability of a task, independent of where the list
- * displays it. A local pin moves the ROW into the pin group (user decision,
- * 2026-09-01: any phase may be pinned), but it must never remove the task
- * from the shortcuts its own state earns it — so counts, attention walks and
- * the ring all resolve through this phase reading, not through the display
- * group.
+ * displays it. A pin is a row marker. Live, attention and unread rows stay in
+ * their status groups; only completed-read and unknown pins park in the pin
+ * group. Counts, attention walks and the ring still resolve through this
+ * phase reading, not through the display group.
  */
 function derivedAttentionState(task) {
   if (task.hidden || task.paused) return 'none'
@@ -654,7 +650,7 @@ function derivedCycleTier(task) {
     return task.planImplementation ? 'plan' : 'attention'
   }
   if (task.phase === 'stopped' && task.planReady) return 'plan'
-  if (task.phase === 'running' && task.dynamicEligible) return 'active'
+  if (task.phase === 'running' && (task.dynamicEligible || taskPinned(task))) return 'active'
   // Deliberately not gated on `dynamicEligible`: the unread badge counts every
   // visible completed-unread root, so the ring must reach exactly the same set
   // or the count is advertising something the shortcut cannot deliver.
@@ -670,25 +666,21 @@ function derivedCycleTier(task) {
   return 'none'
 }
 
-/** 显示分组：置顶一律 pinned；待输入资格仍走 attention，不要在 Vue 里改组。 */
+/** 显示分组：活着的状态组压过置顶泊位；图钉只留在行上。 */
 function derivedDynamicGroup(task) {
   if (task.hidden || task.paused) return 'none'
-  // A local pin is a "keep this where I can find it" request; the row moves to
-  // the pin group in EVERY phase (user decision, 2026-09-01 — previously only
-  // completed-read pins did, which made pinning a live task look like a flash
-  // that immediately reverted). State-earned reachability — badges, attention
-  // walks, the ring — stays with `derivedAttentionState`/`derivedCycleTier`,
-  // so a pinned waiting-input task still answers the 待输入 shortcut.
-  if (taskPinned(task)) return 'pinned'
-  // Attention survives the ordinary activity window. A long-waiting prompt or
-  // unread completion must remain reachable until the user handles it.
+  const pinned = taskPinned(task)
+  // Attention, live work and unread completions keep their status groups even
+  // when pinned. The pin is a row marker; the parking-lot group is only for
+  // completed-read and unknown pins that have no status group of their own.
   if (isAttentionTaskPhase(task.phase)) return 'input'
   if (task.phase === 'completed' && task.unread) return 'unread'
+  if (task.phase === 'running' && (pinned || task.dynamicEligible)) return 'active'
+  if (task.phase === 'stopped' && (pinned || task.dynamicEligible || task.planReady)) return 'stopped'
+  if (pinned) return 'pinned'
   // The activity window retires only unpinned work.
   if (!task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
-  if (task.phase === 'running') return 'active'
   if (task.phase === 'unknown') return 'none'
-  if (task.phase === 'stopped') return 'stopped'
   if (task.phase === 'completed') return 'completed'
   return 'none'
 }
@@ -827,8 +819,8 @@ function buildViews(tasks) {
   // A badge is a promise that something is reachable, so it counts what the
   // ring can actually open — an unopenable task used to be counted and then
   // silently skipped by every shortcut. Counts read the state-earned
-  // attention (not the display group): a pinned waiting-input task now sits
-  // in the pin group but must still be counted and reachable as 待输入.
+  // attention (not the parked pin group): a pinned waiting-input task sits
+  // in 待输入 and must still be counted there.
   const countable = visible.filter((task) => task.capabilities.open)
   views.counts.input = countable.filter((task) => derivedAttentionState(task) === 'input').length
   views.counts.active = countable.filter((task) => (
@@ -849,8 +841,7 @@ function buildViews(tasks) {
     .map((task) => task.key)
   // Direct attention actions are exact: "待输入" must never fall through to
   // an unrelated pinned/completed task. Membership is state-earned, so a
-  // pinned waiting-input task stays reachable here even though its row now
-  // lives in the pin group.
+  // pinned waiting-input task is in the input group and this entry.
   views.attentionKeys.input = inputAttention
   // "已完成未读" is also the fallback entry for pins that have no other
   // shortcut, but the two sets must never share one walk. While a real unread
@@ -2055,6 +2046,26 @@ function createCompanionTaskKernel(dependencies = {}) {
         currentLaneGenerations
       )
       nextNodeStore.set(incoming.key, reconciled.task)
+    }
+    const familySnapshots = new Map()
+    for (const provider of PROVIDERS) {
+      if (!enabledProviders.has(provider) || staleMembershipProviders.has(provider)) continue
+      for (const value of batches[provider].nodes) {
+        if (value?.role !== 'root' || value?.metadata?.topologyComplete !== true) continue
+        const family = typeof value.family === 'string' && value.family
+          ? value.family
+          : `${value.provider}:${value.key}`
+        familySnapshots.set(`${provider}:${family}`, new Set())
+      }
+    }
+    for (const incoming of incomingNodes) {
+      const present = familySnapshots.get(`${incoming.provider}:${incoming.family}`)
+      if (present) present.add(incoming.key)
+    }
+    for (const [key, task] of nextNodeStore) {
+      const present = familySnapshots.get(`${task.provider}:${task.family}`)
+      if (!present || present.has(key)) continue
+      nextNodeStore.delete(key)
     }
     const retainedKeys = new Set(nextNodeStore.keys())
     for (const task of previousPrivateByKey.values()) {

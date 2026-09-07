@@ -347,6 +347,183 @@ function publishCodexParentEvidenceV7(
   })
 }
 
+function claudeActivityObservation(input: {
+  kind: 'turn-running' | 'turn-completed' | 'turn-interrupted'
+  sequence: number
+  turnStartedAt: number
+  terminalAt?: number
+}) {
+  const terminalAt = input.kind === 'turn-running' ? 0 : Number(input.terminalAt) || input.sequence
+  return {
+    kind: input.kind,
+    authority: 'live-turn',
+    exact: true,
+    sequence: input.sequence,
+    observedAt: input.sequence,
+    statusEnteredAt: input.sequence,
+    turnStartedAt: input.turnStartedAt,
+    terminalAt,
+    candidates: [{
+      kind: input.kind,
+      authority: 'live-turn',
+      exact: true,
+      sequence: input.sequence,
+      observedAt: input.sequence,
+      statusEnteredAt: input.sequence,
+      turnStartedAt: input.turnStartedAt,
+      terminalAt
+    }]
+  }
+}
+
+/** Live Claude batches are delta (no membership/topology snapshot), matching applyClaudeStateToCompanionKernel. */
+function publishClaudeSessionEvidenceV7(
+  kernel: Record<string, any>,
+  generation: number,
+  input: {
+    phase: 'running' | 'stopped' | 'completed'
+    turnStartedAt: number
+    lastStopAt?: number
+    lastActivityAt?: number
+    children?: Array<{
+      key: string
+      active: boolean
+      startedAt: number
+      stoppedAt?: number
+    }>
+    omitChildren?: boolean
+    topologyComplete?: boolean
+  }
+) {
+  const parentKey = 'claude:local-a'
+  const family = parentKey
+  const turnStartedAt = input.turnStartedAt
+  const lastStopAt = Number(input.lastStopAt) || 0
+  const lastActivityAt = Number(input.lastActivityAt) || Math.max(turnStartedAt, lastStopAt)
+  const parentKind = input.phase === 'running' ? 'turn-running'
+    : input.phase === 'completed' ? 'turn-completed'
+      : 'turn-interrupted'
+  const parentSequence = Math.max(turnStartedAt, lastStopAt, lastActivityAt)
+  const nodes: Record<string, any>[] = []
+  const relations: Record<string, any>[] = []
+  const parentNode = createEvidenceNodeV7({
+    provider: 'claude',
+    key: parentKey,
+    family,
+    role: 'root',
+    observation: claudeActivityObservation({
+      kind: parentKind,
+      sequence: parentSequence,
+      turnStartedAt,
+      terminalAt: parentKind === 'turn-running' ? 0 : lastStopAt || lastActivityAt
+    }),
+    causalKey: `claude:${parentKey}:${turnStartedAt}`,
+    observedAt: parentSequence,
+    metadata: {
+      kind: 'claude-session',
+      actionAlias: 'local-a',
+      revisionAt: parentSequence,
+      membershipRevision: generation,
+      visibilityRevision: generation,
+      metadataRevision: generation,
+      lastQuestionAt: parentSequence,
+      createdAt: turnStartedAt,
+      displayOrder: 0,
+      cycleOrder: 0,
+      attentionOrder: 0,
+      hidden: false,
+      idleConfirmed: parentKind !== 'turn-running',
+      topologyComplete: input.topologyComplete === true || (!input.omitChildren && input.topologyComplete !== false),
+      localPin: false,
+      dynamicEligible: true,
+      displayName: 'Claude 任务',
+      originalTitle: 'Claude 任务'
+    },
+    capabilities: ['open'],
+    standaloneEligible: true
+  })
+  if (parentNode) nodes.push(parentNode)
+  const children = input.omitChildren ? [] : input.children || []
+  children.forEach((child, index) => {
+    const childRevision = Math.max(child.startedAt, Number(child.stoppedAt) || 0)
+    const childRunning = child.active === true
+    const childKind = childRunning ? 'turn-running' : 'turn-completed'
+    const node = createEvidenceNodeV7({
+      provider: 'claude',
+      key: child.key,
+      family,
+      role: 'child',
+      observation: claudeActivityObservation({
+        kind: childKind,
+        sequence: childRevision,
+        turnStartedAt: child.startedAt,
+        terminalAt: childRunning ? 0 : Math.max(Number(child.stoppedAt) || 0, childRevision)
+      }),
+      causalKey: `claude:${child.key}:${child.startedAt}`,
+      observedAt: childRevision,
+      metadata: {
+        kind: 'topology-child',
+        revisionAt: childRevision,
+        membershipRevision: childRevision,
+        visibilityRevision: childRevision,
+        metadataRevision: childRevision,
+        lastQuestionAt: child.startedAt,
+        createdAt: child.startedAt,
+        displayOrder: index + 1,
+        cycleOrder: index + 1,
+        attentionOrder: index + 1,
+        hidden: false,
+        idleConfirmed: !childRunning,
+        localPin: false,
+        dynamicEligible: true
+      },
+      capabilities: [],
+      standaloneEligible: false
+    })
+    if (node) nodes.push(node)
+    relations.push({
+      childKey: child.key,
+      parentKey,
+      provider: 'claude',
+      family,
+      relation: 'subagent',
+      authority: 'claude-hook',
+      exact: true,
+      generation
+    })
+  })
+  const lanes = {
+    membership: generation,
+    activity: generation,
+    interaction: generation,
+    unread: generation,
+    planArtifact: generation,
+    metadata: generation,
+    topology: generation
+  }
+  const base = draft([], generation, {
+    providers: { codex: false, claude: true },
+    sourceGenerations: { codex: 0, claude: generation },
+    sourceLaneGenerations: {
+      codex: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
+      claude: lanes
+    }
+  }) as Record<string, any>
+  return kernel.publishEvidence({
+    ...base,
+    evidenceBatches: {
+      ...base.evidenceBatches,
+      claude: createEvidenceBatchV7({
+        provider: 'claude',
+        nodes,
+        relations,
+        laneGenerations: lanes,
+        health: 'ready'
+      })
+    }
+  })
+}
+
 afterEach(() => vi.useRealTimers())
 
 describe('CompanionTaskKernel', () => {
@@ -1142,16 +1319,17 @@ describe('CompanionTaskKernel', () => {
     const latest = kernel.getLatest()
     const byKey = new Map(latest.tasks.map((value: any) => [value.key, value]))
     // Local pins keep EyPc order first; provider pins follow in the provider's order.
-    expect(latest.views.groups.pinned).toEqual(['codex-local-pin', 'codex-native-pin-first', 'claude-star', 'codex-native-pin'])
+    expect(latest.views.groups.pinned).toEqual(['codex-local-pin', 'claude-star', 'codex-native-pin'])
     expect(byKey.get('codex-native-pin')).toMatchObject({ dynamicGroup: 'pinned', cycleTier: 'none', providerPin: true, providerPinOrder: 2, providerPinAuthority: 'app-server', localPin: false })
-    // A running provider pin keeps its state-earned ring tier; only parked pins take the fallback.
-    expect(byKey.get('codex-native-pin-first')).toMatchObject({ dynamicGroup: 'pinned', cycleTier: 'active', providerPin: true })
+    // A running provider pin stays in 进行中; the pin is only a row marker.
+    expect(byKey.get('codex-native-pin-first')).toMatchObject({ dynamicGroup: 'active', cycleTier: 'active', providerPin: true })
     expect(byKey.get('claude-star')).toMatchObject({ dynamicGroup: 'pinned', providerPinAuthority: 'claude-metadata' })
     // Unpinned and lane-less rows keep their state-earned groups.
     expect(byKey.get('codex-unpinned')).toMatchObject({ dynamicGroup: 'completed', providerPin: false })
     expect(byKey.get('codex-no-lane')).toMatchObject({ dynamicGroup: 'active', providerPin: null, providerPinAuthority: '' })
     // A running provider pin is still counted as active and reachable by the ring.
     expect(latest.views.counts.active).toBe(2)
+    expect(latest.views.groups.active).toEqual(['codex-no-lane', 'codex-native-pin-first'])
     expect(latest.views.cycleKeys).toContain('codex-native-pin-first')
     // Parked provider pins share the completed-unread fallback with local pins.
     expect(latest.views.attentionKeys.completedUnread).toEqual(['codex-local-pin', 'claude-star', 'codex-native-pin'])
@@ -1434,12 +1612,11 @@ describe('CompanionTaskKernel', () => {
       ], 1, { providers: { codex: true, claude: false } })
     })
 
-    // A pin in ANY phase moves the row to the pin group (user decision,
-    // 2026-09-01) and is exempt from the activity window; the badges keep
-    // counting by real state, so the pinned running task still counts active.
-    expect(current.views.groups.pinned).toEqual(['codex-pin-running', 'codex-pin-stopped'])
-    expect(current.views.groups.active).toEqual([])
-    expect(current.views.groups.stopped).toEqual([])
+    // A pin in ANY phase is exempt from the activity window. Live and continue
+    // pins stay in their status groups; the pin is only a row marker.
+    expect(current.views.groups.pinned).toEqual([])
+    expect(current.views.groups.active).toEqual(['codex-pin-running'])
+    expect(current.views.groups.stopped).toEqual(['codex-pin-stopped'])
     // The window still retires unpinned work.
     expect(current.views.counts).toEqual({ input: 0, active: 1, unread: 0 })
   })
@@ -1498,21 +1675,23 @@ describe('CompanionTaskKernel', () => {
 
     const ring = new Set<string>(current.views.cycleKeys)
     const entry = new Set<string>(current.views.attentionKeys.completedUnread)
-    // Every pin now displays in the pin group (user decision, 2026-09-01)...
-    expect([...current.views.groups.pinned].sort())
-      .toEqual((current.tasks as Array<Record<string, any>>).map((value) => value.key).sort())
+    // Every pin now displays in exactly one group: status groups win for live,
+    // attention, unread and continue; completed-read / unknown stay parked.
+    const parked = (current.tasks as Array<Record<string, any>>)
+      .filter((value) => value.phase === 'completed' && !value.unread || value.phase === 'unknown')
+      .map((value) => value.key)
+      .sort()
+    expect([...current.views.groups.pinned].sort()).toEqual(parked)
     for (const value of current.tasks as Array<Record<string, any>>) {
-      const parked = value.phase === 'completed' && !value.unread || value.phase === 'unknown'
-      if (parked) {
-        // ...but a parked pin (completed-read / unknown) stays out of the
-        // ordinary ring, and a real unread backlog keeps it out of the
-        // dedicated entry, so that shortcut can never drift from unread work
-        // into parked pins.
+      const isParked = (value.phase === 'completed' && !value.unread) || value.phase === 'unknown'
+      if (isParked) {
+        // A parked pin (completed-read / unknown) stays out of the ordinary
+        // ring, and a real unread backlog keeps it out of the dedicated entry.
         expect(entry.has(value.key)).toBe(false)
         expect(ring.has(value.key)).toBe(false)
       } else {
-        // Its state-earned reachability survives the display move: pinning
-        // must neither add a ring slot nor take one away.
+        // Its state-earned reachability survives the pin marker: pinning must
+        // neither add a ring slot nor take one away.
         expect(ring.has(value.key)).toBe(true)
       }
     }
@@ -1549,9 +1728,8 @@ describe('CompanionTaskKernel', () => {
     })
 
     const rows = current.tasks as Array<Record<string, any>>
-    // Badges and entries read state-earned reachability (RAW + user decision
-    // 2026-09-01): moving every pin's ROW into the pin group must not shrink
-    // what the attention badges promise or what the direct entries reach.
+    // Badges and entries read state-earned reachability. Status groups now
+    // hold pinned live/unread rows; that must not shrink badge or entry sets.
     const stateInput = rows
       .filter((value) => ['waiting-input', 'waiting-approval'].includes(value.phase) && value.capabilities.open)
       .map((value) => value.key)
@@ -2209,14 +2387,13 @@ describe('CompanionTaskKernel', () => {
     })
 
     // Pinning must never quietly remove a task from the entries its own phase
-    // earns it; the rows themselves now display in the pin group (user
-    // decision, 2026-09-01) while every shortcut stays state-earned.
+    // earns it; live / attention / unread rows stay in those status groups.
     expect(current.views.cycleKeys).toEqual(['codex-pin-input', 'codex-pin-running', 'codex-pin-unread'])
     expect(current.views.attentionKeys.input).toEqual(['codex-pin-input'])
-    expect(current.views.groups.pinned).toEqual(['codex-pin-input', 'codex-pin-running', 'codex-pin-unread'])
-    expect(current.views.groups.input).toEqual([])
-    expect(current.views.groups.active).toEqual([])
-    expect(current.views.groups.unread).toEqual([])
+    expect(current.views.groups.pinned).toEqual([])
+    expect(current.views.groups.input).toEqual(['codex-pin-input'])
+    expect(current.views.groups.active).toEqual(['codex-pin-running'])
+    expect(current.views.groups.unread).toEqual(['codex-pin-unread'])
     expect(current.views.counts).toEqual({ input: 1, active: 1, unread: 1 })
   })
 
@@ -2496,9 +2673,9 @@ describe('CompanionTaskKernel', () => {
     })
 
     // A pin on a live task keeps the ring position its own running state earns
-    // it; only the ROW moves to the pin group (user decision, 2026-09-01).
-    expect(current.views.groups.pinned).toEqual(['codex-pinned-middle'])
-    expect(current.views.groups.active).toEqual(['claude-new', 'codex-old'])
+    // it; the row stays in 进行中 and the pin is only a marker.
+    expect(current.views.groups.pinned).toEqual([])
+    expect(current.views.groups.active).toEqual(['claude-new', 'codex-pinned-middle', 'codex-old'])
     expect(current.views.cycleKeys).toEqual(['claude-new', 'codex-pinned-middle', 'codex-old'])
   })
 
@@ -2519,11 +2696,10 @@ describe('CompanionTaskKernel', () => {
     })
     expect(current.tasks[0].cycleTier).toBe('fallback')
     expect(current.views.cycleKeys).toEqual(['codex-a'])
-    // The ROW displays in the pin group (user decision, 2026-09-01), but a
-    // continuable stopped pin rides the ring's fourth layer, not the parked
-    // fast-access entry.
-    expect(current.views.groups.pinned).toEqual(['codex-a'])
-    expect(current.views.groups.stopped).toEqual([])
+    // A continuable stopped pin sits in 待继续 and rides the ring's fourth
+    // layer, not the parked fast-access entry.
+    expect(current.views.groups.pinned).toEqual([])
+    expect(current.views.groups.stopped).toEqual(['codex-a'])
     expect(current.views.attentionKeys.completedUnread).toEqual([])
   })
 
@@ -3421,6 +3597,94 @@ describe('source lane units', () => {
     expect(kernel.getPackage().tasks[0]).toMatchObject({ topology: { memberCount: 2, liveCount: 1 } })
   })
 
+  it('lets a Claude parent leave running when its hook children go inactive at the same timestamps', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: false, claude: true } }
+    })
+    kernel.attach({ enabled: true, providers: { codex: false, claude: true } })
+    const child = { key: 'claude-child-a', active: true, startedAt: 1_000, stoppedAt: 0 }
+
+    publishClaudeSessionEvidenceV7(kernel, 2, {
+      phase: 'running',
+      turnStartedAt: 1_000,
+      lastActivityAt: 1_000,
+      children: [child]
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({
+      key: 'claude:local-a',
+      phase: 'running',
+      topology: { mode: 'aggregate', memberCount: 2, liveCount: 2 }
+    })
+
+    publishClaudeSessionEvidenceV7(kernel, 3, {
+      phase: 'stopped',
+      turnStartedAt: 1_000,
+      lastStopAt: 1_000,
+      lastActivityAt: 1_000,
+      children: [{ ...child, active: false, stoppedAt: 1_000 }]
+    })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({
+      phase: 'stopped',
+      topology: { mode: 'aggregate', memberCount: 2, liveCount: 0 }
+    })
+    expect(kernel.getPackage().views.counts.active).toBe(0)
+  })
+
+  it('does not keep a Claude parent running on a delta batch that omits now-inactive children', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: false, claude: true } }
+    })
+    kernel.attach({ enabled: true, providers: { codex: false, claude: true } })
+
+    publishClaudeSessionEvidenceV7(kernel, 2, {
+      phase: 'running',
+      turnStartedAt: 1_000,
+      lastActivityAt: 1_000,
+      children: [{ key: 'claude-child-a', active: true, startedAt: 1_000, stoppedAt: 0 }]
+    })
+    publishClaudeSessionEvidenceV7(kernel, 3, {
+      phase: 'stopped',
+      turnStartedAt: 1_000,
+      lastStopAt: 1_000,
+      lastActivityAt: 1_000,
+      omitChildren: true,
+      topologyComplete: true
+    })
+
+    expect(kernel.getPackage().tasks[0]).toMatchObject({
+      phase: 'stopped',
+      topology: { liveCount: 0 }
+    })
+    expect(kernel.getPackage().views.counts.active).toBe(0)
+  })
+
+  it('keeps Claude children when a later delta is not an exact family snapshot', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: false, claude: true } }
+    })
+    kernel.attach({ enabled: true, providers: { codex: false, claude: true } })
+
+    publishClaudeSessionEvidenceV7(kernel, 2, {
+      phase: 'running',
+      turnStartedAt: 1_000,
+      lastActivityAt: 1_000,
+      children: [{ key: 'claude-child-a', active: true, startedAt: 1_000, stoppedAt: 0 }]
+    })
+    publishClaudeSessionEvidenceV7(kernel, 3, {
+      phase: 'stopped',
+      turnStartedAt: 1_000,
+      lastStopAt: 1_000,
+      lastActivityAt: 1_000,
+      omitChildren: true,
+      topologyComplete: false
+    })
+
+    expect(kernel.getPackage().tasks[0]).toMatchObject({
+      phase: 'running',
+      topology: { liveCount: 1 }
+    })
+  })
+
   it('materializes all-bead Side Chat phase and unread decisions into mutually exclusive canonical views', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
@@ -4103,10 +4367,9 @@ describe('hand-set phase for an unknown task', () => {
 
     // The deliberate exception, and it is not the pin's: an unread completion
     // stays reachable from the entry AND the ring's `unread` tier because the
-    // badge promises exactly that set. The ROW itself displays in the pin
-    // group (user decision, 2026-09-01).
-    expect(current.views.groups.pinned).toEqual(['codex-a'])
-    expect(current.views.groups.unread).toEqual([])
+    // badge promises exactly that set. The row itself displays in 已完成未读.
+    expect(current.views.groups.pinned).toEqual([])
+    expect(current.views.groups.unread).toEqual(['codex-a'])
     expect(current.views.counts.unread).toBe(1)
     expect(current.views.attentionKeys.completedUnread).toEqual(['codex-a'])
     expect(current.views.cycleKeys).toEqual(['codex-a'])

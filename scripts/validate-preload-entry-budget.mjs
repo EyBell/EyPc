@@ -171,7 +171,9 @@ const BUDGET = Object.freeze({
   // ratchet 14402; this task adds +1 for `onPluginEnter` → float
   // `handlePluginEnter`, then +1 for `requireElectron` so a reconstructed
   // preload can close leftover `EyPc Codex` BrowserWindows.
-  lines: 14418,
+  // 2026-09-07 (RAW-216): +2 -- Claude `topologyComplete` is copied onto node
+  // metadata so Kernel family snapshots can retract absent live children.
+  lines: 14420,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

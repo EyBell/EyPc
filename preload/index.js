@@ -11153,7 +11153,8 @@ function companionProviderMetadataV7(input = {}) {
     ...(typeof source.projectKey === 'string' ? { projectKey: source.projectKey.slice(0, 256) } : {}),
     ...(typeof source.projectName === 'string' ? { projectName: source.projectName.slice(0, 240) } : {}),
     ...(source.projectKind === 'project' || source.projectKind === 'chats' ? { projectKind: source.projectKind } : {}),
-    ...(source.archiveRequest && typeof source.archiveRequest === 'object' ? { archiveRequest: source.archiveRequest } : {})
+    ...(source.archiveRequest && typeof source.archiveRequest === 'object' ? { archiveRequest: source.archiveRequest } : {}),
+    ...(source.topologyComplete === true ? { topologyComplete: true } : {})
   }
 }
 
@@ -11571,6 +11572,7 @@ function companionClaudeEvidenceV7(sessionValue, unread, input = {}) {
       attentionOrder: input.order,
       hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
       idleConfirmed: terminal,
+      topologyComplete: !metadataOnly && session.topologyComplete === true,
       localPin,
       // Inbound only (manifest `pin.outbound: false`): the App sidebar star.
       ...companionProviderPinFields({ pinned: session.isStarred === true, authority: 'claude-metadata', fallbackOrder: input.order }),

@@ -1700,6 +1700,83 @@ draft: v7EvidenceDraft({
     context.bridge.close()
   })
 
+  it('clears Claude liveCount when hook children go inactive and the parent fold is stopped', () => {
+    const noopWatch = () => () => undefined
+    let generation = 2
+    let session: Record<string, unknown> = {
+      sessionId: 'local-a',
+      phase: 'running',
+      stateCompatibility: 'compatible',
+      stateGeneration: 2,
+      phaseUpdatedAt: 1_000,
+      turnStartedAt: 1_000,
+      lastActivityAt: 1_000,
+      metadataUpdatedAt: 1_000,
+      createdAt: 800,
+      topologyComplete: true,
+      subagents: [{
+        agentId: 'agent-a',
+        active: true,
+        startedAt: 1_000,
+        stoppedAt: 0,
+        lastActivityAt: 1_000
+      }]
+    }
+    const context = loadCodexBridge(
+      new FakeCodexProcess(),
+      () => nativeRegistryText(),
+      null,
+      false,
+      true,
+      {
+        inspect: () => ({ available: true }),
+        readCodeStateSnapshot: () => ({
+          generation,
+          stateGeneration: generation,
+          readAt: 400 + generation,
+          topologyComplete: true,
+          sessions: [session]
+        }),
+        watchCodeState: noopWatch,
+        watchCodeSessions: noopWatch,
+        watchCodeUnread: noopWatch,
+        close: () => undefined
+      }
+    )
+    const kernel = seedSingleClaudeKernelTask(context, {
+      phase: 'running',
+      dynamicGroup: 'active',
+      idleConfirmed: false,
+      capabilities: { archive: false }
+    })
+
+    expect(context.native.applyClaudeStateToCompanionKernel()).toBe(true)
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === 'claude:local-a'))
+      .toMatchObject({ phase: 'running', topology: { liveCount: 2 } })
+
+    generation = 3
+    session = {
+      ...session,
+      phase: 'stopped',
+      stateGeneration: 3,
+      phaseUpdatedAt: 1_000,
+      lastStopAt: 1_000,
+      lastActivityAt: 1_000,
+      subagents: [{
+        agentId: 'agent-a',
+        active: false,
+        startedAt: 1_000,
+        stoppedAt: 1_000,
+        lastActivityAt: 1_000
+      }]
+    }
+    expect(context.native.applyClaudeStateToCompanionKernel()).toBe(true)
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === 'claude:local-a'))
+      .toMatchObject({ phase: 'stopped', topology: { liveCount: 0 } })
+    expect(kernel.getPackage().views.counts.active).toBe(0)
+    context.bridge.close()
+  })
+
   it('does not manufacture a Claude read from an inventory mutation without unread authority', () => {
     const noopWatch = () => () => undefined
     const context = loadCodexBridge(

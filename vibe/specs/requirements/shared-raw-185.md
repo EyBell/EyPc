@@ -4,7 +4,7 @@ qualified_source: SPEC-260828-COMPANION-PIN-WINDOW-EXEMPTION::RAW-185
 status: active
 domain: companion-shared
 authority: user-stated
-source_annotations: "implementation-landed / focused-automated-verified / host-pending / every-local-pin-displays-in-pinned"
+source_annotations: "implementation-landed / focused-automated-verified / host-pending / pin-window-exemption-retained / display-placement-refined-by-raw-215"
 scoped_relations:
   - kind: refines
     target: eypc-req-shared-raw-183
