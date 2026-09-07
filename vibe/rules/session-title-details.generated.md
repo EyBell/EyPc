@@ -1,9 +1,9 @@
-<!-- generated-from: code-note/adapters/session-title-details.md sha256:d2d31a0937117bfe83dc4917f7959d8b3c520ec52be729fa543e1f7633ce23e5 -->
+<!-- generated-from: code-note/adapters/session-title-details.md sha256:1beb235da53487b8763743d82d1926eb32980780553a6ddac9ea80210387473d -->
 <!-- generated; edit the canonical source and republish -->
 
 # Session Title Details
 
-Conditional [title owner](global-core.generated.md) clauses for naming/audits. APIs belong to host adapters.
+Conditional [title owner](global-core.generated.md) clauses. APIs belong to host adapters.
 
 ## Format
 
@@ -11,32 +11,34 @@ Conditional [title owner](global-core.generated.md) clauses for naming/audits. A
 
 Examples: `260907-CN-规则精简修复`, `260907-CN-WT-导入映射修复`.
 
-- Measure session-start date in Asia/Shanghai (GMT+8): `TZ=Asia/Shanghai date +%y%m%d` at first rename. Keep it across midnight; never invent it, use unconverted UTC or substitute today's date on continuation.
-- Use about 6–12 Simplified Chinese characters, allowing English proper nouns. Join with half-width hyphens, no spaces. Host English-title conventions do not override this.
+- Measure the Asia/Shanghai (GMT+8) session-start date; e.g. `TZ=Asia/Shanghai date +%y%m%d` at task start. Keep it across midnight/continuation; never guess or substitute today's date/unconverted UTC.
+- About 6–12 Simplified Chinese characters; English proper nouns allowed. Half-width hyphens, no spaces; host English-title conventions cannot override this.
 
 ## Project Segment
 
-- Prefer the declared abbreviation; otherwise uppercase CamelCase/hyphen/underscore/space initials, at most four letters/digits. One segment uses its first two letters: CodeNote → CN, smart-meter-hub → SMH, Feeder → FE.
-- Prefer two characters; reuse established forms, lengthen collisions to three/four. No new registry.
-- Place after the date when project distinction helps. Name the task's target, never a merely inspected repo. Omit if no single stable project; omission is valid.
-- Fix at first rename; change only with a changed core goal.
+- Use the declared abbreviation, else uppercase CamelCase/hyphen/underscore/space initials (one segment: first two letters). CodeNote → CN; smart-meter-hub → SMH; Feeder → FE.
+- Prefer two letters/digits, at most four; reuse established forms, lengthen collisions. No registry.
+- Optional after date when distinction helps; name the task target, never an inspected repo. Omit without one stable target. Fix at first rename; change only with the core goal.
 
 ## Worktree Segment
 
-Put `-WT` after date/project on an authorized move into a worktree, never for inspection alone. Name worktree-focused tasks by their functional goal from the lifecycle owner. Drop `-WT` after returning to main only at the next warranted rename.
+- At first naming/switch/resume, resolve this task's execution root from the lifecycle owner and `git worktree list --porcelain`; verify top-level path, Git directory and common directory. Cwd, branch/path names alone are insufficient.
+- Add `-WT` after date/project for linked-worktree execution, including starts and resumes there. Worktree-focused topics use the functional task goal.
+- Retain it across follow-ups and temporary main-checkout reads. Inspection or supervision of another task's worktree alone does not add it.
+- A verified execution switch into/out of a worktree triggers a same-turn update even without topic drift. Drop only on verified return to main; repair missing/wrong segments. Hand-set titles remain protected; unavailable metadata/API means unverified, never guessed.
 
 ## Apply Gate
 
-Run the [baseline gate](global-core.generated.md#apply-gate) before substantive work. Discover current-host tools, including deferred tools. Rename automatic titles without another approval when capable. Preserve hand-set titles unless the user requests change. Unknown provenance requires supported metadata, not guesses from wording.
+Run the [baseline gate](global-core.generated.md#apply-gate) before work. Discover current/deferred host tools. Rename automatic titles when capable; hand-set titles require a user change request. Resolve unknown provenance from supported metadata, never wording.
 
 ## Rename Boundary
 
-Rename only the current task unless another is named; at most once per turn. Core-goal drift/worktree moves qualify; follow-ups/verification do not. Never borrow another host API or edit logs/caches to simulate success.
+Current task only unless another is named; once per turn. Core-goal/checkout changes qualify; follow-ups alone do not. No other-host API or log/cache edits.
 
 ## Verification Boundary
 
-Separate request acceptance, exact canonical readback, visible title and refresh/re-entry persistence. Capability promotion requires the latter checks when surfaces exist. Missing tools limit current availability; they do not erase historical capability evidence.
+Separate request acceptance, exact canonical readback, visible title and refresh persistence. Promotion needs visible/persistence checks when available. Missing tools limit current availability, not historical evidence.
 
 ## Adapter Duty
 
-Entries link to the owner. Record `rename-supported`, `convention-only` or `unmeasured` in the host adapter. Only measured model-visible channels qualify for guard delivery; configuration requires a fresh-session canary before automatic-load acceptance.
+Link to the owner; record `rename-supported`, `convention-only` or `unmeasured` in adapters. Guard delivery needs measured model-visible output; automatic-load acceptance needs a fresh-session canary.
