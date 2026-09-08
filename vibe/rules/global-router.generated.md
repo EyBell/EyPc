@@ -1,4 +1,4 @@
-<!-- generated-from: code-note/routing/README.md sha256:7ff7948d08ddab1bb13298772000364de248ff55a12d85a6450473a93cdfab12 -->
+<!-- generated-from: code-note/routing/README.md sha256:aaa5073065ba7b87ae7ef7965e604ff97cac5a2ad1969e4eab479a15e39d1243 -->
 <!-- generated; edit the canonical source and republish -->
 
 # Rule Kernel Router
@@ -17,6 +17,8 @@ Hosts: any
 ## Host-Agnostic Auto-Load Paradigm
 
 Apply this baseline on every host. Before domain work, read the [catalog](global-route-catalog.generated.md) and its matched owners. Re-evaluate triggers when the task changes; a pointer is not a completed read.
+
+When actually applying a Skill, follow the enabled invocation declaration (central dependency unavailable: `skills/rules.md#invocation-observations`) through the shared producer. Reuse loaded text; telemetry failure stays ancillary. This route adds no automatic host coverage.
 
 ## Fixed Guards
 

@@ -1,4 +1,4 @@
-<!-- generated-from: code-note/routing/catalog.md sha256:bec4f125428a228c3c26f8485c807c2ae292544003d161b1ff7c48c0760e6e39 -->
+<!-- generated-from: code-note/routing/catalog.md sha256:570c474004dc3dc13c6e8a6e4aac5f35ab9f509b9a9fe2f1b166c0ce7968deba -->
 <!-- generated; edit the canonical source and republish -->
 
 # Rule Routing Details
@@ -58,3 +58,21 @@ Invalid input, ambiguity, owner drift, adapter drift or an unknown/malformed exe
 ## Persistence Boundary
 
 Persist no prompts, commands, transcripts, reasoning, outputs, credentials, personal data, machine paths or private receipts. Route results are bounded decisions, not a task log, capability claim or write grant.
+
+## Direct Operation Context
+
+Optional read-only shortcuts in resolve_rule_route.py (central dependency unavailable: `scripts/resolve_rule_route.py#L1`). This table selects existing owners and workflows; it adds no policy owner, action authority or mandatory preflight. Baseline/project loading and request-mode gates still apply. Use it when direct expansion saves repeated manual lookups; an already-loaded unchanged owner needs no reader call.
+
+| operation | contract | workflow | activation |
+| --- | --- | --- | --- |
+| reply | communication-primary-response | - | - |
+| title | session-title | - | title-action |
+| commit | github-collaboration | Git workflow (central dependency unavailable: `../Skills/global/git-batch-commit-push/SKILL.md`) | commit |
+| push | github-collaboration | Git workflow (central dependency unavailable: `../Skills/global/git-batch-commit-push/SKILL.md`) | push |
+| docs | documentation-impact | Document workflow (central dependency unavailable: `../Skills/global/doc-memory-closeout/SKILL.md`) | document-sync |
+
+The reader is canonical-only; portable consumers without the canonical scripts use their existing owner routes. It returns `rule-context/v1`: unique current source paths, full UTF-8 sizes, hashes, a stable `source_fingerprint` and a separately scoped `context_fingerprint` for reuse. `--emit-owner-content` includes the complete selected files. Only explicit `conditional-context` markers are expanded recursively; ordinary Markdown links remain conditional human/agent references. Missing owners, invalid markers, unknown operations/contexts, escapes and cycles return an error with no partial body. Required newly discovered domain owners still follow the normal router.
+
+For example, `--host codex --operation title --operation reply --emit-owner-content` reads those owners/details in one call. Add `--activation-context reply-detail`, `commit-message`, `history-correction` or `document-receipt` only when that actual conditional step is selected. Multiple operations deduplicate shared physical sources.
+
+After actually reading the emitted files, a caller may retain the fingerprint with an ephemeral `--context-key` and pass `--reuse-context` in that same model context. Exact current bytes, selection, host, reader and context identity must still match; a hit emits no repeated bodies. The pure reader writes nothing; when the separately enabled usage observer (central dependency unavailable: `codex-evolution/runtime-supervision/README.md#skill-and-rule-observations`) is available, the CLI may append a private context observation without changing any reuse receipt. A new task, host/project switch, handoff or context reset discards this hint. A fingerprint proves a source snapshot only: it cannot prove model loading, semantic synchronization, successful validation, title/Git completion or permission. Existing `documentation-sync-v2` receipts continue to own document-operation reuse. Do not persist emitted source bodies or build a second receipt ledger.
