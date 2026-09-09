@@ -8,31 +8,30 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 
 ## Current Authorities And Routes
 
+- [Inventory membership and Turn parsing](companion-inventory.md#L1)
+
 - [Controlled task-state specification](../../../specs/260810/1155-install-runtime-diagnostics/spec.md#L1)
+- [RAW-218 native vs Host origin](../../../specs/260908/codex-native-host-origin/spec.md#L1)
 - [Product requirements](../../../specs/PRODUCT_REQUIREMENTS.md#L1)
 - [Architecture](../../ARCHITECTURE.md#L1)
 - [Verification](../../../specs/260810/1155-install-runtime-diagnostics/verify.md#L1)
 
 ## Primary Error Records
 
+
 - [App Server state survives exit](../codex-app-server-session-state-survives-exit.md#L1)
 - [Completed-unread acknowledgement (superseded)](../codex-completed-unread-explicit-acknowledgement.md#L1)
 - [Completion hysteresis (superseded)](../codex-completion-transition-hysteresis.md#L1)
 - [Counter and timestamp units in one comparison set](../comparison-set-mixing-counter-and-timestamp-units.md#L1)
 - [Cross-process notLoaded is not completion](../codex-cross-process-notloaded-is-not-completion.md#L1)
-- [Running side child invisible after reload](../codex-running-side-child-invisible-after-reload.md#L1)
-- [Subagent thread unlisted, parent shows stopped](../codex-subagent-thread-unlisted-parent-shows-stopped.md#L1)
 - [Desktop unread missing-field fallback](../codex-desktop-unread-missing-field-fallback.md#L1)
 - [Detection recorded without a repair path](../detection-recorded-without-any-repair-path.md#L1)
-- [Explicit archive bypasses inventory quarantine](../codex-explicit-archive-event-bypasses-inventory-quarantine.md#L1)
 - [Fixed debounce delays terminal confirmation](../codex-fixed-debounce-delays-terminal-confirmation.md#L1)
-- [Inventory dropout is not deletion](../codex-inventory-dropout-is-not-task-deletion.md#L1)
 - [Pending user request overrides idle](../codex-pending-user-request-overrides-idle-runtime.md#L1)
 - [Provider status display normalization](../codex-provider-status-display-normalization.md#L1)
 - [Read state must not replay activity](../codex-read-state-must-not-replay-activity.md#L1)
 - [Stale live active ordering history (superseded)](../codex-stale-live-active-needs-completion-order.md#L1)
 - [Stale live unread false blocks completion unread](../codex-stale-live-unread-false-blocks-completion-unread.md#L1)
-- [Task count/list projection convergence](../codex-task-count-list-projection-divergence.md#L1)
 - [Task-state version skew degrades atomically](../codex-task-state-version-skew-must-degrade-atomically.md#L1)
 - [Task-switch unfollow preserves live shadow](../codex-task-switch-unfollow-must-not-drop-live-shadow.md#L1)
 - [Turn completion is not Goal completion](../codex-turn-completion-is-not-goal-completion.md#L1)
@@ -58,6 +57,7 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 - [Exact topology must retract absent children](../claude-exact-topology-must-retract-absent-children.md#L1)
 - [Pin group is a parking lot, not live status](../pin-group-is-parking-lot-not-live-status.md#L1)
 - [Foreign provider project fields must reach Kernel metadata](../companion-foreign-project-fields-not-published.md#L1)
+- [Official active empty turns are not non-conversation](../codex-native-active-empty-turns-not-nonconversation.md#L1)
 
 ## Historical Or Migration Sources
 

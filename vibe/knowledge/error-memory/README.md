@@ -19,6 +19,7 @@
 
 | 模块 | 唯一主责范围 |
 | --- | --- |
+| [Companion Inventory](modules/companion-inventory.md#L1) | 库存成员、Turn 解析、丢失行与计数一致性 |
 | [Companion Task State](modules/companion-task-state.md#L1) | phase、Turn/Goal 因果、root/Side、unread、membership、Kernel package 与推送 |
 | [Claude Companion](modules/claude-companion.md#L1) | Claude inventory、App phase、原生 unread、open 与 archive authority |
 | [CodexHost External Processes](modules/codexhost-external-processes.md#L1) | CodexHost 额外进程发现、Host 未读与跳转已读记忆、roster 生命周期、Host 委派写入 |

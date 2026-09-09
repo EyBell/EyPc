@@ -4,12 +4,12 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 60,
-    "ordered_anchors": 338,
-    "raw_parent_ordered": 212,
+    "source_documents": 61,
+    "ordered_anchors": 343,
+    "raw_parent_ordered": 217,
     "unparented_ordered": 126,
     "registered_requirements": 105,
-    "registry_review_required": 107,
+    "registry_review_required": 112,
     "source_addressable_not_registered": 126
   },
   "documents": [
@@ -611,6 +611,16 @@
       "raw_identity_count": 4,
       "ordered_anchor_count": 7,
       "raw_parent_ordered_count": 7,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260908/codex-native-host-origin",
+      "source_path": "vibe/specs/260908/codex-native-host-origin/raw-requirement.md",
+      "spec_id": "SPEC-260908-CODEX-NATIVE-HOST-ORIGIN",
+      "content_sha256": "e602799bacf871c025db593b4612967dc39ce3d4fda5ba6a9863e64be0b87b45",
+      "raw_identity_count": 3,
+      "ordered_anchor_count": 5,
+      "raw_parent_ordered_count": 5,
       "unparented_ordered_count": 0
     }
   ],
@@ -8060,6 +8070,116 @@
       "parent_raw_id": "RAW-216",
       "qualified_source": "SPEC-260907-STATUS-OVER-PIN-AND-STALE-CLAUDE-CHILD::RAW-216#3",
       "clause_sha256": "ca90e6d67abc956aadf1f26cbdc0b2e82e429e1880a5b73d74ee471164e5e032",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-BA73C0AA580A5B75D160",
+      "source_task": "260908/codex-native-host-origin",
+      "source_path": "vibe/specs/260908/codex-native-host-origin/raw-requirement.md",
+      "line": 13,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-218：自动区分 Codex Host 与原生 Codex，并用官方连接器补原生空 Turn 状态",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "1",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-218",
+      "qualified_source": "SPEC-260908-CODEX-NATIVE-HOST-ORIGIN::RAW-218#1",
+      "clause_sha256": "7ac818be400193e99e48d3592aab3c42aebd57dd332a70ac45045925df332111",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-0E5F4DB51698B6A34D1F",
+      "source_task": "260908/codex-native-host-origin",
+      "source_path": "vibe/specs/260908/codex-native-host-origin/raw-requirement.md",
+      "line": 14,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-218：自动区分 Codex Host 与原生 Codex，并用官方连接器补原生空 Turn 状态",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "2",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-218",
+      "qualified_source": "SPEC-260908-CODEX-NATIVE-HOST-ORIGIN::RAW-218#2",
+      "clause_sha256": "83a109bb8b1c371c352d8c363b42a03462a4234de84bb063044d49f97dfc0643",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-F29AAE4C211FDBA8D57E",
+      "source_task": "260908/codex-native-host-origin",
+      "source_path": "vibe/specs/260908/codex-native-host-origin/raw-requirement.md",
+      "line": 15,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-218：自动区分 Codex Host 与原生 Codex，并用官方连接器补原生空 Turn 状态",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "3",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-218",
+      "qualified_source": "SPEC-260908-CODEX-NATIVE-HOST-ORIGIN::RAW-218#3",
+      "clause_sha256": "3ab54352943fb56665bb93743c978b7bc10f79425b2f67df77a9c5bb4005637b",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-7D06F4BA8763578784C6",
+      "source_task": "260908/codex-native-host-origin",
+      "source_path": "vibe/specs/260908/codex-native-host-origin/raw-requirement.md",
+      "line": 16,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-218：自动区分 Codex Host 与原生 Codex，并用官方连接器补原生空 Turn 状态",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "4",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-218",
+      "qualified_source": "SPEC-260908-CODEX-NATIVE-HOST-ORIGIN::RAW-218#4",
+      "clause_sha256": "2100bc000e0ff3b715b1c64fe382a4e489bd16d127e11b7ab387adc2cf851c05",
+      "classification": "raw-child-requirement",
+      "disposition": "registry-review-required",
+      "semantic_module": null,
+      "linked_current_requirement": null,
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-5B0A40438DDFC48074EA",
+      "source_task": "260908/codex-native-host-origin",
+      "source_path": "vibe/specs/260908/codex-native-host-origin/raw-requirement.md",
+      "line": 17,
+      "exact_heading_text": "规范化需求",
+      "heading_path": [
+        "RAW-218：自动区分 Codex Host 与原生 Codex，并用官方连接器补原生空 Turn 状态",
+        "规范化需求"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "5",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-218",
+      "qualified_source": "SPEC-260908-CODEX-NATIVE-HOST-ORIGIN::RAW-218#5",
+      "clause_sha256": "3fe349f277da067c1c62dc2356a8889f89a946ba806b0b36cc1fdd517944fe2d",
       "classification": "raw-child-requirement",
       "disposition": "registry-review-required",
       "semantic_module": null,
