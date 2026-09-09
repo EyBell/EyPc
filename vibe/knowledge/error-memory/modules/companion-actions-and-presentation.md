@@ -44,6 +44,7 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Plain cold start bypasses CodexHost; open readiness launches through the Host first](../codexhost-plain-cold-start-bypasses-host.md#L1)
 - [Display clock zero is missing, not a reset](../companion-display-clock-zero-is-missing.md#L1)
 - [Pin group is a parking lot, not live status](../pin-group-is-parking-lot-not-live-status.md#L1)
+- [Official active empty turns are not non-conversation](../codex-native-active-empty-turns-not-nonconversation.md#L1)
 
 ## Related Error Records
 

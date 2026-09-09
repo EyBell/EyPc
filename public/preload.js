@@ -9433,6 +9433,18 @@ function sanitizeCodexTurnStatusPage(value) {
   return sanitizeCodexTurnStatus(turns[0])
 }
 
+/** Official extra-model rows can be connector-active while turns/list is still
+ * empty. Host extra processes already inject synthetic turns. Idle empty
+ * pages stay non-conversation. */
+function codexNativeConnectorLiveTurn(thread) {
+  const row = codexRecord(thread)
+  if (row.codexhostExternal === true) return null
+  if (codexRecord(row.status).type !== 'active') return null
+  const startedAt = codexTimestampMs(row.recencyAt) || codexTimestampMs(row.updatedAt)
+  if (!startedAt) return null
+  return { status: 'inProgress', startedAt }
+}
+
 function scheduleCodexFirstPromptScan(value) {
   if (codexThreadFirstPromptScanRunning || codexThreadTurnStatusRpcAvailable === false) return
   const source = codexRecord(value)
@@ -9598,6 +9610,13 @@ async function readCodexThreadTurnStatuses(rows, dirtyThreadIds = new Set()) {
     const pageSource = codexRecord(page)
     if (!Array.isArray(pageSource.data)) throw codexError('protocol-error', 'Codex latest Turn response is invalid')
     if (pageSource.data.length === 0) {
+      const liveTurn = codexNativeConnectorLiveTurn(thread)
+      if (liveTurn) {
+        latest.set(thread.id, liveTurn)
+        readSucceededIds.add(thread.id)
+        codexThreadTurnStatusCache.set(thread.id, { turn: { ...liveTurn } })
+        return
+      }
       nonConversationIds.add(thread.id)
       readSucceededIds.add(thread.id)
       codexThreadTurnStatusCache.set(thread.id, { nonConversation: true })

@@ -9583,6 +9583,23 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
+  it('keeps a native connector-active row when official turns/list is empty', async () => {
+    const child = new FakeCodexProcess()
+    child.emptyTurnIds.add(FIXED_THREAD_IDS[1])
+    const { bridge } = loadCodexBridge(child)
+    const snapshot = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(snapshot).toMatchObject({
+      ok: true,
+      value: { completeness: 'verified', nonConversationCount: 0 }
+    })
+    expect(snapshot.value.threads).toHaveLength(5)
+    expect((snapshot.value.threads as Array<Record<string, any>>).find((row) => row.name === '运行中')).toMatchObject({
+      name: '运行中',
+      lastTurnStatus: 'inProgress'
+    })
+    bridge.close()
+  })
+
   it('retries one native project fingerprint change and rejects a second unstable scan', async () => {
     const base = JSON.parse(nativeRegistryText()) as Record<string, any>
     const renamed = JSON.stringify({

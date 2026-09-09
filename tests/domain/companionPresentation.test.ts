@@ -194,6 +194,7 @@ describe('water ball presentation', () => {
 describe('row markers', () => {
   it.each([
     ['Codex', { provider: 'codex' as const }, { provider: 'codex', label: 'CX', tooltip: '归属 Codex' }],
+    ['Codex Host', { provider: 'codex' as const, codexhostHarnessId: 'grok' }, { provider: 'codex', label: 'XH', tooltip: '归属 Codex Host' }],
     ['Claude', { provider: 'claude' as const }, { provider: 'claude', label: 'CC', tooltip: '归属 Claude' }],
     ['Cursor', { provider: 'cursor' as const }, { provider: 'cursor', label: 'CS', tooltip: '归属 Cursor' }],
     ['legacy Codex', {}, { provider: 'codex', label: 'CX', tooltip: '归属 Codex' }]
@@ -272,6 +273,21 @@ describe('row markers', () => {
       statusLabel: '已完成',
       now
     }).rest).toBe('已完成 RECENT')
+    expect(buildCompanionTaskMetaLine({
+      task: {
+        provider: 'codex',
+        codexhostHarnessId: 'grok',
+        projectName: 'CodeNote',
+        projectKind: 'project',
+        lastQuestionAt: now - 12 * 3_600_000
+      },
+      statusLabel: '进行中',
+      now
+    })).toMatchObject({
+      membershipLabel: 'XH',
+      membershipTooltip: '归属 Codex Host',
+      rest: 'CodeNote 进行中 12h'
+    })
   })
 
   it('describes Cursor cold-inventory source status without quota language', () => {

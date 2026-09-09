@@ -231,14 +231,22 @@ const COMPANION_GENERIC_CHATS_NAMES = new Set([
 /**
  * Every status row carries a textual owner cue. Color remains supplementary,
  * so compatibility mode and forced-colors users receive the same information.
- * Task rows compress the cue to `CC` / `CX` / `CS`; tooltip and ARIA keep
+ * Task rows compress the cue to `CC` / `CX` / `CS`; a CodexHost extra
+ * process stays on the Codex provider and shows `XH`. Tooltip and ARIA keep
  * the full「归属 …」phrase.
  */
 export function resolveCompanionRowMarker(
-  task: { provider?: CompanionProviderId } | null | undefined
+  task: { provider?: CompanionProviderId; codexhostHarnessId?: string } | null | undefined
 ): CompanionRowMarker | null {
   if (!task) return null
   const provider = companionTaskProvider(task)
+  if (provider === 'codex' && typeof task.codexhostHarnessId === 'string' && task.codexhostHarnessId) {
+    return {
+      provider,
+      label: 'XH',
+      tooltip: '归属 Codex Host'
+    }
+  }
   const label = COMPANION_PROVIDER_LABELS[provider]
   return {
     provider,
@@ -307,6 +315,7 @@ export interface CompanionTaskMetaLine {
 export function buildCompanionTaskMetaLine(input: {
   task: {
     provider?: CompanionProviderId
+    codexhostHarnessId?: string
     projectName?: string
     projectKind?: 'project' | 'chats'
     companionTopology?: {

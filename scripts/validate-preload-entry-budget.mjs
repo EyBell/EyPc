@@ -178,13 +178,17 @@ const BUDGET = Object.freeze({
   // letting the package fill * Chats. Helpers live next to
   // companionProviderMetadataV7; Cursor workspace.json mapping lives in
   // preload/cursor/inventory.cjs.
-  lines: 14443,
+  // 2026-09-08 (RAW-218): +19 / +1 codex function -- native official
+  // `active` + empty `turns/list` synthesizes inProgress so extra-model
+  // rows stay in inventory. Host extra processes keep discovery turns.
+  lines: 14462,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
   // silently undercounts them by more than half.
   // 2026-09-03: +2 for setCodexhostPath / clearCodexhostPath (manual codexhost location).
-  codexFunctions: 278,
+  // 2026-09-08 (RAW-218): +1 for codexNativeConnectorLiveTurn.
+  codexFunctions: 279,
   // Module-level mutable state: top-level `let`/`var` plus top-level `const`
   // bindings holding a fresh `Map`/`Set`. These are the bindings a closure
   // rewrite has to either move or inject, so they measure coupling rather than
