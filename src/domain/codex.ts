@@ -1914,7 +1914,7 @@ export function projectConversations(input: {
       && Boolean(thread.actionAlias)
       && Number.isFinite(thread.updatedAt)
       && thread.updatedAt > 0
-      && numberValue(thread.lastTurnStartedAt, 0) > 0
+      && latestTurnActivityAt(thread) > 0
       && (!windowStart || latestTurnActivityAt(thread) >= windowStart))
     .map((thread) => [thread.key, thread] as const)).values()]
 

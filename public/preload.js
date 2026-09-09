@@ -9623,7 +9623,13 @@ async function readCodexThreadTurnStatuses(rows, dirtyThreadIds = new Set()) {
       return
     }
     const turn = sanitizeCodexTurnStatusPage(page)
-    if (!turn || !turn.startedAt) throw codexError('protocol-error', 'Codex latest Turn is missing startedAt')
+    // Turn timestamps are nullable in the provider contract. Never invent a
+    // start time, or let one malformed row abort unrelated task reads.
+    if (!turn) {
+      codexThreadTurnStatusCache.delete(thread.id)
+      runtimeDiagnostics.record({ level: 'info', scope: 'task-probe', event: 'codex-invalid-turn', outcome: 'skipped', provider: 'codex', count: 1 })
+      return
+    }
     latest.set(thread.id, turn)
     readSucceededIds.add(thread.id)
     codexThreadTurnStatusCache.set(thread.id, { turn: { ...turn } })
@@ -9653,7 +9659,7 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
     const statusSource = codexRecord(thread.status)
     const connectorStatus = ['active', 'idle', 'notLoaded', 'systemError'].includes(statusSource.type) ? statusSource.type : 'notLoaded'
     const lastTurn = turnStatuses.get(thread.id)
-    if (!lastTurn || !lastTurn.startedAt) continue
+    if (!lastTurn) continue
     const planLifecycle = codexThreadPersistedPlanLifecycle(thread, lastTurn)
     const persistedPendingInput = connectorStatus !== 'active'
       && codexThreadHasPersistedPendingInput(thread, lastTurn)
@@ -9707,7 +9713,7 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       ...(codexTimestampMs(thread.createdAt) ? { createdAt: codexTimestampMs(thread.createdAt) } : {}),
       ...(codexThreadFirstPromptCache.get(thread.id)?.firstPromptAt ? { firstPromptAt: codexThreadFirstPromptCache.get(thread.id).firstPromptAt } : {}),
       lastTurnStatus: lastTurn.status,
-      lastTurnStartedAt: lastTurn.startedAt,
+      ...(lastTurn.startedAt ? { lastTurnStartedAt: lastTurn.startedAt } : {}),
       ...(lastTurn.completedAt ? { lastTurnCompletedAt: lastTurn.completedAt } : {}),
       ...(lastTurn.status === 'interrupted' || lastTurn.status === 'failed'
         ? { lastTurnEvidence: 'targeted-after-exit', idleConfirmed: connectorStatus !== 'active' }

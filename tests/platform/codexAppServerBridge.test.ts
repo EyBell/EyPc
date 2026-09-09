@@ -73,7 +73,7 @@ class FakeCodexProcess extends EventEmitter {
   missingTurnStartedAtIds = new Set<string>()
   missingTurnCompletedAtIds = new Set<string>()
   inProgressTurnIds = new Set<string>()
-  turnOverrides = new Map<string, { id: string; status: 'inProgress' | 'completed' | 'interrupted' | 'failed'; startedAt: number; completedAt?: number }>()
+  turnOverrides = new Map<string, { id: string; status: 'inProgress' | 'completed' | 'interrupted' | 'failed'; startedAt: number | null; completedAt?: number }>()
   failedTurnIds = new Set<string>()
   interruptedTurnIds = new Set<string>()
   rolloutTexts = new Map<string, string>()
@@ -9541,7 +9541,7 @@ draft: v7EvidenceDraft({
     expect(removal).not.toContain("delete source['thread-project-assignments']")
   })
 
-  it('reads all three 100-row inventory pages without a product cap, then fails closed on malformed Turns or cursor loops', async () => {
+  it('reads all inventory pages, tolerates missing Turn start times and fails closed on cursor loops', async () => {
     const child = new FakeCodexProcess()
     child.bulkInventoryCount = 240
     child.inventoryPageSize = 100
@@ -9575,12 +9575,48 @@ draft: v7EvidenceDraft({
 
     child.emptyTurnIds.clear()
     child.missingTurnStartedAtIds.add('00000018-1234-4234-8234-123456789abc')
-    await expect(bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })).resolves.toMatchObject({ ok: false, error: { code: 'protocol-error' } })
+    const missingStart = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(missingStart.ok).toBe(true)
+    expect(missingStart.value.threads).toHaveLength(25)
+    const affected = missingStart.value.threads.find((row: any) => row.name === '批量任务 24')
+    expect(affected).toMatchObject({ lastTurnStatus: 'completed', lastTurnCompletedAt: 2_000_000_071_000 })
+    expect(affected.lastTurnStartedAt).toBeUndefined()
 
     child.missingTurnStartedAtIds.clear()
     child.cursorLoop = true
     await expect(bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })).resolves.toMatchObject({ ok: false, error: { code: 'protocol-error' } })
     bridge.close()
+  })
+
+  it('retains a completed Turn with a null start and isolates an invalid Turn row', async () => {
+    const child = new FakeCodexProcess()
+    child.turnOverrides.set(FIXED_THREAD_IDS[1], { id: 'nullable-start', status: 'completed', startedAt: null, completedAt: 2_000_000_071 })
+    const { bridge } = loadCodexBridge(child)
+    const snapshot = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(snapshot.ok).toBe(true)
+    expect(snapshot.value.threads).toHaveLength(5)
+    const row = snapshot.value.threads.find((entry: any) => entry.name === '运行中')
+    expect(row).toMatchObject({ lastTurnStatus: 'completed', lastTurnCompletedAt: 2_000_000_071_000 })
+    expect(row.lastTurnStartedAt).toBeUndefined()
+    child.turnOverrides.set(FIXED_THREAD_IDS[1], { id: 'invalid', status: 'unknown' as any, startedAt: null })
+    const isolated = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(isolated.ok).toBe(true)
+    expect(isolated.value.threads).toHaveLength(4)
+    expect(isolated.value.nonConversationCount).toBe(0)
+    bridge.close()
+  })
+
+  it('merges completion-only timestamps without regressing a newer or directly live Turn', () => {
+    const { codexMergedInventoryTurnFields: merge } = nodeRequire('../../preload/codex/inventory-turn-fields.cjs')
+      .createCodexInventoryTurnFields({ timestampMs: (value: unknown) => typeof value === 'number' ? value : 0 })
+    const completed = { lastTurnStatus: 'completed', lastTurnCompletedAt: 400 }
+    expect(merge(completed, null)).toEqual({ ...completed, lastTurnEvidence: 'inventory' })
+    expect(merge(completed, { lastTurnStatus: 'completed', lastTurnStartedAt: 500, lastTurnCompletedAt: 600 }))
+      .toMatchObject({ lastTurnStartedAt: 500, lastTurnCompletedAt: 600 })
+    expect(merge(completed, {
+      status: 'active', statusAuthority: 'desktop-live', lastTurnStatus: 'inProgress',
+      lastTurnStartedAt: 300, lastTurnEvidence: 'turn-started'
+    })).toMatchObject({ lastTurnStatus: 'inProgress', lastTurnStartedAt: 300 })
   })
 
   it('keeps a native connector-active row when official turns/list is empty', async () => {

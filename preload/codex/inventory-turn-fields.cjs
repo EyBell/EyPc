@@ -34,10 +34,11 @@ function createCodexInventoryTurnFields(dependencies = {}) {
   }
 
   function codexMergedInventoryTurnFields(projection, previousActivity) {
-    if (!projection?.lastTurnStatus || !timestampMs(projection.lastTurnStartedAt)) return {}
+    if (!projection?.lastTurnStatus) return {}
     const next = {
       lastTurnStatus: projection.lastTurnStatus,
-      lastTurnStartedAt: timestampMs(projection.lastTurnStartedAt),
+      ...(timestampMs(projection.lastTurnStartedAt)
+        ? { lastTurnStartedAt: timestampMs(projection.lastTurnStartedAt) } : {}),
       ...(projection.lastTurnStatus === 'completed' && timestampMs(projection.lastTurnCompletedAt)
         ? { lastTurnCompletedAt: timestampMs(projection.lastTurnCompletedAt) }
         : {}),
@@ -63,7 +64,8 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     const nextExactTerminal = typeof projection.codexhostHarnessId === 'string'
       && ['completed', 'interrupted', 'failed'].includes(next.lastTurnStatus)
       && ['snapshot-corroborated', 'targeted-after-exit', 'turn-completed'].includes(next.lastTurnEvidence)
-    const regressedRevision = previousStartedAt > next.lastTurnStartedAt
+    const nextRevisionAt = next.lastTurnStartedAt || next.lastTurnCompletedAt || 0
+    const regressedRevision = !nextRevisionAt || previousStartedAt > nextRevisionAt
     const regressedCompletedOutcome = previousStartedAt === next.lastTurnStartedAt
       && previousActivity.lastTurnStatus === 'completed'
       && next.lastTurnStatus !== 'completed'

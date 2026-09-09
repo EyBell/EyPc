@@ -6,6 +6,7 @@ import vm from 'node:vm'
 
 const requireFromScript = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..')
+const requireFromPreload = createRequire(resolve(root, 'preload/index.js'))
 const preload = readFileSync(resolve(root, 'preload/index.js'), 'utf8')
 const requestedDays = Number(process.argv[2] || 30)
 const timeWindowDays = Number.isFinite(requestedDays)
@@ -27,7 +28,7 @@ const sandbox = {
   structuredClone,
   require(name) {
     if (name === 'electron') return { ipcRenderer: { on() {} } }
-    return requireFromScript(name)
+    return requireFromPreload(name)
   }
 }
 sandbox.globalThis = sandbox
@@ -40,6 +41,7 @@ function loadDomainModule(filename) {
   const resolvedFilename = extname(filename) ? filename : `${filename}.ts`
   const cached = domainModuleCache.get(resolvedFilename)
   if (cached) return cached.exports
+  if (extname(resolvedFilename) === '.json') return JSON.parse(readFileSync(resolvedFilename, 'utf8'))
 
   const source = readFileSync(resolvedFilename, 'utf8')
   const domainModule = { exports: {} }
@@ -47,6 +49,7 @@ function loadDomainModule(filename) {
   const script = typescript.transpileModule(source, {
     compilerOptions: {
       module: typescript.ModuleKind.CommonJS,
+      esModuleInterop: true,
       target: typescript.ScriptTarget.ES2022
     },
     fileName: resolvedFilename
@@ -73,6 +76,8 @@ const { projectCodexDynamicStatus } = loadDomainModule(resolve(root, 'src/domain
 
 const bridge = sandbox.window.eypcPlatform?.codex
 if (!bridge?.readSnapshot) throw new Error('Codex preload bridge is unavailable')
+
+const turnActivityAt = (thread) => Math.max(thread.lastTurnStartedAt || 0, thread.lastTurnCompletedAt || 0)
 
 async function readSettledActivity(expectedTerminalKeys) {
   if (typeof bridge.readActivitySnapshot !== 'function') return null
@@ -112,7 +117,7 @@ try {
     const snapshot = result.value
     const boundary = Date.now() - timeWindowDays * 24 * 60 * 60 * 1000
     const expectedTerminalKeys = (snapshot.threads || [])
-      .filter((thread) => thread.lastTurnStartedAt >= boundary && ['failed', 'interrupted'].includes(thread.lastTurnStatus))
+      .filter((thread) => turnActivityAt(thread) >= boundary && ['failed', 'interrupted'].includes(thread.lastTurnStatus))
       .map((thread) => thread.key)
     const activityResult = await readSettledActivity(expectedTerminalKeys)
     const activity = activityResult?.ok ? activityResult.value : null
@@ -120,8 +125,8 @@ try {
     const mergedThreads = (snapshot.threads || [])
       .map((thread) => ({ ...thread, ...(activityByKey.get(thread.key) || {}) }))
     const inWindow = mergedThreads
-      .filter((thread) => Number.isFinite(thread.lastTurnStartedAt) && thread.lastTurnStartedAt >= boundary)
-      .sort((left, right) => right.lastTurnStartedAt - left.lastTurnStartedAt || left.key.localeCompare(right.key))
+      .filter((thread) => turnActivityAt(thread) >= boundary)
+      .sort((left, right) => turnActivityAt(right) - turnActivityAt(left) || left.key.localeCompare(right.key))
     const authoritativeActive = (thread) => thread.status === 'active'
       && (thread.statusAuthority === 'desktop-live'
         || thread.statusAuthority === 'app-server-live'
@@ -167,7 +172,7 @@ try {
       .every((thread) => !productWaitingKeys.has(thread.key))
     const attentionDoesNotDoubleCountAsActive = [...productWaitingKeys]
       .every((key) => !productActiveKeys.has(key))
-    const orderIsStrict = inWindow.every((thread, index) => index === 0 || inWindow[index - 1].lastTurnStartedAt >= thread.lastTurnStartedAt)
+    const orderIsStrict = inWindow.every((thread, index) => index === 0 || turnActivityAt(inWindow[index - 1]) >= turnActivityAt(thread))
     const quotaWindows = [
       snapshot.quota?.short ? { name: '5 小时限额', remainingPercent: snapshot.quota.short.remainingPercent } : null,
       snapshot.quota?.weekly ? { name: '周限额', remainingPercent: snapshot.quota.weekly.remainingPercent } : null

@@ -181,7 +181,8 @@ const BUDGET = Object.freeze({
   // 2026-09-08 (RAW-218): +19 / +1 codex function -- native official
   // `active` + empty `turns/list` synthesizes inProgress so extra-model
   // rows stay in inventory. Host extra processes keep discovery turns.
-  lines: 14462,
+  // Nullable Turn start timestamps and per-row malformed-Turn diagnostics: +6.
+  lines: 14468,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

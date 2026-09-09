@@ -41,6 +41,21 @@ function thread(
 }
 
 describe('Codex domain', () => {
+  it('keeps completed tasks with only a completion timestamp without inventing start or duration', () => {
+    const projected = projectConversations({
+      threads: [thread('notLoaded', 500, [], KEY, {
+        lastTurnStatus: 'completed', lastTurnCompletedAt: 400,
+        hasUnreadTurn: true, unreadAuthority: 'desktop-persisted'
+      })],
+      receipts: [], lastTaskScanAt: 0, now: 600
+    })
+    expect(projected.snapshot.completedUnread).toHaveLength(1)
+    const card = projected.snapshot.completedUnread[0]!
+    expect(card.lastTurnCompletedAt).toBe(400)
+    expect(card.lastTurnStartedAt).toBeUndefined()
+    expect(card.lastTurnDurationMs).toBeUndefined()
+  })
+
   it('carries a CodexHost extra process Harness id onto its task card', () => {
     const external = {
       ...thread('idle', 500, [], KEY, {
