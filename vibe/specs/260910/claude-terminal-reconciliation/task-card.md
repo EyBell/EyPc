@@ -1,10 +1,10 @@
 # Claude 完成状态与子任务收敛修复
 
-状态：实现、针对性自动验证、生产构建与真实来源预检通过；artifact-ready / host-reload-pending。修复代码已本地提交 `22936bb`，未推送。
+状态：实现、针对性自动验证、生产构建与真实来源预检通过；user-verified / closed。用户已安装并确认现场验证通过；修复代码 `22936bb`、验证文档 `dc6d1f6` 已提交。
 
 ## 问题与授权
 
-本任务修复明确完成证据与完整子任务快照的收敛，并核对现场 5 条任务。已按本轮分批提交授权，本地提交本任务代码、回归与交付记录；未推送。保留现有 `.agents/skills/codexhost-companion`、`.codemark/codemark.json` 和运行身份的并行改动。
+本任务修复明确完成证据与完整子任务快照的收敛，并核对现场 5 条任务。已完成代码与验证文档的分批提交；本轮授权提交验收记录并推送当前仓库全部待推送提交。保留现有 `.agents/skills/codexhost-companion`、`.codemark/codemark.json` 和运行身份的并行改动。
 
 现场两次只读来源采样均为 Claude 1 running / 22 completed；悬浮窗中 5 条来源已完成的任务仍显示 running / verifying。插件持续发布并被浮窗确认。安装包与 dist 的 Claude reader、queue、Kernel、主 preload、runtime identity 内容一致。旧子任务数量与冷读不同，不能把父任务完成直接等同于所有后台子任务完成。
 
@@ -45,8 +45,8 @@
 | 镜像/构建 | 83 对镜像通过；`pnpm run build` 合同、类型、Vite、uTools 产物校验通过；准备脚本单独执行曾因 Renderer 内嵌旧 Host id 被拒绝，已按影响链改用完整生产构建解决 |
 | 当前真值 | `node scripts/validate-requirements.mjs --write-current-truth` 通过；只回写构建快照，无需求条款新增 |
 | 新产物真实来源预检 | `node scripts/probe-claude-live-state-runtime.mjs`：ok，完整消费 3,234 条事件；该次 Claude 24 completed / 0 running，App 版本兼容、Hook 与 statusline installed；采样数量会变化 |
-| 真机未运行门禁 | 09:43 最后一次现场核对时，浮窗仍指向原 ASAR，显示 7 个进行中；本任务未安装新包、未重载、未进行更新后的两轮来源/浮窗对照 |
+| 用户现场验收 | 用户已安装新产物并确认验证通过，重载待验收项关闭。依据为用户反馈；未新增自动宿主身份读回或两轮采样记录 |
 
 产物：EyPc V7；`host-7ea2d457c39eb57bde4f / renderer-ae98a0145628aa56faf9`；北京时间 `2026/09/10 09:42:32`（`2026-09-10T01:42:32.549Z`）。完整插件入口：[dist/plugin.json](../../../../dist/plugin.json#L1)。对应 [当前需求真值](../../PRODUCT_REQUIREMENTS.md#L14) 与 [状态中心](../../PROJECT_STATUS.md#L8)。
 
-下一步：用户通过 uTools 开发工具接入完整新产物或安装新包后，读回同一 Host/Renderer 身份，再核对本轮 5 条任务及子任务活动数。源码与产物成功不代表已加载或现场恢复。
+结论：用户现场验收通过，本任务关闭，无待执行修复。验收结论随本轮提交交付。

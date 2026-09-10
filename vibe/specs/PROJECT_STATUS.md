@@ -5,7 +5,7 @@ Date: 2026-09-02
 
 ## Purpose
 
-- 2026-09-10 Claude 完成状态收敛修复：积压事件不再按 2,000 条裁尾、未读队列不得轮转、完成次数增量证据跨热读保留、精确空拓扑推进状态代际。296 项聚焦回归与增强的隐藏 Host→Float 积压回归通过；生产构建与真实来源预检通过。`artifact-ready / host-reload-pending`：`host-7ea2d457c39eb57bde4f / renderer-ae98a0145628aa56faf9`，北京时间 `2026/09/10 09:42:32`；修复代码已本地提交 `22936bb`，未推送。[任务/实现](260910/claude-terminal-reconciliation/task-card.md#L1) · [验证与未运行门禁](260910/claude-terminal-reconciliation/task-card.md#L38)。
+- 2026-09-10 Claude 完成状态收敛修复：积压事件不再按 2,000 条裁尾、未读队列不得轮转、完成次数增量证据跨热读保留、精确空拓扑推进状态代际。296 项聚焦回归与增强的隐藏 Host→Float 积压回归通过；生产构建与真实来源预检通过。用户已安装并确认验证通过，`user-verified / closed`。对应产物：`host-7ea2d457c39eb57bde4f / renderer-ae98a0145628aa56faf9`，北京时间 `2026/09/10 09:42:32`；修复代码 `22936bb` 已提交。[任务/实现](260910/claude-terminal-reconciliation/task-card.md#L1) · [验证与用户验收](260910/claude-terminal-reconciliation/task-card.md#L38)。
 
 - 2026-09-09 Codex 可空开始时间修复：聚焦 218 项、生产构建、83 对镜像和真实 Provider 预检通过；新产物 `host-ebeee3b6262b75611535 / renderer-f4e2c63ebc6edd4fbff7`，北京时间 `2026/09/09 12:40:39`。12:43:26 宿主身份匹配；Codex 库存读取恢复为 23 条，用户反馈恢复。[任务与验证](260909/codex-null-turn-start/task-card.md#L1) · [错误预防](../knowledge/error-memory/codex-null-turn-start-aborts-inventory.md#L1)。
 
