@@ -14,7 +14,6 @@
 
 const QUEUE_FILE_NAME = 'eypc-claude-events.jsonl'
 const MAX_QUEUE_BYTES = 512 * 1024
-const MAX_EVENTS_PER_READ = 2000
 // Retained as a public compatibility constant. The first semantic change is
 // now drained synchronously from the native file callback; semantic equality,
 // rather than a throttleable timer, collapses duplicate tail events.
@@ -95,7 +94,10 @@ function parseQueueText(text) {
     const entry = normalizeQueueEntry(parsed)
     if (entry) entries.push(entry)
   }
-  return entries.length > MAX_EVENTS_PER_READ ? entries.slice(-MAX_EVENTS_PER_READ) : entries
+  // The queue is byte-bounded by its writer/rotation policy. Trimming the
+  // parsed prefix here loses real terminal events while drain still advances
+  // past their bytes, leaving previously observed parents/children live.
+  return entries
 }
 
 function emptyHookState() {
@@ -494,11 +496,12 @@ function createEventQueue(dependencies) {
     }
   }
 
-  /** Truncates the queue once it grows past the cap. */
+  /** Only a fully consumed queue may be rotated; unread/partial tails survive. */
   function rotateIfNeeded() {
     try {
       const stat = fs.statSync(queuePath)
-      if ((Number(stat.size) || 0) <= maxBytes) return false
+      const size = Number(stat.size) || 0
+      if (size <= maxBytes || size !== offset) return false
       fs.writeFileSync(queuePath, '')
       offset = 0
       return true

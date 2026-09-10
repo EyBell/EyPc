@@ -2030,19 +2030,29 @@ draft: v7EvidenceDraft({
     context.triggerPluginOut(false)
 
     const promptAt = Date.now()
-    appendFileSync(claudeBridge.queuePath, `${JSON.stringify({ s: cliId, e: 'UserPromptSubmit', t: promptAt, p: 42 })}\n`)
+    appendFileSync(claudeBridge.queuePath,
+      `${JSON.stringify({ s: cliId, e: 'UserPromptSubmit', t: promptAt, p: 42 })}\n`
+      + `${JSON.stringify({ s: cliId, e: 'SubagentStart', a: 'background-a', t: promptAt, p: 42 })}\n`)
     directoryWatchers.get(dataDirectory)?.('change', 'eypc-claude-events.jsonl')
     await vi.waitFor(() => expect(kernel.getPackage().tasks[0].phase).toBe('running'))
+    expect(kernel.getPackage().tasks[0].topology.liveCount).toBe(2)
     await vi.waitFor(() => expect(context.floatAppliedAt()).toBeGreaterThanOrEqual(promptAt))
     expect(context.floatAppliedAt() - promptAt).toBeLessThanOrEqual(250)
 
     const stopAt = Date.now()
-    appendFileSync(claudeBridge.queuePath, `${JSON.stringify({ s: cliId, e: 'Stop', t: stopAt, p: 42 })}\n`)
+    // Hidden Host recovery must fold the completion prefix even when another
+    // session produces more than 2,000 later events before its next read.
+    appendFileSync(claudeBridge.queuePath,
+      `${JSON.stringify({ s: cliId, e: 'Stop', t: stopAt, p: 42 })}\n`
+      + `${JSON.stringify({ s: cliId, e: 'SubagentStop', a: 'background-a', t: stopAt, p: 42 })}\n`
+      + Array.from({ length: 2_100 }, () =>
+        `${JSON.stringify({ s: 'unrelated-session', e: 'PostToolUse', t: stopAt, p: 43 })}\n`).join(''))
     const recovery = fileWatchers.get(claudeBridge.queuePath)
     expect(recovery?.interval).toBe(1_000)
     await new Promise((resolvePromise) => setTimeout(resolvePromise, recovery?.interval || 1_000))
     recovery?.listener()
     await vi.waitFor(() => expect(kernel.getPackage().tasks[0].phase).toBe('completed'))
+    expect(kernel.getPackage().tasks[0].topology.liveCount).toBe(0)
     await vi.waitFor(() => expect(context.floatAppliedAt()).toBeGreaterThanOrEqual(stopAt))
     expect(context.floatAppliedAt() - stopAt).toBeLessThanOrEqual(1_250)
 

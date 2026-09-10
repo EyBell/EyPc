@@ -484,6 +484,40 @@ describe('ordered hook state', () => {
     dispose()
   })
 
+  it('folds terminal events before the bounded return tail of a large unread backlog', () => {
+    const home = makeHome()
+    const queue = events.createEventQueue({ fs, path, directory: home.dataDirectory })
+    const row = (e: string, t: number, extra: Record<string, unknown> = {}) =>
+      `${JSON.stringify({ s: CLI_A, e, t, ...extra })}\n`
+    writeFileSync(queue.queuePath, row('UserPromptSubmit', 10) + row('SubagentStart', 11, { a: 'child-a' }))
+    queue.drain()
+    appendFileSync(queue.queuePath, row('Stop', 20) + row('SubagentStop', 21, { a: 'child-a' })
+      + Array.from({ length: 2_100 }, (_, i) => row('PostToolUse', 30 + i, { s: CLI_SHARED })).join(''))
+    queue.drain()
+    expect(queue.state().get(CLI_A)).toMatchObject({
+      phase: 'completed', subagents: { 'child-a': { active: false, stoppedAt: 21 } }
+    })
+    expect(queue.drain()).toEqual([])
+  })
+
+  it('does not rotate away unread completion or an unfinished record', () => {
+    const home = makeHome()
+    const queue = events.createEventQueue({ fs, path, directory: home.dataDirectory, maxBytes: 32 })
+    writeFileSync(queue.queuePath, `${JSON.stringify({ s: CLI_A, e: 'UserPromptSubmit', t: 10 })}\n`)
+    queue.drain()
+    appendFileSync(queue.queuePath, `${JSON.stringify({ s: CLI_A, e: 'Stop', t: 20 })}\n`)
+    expect(queue.rotateIfNeeded()).toBe(false)
+    queue.drain()
+    expect(queue.state().get(CLI_A).phase).toBe('completed')
+    appendFileSync(queue.queuePath, JSON.stringify({ s: CLI_A, e: 'UserPromptSubmit', t: 30 }))
+    queue.drain()
+    expect(queue.rotateIfNeeded()).toBe(false)
+    appendFileSync(queue.queuePath, '\n')
+    queue.drain()
+    expect(queue.state().get(CLI_A)).toMatchObject({ phase: 'running', turnStartedAt: 30 })
+    expect(queue.rotateIfNeeded()).toBe(true)
+  })
+
   it('recovers a dropped fs.watch notification through the native bounded StatWatcher', () => {
     const home = makeHome()
     let poll: (() => void) | null = null
@@ -799,6 +833,46 @@ describe('Code-mode inventory and correlation', () => {
       compatibility: 'compatible', generation: 1, entries: []
     }).sessions[0]
     expect(row).toMatchObject({ phase: 'completed', stateSource: 'metadata-history' })
+  })
+
+  it('retains confirmed completion across hot reads and permits a genuinely newer Hook Turn', () => {
+    const session = { ...metadata(LOCAL_A, CLI_A), completedTurns: 2,
+      metadataUpdatedAt: 200, lastActivityAt: 200, lastFocusedAt: 190 }
+    let previous = new Map([[LOCAL_A, { completedTurns: 1, completedEvidenceAt: 80,
+      lastActivityAt: 80, metadataUpdatedAt: 80 }]])
+    let hooks = events.foldQueueEntries([event(CLI_A, 'UserPromptSubmit', 100)])
+    const app = { compatibility: 'compatible', generation: 1, entries: [] }
+    for (let i = 0; i < 3; i += 1) {
+      const result = codeSessions.correlateCodeSessions([session], hooks, previous, app)
+      expect(result.sessions[0]).toMatchObject({ phase: 'completed', stateSource: 'metadata-history' })
+      previous = result.nextMetadata
+    }
+    hooks = events.foldQueueEntries([event(CLI_A, 'PostToolUse', 250)], hooks)
+    expect(codeSessions.correlateCodeSessions([session], hooks, previous, app).sessions[0])
+      .toMatchObject({ phase: 'completed', stateSource: 'metadata-history' })
+    hooks = events.foldQueueEntries([event(CLI_A, 'UserPromptSubmit', 300)], hooks)
+    expect(codeSessions.correlateCodeSessions([session], hooks, previous, app).sessions[0])
+      .toMatchObject({ phase: 'running', turnStartedAt: 300 })
+  })
+
+  it('advances the state generation when an unknown child roster becomes an exact empty roster', () => {
+    const home = makeHome()
+    const logs = join(home.root, 'logs')
+    mkdirSync(logs)
+    writeFileSync(join(logs, 'main.log'),
+      `2026-09-10 09:00:00 [info] [Stop hook] Query completed for session ${LOCAL_A}\n`)
+    writeMetadata(home.codeDirectory, metadata(LOCAL_A, CLI_A, { completedTurns: 1 }))
+    const bridge = makeBridge(home, { claudeLogDirectory: logs, claudeAppVersion: '1.49585.0' })
+    const before = bridge.readCodeSnapshot({ now: Date.now() })
+    expect(before.sessions[0]).toMatchObject({ phase: 'completed', stateSource: 'app-log' })
+    expect(before.sessions[0].topologyComplete).not.toBe(true)
+    appendFileSync(bridge.queuePath, `${JSON.stringify({ s: CLI_A, e: 'SessionEnd', t: Date.now() })}\n`)
+    const after = bridge.readCodeStateSnapshot()
+    expect(after.sessions[0]).toMatchObject({ phase: 'completed', stateSource: 'app-log',
+      subagents: [], topologyComplete: true })
+    expect(after.generation).toBeGreaterThan(before.generation)
+    expect(bridge.readCodeStateSnapshot().generation).toBe(after.generation)
+    bridge.close()
   })
 
   it('lets newer completed metadata retire stale live evidence but not a newer live event', () => {

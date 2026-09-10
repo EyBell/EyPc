@@ -114,13 +114,14 @@ function createClaudeBridge(dependencies) {
   }
 
   function readCurrentSessionObservation(sessionId) {
-    queue.rotateIfNeeded()
     queue.drain()
+    queue.rotateIfNeeded()
     const indexed = codeSessions.readIndexedSession(sessionId)
     if (indexed.status !== 'found') return { status: indexed.status }
     const appSnapshot = appState.read()
     const correlated = correlateCodeSessions([indexed.session], queue.state(), previousCodeMetadata, appSnapshot)
-    previousCodeMetadata = correlated.nextMetadata
+    // A targeted read does not replace the full inventory's causal memory.
+    for (const [key, value] of correlated.nextMetadata) previousCodeMetadata.set(key, value)
     const session = correlated.sessions[0]
     if (!session) return { status: 'missing' }
     return { status: 'found', session }
@@ -185,6 +186,9 @@ function createClaudeBridge(dependencies) {
       waitingInputAt: session.waitingInputAt,
       lastStopAt: session.lastStopAt,
       lastSessionEndAt: session.lastSessionEndAt,
+      // Unknown roster and an authoritative empty roster are different facts.
+      // A completeness-only transition must reach the Kernel's family sweep.
+      topologyComplete: session.topologyComplete === true,
       // Topology belongs to the state lane, not metadata delivery. Keep the
       // fingerprint private but make a child-only transition advance the state
       // generation so it cannot wait for an unrelated metadata write.
@@ -367,8 +371,8 @@ function createClaudeBridge(dependencies) {
   }
 
   function readCodeSnapshot(options) {
-    queue.rotateIfNeeded()
     queue.drain()
+    queue.rotateIfNeeded()
     const inventory = codeSessions.readInventory(options)
     const appSnapshot = appState.read()
     if (inventory.available === false) {
@@ -397,8 +401,8 @@ function createClaudeBridge(dependencies) {
    * two lifecycle sources and never touches unread, quota or App metadata.
    */
   function readCodeStateSnapshot(options) {
-    queue.rotateIfNeeded()
     queue.drain()
+    queue.rotateIfNeeded()
     if (!lastCodeInventory) {
       const inventory = codeSessions.readInventory(options)
       if (inventory.available === false) {

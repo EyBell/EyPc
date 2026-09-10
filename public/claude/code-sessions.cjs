@@ -175,6 +175,18 @@ function completedEvidenceAt(session, previousBySession) {
     : session.lastActivityAt || session.metadataUpdatedAt || session.lastFocusedAt
 }
 
+// Unlike a cold metadata timestamp, an observed completedTurns increment is
+// proof of completion. Retain that proof across hot reads until a newer Turn
+// supersedes it; making it a one-read pulse resurrects the same stale Hook.
+function confirmedCompletedEvidenceAt(session, previousBySession) {
+  const previous = previousBySession instanceof Map ? previousBySession.get(session.sessionId) : null
+  if (!previous || (previous.cliSessionId && previous.cliSessionId !== session.cliSessionId)) return 0
+  const count = nonNegativeInteger(session.completedTurns)
+  const before = nonNegativeInteger(previous.completedTurns)
+  if (count > before) return completedEvidenceAt(session, previousBySession)
+  return count > 0 && count === before ? numberOf(previous.confirmedCompletedEvidenceAt) : 0
+}
+
 function stateEvidenceAt(entry) {
   if (!entry) return 0
   return Math.max(
@@ -223,8 +235,8 @@ function selectProjectedStateSource(exactApp, hook, correlation, historyAt, opti
   // History may still retire a unique Hook whose parent Turn started before a
   // later completedTurns increment.
   const hookSupersededByHistory = livePhase(hook)
-    && historyAt > hookAt
-    && (!uniqueLiveHook || (historyConfirmsCompletedTurn && historyAt > hookTurnAt))
+    && ((historyConfirmsCompletedTurn && historyAt > hookTurnAt)
+      || (!uniqueLiveHook && historyAt > hookAt))
   const hookStartsNewerTurn = (threshold) => hook
     && !hookSupersededByHistory
     && (Number(hook.turnStartedAt) || 0) > threshold
@@ -259,11 +271,7 @@ function projectedState(session, hookState, byCli, previousBySession, appSnapsho
   const hook = lifecycleOnlySessionEnd ? null : hookResult.hook
   const hookCorrelation = lifecycleOnlySessionEnd ? 'none' : hookResult.correlation
   const historyAt = completedEvidenceAt(session, previousBySession)
-  const previous = previousBySession instanceof Map
-    ? previousBySession.get(session.sessionId)
-    : null
-  const historyConfirmsCompletedTurn = Boolean(previous)
-    && nonNegativeInteger(session.completedTurns) > nonNegativeInteger(previous.completedTurns)
+  const historyConfirmsCompletedTurn = confirmedCompletedEvidenceAt(session, previousBySession) > 0
   const selected = selectProjectedStateSource(exactApp, hook, hookCorrelation, historyAt, {
     historyConfirmsCompletedTurn
   })
@@ -397,7 +405,8 @@ function correlateCodeSessions(sessions, hookState, previousBySession, appSnapsh
     topologyComplete: projected.every((session) => session.topologyComplete === true),
     nextMetadata: new Map(sessions.map((session) => [session.sessionId, {
       ...session,
-      completedEvidenceAt: completedEvidenceAt(session, previousBySession)
+      completedEvidenceAt: completedEvidenceAt(session, previousBySession),
+      confirmedCompletedEvidenceAt: confirmedCompletedEvidenceAt(session, previousBySession)
     }]))
   }
 }
