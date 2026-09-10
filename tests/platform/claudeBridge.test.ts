@@ -946,6 +946,31 @@ describe('Code-mode inventory and correlation', () => {
     ])
     expect(codeSessions.correlateCodeSessions([session], nextTurn, new Map(), appSnapshot).sessions[0])
       .toMatchObject({ phase: 'running', stateSource: 'hook', turnStartedAt: 300 })
+    expect(codeSessions.correlateCodeSessions([session], nextTurn, new Map(), appSnapshot, { now: 300 + 5_000 }).sessions[0])
+      .toMatchObject({ phase: 'running', stateSource: 'hook', turnStartedAt: 300 })
+    expect(codeSessions.correlateCodeSessions([session], nextTurn, new Map(), appSnapshot, { now: 300 + 2 * 60 * 60 * 1000 }).sessions[0])
+      .toMatchObject({ phase: 'completed', stateSource: 'app-log' })
+  })
+
+  it.each([
+    { name: 'corroborated stop', phase: 'completed', stopAt: 200, provenance: 'exact-terminal', expected: 120 },
+    { name: 'live Hook', phase: 'running', stopAt: 200, provenance: 'exact-terminal', expected: 100 },
+    { name: 'stop before Hook start', phase: 'completed', stopAt: 110, provenance: 'exact-terminal', expected: 100 },
+    { name: 'non-exact App evidence', phase: 'completed', stopAt: 200, provenance: 'cold-replay', expected: 100 }
+  ])('preserves the Hook terminal epoch only with $name', ({ phase, stopAt, provenance, expected }) => {
+    const session = metadata(LOCAL_A, CLI_A, { completedTurns: 0, lastActivityAt: 80, metadataUpdatedAt: 80 })
+    const hooks = new Map([[CLI_A, {
+      phase, turnStartedAt: 120, lastStopAt: stopAt, lastEventAt: 200, lastEvent: phase === 'running' ? 'pre-tool' : 'stop'
+    }]])
+    const snapshot = { compatibility: 'compatible', generation: 2, entries: [{
+      sessionId: LOCAL_A, phase: 'completed', turnStartedAt: 100, lastStopAt: 200,
+      phaseUpdatedAt: 200, lastEventAt: 200, evidenceProvenance: provenance
+    }] }
+    expect(codeSessions.correlateCodeSessions([session], hooks, new Map(), snapshot).sessions[0])
+      .toMatchObject({ phase: 'completed', stateSource: 'app-log', turnStartedAt: expected })
+    const sibling = { ...session, sessionId: LOCAL_B }
+    expect(codeSessions.correlateCodeSessions([session, sibling], hooks, new Map(), snapshot).sessions[0])
+      .toMatchObject({ phase: 'completed', stateSource: 'app-log', turnStartedAt: 100 })
   })
 
   it('does not treat a title-only metadata mtime as newer completion evidence', () => {
@@ -1637,5 +1662,44 @@ describe('metadata activity versus a live App append', () => {
       turnStartedAt: 10
     }
     expect(codeSessions.selectProjectedStateSource(app, hook, 'unique-cli', 0)).toBe('app')
+  })
+
+  it('still prefers an exact App terminal over a later prompt-submit-only Hook turn', () => {
+    const app = {
+      phase: 'stopped',
+      phaseUpdatedAt: 20,
+      turnStartedAt: 10,
+      lastEventAt: 20,
+      lastStopAt: 20,
+      evidenceProvenance: 'exact-terminal'
+    }
+    const hook = {
+      phase: 'running',
+      lastEvent: 'prompt-submit',
+      lastEventAt: 24,
+      turnStartedAt: 24,
+      lastActivityAt: 24
+    }
+    expect(codeSessions.selectProjectedStateSource(app, hook, 'unique-cli', 0, { now: 24 + 2 * 60 * 60 * 1000 })).toBe('app')
+    expect(codeSessions.selectProjectedStateSource(app, hook, 'unique-cli', 0, { now: 24 + 5_000 })).toBe('hook')
+  })
+
+  it('lets Hook win an exact App terminal when a newer Turn has live tool progress', () => {
+    const app = {
+      phase: 'stopped',
+      phaseUpdatedAt: 20,
+      turnStartedAt: 10,
+      lastEventAt: 20,
+      lastStopAt: 20,
+      evidenceProvenance: 'exact-terminal'
+    }
+    const hook = {
+      phase: 'running',
+      lastEvent: 'pre-tool',
+      lastEventAt: 40,
+      turnStartedAt: 30,
+      lastActivityAt: 40
+    }
+    expect(codeSessions.selectProjectedStateSource(app, hook, 'unique-cli', 0)).toBe('hook')
   })
 })

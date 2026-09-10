@@ -208,11 +208,19 @@ function terminalEvidenceAt(entry) {
   )
 }
 
+const HOOK_PROMPT_ONLY_GRACE_MS = 60_000
+
+function hookOpenOnlyEvent(event) {
+  const value = typeof event === 'string' ? event : ''
+  return !value || value === 'prompt-submit' || value === 'session-start' || value === 'notification'
+}
+
 /**
  * Chooses the state authority without allowing same-Turn Hook tail activity to
  * overwrite an exact App terminal, or a Hook terminal to overwrite App live
- * running/waiting. A Hook can reactivate only by proving a strictly newer
- * parent Turn start.
+ * running/waiting. A Hook can reactivate an exact App terminal only by proving
+ * a strictly newer parent Turn start and live progress after that terminal.
+ * UserPromptSubmit alone is not that proof.
  */
 function selectProjectedStateSource(exactApp, hook, correlation, historyAt, options) {
   const appAt = stateEvidenceAt(exactApp)
@@ -240,11 +248,22 @@ function selectProjectedStateSource(exactApp, hook, correlation, historyAt, opti
   const hookStartsNewerTurn = (threshold) => hook
     && !hookSupersededByHistory
     && (Number(hook.turnStartedAt) || 0) > threshold
+  const hookCorroboratesNewerTurn = (threshold) => {
+    if (!hookStartsNewerTurn(threshold)) return false
+    if (!hookOpenOnlyEvent(hook && hook.lastEvent)) {
+      const progressAt = Math.max(Number(hook.lastEventAt) || 0, Number(hook.lastActivityAt) || 0)
+      return progressAt > threshold
+    }
+    const now = Number(options && options.now) || 0
+    if (!now) return true
+    const openedAt = Math.max(Number(hook.lastEventAt) || 0, Number(hook.turnStartedAt) || 0)
+    return now - openedAt <= HOOK_PROMPT_ONLY_GRACE_MS
+  }
 
   if (exactApp && !appSupersededByHistory) {
     const appTerminalAt = terminalEvidenceAt(exactApp)
     if (appTerminalAt) {
-      return hookStartsNewerTurn(appTerminalAt) ? 'hook' : 'app'
+      return hookCorroboratesNewerTurn(appTerminalAt) ? 'hook' : 'app'
     }
     if (!hook || correlation === 'ambiguous' || hookSupersededByHistory) return 'app'
     if (liveObserved(exactApp) && livePhase(exactApp) && !livePhase(hook)) {
@@ -259,7 +278,7 @@ function selectProjectedStateSource(exactApp, hook, correlation, historyAt, opti
   return 'none'
 }
 
-function projectedState(session, hookState, byCli, previousBySession, appSnapshot, appByLocal) {
+function projectedState(session, hookState, byCli, previousBySession, appSnapshot, appByLocal, options) {
   const exactApp = (appByLocal instanceof Map ? appByLocal : appStateMap(appSnapshot)).get(session.sessionId) || null
   const hookResult = hookForSession(session, hookState, byCli, previousBySession)
   // SessionEnd/subagent-only rows are lifecycle observations, not a parent
@@ -273,11 +292,28 @@ function projectedState(session, hookState, byCli, previousBySession, appSnapsho
   const historyAt = completedEvidenceAt(session, previousBySession)
   const historyConfirmsCompletedTurn = confirmedCompletedEvidenceAt(session, previousBySession) > 0
   const selected = selectProjectedStateSource(exactApp, hook, hookCorrelation, historyAt, {
-    historyConfirmsCompletedTurn
+    historyConfirmsCompletedTurn,
+    now: Number(options && options.now) || 0
   })
 
   if (selected === 'app') {
     const appAt = stateEvidenceAt(exactApp)
+    let turnStartedAt = Number(exactApp.turnStartedAt) || 0
+    const hookTurnAt = Number(hook && hook.turnStartedAt) || 0
+    const hookStopAt = Number(hook && hook.lastStopAt) || 0
+    const appTerminalAt = terminalEvidenceAt(exactApp)
+    // App's send-message epoch can predate the CLI Hook's actual Turn start.
+    // Once both sources confirm its stop, preserve that correlated Hook epoch
+    // so the Kernel does not reject App completion as an older Turn. A live,
+    // ambiguous or later-stopped Hook cannot borrow this terminal identity.
+    if (exactApp.evidenceProvenance === 'exact-terminal'
+      && (hookCorrelation === 'direct-local' || hookCorrelation === 'unique-cli')
+      && hook?.phase === exactApp.phase
+      && hookTurnAt > turnStartedAt
+      && hookStopAt >= hookTurnAt
+      && hookStopAt <= appTerminalAt) {
+      turnStartedAt = hookTurnAt
+    }
     return {
       statusCorrelation: 'direct-local',
       stateSource: 'app-log',
@@ -285,7 +321,7 @@ function projectedState(session, hookState, byCli, previousBySession, appSnapsho
       stateGeneration: Number(appSnapshot && appSnapshot.generation) || 0,
       phase: exactApp.phase,
       phaseUpdatedAt: Number(exactApp.phaseUpdatedAt) || appAt,
-      turnStartedAt: Number(exactApp.turnStartedAt) || 0,
+      turnStartedAt,
       hookActivityAt: Number(exactApp.hookActivityAt) || 0,
       waitingApprovalAt: Number(exactApp.waitingApprovalAt) || 0,
       waitingInputAt: Number(exactApp.waitingInputAt) || 0,
@@ -360,7 +396,7 @@ function projectedState(session, hookState, byCli, previousBySession, appSnapsho
   }
 }
 
-function correlateCodeSessions(sessions, hookState, previousBySession, appSnapshot) {
+function correlateCodeSessions(sessions, hookState, previousBySession, appSnapshot, options) {
   const byCli = new Map()
   for (const session of sessions) {
     const rows = byCli.get(session.cliSessionId) || []
@@ -370,7 +406,7 @@ function correlateCodeSessions(sessions, hookState, previousBySession, appSnapsh
   const appByLocal = appStateMap(appSnapshot)
   const projected = sessions.map((session) => {
     const hookResult = hookForSession(session, hookState, byCli, previousBySession)
-    const state = projectedState(session, hookState, byCli, previousBySession, appSnapshot, appByLocal)
+    const state = projectedState(session, hookState, byCli, previousBySession, appSnapshot, appByLocal, options)
     const topologyExact = hookResult.hook
       && hookResult.correlation !== 'none'
       && hookResult.correlation !== 'ambiguous'
@@ -902,6 +938,7 @@ function createCodeSessionReader(dependencies) {
 module.exports = {
   CLAUDE_CODE_READER_REVISION,
   DEFAULT_CODE_WINDOW_MS,
+  HOOK_PROMPT_ONLY_GRACE_MS,
   CODE_RECOVERY_POLL_MS,
   LOCAL_SESSION_PATTERN,
   CLI_SESSION_PATTERN,

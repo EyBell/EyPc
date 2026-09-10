@@ -119,7 +119,7 @@ function createClaudeBridge(dependencies) {
     const indexed = codeSessions.readIndexedSession(sessionId)
     if (indexed.status !== 'found') return { status: indexed.status }
     const appSnapshot = appState.read()
-    const correlated = correlateCodeSessions([indexed.session], queue.state(), previousCodeMetadata, appSnapshot)
+    const correlated = correlateCodeSessions([indexed.session], queue.state(), previousCodeMetadata, appSnapshot, { now: Date.now() })
     // A targeted read does not replace the full inventory's causal memory.
     for (const [key, value] of correlated.nextMetadata) previousCodeMetadata.set(key, value)
     const session = correlated.sessions[0]
@@ -383,7 +383,7 @@ function createClaudeBridge(dependencies) {
         ...stateEnvelope([], appSnapshot, readAt)
       }
     }
-    const correlated = correlateCodeSessions(inventory.sessions, queue.state(), previousCodeMetadata, appSnapshot)
+    const correlated = correlateCodeSessions(inventory.sessions, queue.state(), previousCodeMetadata, appSnapshot, { now: Date.now() })
     previousCodeMetadata = correlated.nextMetadata
     lastCodeInventory = inventory
     const readAt = Number(inventory.readAt) || Date.now()
@@ -421,7 +421,7 @@ function createClaudeBridge(dependencies) {
       lastCodeInventory = inventory
     }
     const appSnapshot = appState.read()
-    const correlated = correlateCodeSessions(lastCodeInventory.sessions, queue.state(), previousCodeMetadata, appSnapshot)
+    const correlated = correlateCodeSessions(lastCodeInventory.sessions, queue.state(), previousCodeMetadata, appSnapshot, { now: Date.now() })
     previousCodeMetadata = correlated.nextMetadata
     const readAt = Date.now()
     const sessions = withTranscriptInterrupts(correlated.sessions)

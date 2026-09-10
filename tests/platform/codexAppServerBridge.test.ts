@@ -1700,6 +1700,54 @@ draft: v7EvidenceDraft({
     context.bridge.close()
   })
 
+  it.each([0, 2])('accepts Claude App completion after a later Hook start with %i children', (childCount) => {
+    const code = nodeRequire(resolve(process.cwd(), 'preload/claude/code-sessions.cjs'))
+    const localId = 'local_11111111-1111-4111-8111-111111111111'
+    const cliId = '22222222-2222-4222-8222-222222222222'
+    const metadata = { sessionId: localId, cliSessionId: cliId, createdAt: 80, lastActivityAt: 100 }
+    const noopWatch = () => () => undefined
+    let generation = 2
+    let hook: Record<string, any> = {
+      phase: 'running', lastEvent: 'pre-tool', turnStartedAt: 1_020, lastEventAt: 1_100,
+      subagents: Object.fromEntries(Array.from({ length: childCount }, (_, index) => [`agent-${index}`, {
+        agentId: `agent-${index}`, active: true, startedAt: 1_100, lastActivityAt: 1_100
+      }]))
+    }
+    let app: Record<string, any> = {
+      sessionId: localId, phase: 'running', turnStartedAt: 1_000, phaseUpdatedAt: 1_000,
+      lastEventAt: 1_000, evidenceProvenance: 'live-append'
+    }
+    const context = loadCodexBridge(new FakeCodexProcess(), () => nativeRegistryText(), null, false, true, {
+      inspect: () => ({ available: true }),
+      readCodeStateSnapshot: () => ({
+        generation, readAt: 3_000 + generation,
+        sessions: code.correlateCodeSessions([metadata], new Map([[cliId, hook]]), new Map(), {
+          compatibility: 'compatible', generation, entries: [app]
+        }, { now: 3_000 }).sessions
+      }),
+      watchCodeState: noopWatch, watchCodeSessions: noopWatch, watchCodeUnread: noopWatch,
+      close: () => undefined
+    })
+    const kernel = seedSingleClaudeKernelTask(context, { key: `claude:${localId}`, actionAlias: localId })
+    context.native.applyClaudeStateToCompanionKernel()
+    expect(kernel.getPackage().tasks[0].phase).toBe('running')
+    expect(kernel.getPackage().tasks[0].topology.liveCount).toBe(childCount + 1)
+    generation += 1
+    hook = { ...hook, phase: 'completed', lastEvent: 'stop', lastStopAt: 2_000, lastEventAt: 2_000,
+      subagents: Object.fromEntries(Object.entries(hook.subagents).map(([key, value]) => [key, {
+        ...(value as Record<string, unknown>), active: false, stoppedAt: 1_900, lastActivityAt: 1_900
+      }])) }
+    app = { ...app, phase: 'completed', lastStopAt: 2_000, phaseUpdatedAt: 2_000,
+      lastEventAt: 2_000, evidenceProvenance: 'exact-terminal' }
+    context.native.applyClaudeStateToCompanionKernel()
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed', topology: { liveCount: 0 } })
+    generation += 1
+    hook = { ...hook, phase: 'running', lastEvent: 'pre-tool', turnStartedAt: 2_500, lastEventAt: 2_600 }
+    context.native.applyClaudeStateToCompanionKernel()
+    expect(kernel.getPackage().tasks[0].phase).toBe('running')
+    context.bridge.close()
+  })
+
   it('clears Claude liveCount when hook children go inactive and the parent fold is stopped', () => {
     const noopWatch = () => () => undefined
     let generation = 2
