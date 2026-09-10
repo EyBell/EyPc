@@ -8,6 +8,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 
 ## Current Authorities And Routes
 
+- [App/Hook terminal Turn identity](../../../specs/260910/claude-terminal-turn-identity/task-card.md#L1)
 - [Claude authority reset specification](../../../specs/260807/claude-code-companion-authority-reset/spec.md#L1)
 - [Controlled task-state specification](../../../specs/260810/1155-install-runtime-diagnostics/spec.md#L1)
 - [Architecture](../../ARCHITECTURE.md#L1)
@@ -15,6 +16,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 - [RAW-210 unique live Hook](../../../specs/260905/companion-status-archive-sync/spec.md#L1)
 - [RAW-211 no version whitelist](../../../specs/260905/claude-no-version-whitelist/spec.md#L1)
 - [RAW-216 exact topology retract](../../../specs/260907/status-over-pin-and-stale-claude-child/spec.md#L1)
+- [Uncorroborated Hook turn after App terminal](../../../specs/260910/claude-uncorroborated-hook-turn/task-card.md#L1)
 
 ## Primary Error Records
 
@@ -23,6 +25,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 - [Generic session end must not overwrite completion](../claude-generic-session-end-must-not-overwrite-completion.md#L1)
 - [StopFailure must not close a continuing parent turn](../claude-stop-failure-must-not-close-continuing-parent-turn.md#L1)
 - [Metadata activity is not completion evidence](../claude-metadata-activity-is-not-completion-evidence.md#L1)
+- [Exact terminal beats later prompt-submit-only Hook](../claude-exact-terminal-uncorroborated-prompt-submit.md#L1)
 - [Metadata archive does not prove native sidebar convergence](../claude-metadata-archive-does-not-prove-native-sidebar-convergence.md#L1)
 - [New phase must outrank previous cache](../claude-new-phase-must-outrank-previous-cache.md#L1)
 - [Unread decay blocked by version gate and minute flush](../claude-unread-decay-blocked-by-version-gate-and-minute-flush.md#L1)

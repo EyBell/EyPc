@@ -4,8 +4,8 @@ status: verified
 scope: project
 fingerprint: claude-phase-cache-merge__new-terminal-overwritten-by-old-running__causal-event-first-atomic-state-reduction
 first_seen: 2026-08-11
-last_verified: 2026-08-26
-review_after: 2026-09-11
+last_verified: 2026-09-10
+review_after: 2026-12-10
 evidence:
   - preload/companion/task-kernel.cjs
   - preload/index.js
@@ -16,6 +16,7 @@ evidence:
   - tests/platform/claudeBridge.test.ts
   - tests/runtime/claudeCompanionController.test.ts
   - tests/domain/companionTaskPackage.test.ts
+  - tests/platform/codexAppServerBridge.test.ts
 tags:
   - claude-companion
   - phase-ordering
@@ -46,6 +47,7 @@ RAW-166 closes the corresponding known/value split. An exact unread snapshot pre
 
 ## Evidence
 
+- 2026-09-10：App 完成与唯一 Hook Stop 均存在，但 App 的 send-message 起点早于 Hook Turn 起点。来源切到 App 后，Kernel 的 Turn 因果门拒绝较旧起点，保留 running。保留双方终态证实的 Hook 起点后，无子任务和两个已停止子任务的生产模块回放均由红转绿；[任务与验证](../../specs/260910/claude-terminal-turn-identity/task-card.md#L1)。
 - [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1) owns `reduceClaudeTaskEvidenceV4`, including causal phase precedence.
 - [preload/index.js](../../../preload/index.js#L1) routes watcher, one-second recovery and open-refresh evidence through that reducer rather than a duplicate Host phase rule.
 - A confirmed Claude open records a process-local completion epoch read hint；a delayed replay of the same terminal epoch cannot restore `unread=true`, while a genuinely newer completion epoch can become unread again.
@@ -60,6 +62,7 @@ Prefer the causally newer current `session.phase`; use previous phase only when 
 
 ## Detection Order
 
+0. 对 App/Hook 切换，比较 Turn 起点而不只比较 phase。只有 App 为 exact-terminal、Hook 唯一关联、相位相同且 Hook Stop 在其 Turn 开始之后、App 终态之前或同时，才可保留较晚 Hook 起点。来源 completed 必须继续经过真实 Kernel 回放，不能单独算验收。
 1. Identify the event time/revision for watcher, inventory and targeted refresh evidence.
 2. Compare current session evidence with the cached phase at the canonical reducer.
 3. Check that all phase-dependent capabilities and groups share one package revision.
@@ -89,6 +92,7 @@ Prefer the causally newer current `session.phase`; use previous phase only when 
 
 | Date | Task | Trigger | Failed Route | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- |
+| 2026-09-10 | [跨来源轮次关联](../../specs/260910/claude-terminal-turn-identity/task-card.md#L1) | 两个任务来源 completed、浮窗仍 running | 切回较早 App Turn 起点，被 Kernel 拒绝；只测选择器漏检 | Provider 保留双方停止证实的 Hook 起点；不放宽共享因果门 | 两条回归先失败后通过；304 项相关测试通过；新产物真实宿主未验收 |
 | 2026-08-11 | RAW-160 | Claude had ended but EyPc still showed running | Previous phase/cache overrode newer current evidence | Kernel-owned causal merge and atomic projection | affected automation verified; real host pending |
 | 2026-08-13 | RAW-165 | Completion/focus was observable before Claude persisted unread，so EyPc waited or later regressed | Treated LevelDB snapshot timing as the only unread authority and did not wake unread-only subscribers from App events；a coincidentally matching value from the previous completion could be mistaken for catch-up | Add exact live completion/focus hot overlay，monotonic hint revision，opposite-edge-plus-post-event persisted acknowledgement and shared watcher wake | affected `364/364` matrix passed；real current-host acceptance pending |
 | 2026-08-13 | RAW-166 | Exact empty unread snapshot could update the value while leaving Host incremental/new-member evidence semantically unknown；log rotation cold replay could also mint a false hot edge | Treated unread boolean/authority as incidental fields and allowed any same-version rebuild to create hints | Admit `unreadKnown/value` together；unavailable abstains；only verified append creates hot unread | affected `457/457` matrix and production build pass；real current-host acceptance pending |
