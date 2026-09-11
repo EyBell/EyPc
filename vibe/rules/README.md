@@ -12,4 +12,4 @@ For code, UI, data, build, deployment or runtime work, read the relevant [local 
 - DB/SQL; read before authoring or running queries: [vibe/ai-db/README.md](../ai-db/README.md).
 - continuation or current acceptance: [vibe/specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md).
 
-Keep this index and local-context.md project-owned. Generated host entries and global-core.generated.md are updated from CodeNote; do not hand-maintain copies of global procedures.
+Keep this index and local-context.md project-owned. Global rules live only in CodeNote and are loaded from there; generated host entries are updated from CodeNote, and this project keeps no copy of global procedures.
