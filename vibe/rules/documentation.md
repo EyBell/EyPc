@@ -2,6 +2,8 @@
 
 Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 
+Consolidation follows [Single Authority And Current Entry](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/process/documentation-impact.md#single-authority-and-current-entry). This adapter keeps only local paths and constraints.
+
 ## Tiers
 
 - Project process hub: [../specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1).
