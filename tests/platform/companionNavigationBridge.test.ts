@@ -567,7 +567,8 @@ describe('process-lifetime companion navigation', () => {
     expect(opened).toEqual(['codex-a', 'codex-b', 'codex-a'])
   })
 
-  it('leaves the cycle cursor alone when an open lands outside the ring', async () => {
+  it('lets a completed-row open own the cursor and walk that display group', async () => {
+    const extra = { key: 'codex-c', provider: 'codex', actionAlias: 'ct_codex_c_1234567890', revisionAt: 104, phase: 'completed', canArchive: true }
     const { navigation, receipt } = readyNavigation({
       openTarget: async (target: { provider: string }) => target.provider === 'claude'
         ? { outcome: 'dispatched' }
@@ -578,15 +579,23 @@ describe('process-lifetime companion navigation', () => {
       enabled: true,
       providers: { codex: true, claude: true },
       ready: true,
-      targets,
-      cycleKeys: ['codex-a', 'claude:local_a']
+      targets: [...targets, extra],
+      cycleKeys: ['codex-a', 'claude:local_a'],
+      groups: {
+        active: ['codex-a', 'claude:local_a'],
+        completed: ['codex-b', extra.key]
+      }
     })).toBe(true)
 
     await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
-    await expect(navigation.open({ key: 'codex-b', source: 'manual-row-open' }))
+    await expect(navigation.open({ key: 'codex-b', source: 'card-click' }))
       .resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
-    expect(navigation.diagnostics().cursorKey).toBe('codex-a')
-    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'dispatched', key: 'claude:local_a' })
+    expect(navigation.diagnostics()).toMatchObject({
+      cursorKey: 'codex-b',
+      selectionGroup: 'completed'
+    })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-c' })
+    expect(navigation.diagnostics().cursorKey).toBe('codex-c')
   })
 
   it('downgrades an unverified opened result to dispatched without granting read authority', async () => {

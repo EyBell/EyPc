@@ -2,7 +2,8 @@
 
 const { PROVIDERS } = require('./provider-registry.cjs')
 const { normalizeOpenResult } = require('./open-handoff.cjs')
-const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v5'
+const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v6'
+const GROUP_ORDER = ['pinned', 'input', 'active', 'stopped', 'unread', 'completed']
 // Kept as an exported compatibility marker for diagnostics/tests. Generic
 // cycling is leading-edge now: the first target is dispatched synchronously.
 const { DEFAULT_COALESCE_MS, CYCLE_WALK_HOLD_MS } = require('../timing-policy.cjs')
@@ -65,6 +66,30 @@ function rangeUp(from, limit) {
   return indices
 }
 
+function emptyGroups() {
+  return Object.fromEntries(GROUP_ORDER.map((name) => [name, []]))
+}
+
+function uniquePresentKeys(keys, targets) {
+  const seen = new Set()
+  const next = []
+  for (const key of Array.isArray(keys) ? keys : []) {
+    if (typeof key !== 'string' || seen.has(key) || !targets.has(key)) continue
+    seen.add(key)
+    next.push(key)
+  }
+  return next
+}
+
+function normalizeGroups(input, targets) {
+  const source = input && typeof input === 'object' ? input : {}
+  const groups = emptyGroups()
+  for (const name of GROUP_ORDER) {
+    groups[name] = uniquePresentKeys(source[name], targets)
+  }
+  return groups
+}
+
 function unavailable(message, errorCode = 'unavailable') {
   return { outcome: 'unavailable', errorCode, message }
 }
@@ -84,7 +109,7 @@ function createCompanionNavigation(dependencies = {}) {
   let enabledProviders = new Set()
   let leaseCounter = 0
   let activeLease = 0
-  let snapshot = { ready: false, targets: new Map(), cycleKeys: [] }
+  let snapshot = { ready: false, targets: new Map(), cycleKeys: [], groups: emptyGroups() }
   let snapshotFingerprint = ''
   let cursorKey = ''
   // A cursor that leaves the ring is not a lost cursor. `cycleKeys` carries only
@@ -184,7 +209,7 @@ function createCompanionNavigation(dependencies = {}) {
 
   function clearSnapshot(reason) {
     clearQueued(reason)
-    snapshot = { ready: false, targets: new Map(), cycleKeys: [] }
+    snapshot = { ready: false, targets: new Map(), cycleKeys: [], groups: emptyGroups() }
     snapshotFingerprint = ''
     cursorKey = ''
     cursorDisplacedSide = ''
@@ -206,7 +231,29 @@ function createCompanionNavigation(dependencies = {}) {
    * re-anchored, so a walk that resumes after the hold lapsed continues from the
    * position it stopped at instead of from the head.
    */
+  function groupContaining(origin) {
+    if (!origin) return ''
+    for (const name of GROUP_ORDER) {
+      if (snapshot.groups[name].includes(origin)) return name
+    }
+    return ''
+  }
+
+  function ringFromSelection(origin) {
+    const name = groupContaining(origin)
+    if (!name) return snapshot.cycleKeys
+    const own = snapshot.groups[name]
+    if (own.length > 1) return own
+    const index = GROUP_ORDER.indexOf(name)
+    const concatenated = uniquePresentKeys([
+      ...GROUP_ORDER.slice(index).flatMap((item) => snapshot.groups[item]),
+      ...GROUP_ORDER.slice(0, index).flatMap((item) => snapshot.groups[item])
+    ], snapshot.targets)
+    return concatenated.length ? concatenated : snapshot.cycleKeys
+  }
+
   function ringForCycle(now) {
+    const origin = walkOrigin()
     if (walkHeld(now)) {
       const alive = walkRing.filter((key) => snapshot.targets.has(key))
       if (alive.length) {
@@ -214,7 +261,8 @@ function createCompanionNavigation(dependencies = {}) {
         // task published into the ring mid-walk joins at the tail: the badge
         // already counts it, and every press renews the hold, so a steady walk
         // would otherwise never reach it at all.
-        const fresh = snapshot.cycleKeys.filter((key) => !alive.includes(key))
+        const intended = ringFromSelection(origin || alive[0])
+        const fresh = intended.filter((key) => !alive.includes(key))
         if (fresh.length) {
           walkMergedCount += 1
           record({
@@ -231,7 +279,7 @@ function createCompanionNavigation(dependencies = {}) {
       }
     }
     const previous = walkRing.length ? walkRing : snapshot.cycleKeys
-    walkRing = snapshot.cycleKeys
+    walkRing = ringFromSelection(origin)
     walkAdoptedCount += 1
     if (cursorKey && walkRing.length && !walkRing.includes(cursorKey)) recoverCursor(previous)
     return walkRing
@@ -318,8 +366,10 @@ function createCompanionNavigation(dependencies = {}) {
       seen.add(key)
       cycleKeys.push(key)
     }
+    const groups = normalizeGroups(input.groups, targets)
     const fingerprint = JSON.stringify({
       ready: input.ready === true,
+      groups,
       targets: [...targets.values()].map((target) => [
         target.key,
         target.provider,
@@ -335,12 +385,12 @@ function createCompanionNavigation(dependencies = {}) {
       return true
     }
     const previousCycleKeys = snapshot.cycleKeys
-    snapshot = { ready: input.ready === true, targets, cycleKeys }
+    snapshot = { ready: input.ready === true, targets, cycleKeys, groups }
     snapshotFingerprint = fingerprint
     if (cursorKey && !targets.has(cursorKey)) {
       cursorKey = ''
       cursorDisplacedSide = ''
-    } else if (cursorKey && !walkHeld() && !cycleKeys.includes(cursorKey)) {
+    } else if (cursorKey && !walkHeld() && !cycleKeys.includes(cursorKey) && !groupContaining(cursorKey)) {
       recoverCursor(previousCycleKeys)
     }
     return true
@@ -360,14 +410,10 @@ function createCompanionNavigation(dependencies = {}) {
       const result = normalizeOpenResult(await openTarget(request.target, request), request.target)
       const currentOperationId = result.operationId || request.operationId
       if (result.outcome === 'opened' || result.outcome === 'dispatched') {
-        // The ring position is what the user is walking, so any confirmed open
-        // that lands inside it owns the cursor. A card click, a quick jump or an
-        // attention shortcut used to leave the cursor wherever the last cycle
-        // stopped, and the next press resumed from there instead of from the
-        // task now in front of the user. An open that lands outside the ring —
-        // a hidden row, an ephemeral target — deliberately leaves it alone
-        // rather than re-creating an unreachable cursor.
-        if ((walkHeld() ? walkRing : snapshot.cycleKeys).includes(request.target.key)) {
+        // Any confirmed open of a live target owns the cursor, including a
+        // completed row that is not on the urgency ring. Previous/next then
+        // walk that task's display group instead of resuming the old ring head.
+        if (snapshot.targets.has(request.target.key)) {
           cursorKey = request.target.key
           cursorDisplacedSide = ''
         }
@@ -599,6 +645,7 @@ function createCompanionNavigation(dependencies = {}) {
       enabledProviderCount: enabledProviders.size,
       targetCount: snapshot.targets.size,
       cycleCount: snapshot.cycleKeys.length,
+      selectionGroup: groupContaining(cursorKey) || 'none',
       cursorKey,
       cursorDisplaced: cursorDisplacedSide || 'none',
       cursorRecoveredCount,

@@ -3124,7 +3124,21 @@ watch([searchField, searchMetaText, searchPlaceholder, searchText], () => {
 // 和"键盘游标"是两个东西：focusedKey 为空时界面照样高亮首行，但 moveFocus 从 -1 起算。
 // 这里把两者合成同一个真相，immediate 保证首次挂载就成立。
 // 必须注册在 renderRows watcher 之前，否则同一轮里面板刷新会读到还没补种的游标。
+watch(() => snapshot.value?.taskSnapshot?.focusedKey, (key) => {
+  if (key) focusedKey.value = `task:${key}`
+})
+
 watch(focusItems, (items) => {
+  const packageKey = snapshot.value?.taskSnapshot?.focusedKey
+  const preferred = packageKey ? `task:${packageKey}` : focusedKey.value
+  if (items.some((item) => item.key === preferred)) {
+    focusedKey.value = preferred
+    return
+  }
+  if (packageKey) {
+    focusedKey.value = preferred
+    return
+  }
   if (!items.some((item) => item.key === focusedKey.value)) focusedKey.value = items[0]?.key || ''
 }, { immediate: true, flush: 'post' })
 

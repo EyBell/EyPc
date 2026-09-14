@@ -8,7 +8,7 @@
 
 - 主窗口 **Codex** Tab
 - uTools：`eypc-codex` 及相关全局功能（显示/隐藏悬浮球、直接展开卡片、快速任务查看、待输入、已完成未读、上一个/下一个任务、归档当前任务等）
-- 插件内默认：`Ctrl+Alt+Q`（macOS 常为 `Command+Option+Q`）切换悬浮球；`Ctrl+Alt+Enter` 显示并展开卡片；`Ctrl+Alt+K` 进入快速任务查看
+- 插件内默认：`Ctrl+Alt+Q`（macOS 常为 `Command+Option+Q`）切换悬浮球；`Ctrl+Alt+Enter` 显示并展开卡片；`Ctrl+Alt+K` 进入快速任务查看。从快捷键、展开卡片或角标打开某条对话后，会记住它是当前任务；「上一个 / 下一个」从这条所在分组继续，列表高亮也跟到这一条。
 - **配置入口：** Codex「快捷方式」为每一个全局功能各提供一行「去设置」——悬浮球开关、直接展开卡片、快速任务查看、待输入、已完成未读、上一个/下一个任务、归档当前任务、Action 执行工作台、Action 槽 1–5。每一行配置的都是它自己那条功能
 - **Action Runner / Environment Action 槽 1–5**：Runner 入口只展开工作台，槽位入口会展开、定位并执行
 

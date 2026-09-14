@@ -878,7 +878,8 @@ function semanticPackage(packageValue) {
       errorCode: packageValue.providerHealth?.[provider]?.errorCode || ''
     }])),
     tasks: packageValue.tasks.map(semanticTask),
-    views: packageValue.views
+    views: packageValue.views,
+    focusedKey: packageValue.focusedKey || ''
   })
 }
 
@@ -984,6 +985,29 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   beginNavigation()
+  navigation.onResult((event) => {
+    if (event.outcome !== 'opened' && event.outcome !== 'dispatched') return
+    const key = typeof event.key === 'string' ? event.key : ''
+    const task = taskForKey(key)
+    if (!task) return
+    const rotateSources = new Set([
+      'card-click',
+      'manual-row-open',
+      'manual-quick-jump',
+      'global-shortcut',
+      'local-shortcut',
+      'task-cycle'
+    ])
+    markAttentionOpened(task, { rotate: rotateSources.has(event.source) })
+    if (currentPackage.focusedKey === key) return
+    currentPackage = { ...currentPackage, focusedKey: key }
+    const semantic = semanticPackage(currentPackage)
+    if (semantic === lastSemantic) return
+    currentPackage.packageRevision = ++packageSequence
+    currentPackage.publishedAt = now()
+    lastSemantic = semantic
+    emitPackage(currentPackage)
+  })
 
   function interactionStoreKey(interaction) {
     return `${interaction.provider}\0${interaction.taskKey}\0${interaction.branchRef}\0${interaction.interactionRef}`
@@ -1252,12 +1276,18 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
   }
 
-  function markAttentionOpened(task) {
+  function markAttentionOpened(task, options = {}) {
     if (!task) return
     for (const kind of ['input', 'completedUnread']) {
       if (!currentPackage.views.attentionKeys[kind].includes(task.key)) continue
       const instance = attentionInstance(kind, task)
-      if (instance) attentionSeen[kind].add(instance)
+      if (!instance) continue
+      attentionSeen[kind].add(instance)
+      if (options.rotate === false) continue
+      const walk = attentionWalks[kind]
+      const index = walk.findIndex((entry) => entry.key === task.key && entry.instance === instance)
+      if (index < 0) continue
+      attentionWalks[kind] = [...walk.slice(index + 1), ...walk.slice(0, index), walk[index]]
     }
   }
 
@@ -1272,7 +1302,6 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   /** 只有收据 confirmsRead===true 才清 completed-unread；Deep Link 成功不等于已读。 */
   function acknowledgeOpenedTask(task, result) {
-    markAttentionOpened(task)
     if (result?.confirmsRead !== true) return
     if (!task || !providerTraits(task.provider).readAcknowledgements || task.phase !== 'completed' || task.unread !== true) return
     const epoch = taskTerminalEpoch(task)
@@ -1535,7 +1564,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       // Direct row open remains available from the hidden/paused page; only
       // selector-owned cycleKeys and attentionKeys exclude those tasks.
       targets: actionTargets,
-      cycleKeys: packageValue.views.cycleKeys
+      cycleKeys: packageValue.views.cycleKeys,
+      groups: packageValue.views.groups
     })
   }
 
