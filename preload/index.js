@@ -276,6 +276,52 @@ try {
   cursorBridgeLoadError = String(error && error.message || error || 'cursor module unavailable')
 }
 
+// Orca Agents companion. Same guarded-require shape: a missing module
+// degrades this provider alone. Inventory is CLI `worktree ps` + `terminal
+// list`; jump is `terminal switch`; archive closes that pane.
+let orcaBridge = null
+let orcaBridgeLoadError = ''
+try {
+  let orcaModule = null
+  let orcaRelativeLoadError = null
+  try {
+    orcaModule = require('./orca/index.cjs')
+  } catch (error) {
+    orcaRelativeLoadError = error
+  }
+  if (!orcaModule) {
+    const orcaBaseCandidates = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(orcaBaseCandidates))) {
+      try {
+        orcaModule = require(path.join(base, 'orca', 'index.cjs'))
+        break
+      } catch {}
+    }
+  }
+  const createOrcaBridge = orcaModule && orcaModule.createOrcaBridge
+  if (typeof createOrcaBridge !== 'function') throw orcaRelativeLoadError || new Error('orca module factory unavailable')
+  orcaBridge = createOrcaBridge({
+    fs,
+    path,
+    env: process.env,
+    platform: process.platform,
+    execFile,
+    windowsList: () => windowSubsystem
+      ? windowSubsystem.list()
+      : Promise.resolve({ windows: [] }),
+    windowsActivate: (request) => windowSubsystem
+      ? windowSubsystem.activate(request)
+      : Promise.resolve({ outcome: 'unsupported' })
+  })
+} catch (error) {
+  orcaBridgeLoadError = String(error && error.message || error || 'orca module unavailable')
+}
+
 // Process-lifetime companion task authority. Provider adapters only contribute
 // raw evidence and capabilities; this Kernel owns the canonical package,
 // cursor and dispatch arbitration across mainHide/Renderer remounts.
@@ -286,6 +332,8 @@ let companionEvidenceChannelsV7 = null
 let codexBranchObservationV7 = null
 let claudeSessionObservationV7 = null
 let cursorSessionObservationV7 = null
+let orcaSessionObservationV7 = null
+let companionProviderOrder = ['codex', 'claude', 'cursor']
 let createCompanionEvidenceNodeV7 = null
 let createCompanionInteractionEvidenceV7 = null
 let createCompanionInteractionSetV7 = null
@@ -325,6 +373,9 @@ try {
   createCompanionHostRegistry = typeof kernelModule.createCompanionHostRegistry === 'function'
     ? kernelModule.createCompanionHostRegistry
     : null
+  if (Array.isArray(kernelModule.PROVIDERS) && kernelModule.PROVIDERS.length) {
+    companionProviderOrder = kernelModule.PROVIDERS.filter((id) => typeof id === 'string')
+  }
   companionV7Revisions = kernelModule.COMPANION_V7_REVISIONS || null
   companionEvidenceChannelsV7 = Array.isArray(kernelModule.COMPANION_EVIDENCE_CHANNELS_V7)
     ? kernelModule.COMPANION_EVIDENCE_CHANNELS_V7
@@ -342,12 +393,14 @@ try {
   codexBranchObservationV7 = evidenceAdapter?.codexBranchObservationV7
   claudeSessionObservationV7 = evidenceAdapter?.claudeSessionObservationV7
   cursorSessionObservationV7 = evidenceAdapter?.cursorSessionObservationV7
+  orcaSessionObservationV7 = evidenceAdapter?.orcaSessionObservationV7
   createCompanionEvidenceNodeV7 = evidenceAdapter?.createEvidenceNodeV7
   createCompanionInteractionEvidenceV7 = evidenceAdapter?.createInteractionEvidenceV7
   createCompanionInteractionSetV7 = evidenceAdapter?.createInteractionSetV7
   createCompanionEvidenceBatchV7 = evidenceAdapter?.createEvidenceBatchV7
   if (!createCompanionHostRegistry || !companionV7Revisions || !companionEvidenceChannelsV7
     || !codexBranchObservationV7 || !claudeSessionObservationV7 || !cursorSessionObservationV7
+    || !orcaSessionObservationV7
     || !createCompanionEvidenceNodeV7 || !createCompanionInteractionEvidenceV7
     || !createCompanionInteractionSetV7 || !createCompanionEvidenceBatchV7) {
     throw new Error('companion V7 evidence adapter unavailable')
@@ -1402,6 +1455,18 @@ function codexRolloutPendingPlanStateText(text) {
 }
 const CODEX_ACTION_RUNNER_MIN_WIDTH = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_WIDTH ?? 720
 const CODEX_ACTION_RUNNER_MIN_HEIGHT = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_HEIGHT ?? 420
+
+function orcaUnavailable(shape) {
+  const message = `Orca 模块未加载：${orcaBridgeLoadError || 'unknown error'}`
+  if (shape === 'inventory') {
+    return { revision: '', available: false, reason: 'unknown', sessions: [], truncated: false, readAt: Date.now() }
+  }
+  if (shape === 'environment') {
+    return { available: false, reason: 'unknown', sessionCount: 0, cliPath: '', readAt: Date.now() }
+  }
+  if (shape === 'archive') return { outcome: 'failed', errorCode: 'archive-unavailable', message }
+  return { outcome: 'unavailable', confirmsRead: false, message }
+}
 
 function cursorUnavailable(shape) {
   const message = `Cursor 模块未加载：${cursorBridgeLoadError || 'unknown error'}`
@@ -10726,6 +10791,19 @@ async function openCompanionCursorTarget(target) {
   return result
 }
 
+async function openCompanionOrcaTarget(target) {
+  const exactAlias = typeof target?.key === 'string' && target.key.startsWith('orca:')
+    ? target.key.slice('orca:'.length)
+    : ''
+  const result = orcaBridge
+    ? await orcaBridge.openTask(String(exactAlias || target.actionAlias || ''))
+    : orcaUnavailable('open')
+  if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
+    queueMicrotask(() => queueCompanionHostReconciliation('orca'))
+  }
+  return result
+}
+
 function codexPrivateThreadSettings(...values) {
   for (const value of values) {
     const source = codexRecord(value)
@@ -10906,7 +10984,8 @@ function companionTaskConfiguration() {
     providers: {
       codex: providerSource.codex === undefined ? true : providerSource.codex === true,
       claude: providerSource.claude === true,
-      cursor: providerSource.cursor === true
+      cursor: providerSource.cursor === true,
+      orca: providerSource.orca === true
     }
   }
 }
@@ -11884,6 +11963,74 @@ function companionCursorEvidenceV7(sessionValue, hookValue, input = {}) {
   }
 }
 
+function companionOrcaEvidenceV7(sessionValue, input = {}) {
+  const session = codexRecord(sessionValue)
+  const paneKey = typeof session.paneKey === 'string' ? session.paneKey.toLowerCase() : ''
+  if (!paneKey) return { nodes: [], interactions: [], interactionSets: [], relations: [], maxima: {} }
+  const key = `orca:${paneKey}`
+  const family = key
+  const persisted = input.persisted || companionPersistedTaskState()
+  const observation = orcaSessionObservationV7(session, { acceptedAt: input.acceptedAt })
+  const revisionAt = companionEvidenceSequenceV7(
+    session.lastUpdatedAt,
+    session.createdAt,
+    input.acceptedAt,
+    1
+  )
+  const localPin = persisted.pins.has(key)
+  const originalTitle = typeof session.name === 'string' && session.name.trim()
+    ? session.name.trim().slice(0, 240)
+    : 'Orca'
+  const alias = persisted.aliases.get(key) || ''
+  const terminal = ['turn-completed', 'turn-interrupted', 'turn-failed'].includes(observation.kind)
+  const root = createCompanionEvidenceNodeV7({
+    provider: 'orca',
+    key,
+    family,
+    role: 'root',
+    observation,
+    causalKey: companionCausalKey('orca', key, observation.turnStartedAt || observation.sequence),
+    observedAt: observation.sequence,
+    metadata: companionProviderMetadataV7({
+      kind: localPin ? 'local-pin' : 'orca-session',
+      actionAlias: paneKey,
+      revisionAt,
+      membershipRevision: companionEvidenceSequenceV7(input.acceptedAt, revisionAt),
+      visibilityRevision: revisionAt,
+      metadataRevision: companionEvidenceSequenceV7(session.lastUpdatedAt, input.acceptedAt, revisionAt),
+      lastQuestionAt: companionEvidenceSequenceV7(session.lastUpdatedAt, session.createdAt),
+      createdAt: session.createdAt,
+      displayOrder: localPin ? persisted.pinOrder?.get(key) ?? input.order : input.order,
+      cycleOrder: input.order,
+      attentionOrder: input.order,
+      hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
+      idleConfirmed: terminal,
+      localPin,
+      ...companionProviderPinFields({ pinned: session.pinned, order: input.order, authority: 'orca-worktree', fallbackOrder: input.order }),
+      dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.lastUpdatedAt) >= input.dynamicCutoff,
+      displayName: alias || originalTitle,
+      originalTitle,
+      alias,
+      ...companionProviderProjectFields(session)
+    }),
+    capabilities: ['open', ...(terminal ? ['archive'] : [])],
+    standaloneEligible: true
+  })
+  return {
+    nodes: root ? [root] : [],
+    interactions: [],
+    interactionSets: [],
+    relations: [],
+    maxima: {
+      activity: observation.sequence,
+      interaction: 0,
+      unread: observation.unreadSequence,
+      planArtifact: 0,
+      topology: 0
+    }
+  }
+}
+
 let companionPreflightDraftSequence = 0
 
 async function preflightCompanionTaskPackageV7(input = {}) {
@@ -11893,7 +12040,8 @@ async function preflightCompanionTaskPackageV7(input = {}) {
   const providers = {
     codex: requested.codex === true && configuration.providers.codex,
     claude: requested.claude === true && configuration.providers.claude,
-    cursor: requested.cursor === true && configuration.providers.cursor
+    cursor: requested.cursor === true && configuration.providers.cursor,
+    orca: requested.orca === true && configuration.providers.orca
   }
   if (!configuration.enabled) throw new Error('companion-disabled')
   const reads = []
@@ -11928,20 +12076,28 @@ async function preflightCompanionTaskPackageV7(input = {}) {
       : { provider: 'cursor', status: 'unavailable', errorCode: `cursor-${inventory?.reason || 'task-preflight-failed'}`.slice(0, 80) })
       .catch(() => ({ provider: 'cursor', status: 'unavailable', errorCode: 'cursor-task-preflight-failed' })))
   }
+  if (providers.orca) {
+    reads.push(Promise.resolve(orcaBridge?.readInventory?.() || orcaUnavailable('inventory'))
+      .then((inventory) => inventory?.available === true
+        && Array.isArray(inventory.sessions) && inventory.truncated !== true
+        ? { provider: 'orca', status: 'ready', value: inventory }
+        : { provider: 'orca', status: 'unavailable', errorCode: `orca-${inventory?.reason || 'task-preflight-failed'}`.slice(0, 80) })
+      .catch(() => ({ provider: 'orca', status: 'unavailable', errorCode: 'orca-task-preflight-failed' })))
+  }
   if (!reads.length) throw new Error('no-enabled-provider')
   const rows = await Promise.all(reads)
   const persisted = companionPersistedTaskState()
   const dynamicCutoff = Date.now() - configuration.dynamicTaskWindowHours * 60 * 60 * 1_000
-  const sourceLaneGenerations = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => [
+  const sourceLaneGenerations = Object.fromEntries(companionProviderOrder.map((provider) => [
     provider,
     Object.fromEntries(companionEvidenceChannelsV7.map((lane) => [lane, 0]))
   ]))
-  const providerHealth = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => [provider, {
+  const providerHealth = Object.fromEntries(companionProviderOrder.map((provider) => [provider, {
     status: providers[provider] ? 'unavailable' : 'disabled',
     generation: 0,
     errorCode: ''
   }]))
-  const evidenceBatches = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => [provider, null]))
+  const evidenceBatches = Object.fromEntries(companionProviderOrder.map((provider) => [provider, null]))
   let taskCount = 0
   for (const result of rows) {
     const provider = result.provider
@@ -12037,7 +12193,34 @@ async function preflightCompanionTaskPackageV7(input = {}) {
         relations.push(...evidence.relations)
         order += evidence.nodes.length
       }
-    } else {
+    } else if (provider === 'orca') {
+      const generation = readAt
+      Object.assign(sourceLaneGenerations.orca, {
+        membership: generation,
+        activity: generation,
+        interaction: generation,
+        unread: generation,
+        planArtifact: generation,
+        metadata: generation,
+        topology: generation
+      })
+      topologyComplete = true
+      for (const session of result.value.sessions) {
+        const evidence = companionOrcaEvidenceV7(session, {
+          persisted,
+          dynamicCutoff,
+          order,
+          acceptedAt: readAt,
+          topologyGeneration: generation,
+          authority: 'provider-snapshot'
+        })
+        nodes.push(...evidence.nodes)
+        interactions.push(...evidence.interactions)
+        interactionSets.push(...evidence.interactionSets)
+        relations.push(...evidence.relations)
+        order += evidence.nodes.length
+      }
+    } else if (provider === 'cursor') {
       const hooks = new Map((Array.isArray(result.hooks) ? result.hooks : [])
         .filter((value) => value && typeof value.sessionId === 'string')
         .map((value) => [String(value.sessionId).toLowerCase(), codexRecord(value)]))
@@ -12085,7 +12268,7 @@ async function preflightCompanionTaskPackageV7(input = {}) {
       health: result.status
     })
   }
-  for (const provider of ['codex', 'claude', 'cursor']) {
+  for (const provider of companionProviderOrder) {
     if (evidenceBatches[provider]) continue
     evidenceBatches[provider] = createCompanionEvidenceBatchV7({
       provider,
@@ -12093,7 +12276,7 @@ async function preflightCompanionTaskPackageV7(input = {}) {
       health: providerHealth[provider].status
     })
   }
-  const sourceGenerations = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => [
+  const sourceGenerations = Object.fromEntries(companionProviderOrder.map((provider) => [
     provider,
     companionCounterAggregate(sourceLaneGenerations[provider])
   ]))
@@ -12171,7 +12354,10 @@ try {
           bundleId: 'com.todesktop.230313mzl4w4u92',
           appName: 'Cursor',
           windowAppIdPrefix: 'com.todesktop.'
-        })
+        }),
+        ...(orcaBridge && typeof orcaBridge.runtimeStrategy === 'function'
+          ? { orca: orcaBridge.runtimeStrategy() }
+          : {})
       }
     })
   }
@@ -12221,6 +12407,15 @@ const companionHostRegistry = createCompanionHostRegistry?.({
         || (typeof target.key === 'string' && target.key.startsWith('cursor:') ? target.key.slice('cursor:'.length) : '')))
       : Promise.resolve(cursorUnavailable('archive')),
     // No `setPin`: Cursor pin is inbound-only by manifest policy (see claude).
+    close: () => undefined
+  },
+  orca: {
+    inspect: () => orcaBridge ? orcaBridge.inspect() : orcaUnavailable('environment'),
+    open: companionOpenReadiness ? companionOpenReadiness.wrapOpen('orca', openCompanionOrcaTarget) : openCompanionOrcaTarget,
+    archive: (target) => orcaBridge
+      ? orcaBridge.archiveTask(String(target.actionAlias
+        || (typeof target.key === 'string' && target.key.startsWith('orca:') ? target.key.slice('orca:'.length) : '')))
+      : Promise.resolve(orcaUnavailable('archive')),
     close: () => undefined
   }
 })
@@ -12407,6 +12602,7 @@ let companionClaudeInventoryDispose = null
 let companionClaudeUnreadDispose = null
 let companionCursorEventDispose = null
 let companionCursorInventoryDispose = null
+let companionOrcaInventoryDispose = null
 let companionClaudeUnreadSnapshot = { ids: new Set(), generation: 0, readAt: 0, available: false }
 
 /**
@@ -12579,7 +12775,7 @@ function companionInteractionEvidenceV1(task, authority = 'provider-live') {
 function publishCompanionEvidenceBatchesV3(input = {}) {
   const current = companionTaskKernel?.getPackage?.()
   if (!current?.complete || !companionTaskKernel?.publishEvidence) return false
-  const providers = ['codex', 'claude', 'cursor']
+  const providers = companionProviderOrder
   const requestedBatches = codexRecord(input.evidenceBatches)
   const requestedLanes = codexRecord(input.sourceLaneGenerations)
   const sourceLaneGenerations = Object.fromEntries(providers.map((provider) => {
@@ -13113,7 +13309,7 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
 
 function queueCompanionHostReconciliation(provider = '') {
   if (!companionTaskKernel) return
-  const requestedProvider = provider === 'codex' || provider === 'claude' || provider === 'cursor' ? provider : ''
+  const requestedProvider = companionProviderOrder.includes(provider) ? provider : ''
   if (companionHostReconcileInFlight) {
     companionHostReconcilePendingProviders.add(requestedProvider)
     recordCompanionProbeGate('reconciliation-gate', 'coalesced', {
@@ -13127,11 +13323,7 @@ function queueCompanionHostReconciliation(provider = '') {
     .then(() => {
       const current = companionTaskKernel.getPackage()
       const requestedProviders = requestedProvider
-        ? {
-            codex: requestedProvider === 'codex',
-            claude: requestedProvider === 'claude',
-            cursor: requestedProvider === 'cursor'
-          }
+        ? Object.fromEntries(companionProviderOrder.map((id) => [id, id === requestedProvider]))
         : current.providers
       return preflightCompanionTaskPackageV7({ providers: requestedProviders }).then((draft) => {
         if (!requestedProvider) return draft
@@ -13150,7 +13342,7 @@ function queueCompanionHostReconciliation(provider = '') {
             ...current.providerHealth,
             [requestedProvider]: draft.providerHealth[requestedProvider]
           },
-          evidenceBatches: Object.fromEntries(['codex', 'claude', 'cursor'].map((providerId) => [
+          evidenceBatches: Object.fromEntries(companionProviderOrder.map((providerId) => [
             providerId,
             providerId === requestedProvider
               ? draft.evidenceBatches[providerId]
@@ -13240,6 +13432,7 @@ if (companionTaskKernel) {
   try { companionClaudeUnreadDispose = claudeBridge?.watchCodeUnread?.(() => { void applyClaudeUnreadToCompanionKernel() }) || null } catch {}
   try { companionCursorEventDispose = cursorBridge?.watchEvents?.(() => queueCompanionHostReconciliation('cursor')) || null } catch {}
   try { companionCursorInventoryDispose = cursorBridge?.watchInventory?.(() => queueCompanionHostReconciliation('cursor')) || null } catch {}
+  try { companionOrcaInventoryDispose = orcaBridge?.watchInventory?.(() => queueCompanionHostReconciliation('orca')) || null } catch {}
 }
 
 function runtimeIdentityHandshake(input = {}) {
@@ -13392,11 +13585,13 @@ if (globalThis.utools && typeof globalThis.utools.onPluginOut === 'function') {
       try { companionClaudeUnreadDispose?.() } catch {}
       try { companionCursorEventDispose?.() } catch {}
       try { companionCursorInventoryDispose?.() } catch {}
+      try { companionOrcaInventoryDispose?.() } catch {}
       companionClaudeStateDispose = null
       companionClaudeInventoryDispose = null
       companionClaudeUnreadDispose = null
       companionCursorEventDispose = null
       companionCursorInventoryDispose = null
+      companionOrcaInventoryDispose = null
       closeCodexInventoryMembershipWatchers()
       companionTaskKernel?.close()
       codexEnvironmentBridge?.shutdownCodexEnvironmentActions()
@@ -14292,6 +14487,28 @@ window.eypcPlatform = {
       loadError: cursorBridgeLoadError
     }),
     close: () => { if (cursorBridge) cursorBridge.close() }
+  },
+  orca: {
+    inspect: () => orcaBridge ? orcaBridge.inspect() : orcaUnavailable('environment'),
+    readInventory: () => orcaBridge
+      ? Promise.resolve(orcaBridge.readInventory())
+      : orcaUnavailable('inventory'),
+    watchInventory: (...args) => orcaBridge && typeof orcaBridge.watchInventory === 'function'
+      ? orcaBridge.watchInventory(...args)
+      : () => {},
+    openTask: (...args) => orcaBridge
+      ? orcaBridge.openTask(...args)
+      : Promise.resolve(orcaUnavailable('open')),
+    archiveTask: (...args) => orcaBridge
+      ? orcaBridge.archiveTask(...args)
+      : Promise.resolve(orcaUnavailable('archive')),
+    diagnostics: () => ({
+      ...(orcaBridge && typeof orcaBridge.diagnostics === 'function' ? orcaBridge.diagnostics() : {}),
+      revision: orcaBridge ? orcaBridge.revision : '',
+      loaded: Boolean(orcaBridge),
+      loadError: orcaBridgeLoadError
+    }),
+    close: () => { if (orcaBridge) orcaBridge.close() }
   },
   companionKernel: companionTaskKernel
       ? {

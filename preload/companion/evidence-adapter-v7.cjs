@@ -4,8 +4,9 @@ const {
   COMPANION_V7_REVISIONS,
   COMPANION_EVIDENCE_CHANNELS_V7
 } = require('./contracts-v7.cjs')
+const { PROVIDERS: PROVIDER_ORDER } = require('./provider-registry.cjs')
 
-const PROVIDERS = new Set(['codex', 'claude', 'cursor'])
+const PROVIDERS = new Set(PROVIDER_ORDER)
 const ACTIVITY_KINDS = new Set([
   'turn-running',
   'turn-completed',
@@ -332,6 +333,56 @@ function cursorSessionObservationV7(value = {}, hookValue = {}) {
   }
 }
 
+function orcaSessionObservationV7(value = {}, options = {}) {
+  const session = record(value)
+  const extra = record(options)
+  const state = typeof session.state === 'string' ? session.state.trim().toLowerCase() : ''
+  let kind = 'unknown'
+  if (state === 'working' || state === 'waiting' || state === 'blocked') kind = 'turn-running'
+  else if (state === 'interrupted') kind = 'turn-interrupted'
+  else if (state === 'done') kind = 'turn-completed'
+  const lastUpdatedAt = integer(session.lastUpdatedAt)
+  const stateStartedAt = integer(session.stateStartedAt)
+  const acceptedAt = integer(extra.acceptedAt)
+  // Turn epoch is when Orca entered this state, not last tool output and not
+  // worktree createdAt. Using lastUpdatedAt as running turnStartedAt made each
+  // poll a newer live Turn, so a later `done` with an older createdAt could
+  // never close 进行中.
+  const turnStartedAt = stateStartedAt || lastUpdatedAt || integer(session.createdAt)
+  const sequence = Math.max(lastUpdatedAt, stateStartedAt, acceptedAt, turnStartedAt)
+  const terminalAt = kind === 'turn-completed' || kind === 'turn-interrupted'
+    ? Math.max(lastUpdatedAt, stateStartedAt, acceptedAt, turnStartedAt)
+    : 0
+  return {
+    kind,
+    exact: kind !== 'unknown',
+    authority: 'inventory',
+    candidates: [{
+      kind,
+      authority: 'inventory',
+      exact: kind !== 'unknown',
+      sequence,
+      observedAt: sequence,
+      statusEnteredAt: sequence,
+      turnStartedAt,
+      terminalAt
+    }],
+    sequence,
+    statusEnteredAt: sequence,
+    turnStartedAt,
+    terminalAt,
+    unreadKnown: true,
+    unread: session.unread === true,
+    unreadSequence: sequence,
+    interactionKind: '',
+    interactionSequence: 0,
+    planState: 'unknown',
+    planSequence: 0,
+    planActionable: false,
+    planReason: ''
+  }
+}
+
 function createEvidenceNodeV7(input = {}) {
   const source = record(input)
   const provider = PROVIDERS.has(source.provider) ? source.provider : ''
@@ -475,6 +526,7 @@ module.exports = {
   codexBranchObservationV7,
   claudeSessionObservationV7,
   cursorSessionObservationV7,
+  orcaSessionObservationV7,
   createEvidenceNodeV7,
   createInteractionEvidenceV7,
   createInteractionSetV7,

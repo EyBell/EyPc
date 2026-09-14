@@ -128,6 +128,9 @@ export interface CodexRuntimeView {
   cursorAvailable: boolean
   cursorInventoryReason: string
   cursorHooks: 'installed' | 'outdated' | 'missing' | 'unknown'
+  orcaSessionCount: number
+  orcaAvailable: boolean
+  orcaInventoryReason: string
   claudeQuota: ClaudeQuotaSnapshot
   refreshing: boolean
   floatHost: {
@@ -453,6 +456,8 @@ export function createCodexController(options: CodexControllerOptions) {
   let lastCursorReadAt = 0
   let cursorInventorySettled = true
   let cursorHooks: 'installed' | 'outdated' | 'missing' | 'unknown' = 'unknown'
+  let orcaAvailable = false
+  let orcaInventoryReason = ''
   const cursorHookStates = new Map<string, { phase: CursorAgentObservation['hookPhase']; turnOpen: boolean; lastEventAt: number }>()
   let cursorEventDispose: (() => void) | null = null
   let cursorInventoryWatchDispose: (() => void) | null = null
@@ -615,6 +620,10 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function cursorEnabled(): boolean {
     return isCompanionProviderEnabled(codexState().settings.providers, 'cursor')
+  }
+
+  function orcaEnabled(): boolean {
+    return isCompanionProviderEnabled(codexState().settings.providers, 'orca')
   }
 
   function refreshTaskPresentation(conversations: ConversationSnapshotV1, now = Date.now()) {
@@ -1130,6 +1139,46 @@ export function createCodexController(options: CodexControllerOptions) {
     }
   }
 
+  function resetOrcaLane() {
+    orcaAvailable = false
+    orcaInventoryReason = ''
+  }
+
+  async function refreshOrcaInspect() {
+    if (disposed || !orcaEnabled()) return false
+    const inspect = options.platform.orca?.inspect
+    if (typeof inspect !== 'function') {
+      orcaAvailable = false
+      orcaInventoryReason = 'unknown'
+      return false
+    }
+    try {
+      const inspected = await inspect()
+      const available = inspected?.available === true
+      const reason = typeof inspected?.reason === 'string' && inspected.reason ? inspected.reason : (available ? 'ready' : 'unknown')
+      if (available === orcaAvailable && reason === orcaInventoryReason) return false
+      orcaAvailable = available
+      orcaInventoryReason = reason
+      return true
+    } catch {
+      orcaAvailable = false
+      orcaInventoryReason = 'degraded'
+      return false
+    }
+  }
+
+  function syncOrcaEnablement() {
+    if (!orcaEnabled()) {
+      resetOrcaLane()
+      options.notify()
+      return
+    }
+    void refreshOrcaInspect().then((changed) => {
+      if (disposed) return
+      if (changed) options.notify()
+    }).catch(() => { /* orca lane degrades on its own */ })
+  }
+
   function syncCursorEnablement() {
     if (!cursorEnabled()) {
       resetCursorLane()
@@ -1191,6 +1240,11 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     if (cursorEnabled()) {
       void refreshCursorRegistration().then((changed) => {
+        if (!disposed && changed) options.notify()
+      }).catch(() => undefined)
+    }
+    if (orcaEnabled()) {
+      void refreshOrcaInspect().then((changed) => {
         if (!disposed && changed) options.notify()
       }).catch(() => undefined)
     }
@@ -2177,7 +2231,8 @@ export function createCodexController(options: CodexControllerOptions) {
     const codexEnablementChanged = current.providers.codex !== next.providers.codex
     const claudeEnablementChanged = current.providers.claude !== next.providers.claude
     const cursorEnablementChanged = current.providers.cursor !== next.providers.cursor
-    const providerEnablementChanged = codexEnablementChanged || claudeEnablementChanged || cursorEnablementChanged
+    const orcaEnablementChanged = current.providers.orca !== next.providers.orca
+    const providerEnablementChanged = codexEnablementChanged || claudeEnablementChanged || cursorEnablementChanged || orcaEnablementChanged
     if (codexEnablementChanged) codexInventorySettled = next.providers.codex !== true
     if (claudeEnablementChanged) claudeInventorySettled = next.providers.claude !== true
     if (cursorEnablementChanged) cursorInventorySettled = next.providers.cursor !== true
@@ -2208,6 +2263,7 @@ export function createCodexController(options: CodexControllerOptions) {
     // immediately rather than leaving stale cards until the next Codex tick.
     if (claudeEnablementChanged) syncClaudeEnablement()
     if (cursorEnablementChanged) syncCursorEnablement()
+    if (orcaEnablementChanged) syncOrcaEnablement()
     return true
   }
 
@@ -3743,6 +3799,11 @@ export function createCodexController(options: CodexControllerOptions) {
         cursorAvailable,
         cursorInventoryReason,
         cursorHooks,
+        orcaSessionCount: taskSnapshot.complete
+          ? taskSnapshot.tasks.filter((task) => task.provider === 'orca').length
+          : 0,
+        orcaAvailable,
+        orcaInventoryReason,
         claudeQuota,
         refreshing,
         floatHost: {

@@ -182,7 +182,10 @@ const BUDGET = Object.freeze({
   // `active` + empty `turns/list` synthesizes inProgress so extra-model
   // rows stay in inventory. Host extra processes keep discovery turns.
   // Nullable Turn start timestamps and per-row malformed-Turn diagnostics: +6.
-  lines: 14468,
+  // 2026-09-13 (RAW-219): +211 -- Orca fourth provider: guarded bridge load,
+  // evidence node, preflight/reconcile lanes, Host Registry/open-readiness
+  // and platform.orca. Inventory/open/archive live in preload/orca/.
+  lines: 14679,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
@@ -196,7 +199,9 @@ const BUDGET = Object.freeze({
   // volume.
   // 2026-09-03: +2 guarded module slots, codexDesktopLaunch and companionOpenReadiness.
   // 2026-09-03 (RAW-205): +2 guarded module slots, codexPinBridgeModule and codexPinBridge.
-  mutableBindings: 157
+  // 2026-09-13 (RAW-219): +5 -- orcaBridge, loadError, observation helper,
+  // provider order, inventory disposer.
+  mutableBindings: 162
 })
 
 const root = resolve(import.meta.dirname, '..')

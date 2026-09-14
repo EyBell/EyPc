@@ -5,6 +5,7 @@ const {
   codexBranchObservationV7,
   claudeSessionObservationV7,
   cursorSessionObservationV7,
+  orcaSessionObservationV7,
   createEvidenceNodeV7,
   createEvidenceBatchV7
 } = require('../../preload/companion/evidence-adapter-v7.cjs') as Record<string, (...args: any[]) => any>
@@ -219,5 +220,37 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
       unreadKnown: true,
       unread: true
     })
+  })
+
+  it('maps Orca working/done/interrupted without inventing interactions', () => {
+    expect(orcaSessionObservationV7({
+      state: 'working',
+      unread: false,
+      lastUpdatedAt: 50,
+      stateStartedAt: 10
+    })).toMatchObject({
+      kind: 'turn-running',
+      exact: true,
+      unread: false,
+      turnStartedAt: 10,
+      interactionKind: '',
+      planState: 'unknown'
+    })
+    expect(orcaSessionObservationV7({
+      state: 'done',
+      unread: true,
+      lastUpdatedAt: 80
+    })).toMatchObject({
+      kind: 'turn-completed',
+      unread: true
+    })
+    expect(orcaSessionObservationV7({
+      state: 'interrupted',
+      lastUpdatedAt: 90
+    })).toMatchObject({ kind: 'turn-interrupted' })
+    expect(orcaSessionObservationV7({
+      state: 'waiting',
+      lastUpdatedAt: 100
+    })).toMatchObject({ kind: 'turn-running' })
   })
 })

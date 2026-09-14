@@ -734,6 +734,35 @@ export interface EypcPlatformApi {
     diagnostics(): { revision: string; loaded: boolean; loadError: string }
     close(): void
   }
+  /**
+   * Orca Agents companion. Optional so an older preload degrades this lane
+   * alone. Inventory is CLI `worktree ps` + `terminal list`; `openTask`
+   * switches the live terminal and reports `dispatched`, never a read.
+   * `archiveTask` closes that pane after refusing a live `working` session.
+   */
+  orca?: {
+    inspect(): Promise<{ available: boolean; reason: string; sessionCount?: number; cliPath?: string; readAt?: number }> | { available: boolean; reason: string; sessionCount?: number; cliPath?: string; readAt?: number }
+    readInventory(): Promise<{
+      revision: string
+      available: boolean
+      reason: string
+      sessions: Array<Record<string, unknown>>
+      truncated: boolean
+      readAt: number
+    }> | {
+      revision: string
+      available: boolean
+      reason: string
+      sessions: Array<Record<string, unknown>>
+      truncated: boolean
+      readAt: number
+    }
+    watchInventory?(listener: () => void): () => void
+    openTask(paneKey: string): Promise<ClaudeOpenResult>
+    archiveTask?(paneKey: string): Promise<ClaudeArchiveResult>
+    diagnostics(): { revision: string; loaded: boolean; loadError: string; cliPath?: string; cliAvailable?: boolean }
+    close(): void
+  }
   /** Unified process-owned authority used by current Main, Float and shortcuts. */
   companionKernel?: CompanionTaskKernelBridge
   float: {
