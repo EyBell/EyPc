@@ -44,6 +44,7 @@
 - [RAW-217](../shared-raw-217.md#L1) — `active` · 悬浮卡片任务行第二行压缩为 CC/CX/CS + 项目 + sub+N + 状态 + 短时；Claude cwd / Cursor workspace.json 进入 Kernel 项目名；默认 chats 名省略，悬停给完整说明
 - [RAW-218](../shared-raw-218.md#L1) — `active` · 自动区分 Codex Host 额外进程（`XH`）与原生 Codex（`CX`，含 Codex++）；原生官方 active 且 turns 为空时按进行中发布
 - [RAW-219](../shared-raw-219.md#L1) — `active` · 第四个独立来源 Orca：CLI 库存/跳转/跟踪，默认关闭，不读对话正文
+- [RAW-220](../shared-raw-220.md#L1) — `active` · Orca 标签栏已完成未读应按窗格导出；未导出前 EyPc 中转：曾观测进行中不得直接已完成已读，插件跳转/点击后才已读
 
 
 ### 编号条款

@@ -53,6 +53,8 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Cursor hook terminal beats leftover unfinishedRunAt](../cursor-hook-terminal-beats-stale-unfinished-run.md#L1)
 - [Foreign provider project fields must reach Kernel metadata](../companion-foreign-project-fields-not-published.md#L1)
 - [Orca spinner OSC title is not the card topic](../orca-spinner-osc-title-is-not-card-topic.md#L1)
+- [Orca workspace pin is not conversation pin](../orca-workspace-pin-is-not-conversation-pin.md#L1)
+- [Orca Session History has no unread or pin](../orca-session-history-has-no-unread-or-pin.md#L1)
 
 ## Historical Or Migration Sources
 

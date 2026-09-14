@@ -28,17 +28,22 @@ Orca 一个工作区里只有一条实际未读对话，EyPc「已完成未读�
 
 ## Verified Root Cause
 
-库存把 `worktree.unread` 写进该工作树每一个 agent 的 `session.unread`。Kernel 再把每条 `done + unread` 送进已完成未读。组汇总被当成成员状态。
+库存把 `worktree.unread` 写进该工作树每一个 agent 的 `session.unread`。Kernel 再把每条 `done + unread` 送进已完成未读。组汇总被当成成员状态。后来虽改为只标最新结束的一条，却用含工作区 `lastActivityAt` 的 `lastUpdatedAt` 当结束时间，组内完成项时间被拉平，再按 `paneKey` 字母序选中邻居。
 
 ## Detection Order
 
 1. 同一 `worktreeId` 下有多条 `done` 卡同时 `unread=true`，而 Orca 侧栏只有一条未读，就是本条。
 2. 先看库存是否把工作树 `unread` 直接抄到每条 session。
-3. 不要先去改 Kernel 未读合并；那是成员 OR，根因在归因。
+3. 点「已完成未读」却打开同窗左侧标签：先对照 visual layout `tabs` 最右侧 done 是否就是未读卡；再看时钟/`paneKey` 是否抢了邻居。
+4. 不要先去改 Kernel 未读合并。CLI `terminal switch` 在 handle 正确时会切到目标标签，根因在归因。
 
 ## Prevention Rule
 
-工作树 unread 只是汇总。卡片未读只归因到该工作树里最新结束（非 working）的那一条。进行中的会话不吃这口汇总未读。CLI 没有按会话未读时，宁可少标一条，也不要把已读对话标未读。
+工作树 unread 只是汇总，不得抄到组内每一条。CLI agent 行若带布尔 `unread`，卡片跟窗格，工作区汇总为假不得把仍未读的完成对话打成已读。没有按窗格字段时，只有该工作树恰好一条已完成会话才可吃汇总。多条已完成不得猜最右/最新（会把「清工」标未读、把 KM-8765 放进已完成）。进行中的会话不吃这口汇总未读。宁可少标一条，也不要把已读对话标未读。
+
+Orca 一个 Workspace 窗口里多条 Agent 标签共用工作区 `unread`。橙色标签是渲染层 `unreadAgentCompletionPanes`，正式 1.4.202 CLI 不导出。猜最右侧已完成对话会标错卡。
+
+不得用工作区 `lastActivityAt`、旁边窗格 `lastOutputAt`、`paneKey` 字母序或标签条右端当未读身份。
 
 ## Alternative Route
 
@@ -46,14 +51,17 @@ Orca 一个工作区里只有一条实际未读对话，EyPc「已完成未读�
 - 前置条件: 库存按工作树收集 agent 行。
 - 有序步骤:
   1. `mergeSession` 不写工作树 unread。
-  2. 每个工作树收集完后，只给 `lastUpdatedAt` 最大的非 working 行打 unread。
-  3. 测试：四条同组，三条 done 一条 working，工作树 unread=true，只有最新 done 为 true。
+  2. 有 agent.`unread` 布尔时跟窗格。否则仅当该工作树只有一条已完成会话才吃汇总。`lastUpdatedAt` 不得含工作区 `lastActivityAt`。
+  3. 测试：左侧标签更新、paneKey 更大，右侧标签更早结束，未读必须在右侧。无布局时仍按 `stateStartedAt`。
 - 验证: `pnpm exec vitest run tests/platform/orcaInventory.test.ts`
 - 适用边界: Orca Companion 卡片未读。不把工作树汇总当成项目未读角标的另一套算法。
-- 回退: 工作树 unread=false 时组内全部已读。
+- 回退: 没有任何 agent.unread 字段且工作树 unread=false 时组内全部已读；有 agent.unread=true 时不得回退成已读。
 
 ## Occurrence History
 
 | 日期 | 任务 | 触发 | 失败路线 | 证据 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-09-14 | 工作区未读误扇出 | CodeNote master 四条已完成 | 工作树 unread 抄到每条卡 | CLI agent 无 unread 字段 | 只归因最新结束的一条 | verified |
+| 2026-09-14 | 完成窗格未读被标已读 | EyPc 工作树 1 done + 1 working | 汇总 unread=false 整组清零 | Orca Agents 仍按窗格未读 | agent.unread 优先于汇总 | pending-host |
+| 2026-09-14 | 已完成未读跳到左侧对话 | CodeNote 最后一格未读，点击进左边 fork 会话 | lastUpdatedAt 吃进工作区 lastActivityAt，平手后按 paneKey 选中邻居 | 同组 lastActivityAt 相同，左侧 paneKey 更大 | 归因改用 stateStartedAt | pending-host |
+| 2026-09-14 | Workspace 标签条偏移 | 最后一格金标未读，跳进同窗左侧对话 | 时钟/paneKey 归因不是标签条最右侧完成项 | CLI switch 用对 handle 能切到最后一格 | 有布局时按 tabs 顺序取最右侧 done | pending-host |

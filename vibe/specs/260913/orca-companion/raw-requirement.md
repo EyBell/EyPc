@@ -26,9 +26,28 @@ text: >
 
 1. Orca 是第四个 first-class Companion Provider，默认关闭；开启后与 Codex / Claude / Cursor 共享同一任务清单、角标与循环，互不影响。
 2. 库存只读 `orca worktree ps` 与 `orca terminal list` 的白名单字段。Prompt、lastAssistantMessage、toolInput、终端 preview、绝对路径不得进入证据、诊断或持久化。
-3. 一张卡对应一个 Agent 终端（`tabId:leafId`）。没有 `agentIdentity` 的普通终端不进清单。
-4. 相位只映射 Orca 已公开的状态：`working` / `waiting` / `blocked` → 进行中；窗格 OSC 工作帧（含 Grok `Waiting for response` 规范化成 `⠋ Grok`、Claude `. ` / spinner）同样是进行中，不必等 toolName 或助手正文。`done` 且无工作帧 → 已完成，`interrupted` 或断开 → 待继续。不发明待输入/Plan。工作树 `unread` 只是工作区汇总，不得扇出到组内每条对话；卡片未读只归因到该工作树里最新结束的那一条（CLI 没有按会话未读字段）。
+3. 一张卡对应一个 Agent 终端（`tabId:leafId`）。没有 `agentIdentity` 的普通终端不进清单。只开启了 Agent 工具栏、还没有任何对话的窗格也不进清单；工作帧或 worktree.ps 里已有提问/回复/工具的会话仍进。在 Orca 窗口里关掉的窗格不进清单：`worktree ps` 残留 agent 行不算还开着；成功的 `terminal list` 没有该 `paneKey` 就必须拿掉。
+4. 相位只映射 Orca 已公开的状态：`working` / `waiting` / `blocked` → 进行中；窗格 OSC 工作帧（含 Grok `Waiting for response` 规范化成 `⠋ Grok`、Claude `. ` / spinner）同样是进行中，不必等 toolName 或助手正文。`done` 且无工作帧 → 已完成，`interrupted` 或断开 → 待继续。不发明待输入/Plan。Orca 三处状态不是同一份：标签卡才有已完成未读（`unreadAgentCompletionPanes`）和标签钉；左侧树只有进行中/已完成/中断圆点；Agent Session History（`aiVault.listSessions`）只有标题/更新时间/条数，没有 unread/pin/phase，禁止当未读或钉来源，也禁止读 preview。工作树 `unread` 只是工作区汇总，不得扇出到组内每条对话。CLI agent 行若带布尔 `unread`，卡片未读以该字段为准，汇总为假不得把它打成已读。没有按窗格未读时，只有该工作树恰好一条已完成会话才可吃工作区汇总；多条已完成不得猜测最右/最新，宁可少标。
 5. 打开走统一 Command：就绪层先保证 Orca 在跑（`orca status` / `orca open`），再 `terminal switch`。结果最多 `dispatched`，不确认已读。
 6. 归档关闭该终端窗格（`terminal close --terminal`，不用 `--all`）。`working` 拒绝归档。
-7. 状态跟踪用 Orca CLI 轮询（1 秒），因为没有 EyPc 自有 hook 文件。Orca 工作树置顶只入站，插件置顶本地，不写出站。
+7. 状态跟踪用 Orca CLI 轮询（1 秒），因为没有 EyPc 自有 hook 文件。Orca 标签置顶与 Codex 线程置顶是同一粒度。入站优先 `terminal.isPinned`；CLI 缺字段时直读本机 `orca-data.json` 的 `workspaceSession.tabsByWorktree|unifiedTabs.isPinned`（只取 tabId 布尔，不读标题/正文），与 1 秒库存对齐。不把工作区 `worktree.isPinned` 扇到组内每条。EyPc 置顶/取消写回 `terminal pin --pinned/--no-pinned`（桌面开着时走渲染层 `pinTab`）。插件本地置顶只作写回失败时的回退。
 8. 任务行来源缩写 `OR`，悬停「归属 Orca」。项目名用仓库显示名。
+9. 排序、行上相对时间和活动时间窗都以最新提问时间为节点：Orca 进入 `working` 的 `stateStartedAt`。回复过程中的 `updatedAt`、终端 `lastOutputAt` 或 1 秒轮询时刻不得把卡片抬到上面或刷新相对时间。完成后库存发 0，Kernel 保留上一轮提问钟。
+
+## RAW-220
+
+captured_at: 2026-09-14
+state: active
+text: >
+
+  你把“已完成未读”的状态登记到一个需求里，录到 Orca 我的本地主分支。
+  当前先暂时处理一下：通过 EYRPC 作为“已完成/未读”的中转记录，先做临时处理。
+
+  比如，我们读取到“进行中”后，它永远不会直接跳成“已完成”，只有通过插件跳转，或者点击插件，经过点击、查看这一部分操作之后，才会变成“已完成/已读”。这样的方式可以让我的交互更加成体系，防止遗漏一些重要的未读项。
+
+## 规范化需求（RAW-220）
+
+1. 把标签栏「已完成未读」登记为 Orca 产品需求：权威是渲染层 `unreadAgentCompletionPanes[paneKey]`，不是 Agent Session History，也不是左侧 Project Tree 圆点。Orca 应把该按窗格布尔导出到 `worktree ps` 的 `agents[].unread`（始终带布尔）；现网 1.4.202 未导出。
+2. 在 Orca 导出之前，EyPc 做临时中转：只要库存曾经读到该窗格「进行中」，之后变成 `done` 时进入「已完成未读」，不得直接变成「已完成已读」。冷启动时已经是已完成、且从未观测到进行中的窗格，不为此中转凭空标未读。
+3. 只有插件跳转或点击查看之后，这一轮才变成「已完成已读」。进行中点卡片不得改成已完成。Orca 窗口里点标签仍不作为 EyPc 已读（原生焦点仍不确认）。
+4. CLI 已给出 `agent.unread` 布尔时仍以该字段为准。工作区汇总未读不得扇出。History / 左侧树仍禁止当未读来源。
