@@ -72,7 +72,10 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
       'cli.cjs',
       'inventory.cjs',
       'open.cjs',
-      'archive.cjs'
+      'archive.cjs',
+      'pin.cjs',
+      'native-state.cjs',
+      'unread-bridge.cjs'
     ]
   }
 ])

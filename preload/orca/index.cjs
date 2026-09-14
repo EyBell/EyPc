@@ -14,6 +14,8 @@ const { createOrcaCli } = require('./cli.cjs')
 const { createInventoryReader, fingerprintOf } = require('./inventory.cjs')
 const { createOpener } = require('./open.cjs')
 const { createArchiver } = require('./archive.cjs')
+const { createPinner } = require('./pin.cjs')
+const { createUnreadBridge } = require('./unread-bridge.cjs')
 
 function createOrcaRuntimeStrategy(cli) {
   return {
@@ -49,7 +51,8 @@ function createOrcaRuntimeStrategy(cli) {
 
 function createOrcaBridge(dependencies = {}) {
   const cli = dependencies.cli || createOrcaCli(dependencies)
-  const inventory = createInventoryReader({ cli })
+  const unreadBridge = dependencies.unreadBridge || createUnreadBridge(dependencies)
+  const inventory = createInventoryReader({ cli, unreadBridge })
   const cache = { sessions: [], available: false, reason: 'unknown', readAt: 0, fingerprint: '' }
   const watchers = new Set()
   let pollTimer = null
@@ -69,16 +72,15 @@ function createOrcaBridge(dependencies = {}) {
       return next && next.handle ? next.handle : ''
     }
   })
-  const archiver = createArchiver({
-    cli,
-    lookupSession: async (paneKey) => {
-      const hit = cache.sessions.find((session) => session.paneKey === paneKey)
-      if (hit) return hit
-      const snapshot = await inventory.readInventory()
-      remember(snapshot)
-      return snapshot.sessions.find((session) => session.paneKey === paneKey) || null
-    }
-  })
+  async function lookupSession(paneKey) {
+    const hit = cache.sessions.find((session) => session.paneKey === paneKey)
+    if (hit) return hit
+    const snapshot = await inventory.readInventory()
+    remember(snapshot)
+    return snapshot.sessions.find((session) => session.paneKey === paneKey) || null
+  }
+  const archiver = createArchiver({ cli, lookupSession })
+  const pinner = createPinner({ cli, lookupSession })
 
   function remember(snapshot) {
     cache.sessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : []
@@ -148,8 +150,21 @@ function createOrcaBridge(dependencies = {}) {
         if (!watchers.size) stopPoll()
       }
     },
-    openTask: (paneKey, options) => opener.openTask(String(paneKey || ''), options || {}),
+    openTask: async (paneKey, options) => {
+      const result = await opener.openTask(String(paneKey || ''), options || {})
+      if (result && (result.outcome === 'dispatched' || result.outcome === 'opened')) {
+        unreadBridge.markViewed(paneKey)
+        const key = String(paneKey || '').toLowerCase()
+        for (const session of cache.sessions) {
+          if (session.paneKey === key && session.state !== 'working') session.unread = false
+        }
+        cache.fingerprint = fingerprintOf(cache.sessions)
+        broadcast()
+      }
+      return result
+    },
     archiveTask: (paneKey) => archiver.archiveTask(String(paneKey || '')),
+    setPin: (paneKey, request) => pinner.setPin(String(paneKey || ''), request || {}),
     runtimeStrategy: () => createOrcaRuntimeStrategy(cli),
     diagnostics() {
       return {

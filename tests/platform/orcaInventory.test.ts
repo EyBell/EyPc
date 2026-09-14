@@ -7,13 +7,17 @@ const inventory = require_(resolve(process.cwd(), 'preload/orca/inventory.cjs'))
   collectSessions: (
     worktrees: unknown[],
     terminals: unknown[],
-    visualLayouts?: unknown
+    visualLayouts?: unknown,
+    nativePins?: Set<string>
   ) => { sessions: Array<Record<string, unknown>>; truncated: boolean }
   fingerprintOf: (sessions: unknown[]) => string
   displayTitle: (title: string, agentType: string, repoName: string, tabTitle?: string) => string
   indexTabTitles: (visualLayouts: unknown) => Map<string, string>
   oscIndicatesWorking: (title: string) => boolean
-  createInventoryReader: (dependencies: { cli: { available?: boolean; json: (args: string[]) => Promise<unknown> } }) => {
+  createInventoryReader: (dependencies: {
+    cli: { available?: boolean; json: (args: string[]) => Promise<unknown> }
+    nativeState?: { pinnedTabIds: () => Set<string> }
+  }) => {
     readInventory: () => Promise<{ sessions: Array<Record<string, unknown>>; available: boolean }>
   }
 }
@@ -50,7 +54,8 @@ describe('Orca agent inventory', () => {
       connected: true,
       agentIdentity: 'grok',
       lastOutputAt: 200,
-      preview: 'SECRET BUFFER'
+      preview: 'SECRET BUFFER',
+      isPinned: true
     }])
     expect(sessions).toHaveLength(1)
     expect(sessions[0]).toMatchObject({
@@ -150,6 +155,7 @@ describe('Orca agent inventory', () => {
   it('asks terminal list for visual layouts and falls back without them', async () => {
     const calls: string[][] = []
     const reader = inventory.createInventoryReader({
+      nativeState: { pinnedTabIds: () => new Set() },
       cli: {
         json: async (args: string[]) => {
           calls.push(args)
@@ -174,6 +180,43 @@ describe('Orca agent inventory', () => {
     expect(snapshot.sessions[0]).toMatchObject({ state: 'working', name: 'gr · EyPc' })
   })
 
+  it('drops a worktree.ps agent whose pane is no longer in terminal list', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'CodeNote',
+      unread: true,
+      agents: [
+        { paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok', updatedAt: 10, toolName: 'read_file' },
+        { paneKey: `${NEW_TAB}:${NEW_LEAF}`, state: 'done', agentType: 'grok', updatedAt: 20, toolName: 'read_file' }
+      ]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: 'still open',
+      connected: true,
+      agentIdentity: 'grok'
+    }])
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0]).toMatchObject({ paneKey: `${TAB}:${LEAF}`, handle: HANDLE })
+  })
+
+  it('does not treat a failed terminal list as every pane having closed', async () => {
+    const reader = inventory.createInventoryReader({
+      nativeState: { pinnedTabIds: () => new Set() },
+      cli: {
+        json: async (args: string[]) => {
+          if (args[0] === 'worktree') {
+            return { ok: true, result: { worktrees: [{ repo: 'EyPc', agents: [{ paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok', toolName: 'read_file' }] }] } }
+          }
+          return { ok: false, error: { code: 'timeout' } }
+        }
+      }
+    })
+    const snapshot = await reader.readInventory()
+    expect(snapshot.available).toBe(false)
+    expect(snapshot.sessions).toEqual([])
+  })
+
   it('skips plain shells and archived worktrees', () => {
     const { sessions } = inventory.collectSessions([{
       repo: 'shell',
@@ -187,6 +230,58 @@ describe('Orca agent inventory', () => {
       connected: true
     }])
     expect(sessions).toEqual([])
+  })
+
+  it('skips an agent toolbar that has identity but no conversation', () => {
+    const idleToolbar = inventory.collectSessions([{
+      repo: 'EyPc',
+      agents: []
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: 'Grok',
+      connected: true,
+      agentIdentity: 'grok'
+    }])
+    expect(idleToolbar.sessions).toEqual([])
+
+    const emptyInventoryRow = inventory.collectSessions([{
+      repo: 'EyPc',
+      agents: [{
+        paneKey: `${TAB}:${LEAF}`,
+        state: 'done',
+        agentType: 'grok',
+        prompt: '',
+        lastAssistantMessage: '',
+        toolName: '',
+        updatedAt: 10
+      }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: 'Grok',
+      connected: true,
+      agentIdentity: 'grok'
+    }])
+    expect(emptyInventoryRow.sessions).toEqual([])
+  })
+
+  it('still lists a toolbar pane that is already waiting for a reply', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      agents: []
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '⠋ Grok',
+      connected: true,
+      agentIdentity: 'grok'
+    }])
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0]).toMatchObject({ state: 'working', agentType: 'grok' })
   })
 
   it('does not fan worktree unread onto every agent in the group', () => {
@@ -211,9 +306,194 @@ describe('Orca agent inventory', () => {
     ])
     expect(sessions.map((row) => [row.state, row.unread])).toEqual([
       ['done', false],
-      ['done', true],
+      ['done', false],
       ['done', false],
       ['working', false]
+    ])
+  })
+
+  it('does not guess worktree unread onto a sibling when several panes are done', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'CodeNote',
+      unread: true,
+      lastActivityAt: 900,
+      worktreeId: 'codenote-master',
+      agents: [
+        { paneKey: `${NEW_TAB}:${NEW_LEAF}`, state: 'done', agentType: 'grok', updatedAt: 80, stateStartedAt: 80 },
+        { paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok', updatedAt: 40, stateStartedAt: 40 }
+      ]
+    }], [
+      {
+        handle: 'term_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        tabId: NEW_TAB,
+        leafId: NEW_LEAF,
+        title: 'left sibling',
+        connected: true,
+        agentIdentity: 'grok',
+        lastOutputAt: 800
+      },
+      { handle: HANDLE, tabId: TAB, leafId: LEAF, title: 'rightmost done', connected: true, agentIdentity: 'grok' }
+    ], [{
+      worktreeId: 'codenote-master::/repo',
+      root: {
+        type: 'group',
+        activeTabId: NEW_TAB,
+        tabs: [
+          { tabId: NEW_TAB, activeLeafId: NEW_LEAF, title: '260914-KM-8765镜像核验' },
+          { tabId: TAB, activeLeafId: LEAF, title: '260913-CN-提交规则清工作树' }
+        ]
+      }
+    }])
+    expect(sessions.map((row) => [row.name, row.unread])).toEqual([
+      ['gr · 260914-KM-8765镜像核验', false],
+      ['gr · 260913-CN-提交规则清工作树', false]
+    ])
+  })
+
+  it('attributes worktree unread only when a single done pane can own it', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      unread: true,
+      worktreeId: 'eypc-main',
+      agents: [{ paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok', updatedAt: 10, stateStartedAt: 10 }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: 'done',
+      connected: true,
+      agentIdentity: 'grok'
+    }])
+    expect(sessions[0]?.unread).toBe(true)
+  })
+
+  it('joins native session-store pins when CLI omits isPinned', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      agents: [{ paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok', updatedAt: 10 }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: 'done',
+      connected: true,
+      agentIdentity: 'grok'
+    }], undefined, new Set([TAB]))
+    expect(sessions[0]?.pinned).toBe(true)
+  })
+
+  it('does not let worktree activity or a viewed sibling steal unread from the newest finished pane', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'CodeNote',
+      unread: true,
+      lastActivityAt: 900,
+      worktreeId: 'codenote-master',
+      agents: [
+        { paneKey: `${NEW_TAB}:${NEW_LEAF}`, state: 'done', agentType: 'grok', updatedAt: 40, stateStartedAt: 40 },
+        { paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok', updatedAt: 80, stateStartedAt: 80 }
+      ]
+    }], [
+      {
+        handle: 'term_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        tabId: NEW_TAB,
+        leafId: NEW_LEAF,
+        title: 'left sibling',
+        connected: true,
+        agentIdentity: 'grok',
+        lastOutputAt: 800
+      },
+      { handle: HANDLE, tabId: TAB, leafId: LEAF, title: 'newest finished', connected: true, agentIdentity: 'grok' }
+    ])
+    expect(NEW_TAB > TAB).toBe(true)
+    expect(sessions.map((row) => [row.paneKey, row.state, row.unread, row.lastUpdatedAt, row.stateStartedAt])).toEqual([
+      [`${NEW_TAB}:${NEW_LEAF}`, 'done', false, 40, 40],
+      [`${TAB}:${LEAF}`, 'done', false, 80, 80]
+    ])
+  })
+
+  it('honors per-agent unread when the worktree summary is already false', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      unread: false,
+      worktreeId: 'eypc-main',
+      agents: [
+        { paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok', updatedAt: 10, unread: true },
+        { paneKey: `${NEW_TAB}:${NEW_LEAF}`, state: 'working', agentType: 'grok', updatedAt: 20, unread: false }
+      ]
+    }], [
+      { handle: HANDLE, tabId: TAB, leafId: LEAF, title: 'done', connected: true, agentIdentity: 'grok' },
+      {
+        handle: 'term_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        tabId: NEW_TAB,
+        leafId: NEW_LEAF,
+        title: '⠋ Grok',
+        connected: true,
+        agentIdentity: 'grok'
+      }
+    ])
+    expect(sessions.map((row) => [row.state, row.unread])).toEqual([
+      ['done', true],
+      ['working', false]
+    ])
+    expect(sessions.every((row) => row.unreadExplicit === undefined)).toBe(true)
+  })
+
+  it('uses only the tab pin, never the workspace pin', () => {
+    const workspacePinned = inventory.collectSessions([{
+      repo: 'EyPc',
+      isPinned: true,
+      worktreeId: 'repo::/tmp/EyPc',
+      agents: [{ paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok', updatedAt: 10 }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: 'done',
+      connected: true,
+      agentIdentity: 'grok',
+      isPinned: false
+    }])
+    expect(workspacePinned.sessions[0]).toMatchObject({ pinned: false, worktreeId: 'repo::/tmp/EyPc' })
+
+    const tabPinned = inventory.collectSessions([{
+      repo: 'EyPc',
+      isPinned: false,
+      agents: [{ paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok', updatedAt: 10 }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: 'done',
+      connected: true,
+      agentIdentity: 'grok',
+      isPinned: true
+    }])
+    expect(tabPinned.sessions[0]?.pinned).toBe(true)
+  })
+
+  it('does not let the worktree summary overwrite an explicit read pane', () => {
+    const midLeaf = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      unread: true,
+      agents: [
+        { paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok', updatedAt: 10, unread: false },
+        { paneKey: `${TAB}:${midLeaf}`, state: 'done', agentType: 'grok', updatedAt: 40, unread: true }
+      ]
+    }], [
+      { handle: HANDLE, tabId: TAB, leafId: LEAF, title: 'read', connected: true, agentIdentity: 'grok' },
+      {
+        handle: 'term_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        tabId: TAB,
+        leafId: midLeaf,
+        title: 'unread',
+        connected: true,
+        agentIdentity: 'grok'
+      }
+    ])
+    expect(sessions.map((row) => [row.state, row.unread])).toEqual([
+      ['done', false],
+      ['done', true]
     ])
   })
 
@@ -253,8 +533,63 @@ describe('Orca agent inventory', () => {
     expect(sessions[0]).toMatchObject({
       state: 'working',
       name: 'gr · 260913-AD-触发辅助功能授权',
-      lastUpdatedAt: 160,
-      stateStartedAt: 160
+      lastUpdatedAt: 100,
+      lastQuestionAt: 100,
+      stateStartedAt: 100
+    })
+  })
+
+  it('keeps the question clock on stateStartedAt while output and mid-turn updates continue', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      agents: [{
+        paneKey: `${TAB}:${LEAF}`,
+        state: 'working',
+        agentType: 'grok',
+        stateStartedAt: 100,
+        updatedAt: 400
+      }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '⠋ Grok',
+      connected: true,
+      agentIdentity: 'grok',
+      lastOutputAt: 500
+    }])
+    expect(sessions[0]).toMatchObject({
+      state: 'working',
+      lastQuestionAt: 100,
+      lastUpdatedAt: 100,
+      stateStartedAt: 100
+    })
+  })
+
+  it('does not publish a done-row question clock so Kernel can keep the last question', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      agents: [{
+        paneKey: `${TAB}:${LEAF}`,
+        state: 'done',
+        agentType: 'grok',
+        stateStartedAt: 300,
+        updatedAt: 300
+      }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: 'done',
+      connected: true,
+      agentIdentity: 'grok',
+      lastOutputAt: 500
+    }])
+    expect(sessions[0]).toMatchObject({
+      state: 'done',
+      lastQuestionAt: 0,
+      lastUpdatedAt: 300,
+      stateStartedAt: 300
     })
   })
 

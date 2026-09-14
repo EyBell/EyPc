@@ -9,6 +9,7 @@
  */
 
 const { harnessLabel } = require('../companion/harness-labels.cjs')
+const { createNativeStateReader } = require('./native-state.cjs')
 const ORCA_INVENTORY_REVISION = 'orca-agent-inventory-v1'
 const BARE_AGENT_TITLE = /^(grok|claude|claude-code|codex|cursor|pi|omp|dsh|opencode|kimi)$/i
 const TAB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -105,9 +106,52 @@ function indexTabTitles(visualLayouts) {
   return byTab
 }
 
+function indexTabOrdinals(visualLayouts) {
+  const ordinals = new Map()
+  function takeTabs(tabs) {
+    if (!Array.isArray(tabs)) return
+    tabs.forEach((tab, index) => {
+      if (!isTabLayoutNode(tab)) return
+      const tabId = textOf(tab.tabId).toLowerCase()
+      if (TAB_ID.test(tabId) && !ordinals.has(tabId)) ordinals.set(tabId, index)
+    })
+  }
+  function walk(node) {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item)
+      return
+    }
+    if (Array.isArray(node.tabs)) takeTabs(node.tabs)
+    for (const [key, value] of Object.entries(node)) {
+      if (LAYOUT_SKIP.has(key) || !value || typeof value !== 'object') continue
+      walk(value)
+    }
+  }
+  walk(visualLayouts)
+  return ordinals
+}
+
 function oscIndicatesWorking(title) {
   const raw = textOf(title)
   return Boolean(raw) && OSC_WORKING_PREFIX.test(raw)
+}
+
+function isLiveAgent(agent, terminal) {
+  const state = textOf(agent && agent.state).toLowerCase()
+  if (state === 'working' || state === 'waiting' || state === 'blocked') return true
+  if (flagOf(agent && agent.interrupted)) return true
+  return oscIndicatesWorking(terminal && terminal.title)
+}
+
+function hasConversation(agent, terminal) {
+  if (isLiveAgent(agent, terminal)) return true
+  if (textOf(agent && agent.prompt) || textOf(agent && agent.lastAssistantMessage) || textOf(agent && agent.toolName)) {
+    return true
+  }
+  return !Object.prototype.hasOwnProperty.call(agent || {}, 'prompt')
+    && !Object.prototype.hasOwnProperty.call(agent || {}, 'lastAssistantMessage')
+    && !Object.prototype.hasOwnProperty.call(agent || {}, 'toolName')
 }
 
 function sessionState(agent, connected, terminalTitle) {
@@ -119,7 +163,7 @@ function sessionState(agent, connected, terminalTitle) {
   return 'done'
 }
 
-function mergeSession(agent, terminal, worktree, tabTitles) {
+function mergeSession(agent, terminal, worktree, tabTitles, tabOrdinals, nativePins) {
   const fromAgent = textOf(agent.paneKey).toLowerCase()
   const paneKey = paneKeyOf(fromAgent.split(':')[0], fromAgent.split(':')[1])
     || paneKeyOf(terminal.tabId, terminal.leafId)
@@ -129,14 +173,20 @@ function mergeSession(agent, terminal, worktree, tabTitles) {
   const handle = textOf(terminal.handle)
   const tabId = paneKey.slice(0, 36)
   const tabTitle = tabTitles instanceof Map ? (tabTitles.get(tabId) || '') : ''
+  const tabOrdinal = tabOrdinals instanceof Map && tabOrdinals.has(tabId) ? tabOrdinals.get(tabId) : -1
   const connected = terminal.connected !== false
   const oscTitle = terminal.title
   const state = sessionState(agent, connected, oscTitle)
   const startedAt = timeOf(agent.stateStartedAt)
-  const outputAt = timeOf(terminal.lastOutputAt)
   const updatedAt = timeOf(agent.updatedAt)
-  const lastUpdatedAt = Math.max(updatedAt, outputAt, startedAt, timeOf(worktree.lastActivityAt))
-  const liveFromTitle = state === 'working' && textOf(agent.state).toLowerCase() !== 'working'
+  // Pane recency is this terminal's own clocks. worktree.lastActivityAt is a
+  // group summary and would make every sibling look equally new.
+  // lastOutputAt / mid-turn updatedAt tick while the model replies and would
+  // keep re-sorting the card. Sort and display stay on the question epoch:
+  // when Orca entered working. Done/interrupted send 0 so Kernel keeps the
+  // previous question time.
+  const lastQuestionAt = state === 'working' ? startedAt : 0
+  const lastUpdatedAt = startedAt || updatedAt
   return {
     paneKey,
     tabId,
@@ -146,14 +196,18 @@ function mergeSession(agent, terminal, worktree, tabTitles) {
     name: displayTitle(oscTitle, agentType, worktree.repo, tabTitle),
     projectName: textOf(worktree.repo).slice(0, 240),
     projectKey: textOf(worktree.worktreeId || worktree.repoId).slice(0, 256),
+    worktreeId: textOf(worktree.worktreeId).slice(0, 256),
     connected,
     state,
-    unread: false,
-    pinned: flagOf(worktree.isPinned),
+    unread: agent.unread === true,
+    unreadExplicit: typeof agent.unread === 'boolean',
+    pinned: terminal.isPinned === true || (nativePins instanceof Set && nativePins.has(tabId)),
     lastUpdatedAt,
-    stateStartedAt: liveFromTitle ? (outputAt || lastUpdatedAt) : startedAt,
+    lastQuestionAt,
+    stateStartedAt: startedAt || updatedAt,
     createdAt: timeOf(worktree.sortOrder) || timeOf(worktree.lastActivityAt),
-    worktreeDisplayName: textOf(worktree.displayName).slice(0, 120)
+    worktreeDisplayName: textOf(worktree.displayName).slice(0, 120),
+    tabOrdinal
   }
 }
 
@@ -172,30 +226,47 @@ function indexTerminals(terminals) {
   return { byPane, byTab }
 }
 
-function attributeWorktreeUnread(sessions, start, worktreeUnread) {
-  const end = sessions.length
-  for (let index = start; index < end; index += 1) sessions[index].unread = false
-  if (!worktreeUnread || start >= end) return
-  let best = -1
-  let bestAt = -1
-  let bestKey = ''
-  for (let index = start; index < end; index += 1) {
-    const session = sessions[index]
-    if (session.state === 'working') continue
-    const at = timeOf(session.lastUpdatedAt)
-    const key = textOf(session.paneKey)
-    if (at > bestAt || (at === bestAt && key > bestKey)) {
-      bestAt = at
-      bestKey = key
-      best = index
-    }
-  }
-  if (best >= 0) sessions[best].unread = true
+function stripAttributionFields(session) {
+  delete session.unreadExplicit
+  delete session.tabOrdinal
 }
 
-function collectSessions(worktrees, terminals, visualLayouts) {
+function attributeWorktreeUnread(sessions, start, worktreeUnread) {
+  const end = sessions.length
+  let hasExplicit = false
+  for (let index = start; index < end; index += 1) {
+    if (sessions[index].unreadExplicit === true) hasExplicit = true
+  }
+  if (hasExplicit) {
+    for (let index = start; index < end; index += 1) {
+      const session = sessions[index]
+      if (session.unreadExplicit !== true) session.unread = false
+    }
+    return
+  }
+  for (let index = start; index < end; index += 1) {
+    sessions[index].unread = false
+  }
+  if (!worktreeUnread || start >= end) return
+  const done = []
+  for (let index = start; index < end; index += 1) {
+    if (sessions[index].state !== 'working') done.push(index)
+  }
+  // Workspace unread is one bit. Guessing the rightmost/newest sibling marks
+  // an already-read tab (KM-8765 vs 清工). Only attribute when a single done
+  // pane can own that bit.
+  if (done.length === 1) sessions[done[0]].unread = true
+}
+
+function finishUnread(sessions, unreadBridge) {
+  if (unreadBridge && typeof unreadBridge.observe === 'function') unreadBridge.observe(sessions)
+  for (const session of sessions) stripAttributionFields(session)
+}
+
+function collectSessions(worktrees, terminals, visualLayouts, nativePins, unreadBridge) {
   const { byPane } = indexTerminals(terminals)
   const tabTitles = indexTabTitles(visualLayouts)
+  const tabOrdinals = indexTabOrdinals(visualLayouts)
   const seen = new Set()
   const sessions = []
   for (const row of worktrees) {
@@ -206,13 +277,16 @@ function collectSessions(worktrees, terminals, visualLayouts) {
       const agent = recordOf(agentRow)
       const paneKey = textOf(agent.paneKey).toLowerCase()
       if (!paneKey || seen.has(paneKey)) continue
-      const terminal = byPane.get(paneKey) || {}
-      const session = mergeSession(agent, terminal, worktree, tabTitles)
+      const terminal = byPane.get(paneKey)
+      if (!terminal) continue
+      if (!hasConversation(agent, terminal)) continue
+      const session = mergeSession(agent, terminal, worktree, tabTitles, tabOrdinals, nativePins)
       if (!session) continue
       seen.add(session.paneKey)
       sessions.push(session)
       if (sessions.length >= MAX_SESSIONS) {
         attributeWorktreeUnread(sessions, start, flagOf(worktree.unread))
+        finishUnread(sessions, unreadBridge)
         return { sessions, truncated: true }
       }
     }
@@ -222,17 +296,25 @@ function collectSessions(worktrees, terminals, visualLayouts) {
     const row = recordOf(terminal)
     const paneKey = paneKeyOf(row.tabId, row.leafId)
     if (!paneKey || seen.has(paneKey) || !agentTypeOf(row.agentIdentity)) continue
-    const session = mergeSession({
+    const agent = {
       paneKey,
       agentType: row.agentIdentity,
       state: 'done',
       updatedAt: row.lastOutputAt
-    }, row, { repo: '', displayName: '', unread: false, isPinned: false }, tabTitles)
+    }
+    // Toolbar-only panes publish agentIdentity before any conversation exists.
+    // Keep a live working frame; idle identity without a worktree.ps row stays out.
+    if (!isLiveAgent(agent, row)) continue
+    const session = mergeSession(agent, row, { repo: '', displayName: '', unread: false, isPinned: false }, tabTitles, tabOrdinals, nativePins)
     if (!session) continue
     seen.add(session.paneKey)
     sessions.push(session)
-    if (sessions.length >= MAX_SESSIONS) return { sessions, truncated: true }
+    if (sessions.length >= MAX_SESSIONS) {
+      finishUnread(sessions, unreadBridge)
+      return { sessions, truncated: true }
+    }
   }
+  finishUnread(sessions, unreadBridge)
   return { sessions, truncated: false }
 }
 
@@ -247,8 +329,10 @@ function fingerprintOf(sessions) {
     session.pinned,
     session.connected,
     session.lastUpdatedAt,
+    session.lastQuestionAt,
     session.stateStartedAt,
-    session.projectName
+    session.projectName,
+    session.worktreeId
   ])))
 }
 
@@ -257,6 +341,9 @@ function createInventoryReader(dependencies = {}) {
   if (!cli || typeof cli.json !== 'function') {
     throw new Error('orca inventory requires cli.json')
   }
+  const nativeState = dependencies.nativeState
+    || createNativeStateReader(dependencies)
+  const unreadBridge = dependencies.unreadBridge
 
   async function readInventory() {
     const readAt = Date.now()
@@ -277,8 +364,9 @@ function createInventoryReader(dependencies = {}) {
     const list = listWithLayouts.ok === true
       ? listWithLayouts
       : await cli.json(['terminal', 'list'])
-    if (ps.ok !== true) {
-      const code = textOf(ps.error && ps.error.code) || 'ps-failed'
+    if (ps.ok !== true || list.ok !== true) {
+      const failed = ps.ok !== true ? ps : list
+      const code = textOf(failed.error && failed.error.code) || (ps.ok !== true ? 'ps-failed' : 'list-failed')
       return {
         revision: ORCA_INVENTORY_REVISION,
         available: false,
@@ -295,7 +383,10 @@ function createInventoryReader(dependencies = {}) {
     const visualLayouts = list.ok === true && Array.isArray(list.result && list.result.visualLayouts)
       ? list.result.visualLayouts
       : []
-    const collected = collectSessions(worktrees, terminals, visualLayouts)
+    const nativePins = nativeState && typeof nativeState.pinnedTabIds === 'function'
+      ? nativeState.pinnedTabIds()
+      : new Set()
+    const collected = collectSessions(worktrees, terminals, visualLayouts, nativePins, unreadBridge)
     return {
       revision: ORCA_INVENTORY_REVISION,
       available: true,
@@ -320,7 +411,9 @@ module.exports = {
   fingerprintOf,
   displayTitle,
   indexTabTitles,
+  indexTabOrdinals,
   oscIndicatesWorking,
   attributeWorktreeUnread,
+  finishUnread,
   createInventoryReader
 }
