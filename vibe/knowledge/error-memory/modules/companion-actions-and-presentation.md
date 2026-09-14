@@ -52,6 +52,7 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Consumer cache and Float applied ACK](../companion-consumer-cache-and-float-applied-ack.md#L1)
 - [Cursor hook terminal beats leftover unfinishedRunAt](../cursor-hook-terminal-beats-stale-unfinished-run.md#L1)
 - [Foreign provider project fields must reach Kernel metadata](../companion-foreign-project-fields-not-published.md#L1)
+- [Orca spinner OSC title is not the card topic](../orca-spinner-osc-title-is-not-card-topic.md#L1)
 
 ## Historical Or Migration Sources
 

@@ -7,7 +7,7 @@
 ## 证据进 Kernel
 
 ```text
-preload/codex|claude|cursor 适配器
+preload/codex|claude|cursor|orca 适配器
   → provider-registry.cjs
   → task-topology.cjs（只收成员关系）
   → task-kernel.cjs createCompanionTaskKernel
@@ -16,6 +16,8 @@ preload/codex|claude|cursor 适配器
   → createCodexController 身份闸门
   → CodexPage / FloatApp / 角标
 ```
+
+新来源接入步骤（含 Kernel `taskKind` 准入）：[companion-provider-onboarding.md](../../companion-provider-onboarding.md#L1)。
 
 工厂：[task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L894)。
 

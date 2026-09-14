@@ -43,6 +43,7 @@
 - [RAW-216](../shared-raw-216.md#L1) — `active` · Claude 精确拓扑下子代理名单为全家快照；缺席成员必须撤回，不得残留抬升 liveCount
 - [RAW-217](../shared-raw-217.md#L1) — `active` · 悬浮卡片任务行第二行压缩为 CC/CX/CS + 项目 + sub+N + 状态 + 短时；Claude cwd / Cursor workspace.json 进入 Kernel 项目名；默认 chats 名省略，悬停给完整说明
 - [RAW-218](../shared-raw-218.md#L1) — `active` · 自动区分 Codex Host 额外进程（`XH`）与原生 Codex（`CX`，含 Codex++）；原生官方 active 且 turns 为空时按进行中发布
+- [RAW-219](../shared-raw-219.md#L1) — `active` · 第四个独立来源 Orca：CLI 库存/跳转/跟踪，默认关闭，不读对话正文
 
 
 ### 编号条款

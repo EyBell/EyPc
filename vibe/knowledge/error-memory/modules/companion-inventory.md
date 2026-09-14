@@ -19,10 +19,13 @@ Link-only route for task inventory membership, Turn parsing, missing rows and li
 - [Explicit archive bypasses inventory quarantine](../codex-explicit-archive-event-bypasses-inventory-quarantine.md#L1)
 - [Inventory dropout is not deletion](../codex-inventory-dropout-is-not-task-deletion.md#L1)
 - [Task count/list projection convergence](../codex-task-count-list-projection-divergence.md#L1)
+- [Orca spinner OSC title is not the card topic](../orca-spinner-osc-title-is-not-card-topic.md#L1)
 
 ## Related Error Records
 
 - [Official active empty turns](../codex-native-active-empty-turns-not-nonconversation.md#L1)
+- [Orca Grok wait stays done until tool](../orca-grok-wait-stays-done-until-tool.md#L1)
+- [Orca worktree unread must not fan out](../orca-worktree-unread-must-not-fan-out.md#L1)
 
 ## Historical Or Migration Sources
 
