@@ -1465,6 +1465,7 @@ function orcaUnavailable(shape) {
     return { available: false, reason: 'unknown', sessionCount: 0, cliPath: '', readAt: Date.now() }
   }
   if (shape === 'archive') return { outcome: 'failed', errorCode: 'archive-unavailable', message }
+  if (shape === 'pin') return { outcome: 'failed', errorCode: 'pin-unavailable', message }
   return { outcome: 'unavailable', confirmsRead: false, message }
 }
 
@@ -4833,6 +4834,7 @@ class CodexDesktopCompanionBridge {
     this.unreadStateWatcher = null
     this.unreadStateWatchPath = ''
     this.pinMirrorLine = undefined
+    this.unreadLine = undefined
     this.unreadStateStatWatcherActive = false
     this.unreadStateWatcherRetryAvailable = true
     this.lastSocketError = ''
@@ -6880,10 +6882,33 @@ class CodexDesktopCompanionBridge {
     requestCodexInventoryMembershipReconciliation('watcher-event', { forceTasksOnly: true })
   }
 
+  dropStaleExactUnreadAgainstNativeSet(unreadIds) {
+    if (!(unreadIds instanceof Set)) return
+    for (const [threadId, live] of [...this.liveUnread]) {
+      if (live?.unreadEvidence !== 'event' || live.hasUnreadTurn !== true) continue
+      if (live.ownerClientId === 'eypc-open') continue
+      if (unreadIds.has(threadId)) continue
+      this.liveUnread.delete(threadId)
+      const shadow = this.shadows.get(threadId) || this.sideShadows.get(threadId)
+      if (shadow?.unreadEvidence === 'event' && shadow.hasUnreadTurn === true) {
+        delete shadow.hasUnreadTurn
+        delete shadow.unreadEvidence
+      }
+    }
+  }
+
   refreshPersistedUnread(emit = true) {
     let unreadIds = null
     try { unreadIds = readCodexDesktopUnreadIds() } catch {}
-    if (unreadIds) this.notePinMirror(unreadIds.pinMirrorLine, emit)
+    if (unreadIds) {
+      this.notePinMirror(unreadIds.pinMirrorLine, emit)
+      const unreadLine = typeof unreadIds.unreadLine === 'string'
+        ? unreadIds.unreadLine
+        : [...unreadIds].sort().join(',')
+      const unreadSetChanged = this.unreadLine !== undefined && unreadLine !== this.unreadLine
+      this.unreadLine = unreadLine
+      if (unreadSetChanged) this.dropStaleExactUnreadAgainstNativeSet(unreadIds)
+    }
     const changed = []
     for (const threadId of this.inventory) {
       const known = codexActivityInventory.get(threadId)
@@ -7028,6 +7053,7 @@ class CodexDesktopCompanionBridge {
     this.unreadStateStatWatcherActive = false
     this.unreadStateWatchPath = ''
     this.pinMirrorLine = undefined
+    this.unreadLine = undefined
     this.unreadStateWatcherRetryAvailable = true
   }
 
@@ -8777,6 +8803,10 @@ function readCodexDesktopUnreadIdsInner() {
   const mirror = codexRecord(parsed)['pinned-thread-ids']
   Object.defineProperty(ids, 'pinMirrorLine', {
     value: Array.isArray(mirror) ? mirror.filter(validCodexThreadId).slice(0, 500).join(',') : '',
+    enumerable: false
+  })
+  Object.defineProperty(ids, 'unreadLine', {
+    value: [...ids].sort().join(','),
     enumerable: false
   })
   return ids
@@ -11998,7 +12028,7 @@ function companionOrcaEvidenceV7(sessionValue, input = {}) {
       membershipRevision: companionEvidenceSequenceV7(input.acceptedAt, revisionAt),
       visibilityRevision: revisionAt,
       metadataRevision: companionEvidenceSequenceV7(session.lastUpdatedAt, input.acceptedAt, revisionAt),
-      lastQuestionAt: companionEvidenceSequenceV7(session.lastUpdatedAt, session.createdAt),
+      lastQuestionAt: companionEvidenceSequenceV7(session.lastQuestionAt),
       createdAt: session.createdAt,
       displayOrder: localPin ? persisted.pinOrder?.get(key) ?? input.order : input.order,
       cycleOrder: input.order,
@@ -12006,14 +12036,14 @@ function companionOrcaEvidenceV7(sessionValue, input = {}) {
       hidden: Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
       idleConfirmed: terminal,
       localPin,
-      ...companionProviderPinFields({ pinned: session.pinned, order: input.order, authority: 'orca-worktree', fallbackOrder: input.order }),
-      dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.lastUpdatedAt) >= input.dynamicCutoff,
+      ...companionProviderPinFields({ pinned: session.pinned === true, order: input.order, authority: 'orca-tab', fallbackOrder: input.order }),
+      dynamicEligible: !input.dynamicCutoff || companionEvidenceSequenceV7(session.lastQuestionAt, session.lastUpdatedAt) >= input.dynamicCutoff,
       displayName: alias || originalTitle,
       originalTitle,
       alias,
       ...companionProviderProjectFields(session)
     }),
-    capabilities: ['open', ...(terminal ? ['archive'] : [])],
+    capabilities: ['open', 'pin', ...(terminal ? ['archive'] : [])],
     standaloneEligible: true
   })
   return {
@@ -12416,6 +12446,12 @@ const companionHostRegistry = createCompanionHostRegistry?.({
       ? orcaBridge.archiveTask(String(target.actionAlias
         || (typeof target.key === 'string' && target.key.startsWith('orca:') ? target.key.slice('orca:'.length) : '')))
       : Promise.resolve(orcaUnavailable('archive')),
+    setPin: (target, request) => orcaBridge
+      ? orcaBridge.setPin(String(target.actionAlias
+        || (typeof target.key === 'string' && target.key.startsWith('orca:') ? target.key.slice('orca:'.length) : '')), {
+        pinned: request?.pinned === true
+      })
+      : Promise.resolve(orcaUnavailable('pin')),
     close: () => undefined
   }
 })

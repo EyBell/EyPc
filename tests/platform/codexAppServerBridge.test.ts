@@ -5806,6 +5806,49 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
+  it('lets a later native unread set without the thread clear a stale exact unread event', async () => {
+    let nativeUnread = true
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const threadId = FIXED_THREAD_IDS[2]
+    desktopSocket.unreadSnapshotThreadIds.add(threadId)
+    const context = loadCodexBridge(
+      child,
+      () => nativeRegistryTextWithUnread(nativeUnread ? [threadId] : []),
+      desktopSocket
+    )
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const task = baseline.value.threads[2]
+    expect((await context.bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      hasUnreadTurn: true,
+      unreadAuthority: 'desktop-persisted'
+    })
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-read-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 2,
+      params: { hostId: 'local', conversationId: threadId, hasUnreadTurn: true }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await context.bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      hasUnreadTurn: true,
+      unreadAuthority: 'desktop-live'
+    })
+
+    nativeUnread = false
+    desktopSocket.unreadSnapshotThreadIds.delete(threadId)
+    context.triggerNativeStateChange('rename')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await context.bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      hasUnreadTurn: false,
+      unreadAuthority: 'desktop-persisted'
+    })
+    context.bridge.close()
+  })
+
   it('retains the last parsed native nonmembership across a transient unread-file read failure', async () => {
     const child = new FakeCodexProcess()
     const desktopSocket = new FakeCodexDesktopSocket()

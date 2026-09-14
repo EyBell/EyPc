@@ -63,7 +63,7 @@ const CYCLE_TIER_ORDER = ['attention', 'plan', 'active', 'unread', 'fallback']
  * bucket nothing may read.
  */
 const DYNAMIC_GROUPS = ['pinned', 'input', 'active', 'stopped', 'unread', 'completed']
-const PROVIDER_PIN_AUTHORITIES = new Set(['app-server', 'codexhost', 'claude-metadata', 'cursor-workspace', 'orca-worktree'])
+const PROVIDER_PIN_AUTHORITIES = new Set(['app-server', 'codexhost', 'claude-metadata', 'cursor-workspace', 'orca-tab'])
 const TASK_KINDS = new Set([
   ...PROVIDERS.map((id) => providerRegistry.providers[id].taskKind),
   'topology-child',

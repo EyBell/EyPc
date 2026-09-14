@@ -1453,6 +1453,8 @@ describe('CompanionTaskKernel', () => {
       .toThrow('companion-provider-pin-adapter-forbidden:cursor')
     const codexOnly = createCompanionHostRegistry({ codex: { open: vi.fn(), setPin: vi.fn() } })
     expect(typeof codexOnly.adapters.codex.setPin).toBe('function')
+    expect(providerPinPolicy('orca')).toMatchObject({ inbound: true, outbound: true, appLabel: 'Orca', pinNoun: '置顶' })
+    expect(typeof createCompanionHostRegistry({ orca: { setPin: vi.fn() } }).adapters.orca.setPin).toBe('function')
     expect(codexOnly.adapters.claude.setPin).toBeUndefined()
     // A manifest without a complete pin policy is rejected at load time.
     const broken = JSON.parse(JSON.stringify(providerManifest))

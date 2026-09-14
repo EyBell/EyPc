@@ -59,7 +59,7 @@ describe('companion provider pin policy', () => {
     expect(COMPANION_PROVIDER_PIN_POLICY.codex).toEqual({ inbound: true, outbound: true, appLabel: 'Codex', pinNoun: '置顶' })
     expect(COMPANION_PROVIDER_PIN_POLICY.claude).toEqual({ inbound: true, outbound: false, appLabel: 'Claude App', pinNoun: '星标' })
     expect(COMPANION_PROVIDER_PIN_POLICY.cursor).toEqual({ inbound: true, outbound: false, appLabel: 'Cursor', pinNoun: '置顶' })
-    expect(COMPANION_PROVIDER_PIN_POLICY.orca).toEqual({ inbound: true, outbound: false, appLabel: 'Orca', pinNoun: '置顶' })
+    expect(COMPANION_PROVIDER_PIN_POLICY.orca).toEqual({ inbound: true, outbound: true, appLabel: 'Orca', pinNoun: '置顶' })
     expect(companionPinAppLabel('claude')).toBe('Claude App')
     expect(companionPinNativeLabel('claude')).toBe('Claude App 星标')
     expect(companionPinNativeLabel('cursor')).toBe('Cursor 置顶')

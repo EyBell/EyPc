@@ -343,15 +343,18 @@ function orcaSessionObservationV7(value = {}, options = {}) {
   else if (state === 'done') kind = 'turn-completed'
   const lastUpdatedAt = integer(session.lastUpdatedAt)
   const stateStartedAt = integer(session.stateStartedAt)
-  const acceptedAt = integer(extra.acceptedAt)
   // Turn epoch is when Orca entered this state, not last tool output and not
   // worktree createdAt. Using lastUpdatedAt as running turnStartedAt made each
   // poll a newer live Turn, so a later `done` with an older createdAt could
   // never close 进行中.
   const turnStartedAt = stateStartedAt || lastUpdatedAt || integer(session.createdAt)
-  const sequence = Math.max(lastUpdatedAt, stateStartedAt, acceptedAt, turnStartedAt)
+  // acceptedAt is poll time. Folding it into sequence made every 1s inventory
+  // look newer than the question, so sort/status clocks drifted while the
+  // model was still answering.
+  const sequence = Math.max(lastUpdatedAt, stateStartedAt, turnStartedAt)
+  const acceptedAt = integer(extra.acceptedAt)
   const terminalAt = kind === 'turn-completed' || kind === 'turn-interrupted'
-    ? Math.max(lastUpdatedAt, stateStartedAt, acceptedAt, turnStartedAt)
+    ? Math.max(lastUpdatedAt, stateStartedAt, turnStartedAt)
     : 0
   return {
     kind,
@@ -373,7 +376,7 @@ function orcaSessionObservationV7(value = {}, options = {}) {
     terminalAt,
     unreadKnown: true,
     unread: session.unread === true,
-    unreadSequence: sequence,
+    unreadSequence: Math.max(sequence, acceptedAt),
     interactionKind: '',
     interactionSequence: 0,
     planState: 'unknown',

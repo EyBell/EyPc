@@ -46,7 +46,7 @@
       "relationMode": "exact",
       "topologySources": ["inventory"],
       "capabilities": ["open", "archive", "topology"],
-      "pin": { "inbound": true, "outbound": false, "appLabel": "Orca", "pinNoun": "置顶" }
+      "pin": { "inbound": true, "outbound": true, "appLabel": "Orca", "pinNoun": "置顶" }
     }
   }
 }

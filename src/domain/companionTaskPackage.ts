@@ -35,7 +35,7 @@ export type { CompanionTaskKind }
 export const COMPANION_TASK_KERNEL_REVISION = COMPANION_V7_REVISIONS.kernel
 export const COMPANION_TASK_PACKAGE_REVISION = COMPANION_V7_REVISIONS.snapshot
 
-export type CompanionProviderPinAuthority = 'app-server' | 'codexhost' | 'claude-metadata' | 'cursor-workspace' | 'orca-worktree'
+export type CompanionProviderPinAuthority = 'app-server' | 'codexhost' | 'claude-metadata' | 'cursor-workspace' | 'orca-tab'
 export type CompanionTaskPhase = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
 export type CompanionTaskEvidencePhaseV4 = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'interrupted' | 'failed' | 'unknown'
 export type CompanionTaskFreshnessV4 = 'fresh' | 'verifying'

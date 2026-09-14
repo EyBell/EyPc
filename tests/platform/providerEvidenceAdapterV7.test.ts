@@ -252,5 +252,15 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
       state: 'waiting',
       lastUpdatedAt: 100
     })).toMatchObject({ kind: 'turn-running' })
+    expect(orcaSessionObservationV7({
+      state: 'working',
+      lastUpdatedAt: 50,
+      stateStartedAt: 10
+    }, { acceptedAt: 9999 })).toMatchObject({
+      turnStartedAt: 10,
+      sequence: 50,
+      statusEnteredAt: 50,
+      unreadSequence: 9999
+    })
   })
 })
