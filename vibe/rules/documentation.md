@@ -11,6 +11,8 @@ Consolidation follows [Single Authority And Current Entry](../../../../../czz/Cz
 - Requirement identity, status and supersession: [../specs/requirements/README.md](../specs/requirements/README.md#L1) — 某条条款是否还作数、还有哪部分作数、是谁说的。
 - Task docs: follow CodeNote process date grouping under `vibe/specs/`.
 - Durable architecture: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
+- Companion Provider 接入步骤: [../knowledge/companion-provider-onboarding.md](../knowledge/companion-provider-onboarding.md#L1).
+- Harness 抬头缩写（CodexHost / Orca / Paseo 共用）: [../knowledge/harness-title-abbreviations.md](../knowledge/harness-title-abbreviations.md#L1).
 - Code onboarding map (requirement → module → measured line, not a second PRD): [../knowledge/code-map/README.md](../knowledge/code-map/README.md#L1). Core flows also load from [`.codemark/codemark.json`](../../.codemark/codemark.json#L1).
 - Technical implementation memory: [../knowledge/technical-details.md](../knowledge/technical-details.md#L1).
 - Error memory: [../knowledge/error-memory.md](../knowledge/error-memory.md#L1).

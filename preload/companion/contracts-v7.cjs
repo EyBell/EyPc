@@ -25,7 +25,7 @@ const COMPANION_PLAN_ARTIFACT_STATES_V1 = Object.freeze(["unknown","available","
 const COMPANION_PLAN_ARTIFACT_REASONS_V1 = Object.freeze(["","cancel","execution-start","archive","removal"])
 const CHILD_SURFACES_V7 = Object.freeze(["main","float","action","quick-favorites"])
 const CHILD_ACK_STAGES_V7 = Object.freeze(["accepted","dispatched","native-confirmed","read-confirmed","applied","rejected"])
-const PROVIDERS = new Set(['codex', 'claude', 'cursor'])
+const PROVIDERS = new Set(["codex","claude","cursor","orca"])
 
 function finiteSequence(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0

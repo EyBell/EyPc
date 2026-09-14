@@ -59,6 +59,7 @@ describe('companion provider pin policy', () => {
     expect(COMPANION_PROVIDER_PIN_POLICY.codex).toEqual({ inbound: true, outbound: true, appLabel: 'Codex', pinNoun: '置顶' })
     expect(COMPANION_PROVIDER_PIN_POLICY.claude).toEqual({ inbound: true, outbound: false, appLabel: 'Claude App', pinNoun: '星标' })
     expect(COMPANION_PROVIDER_PIN_POLICY.cursor).toEqual({ inbound: true, outbound: false, appLabel: 'Cursor', pinNoun: '置顶' })
+    expect(COMPANION_PROVIDER_PIN_POLICY.orca).toEqual({ inbound: true, outbound: false, appLabel: 'Orca', pinNoun: '置顶' })
     expect(companionPinAppLabel('claude')).toBe('Claude App')
     expect(companionPinNativeLabel('claude')).toBe('Claude App 星标')
     expect(companionPinNativeLabel('cursor')).toBe('Cursor 置顶')
@@ -80,6 +81,7 @@ describe('companion provider identity', () => {
     expect(companionTaskKey('codex', 'thread-1')).toBe('thread-1')
     expect(companionTaskKey('claude', 'sess-1')).toBe('claude:sess-1')
     expect(companionTaskKey('cursor', '86e0370a-21b3-434d-a1a3-0ce83edc5ddd')).toBe('cursor:86e0370a-21b3-434d-a1a3-0ce83edc5ddd')
+    expect(companionTaskKey('orca', '2e625d72-50d4-473d-854d-e6faa62e4039:e971fc98-d84d-43c4-ae40-ef3877e16485')).toBe('orca:2e625d72-50d4-473d-854d-e6faa62e4039:e971fc98-d84d-43c4-ae40-ef3877e16485')
     expect(parseCompanionTaskKey('thread-1')).toEqual({ provider: 'codex', rawKey: 'thread-1' })
     expect(parseCompanionTaskKey('claude:sess-1')).toEqual({ provider: 'claude', rawKey: 'sess-1' })
     expect(parseCompanionTaskKey('cursor:86e0370a-21b3-434d-a1a3-0ce83edc5ddd')).toEqual({
@@ -127,13 +129,13 @@ describe('namespaced keys survive persistence', () => {
 describe('companion enablement', () => {
   it('normalizes absent settings into the pre-existing codex-only behavior', () => {
     expect(normalizeCompanionEnablement(undefined)).toEqual(DEFAULT_COMPANION_ENABLEMENT)
-    expect(normalizeCompanionEnablement({})).toEqual({ codex: true, claude: false, cursor: false })
+    expect(normalizeCompanionEnablement({})).toEqual({ codex: true, claude: false, cursor: false, orca: false })
     expect(isCompanionCompatibilityMode(normalizeCompanionEnablement(undefined))).toBe(true)
   })
 
   it('treats any non-true value as disabled and reports enabled providers in cycle order', () => {
-    expect(normalizeCompanionEnablement({ codex: 'yes', claude: 1 })).toEqual({ codex: false, claude: false, cursor: false })
-    expect(enabledCompanionProviders({ codex: true, claude: true, cursor: true })).toEqual([...COMPANION_PROVIDER_CYCLE_ORDER])
+    expect(normalizeCompanionEnablement({ codex: 'yes', claude: 1 })).toEqual({ codex: false, claude: false, cursor: false, orca: false })
+    expect(enabledCompanionProviders({ codex: true, claude: true, cursor: true, orca: true })).toEqual([...COMPANION_PROVIDER_CYCLE_ORDER])
     expect(enabledCompanionProviders({ codex: false, claude: true, cursor: false })).toEqual(['claude'])
     expect(enabledCompanionProviders({ codex: true, claude: false, cursor: false })).toEqual(['codex'])
     expect(isCompanionCompatibilityMode({ codex: true, claude: true, cursor: false })).toBe(false)
@@ -214,7 +216,7 @@ describe('cross-provider aggregation is status-driven', () => {
 
   it('counts inventory membership per provider', () => {
     expect(countCompanionTasksByProvider([task('c1'), task('l1', 'claude'), task('l2', 'claude')]))
-      .toEqual({ codex: 1, claude: 2, cursor: 0 })
+      .toEqual({ codex: 1, claude: 2, cursor: 0, orca: 0 })
   })
 })
 

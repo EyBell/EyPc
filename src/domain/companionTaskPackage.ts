@@ -8,10 +8,13 @@ import {
   type ConversationSnapshotV1
 } from './codex'
 import {
+  COMPANION_PROVIDER_IDS,
+  DEFAULT_COMPANION_ENABLEMENT,
   companionTaskProvider,
   isCompanionProviderEnabled,
   type CompanionProviderEnablement,
   type CompanionProviderId,
+  type CompanionTaskKind,
   isCompanionAttentionState,
   isCompanionLivePhase
 } from './companionProvider'
@@ -27,11 +30,12 @@ import {
   type CompanionPlanArtifactStateV1
 } from './generated/companionContractsV7'
 
+export type { CompanionTaskKind }
+
 export const COMPANION_TASK_KERNEL_REVISION = COMPANION_V7_REVISIONS.kernel
 export const COMPANION_TASK_PACKAGE_REVISION = COMPANION_V7_REVISIONS.snapshot
 
-export type CompanionTaskKind = 'codex-thread' | 'claude-session' | 'cursor-session' | 'topology-child' | 'local-pin'
-export type CompanionProviderPinAuthority = 'app-server' | 'codexhost' | 'claude-metadata' | 'cursor-workspace'
+export type CompanionProviderPinAuthority = 'app-server' | 'codexhost' | 'claude-metadata' | 'cursor-workspace' | 'orca-worktree'
 export type CompanionTaskPhase = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
 export type CompanionTaskEvidencePhaseV4 = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'interrupted' | 'failed' | 'unknown'
 export type CompanionTaskFreshnessV4 = 'fresh' | 'verifying'
@@ -276,8 +280,12 @@ function allTaskCards(taskState: CodexTaskStatePackageV1): CodexTaskCard[] {
   ]
 }
 
+const EMPTY_LANES = Object.freeze({
+  membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0
+})
+
 export function emptyCompanionTaskPackage(
-  providers: CompanionProviderEnablement = { codex: true, claude: false, cursor: false }
+  providers: CompanionProviderEnablement = { ...DEFAULT_COMPANION_ENABLEMENT }
 ): CompanionTaskSnapshotV6 {
   return {
     schema: COMPANION_TASK_PACKAGE_REVISION,
@@ -294,17 +302,13 @@ export function emptyCompanionTaskPackage(
     complete: false,
     freshness: 'verifying',
     focusedKey: '',
-    sourceGenerations: { codex: 0, claude: 0, cursor: 0 },
-    sourceLaneGenerations: {
-      codex: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
-      claude: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 },
-      cursor: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 }
-    },
-    providerHealth: {
-      codex: { status: providers.codex ? 'unavailable' : 'disabled', generation: 0, errorCode: '' },
-      claude: { status: providers.claude ? 'unavailable' : 'disabled', generation: 0, errorCode: '' },
-      cursor: { status: providers.cursor ? 'unavailable' : 'disabled', generation: 0, errorCode: '' }
-    },
+    sourceGenerations: Object.fromEntries(COMPANION_PROVIDER_IDS.map((provider) => [provider, 0])) as Record<CompanionProviderId, number>,
+    sourceLaneGenerations: Object.fromEntries(COMPANION_PROVIDER_IDS.map((provider) => [provider, { ...EMPTY_LANES }])) as CompanionTaskSnapshotV6['sourceLaneGenerations'],
+    providerHealth: Object.fromEntries(COMPANION_PROVIDER_IDS.map((provider) => [provider, {
+      status: providers[provider] ? 'unavailable' : 'disabled',
+      generation: 0,
+      errorCode: ''
+    }])) as CompanionTaskSnapshotV6['providerHealth'],
     tasks: [],
     views: {
       groups: { pinned: [], input: [], active: [], stopped: [], unread: [], completed: [] },

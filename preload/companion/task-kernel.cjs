@@ -63,7 +63,12 @@ const CYCLE_TIER_ORDER = ['attention', 'plan', 'active', 'unread', 'fallback']
  * bucket nothing may read.
  */
 const DYNAMIC_GROUPS = ['pinned', 'input', 'active', 'stopped', 'unread', 'completed']
-const PROVIDER_PIN_AUTHORITIES = new Set(['app-server', 'codexhost', 'claude-metadata', 'cursor-workspace'])
+const PROVIDER_PIN_AUTHORITIES = new Set(['app-server', 'codexhost', 'claude-metadata', 'cursor-workspace', 'orca-worktree'])
+const TASK_KINDS = new Set([
+  ...PROVIDERS.map((id) => providerRegistry.providers[id].taskKind),
+  'topology-child',
+  'local-pin'
+])
 const GROUPS = [...DYNAMIC_GROUPS, 'none']
 const DRAFT_PRODUCERS = ['renderer', 'host-preflight', 'host-evidence']
 const SOURCE_LANES = [...COMPANION_EVIDENCE_CHANNELS_V7]
@@ -105,34 +110,32 @@ function sameProviders(left, right) {
  * conditionals through the reducer means adding a Provider is a search rather
  * than a row. The reducer therefore reads traits and stays Provider-neutral.
  */
-const PROVIDER_TRAITS = Object.freeze({
-  codex: Object.freeze({
-    taskKind: 'codex-thread',
-    planLifecycle: true,
-    archiveNeedsVerifiedInventory: true,
-    // Codex read state is Provider-owned (preload acknowledgement map, Desktop
-    // read events, CodexHost thread memory); the Kernel only projects it.
-    readAcknowledgements: false,
-    keyPrefixActionAlias: false
-  }),
-  claude: Object.freeze({
-    taskKind: 'claude-session',
+const PROVIDER_TRAITS = Object.freeze(Object.fromEntries(PROVIDERS.map((id) => {
+  const taskKind = providerRegistry.providers[id].taskKind
+  if (id === 'codex') {
+    return [id, Object.freeze({
+      taskKind,
+      planLifecycle: true,
+      archiveNeedsVerifiedInventory: true,
+      // Codex read state is Provider-owned (preload acknowledgement map, Desktop
+      // read events, CodexHost thread memory); the Kernel only projects it.
+      readAcknowledgements: false,
+      keyPrefixActionAlias: false
+    })]
+  }
+  return [id, Object.freeze({
+    taskKind,
     planLifecycle: false,
     archiveNeedsVerifiedInventory: false,
-    readAcknowledgements: true,
+    readAcknowledgements: id === 'claude',
     keyPrefixActionAlias: true
-  }),
-  cursor: Object.freeze({
-    taskKind: 'cursor-session',
-    planLifecycle: false,
-    archiveNeedsVerifiedInventory: false,
-    readAcknowledgements: false,
-    keyPrefixActionAlias: true
-  })
-})
+  })]
+})))
 
 function providerTraits(provider) {
-  return PROVIDER_TRAITS[provider] || PROVIDER_TRAITS.codex
+  const traits = PROVIDER_TRAITS[provider]
+  if (!traits) throw new Error(`companion-provider-traits-missing:${provider}`)
+  return traits
 }
 
 /**
@@ -209,9 +212,7 @@ function normalizeTask(value, enabledProviders) {
   if (!value || typeof value !== 'object') return null
   const provider = PROVIDERS.includes(value.provider) ? value.provider : ''
   const key = typeof value.key === 'string' ? value.key : ''
-  const kind = value.kind === 'claude-session' || value.kind === 'codex-thread'
-    || value.kind === 'cursor-session' || value.kind === 'topology-child'
-    || value.kind === 'local-pin' ? value.kind : ''
+  const kind = TASK_KINDS.has(value.kind) ? value.kind : ''
   const phase = isKnownTaskPhase(value.phase) ? value.phase : 'unknown'
   const actionAlias = typeof value.actionAlias === 'string' ? value.actionAlias : ''
   const revisionAt = finiteInteger(value.revisionAt)
@@ -2602,11 +2603,10 @@ function createCompanionTaskKernel(dependencies = {}) {
   function ephemeralOpenTarget(key, actionAlias = '') {
     if (typeof key !== 'string' || !key || key.length > 256) return null
     const enabledProviders = providerSet(providers)
-    const inferred = key.startsWith('claude:')
-      ? 'claude'
-      : /^[a-f0-9]{32}$/i.test(key) || /^ct_/i.test(actionAlias)
-        ? 'codex'
-        : enabledProviders.size === 1 ? [...enabledProviders][0] : ''
+    const namespaced = PROVIDERS.find((id) => id !== 'codex' && key.startsWith(`${id}:`)) || ''
+    const inferred = namespaced
+      || (/^[a-f0-9]{32}$/i.test(key) || /^ct_/i.test(actionAlias) ? 'codex' : '')
+      || (enabledProviders.size === 1 ? [...enabledProviders][0] : '')
     if (!inferred || !enabledProviders.has(inferred)) return null
     return {
       key,
@@ -3280,6 +3280,9 @@ module.exports = {
   PREFLIGHT_PROGRESS_MS,
   PREFLIGHT_TIMEOUT_MS,
   UNKNOWN_GRACE_MS,
+  PROVIDERS,
+  TASK_KINDS: [...TASK_KINDS],
+  PROVIDER_TRAITS,
   createCompanionHostRegistry,
   createCompanionTaskKernel
 }

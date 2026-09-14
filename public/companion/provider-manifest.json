@@ -6,7 +6,7 @@
   "commandRevision": "companion-task-command-v1",
   "subscribeRevision": "companion-task-subscribe-v1",
   "ackRevision": "companion-task-ack-v2",
-  "order": ["codex", "claude", "cursor"],
+  "order": ["codex", "claude", "cursor", "orca"],
   "providers": {
     "codex": {
       "id": "codex",
@@ -37,6 +37,16 @@
       "topologySources": ["hooks", "inventory"],
       "capabilities": ["open", "archive", "topology"],
       "pin": { "inbound": true, "outbound": false, "appLabel": "Cursor", "pinNoun": "置顶" }
+    },
+    "orca": {
+      "id": "orca",
+      "label": "Orca",
+      "enabledByDefault": false,
+      "taskKind": "orca-session",
+      "relationMode": "exact",
+      "topologySources": ["inventory"],
+      "capabilities": ["open", "archive", "topology"],
+      "pin": { "inbound": true, "outbound": false, "appLabel": "Orca", "pinNoun": "置顶" }
     }
   }
 }

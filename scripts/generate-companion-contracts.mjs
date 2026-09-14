@@ -25,6 +25,8 @@ const planArtifactStates = tuple(schema.properties.planArtifact.properties.state
 const planArtifactReasons = tuple(schema.properties.planArtifact.properties.reasons)
 const childSurfaces = tuple(schema.properties.childEnvelope.properties.surfaces)
 const childAckStages = tuple(schema.properties.childEnvelope.properties.ackStages)
+const providerManifest = JSON.parse(fs.readFileSync(path.join(root, 'preload', 'companion', 'provider-manifest.json'), 'utf8'))
+const PROVIDERS = new Set(Array.isArray(providerManifest.order) ? providerManifest.order : ['codex', 'claude', 'cursor'])
 
 const banner = '// Generated from contracts/companion-v7.schema.json. Do not edit by hand.\n'
 const ts = `${banner}
@@ -109,7 +111,7 @@ const COMPANION_PLAN_ARTIFACT_STATES_V1 = Object.freeze(${JSON.stringify(planArt
 const COMPANION_PLAN_ARTIFACT_REASONS_V1 = Object.freeze(${JSON.stringify(planArtifactReasons)})
 const CHILD_SURFACES_V7 = Object.freeze(${JSON.stringify(childSurfaces)})
 const CHILD_ACK_STAGES_V7 = Object.freeze(${JSON.stringify(childAckStages)})
-const PROVIDERS = new Set(['codex', 'claude', 'cursor'])
+const PROVIDERS = new Set(${JSON.stringify([...PROVIDERS])})
 
 function finiteSequence(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : 0

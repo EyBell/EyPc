@@ -183,27 +183,30 @@ function interaction(overrides: Record<string, any> = {}) {
 }
 
 function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown> = {}) {
-  const configuredProviders = (overrides.providers as { codex?: boolean; claude?: boolean; cursor?: boolean } | undefined) || {}
+  const configuredProviders = (overrides.providers as { codex?: boolean; claude?: boolean; cursor?: boolean; orca?: boolean } | undefined) || {}
   const providers = {
     codex: configuredProviders.codex !== false,
     claude: configuredProviders.claude !== false,
-    cursor: configuredProviders.cursor === true
+    cursor: configuredProviders.cursor === true,
+    orca: configuredProviders.orca === true
   }
-  const incomingGenerations = (overrides.sourceGenerations as { codex?: number; claude?: number; cursor?: number } | undefined) || {}
+  const incomingGenerations = (overrides.sourceGenerations as { codex?: number; claude?: number; cursor?: number; orca?: number } | undefined) || {}
   const sourceGenerations = {
     codex: incomingGenerations.codex ?? revision,
     claude: incomingGenerations.claude ?? revision,
-    cursor: incomingGenerations.cursor ?? 0
+    cursor: incomingGenerations.cursor ?? 0,
+    orca: incomingGenerations.orca ?? 0
   }
   const sourceLaneGenerations = (overrides.sourceLaneGenerations as Record<string, unknown> | undefined)
     || {
       codex: { membership: sourceGenerations.codex || 0, activity: sourceGenerations.codex || 0, interaction: sourceGenerations.codex || 0, unread: sourceGenerations.codex || 0, planArtifact: sourceGenerations.codex || 0, metadata: sourceGenerations.codex || 0, topology: sourceGenerations.codex || 0 },
       claude: { membership: sourceGenerations.claude || 0, activity: sourceGenerations.claude || 0, interaction: sourceGenerations.claude || 0, unread: sourceGenerations.claude || 0, planArtifact: sourceGenerations.claude || 0, metadata: sourceGenerations.claude || 0, topology: sourceGenerations.claude || 0 },
-      cursor: { membership: sourceGenerations.cursor || 0, activity: sourceGenerations.cursor || 0, interaction: sourceGenerations.cursor || 0, unread: sourceGenerations.cursor || 0, planArtifact: sourceGenerations.cursor || 0, metadata: sourceGenerations.cursor || 0, topology: sourceGenerations.cursor || 0 }
+      cursor: { membership: sourceGenerations.cursor || 0, activity: sourceGenerations.cursor || 0, interaction: sourceGenerations.cursor || 0, unread: sourceGenerations.cursor || 0, planArtifact: sourceGenerations.cursor || 0, metadata: sourceGenerations.cursor || 0, topology: sourceGenerations.cursor || 0 },
+      orca: { membership: sourceGenerations.orca || 0, activity: sourceGenerations.orca || 0, interaction: sourceGenerations.orca || 0, unread: sourceGenerations.orca || 0, planArtifact: sourceGenerations.orca || 0, metadata: sourceGenerations.orca || 0, topology: sourceGenerations.orca || 0 }
     }
   const producer = typeof overrides.producer === 'string' ? overrides.producer : 'host-evidence'
   const relations = Array.isArray(overrides.relations) ? overrides.relations : []
-  const evidenceBatches = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => {
+  const evidenceBatches = Object.fromEntries(['codex', 'claude', 'cursor', 'orca'].map((provider) => {
     const lanes = (sourceLaneGenerations[provider] || {}) as Record<string, number>
     const snapshot = producer === 'host-preflight'
     const providerRelations = relations.filter((relation: any) => relation?.provider === provider)
@@ -247,7 +250,8 @@ function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown
     providerHealth: {
       codex: { status: providers.codex ? 'ready' : 'disabled', generation: sourceGenerations.codex, errorCode: '' },
       claude: { status: providers.claude ? 'ready' : 'disabled', generation: sourceGenerations.claude, errorCode: '' },
-      cursor: { status: providers.cursor ? 'ready' : 'disabled', generation: sourceGenerations.cursor, errorCode: '' }
+      cursor: { status: providers.cursor ? 'ready' : 'disabled', generation: sourceGenerations.cursor, errorCode: '' },
+      orca: { status: providers.orca ? 'ready' : 'disabled', generation: sourceGenerations.orca, errorCode: '' }
     }
   }
 }
@@ -1949,6 +1953,108 @@ describe('CompanionTaskKernel', () => {
     expect(kernel.publishAuxiliaryCycleTasks).toBeUndefined()
   })
 
+  it('admits a running Orca agent into the active group instead of dropping orca-session', () => {
+    const now = 1_000
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      now: () => now,
+      initialConfiguration: { enabled: true, providers: { codex: false, claude: false, cursor: false, orca: true } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: false, cursor: false, orca: true } })
+    const orcaKey = 'orca:2e625d72-50d4-473d-854d-e6faa62e4039:e971fc98-d84d-43c4-ae40-ef3877e16485'
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        key: orcaKey,
+        provider: 'orca',
+        kind: 'orca-session',
+        actionAlias: '2e625d72-50d4-473d-854d-e6faa62e4039:e971fc98-d84d-43c4-ae40-ef3877e16485',
+        family: orcaKey,
+        role: 'root',
+        phase: 'running',
+        revisionAt: now,
+        phaseRevision: now,
+        membershipRevision: now,
+        statusEnteredAt: now,
+        lastQuestionAt: now,
+        createdAt: now - 10,
+        dynamicEligible: true
+      })], 1, {
+        producer: 'host-preflight',
+        providers: { codex: false, claude: false, cursor: false, orca: true },
+        sourceGenerations: { codex: 0, claude: 0, cursor: 0, orca: now }
+      })
+    })
+    const snapshot = kernel.getLatest()
+    expect(snapshot.tasks.map((row: Record<string, unknown>) => row.key)).toEqual([orcaKey])
+    expect(snapshot.tasks[0]).toMatchObject({ provider: 'orca', kind: 'orca-session', phase: 'running' })
+    expect(snapshot.views.groups.active).toEqual([orcaKey])
+    expect(snapshot.views.counts.active).toBe(1)
+  })
+
+  it('lets an Orca done observation close a live turn instead of sticking on 进行中', () => {
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      now: () => 1_000,
+      initialConfiguration: { enabled: true, providers: { codex: false, claude: false, cursor: false, orca: true } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: false, cursor: false, orca: true } })
+    const orcaKey = 'orca:2e625d72-50d4-473d-854d-e6faa62e4039:e971fc98-d84d-43c4-ae40-ef3877e16485'
+    const base = {
+      key: orcaKey,
+      provider: 'orca' as const,
+      kind: 'orca-session',
+      actionAlias: '2e625d72-50d4-473d-854d-e6faa62e4039:e971fc98-d84d-43c4-ae40-ef3877e16485',
+      family: orcaKey,
+      role: 'root' as const,
+      dynamicEligible: true
+    }
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        ...base,
+        phase: 'running',
+        revisionAt: 80,
+        phaseRevision: 80,
+        membershipRevision: 80,
+        statusEnteredAt: 80,
+        lastQuestionAt: 80,
+        createdAt: 10,
+        turnStartedAt: 40
+      })], 1, {
+        producer: 'host-preflight',
+        providers: { codex: false, claude: false, cursor: false, orca: true },
+        sourceGenerations: { codex: 0, claude: 0, cursor: 0, orca: 80 }
+      })
+    })
+    expect(kernel.getLatest().tasks[0].phase).toBe('running')
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        ...base,
+        phase: 'completed',
+        unread: true,
+        unreadKnown: true,
+        revisionAt: 90,
+        phaseRevision: 90,
+        membershipRevision: 90,
+        statusEnteredAt: 90,
+        lastQuestionAt: 90,
+        createdAt: 10,
+        turnStartedAt: 90,
+        terminalAt: 90
+      })], 2, {
+        producer: 'host-preflight',
+        providers: { codex: false, claude: false, cursor: false, orca: true },
+        sourceGenerations: { codex: 0, claude: 0, cursor: 0, orca: 90 }
+      })
+    })
+    const snapshot = kernel.getLatest()
+    expect(snapshot.tasks[0]).toMatchObject({ key: orcaKey, phase: 'completed', unread: true })
+    expect(snapshot.views.groups.active).toEqual([])
+    expect(snapshot.views.groups.unread).toEqual([orcaKey])
+  })
+
   it('publishes only the aggregate root and excludes topology children from badges and cycling', () => {
     const kernel = createCompanionTaskKernel({
       coalesceMs: 0,
@@ -2763,7 +2869,7 @@ describe('CompanionTaskKernel', () => {
 
     expect(next.tasks.find((value: any) => value.provider === 'codex')).toMatchObject({ key: 'codex-a', revisionAt: 100 })
     expect(next.tasks.find((value: any) => value.provider === 'claude')).toMatchObject({ key: 'claude-a', phase: 'waiting-input', revisionAt: 100 })
-    expect(next.sourceGenerations).toEqual({ codex: 10, claude: 11, cursor: 0 })
+    expect(next.sourceGenerations).toEqual({ codex: 10, claude: 11, cursor: 0, orca: 0 })
   })
 
   it('holds one unknown observation for only the bounded 250 ms grace', () => {
@@ -3353,9 +3459,9 @@ describe('provider differences are declared, not branched', () => {
   })
 
   it('declares a trait row for every registered provider', () => {
-    expect(kernelSource).toContain('const PROVIDER_TRAITS = Object.freeze({')
-    for (const provider of ['codex', 'claude', 'cursor']) {
-      expect(kernelSource).toContain(`  ${provider}: Object.freeze({`)
+    expect(kernelSource).toContain('const PROVIDER_TRAITS = Object.freeze(Object.fromEntries(PROVIDERS.map')
+    for (const provider of providerManifest.order as string[]) {
+      expect(providerManifest.providers[provider].taskKind).toBeTruthy()
     }
   })
 

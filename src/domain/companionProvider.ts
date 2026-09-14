@@ -9,6 +9,8 @@
 import providerManifest from '../../preload/companion/provider-manifest.json'
 
 export type CompanionProviderId = keyof typeof providerManifest.providers
+export type CompanionProviderTaskKind = (typeof providerManifest.providers)[CompanionProviderId]['taskKind']
+export type CompanionTaskKind = CompanionProviderTaskKind | 'topology-child' | 'local-pin'
 
 /** Legacy inventories carry no provider field; they are Codex by definition. */
 export const DEFAULT_COMPANION_PROVIDER: CompanionProviderId = 'codex'
@@ -105,11 +107,13 @@ export interface CompanionProviderEnablement {
   codex: boolean
   claude: boolean
   cursor: boolean
+  orca?: boolean
 }
 
 /**
- * Claude and Cursor are opt-in. A stored settings object that predates those
- * features therefore normalizes into the exact pre-existing Codex-only behavior.
+ * Claude, Cursor and Orca are opt-in. A stored settings object that predates
+ * those features therefore normalizes into the exact pre-existing Codex-only
+ * behavior.
  */
 export const DEFAULT_COMPANION_ENABLEMENT: Readonly<CompanionProviderEnablement> = Object.freeze(Object.fromEntries(
   COMPANION_PROVIDER_IDS.map((provider) => [provider, providerManifest.providers[provider].enabledByDefault])
@@ -256,6 +260,7 @@ export interface CompanionProviderAvailability {
   codex: boolean
   claude: boolean
   cursor?: boolean
+  orca?: boolean
 }
 
 const CODEX_ONLY_MAPPING: CompanionWaterBallMapping = { liquid: 'codex', ring: 'codex', percent: 'codex', compatibility: true }

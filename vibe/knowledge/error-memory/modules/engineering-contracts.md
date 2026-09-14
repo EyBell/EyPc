@@ -48,7 +48,7 @@ Link-only route for general data contracts、testing、type narrowing、document
 
 ## Related Error Records
 
-- None.
+- [Kernel must admit the manifest taskKind](../kernel-must-admit-manifest-taskkind.md#L1)
 
 ## Historical Or Migration Sources
 
