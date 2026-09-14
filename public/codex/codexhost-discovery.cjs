@@ -53,25 +53,14 @@ const CODEXHOST_THREAD_MEMORY_STORAGE_KEY = 'eypc/codex/codexhost-thread-memory/
 const CODEXHOST_THREAD_MEMORY_LIMIT = 300
 const THREAD_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const RUNTIME_COMMAND_PATTERN = /(^|\s)\S*\/bin\/node\s+\S*\/host-runtime\/dist\/main\.js\s/
-/** Compressed 2–3 letter harness prefixes for row titles (user-decided):
- * cc=Claude Code, cx=Codex, gr=Grok, ds=DeepSeek Harness, pi=Pi,
- * op=Oh My Pi/OMP, cs=Cursor. Unknown harnesses keep their raw id. */
-const HARNESS_LABELS = Object.freeze({
-  'claude-code': 'cc',
-  codex: 'cx',
-  pi: 'pi',
-  grok: 'gr',
-  omp: 'op',
-  dsh: 'ds',
-  cursor: 'cs'
-})
+const { harnessLabel } = require('../companion/harness-labels.cjs')
 
 function record(value) {
   return value && typeof value === 'object' ? value : {}
 }
 
 function codexhostHarnessLabel(harnessId) {
-  return HARNESS_LABELS[harnessId] || (typeof harnessId === 'string' && harnessId ? harnessId : 'Harness')
+  return harnessLabel(harnessId) || (typeof harnessId === 'string' && harnessId.trim() ? harnessId.trim() : 'Harness')
 }
 
 /** Open charset: a Harness the Host adds later must cross without a change. */
