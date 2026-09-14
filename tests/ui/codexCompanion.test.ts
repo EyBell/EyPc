@@ -133,16 +133,18 @@ function canonicalSnapshot(taskState: CodexTaskStatePackageV1): CompanionTaskSna
     enabled: true,
     complete: true,
     freshness: 'fresh',
-    sourceGenerations: { codex: revision, claude: revision, cursor: revision },
+    sourceGenerations: { codex: revision, claude: revision, cursor: revision, orca: 0 },
     sourceLaneGenerations: {
       codex: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision },
       claude: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision },
-      cursor: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision }
+      cursor: { membership: revision, activity: revision, interaction: revision, unread: revision, planArtifact: revision, metadata: revision, topology: revision },
+      orca: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 }
     },
     providerHealth: {
       codex: { status: 'ready', generation: revision, errorCode: '' },
       claude: { status: 'ready', generation: revision, errorCode: '' },
-      cursor: { status: 'ready', generation: revision, errorCode: '' }
+      cursor: { status: 'ready', generation: revision, errorCode: '' },
+      orca: { status: 'disabled', generation: 0, errorCode: '' }
     },
     tasks,
     views: {

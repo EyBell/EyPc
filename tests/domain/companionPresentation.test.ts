@@ -7,6 +7,7 @@ import {
   claudeSetupHint,
   claudeSourceStatusText,
   cursorSourceStatusText,
+  orcaSourceStatusText,
   companionQuotaChipAriaLabel,
   companionQuotaChipHint,
   companionQuotaFreshnessText,
@@ -297,6 +298,10 @@ describe('row markers', () => {
     expect(cursorSourceStatusText({ enabled: true, available: false, reason: 'sqlite-unavailable', sessionCount: 0 })).toBe('当前 uTools 不能用内置 Node 读 Cursor 库')
     expect(cursorSourceStatusText({ enabled: true, available: true, sessionCount: 2 })).toBe('已接入 2 条本机 Agent')
     expect(cursorSourceStatusText({ enabled: true, available: true, sessionCount: 2, hooks: 'missing' })).toBe('已接入 2 条本机 Agent · 钩子未注册')
+    expect(orcaSourceStatusText({ enabled: false, available: true, sessionCount: 3 })).toBe('关闭时不读取任何 Orca 数据')
+    expect(orcaSourceStatusText({ enabled: true, available: false, reason: 'missing-cli', sessionCount: 0 })).toBe('未找到 Orca CLI')
+    expect(orcaSourceStatusText({ enabled: true, available: false, reason: 'app-unavailable', sessionCount: 0 })).toBe('Orca 未运行或无法读取任务')
+    expect(orcaSourceStatusText({ enabled: true, available: true, sessionCount: 2 })).toBe('已接入 2 条 Orca 任务')
   })
 })
 

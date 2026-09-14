@@ -217,7 +217,8 @@ export interface CompanionProjectMarker {
 export const COMPANION_PROVIDER_ABBREVS = Object.freeze({
   claude: 'CC',
   codex: 'CX',
-  cursor: 'CS'
+  cursor: 'CS',
+  orca: 'OR'
 } as const) satisfies Record<CompanionProviderId, string>
 
 const COMPANION_GENERIC_CHATS_NAMES = new Set([
@@ -231,7 +232,7 @@ const COMPANION_GENERIC_CHATS_NAMES = new Set([
 /**
  * Every status row carries a textual owner cue. Color remains supplementary,
  * so compatibility mode and forced-colors users receive the same information.
- * Task rows compress the cue to `CC` / `CX` / `CS`; a CodexHost extra
+ * Task rows compress the cue to `CC` / `CX` / `CS` / `OR`; a CodexHost extra
  * process stays on the Codex provider and shows `XH`. Tooltip and ARIA keep
  * the full「归属 …」phrase.
  */
@@ -964,6 +965,23 @@ export function cursorSourceStatusText(input: {
   if (input.hooks === 'outdated') return `${base} · 钩子已过期`
   if (input.hooks === 'missing') return `${base} · 钩子未注册`
   return base
+}
+
+export function orcaSourceStatusText(input: {
+  enabled: boolean
+  available: boolean
+  sessionCount: number
+  reason?: string
+}): string {
+  if (!input.enabled) return '关闭时不读取任何 Orca 数据'
+  if (!input.available) {
+    if (input.reason === 'missing-cli') return '未找到 Orca CLI'
+    if (input.reason === 'app-unavailable') return 'Orca 未运行或无法读取任务'
+    if (input.reason === 'timeout') return '读取 Orca 任务超时'
+    return '本机 Orca 任务不可读'
+  }
+  const count = Number.isFinite(input.sessionCount) ? Math.max(0, Math.trunc(input.sessionCount)) : 0
+  return count > 0 ? `已接入 ${count} 条 Orca 任务` : '已接入，当前没有 Orca 任务'
 }
 
 export function cursorRegistrationRows(

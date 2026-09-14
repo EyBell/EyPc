@@ -33,7 +33,7 @@ import {
   shouldInlineCodexEnvironmentDetail,
   visibleCodexEnvironmentRows
 } from '../domain/codexEnvironmentPresentation'
-import { claudeRegistrationRows, claudeSourceStatusText, cursorRegistrationRows, cursorSourceStatusText, resolveCompanionWaterBallPresentation, codexhostSourceStatusText } from '../domain/companionPresentation'
+import { claudeRegistrationRows, claudeSourceStatusText, cursorRegistrationRows, cursorSourceStatusText, orcaSourceStatusText, resolveCompanionWaterBallPresentation, codexhostSourceStatusText } from '../domain/companionPresentation'
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
   CODEX_MAX_QUOTA_REFRESH_SECONDS,
@@ -332,6 +332,17 @@ const cursorRegistrationGrid = computed(() => cursorRegistrationRows(props.snaps
 
 function toggleCursor(enabled: boolean) {
   update({ providers: { ...props.snapshot.settings.providers, cursor: enabled } })
+}
+
+const orcaStatusText = computed(() => orcaSourceStatusText({
+  enabled: props.snapshot.settings.providers.orca === true,
+  available: props.snapshot.orcaAvailable,
+  reason: props.snapshot.orcaInventoryReason,
+  sessionCount: props.snapshot.orcaSessionCount
+}))
+
+function toggleOrca(enabled: boolean) {
+  update({ providers: { ...props.snapshot.settings.providers, orca: enabled } })
 }
 
 function registerClaude(register: boolean) {
@@ -1137,6 +1148,20 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             @click="registerCursor(false)"
           >移除钩子</button>
         </div>
+        <label class="codex-switch-row">
+          <span>
+            <strong>接入 Orca</strong>
+            <small>{{ orcaStatusText }}</small>
+          </span>
+          <input
+            type="checkbox"
+            :checked="snapshot.settings.providers.orca"
+            data-operation-tooltip="接入 Orca"
+            data-operation-description="开启后只读本机 Orca Agents 的任务状态（进行中/已完成/未读），列入同一任务清单；默认关闭。不做额度，不读对话正文。点卡片经 Orca CLI 切到该终端；归档会关闭该终端窗格。进行中的任务不能归档。"
+            @change="toggleOrca(($event.target as HTMLInputElement).checked)"
+          />
+          <i />
+        </label>
         <label v-if="snapshot.settings.providers.claude" class="codex-switch-row">
           <span>
             <strong>允许读取 Claude App 额度</strong>

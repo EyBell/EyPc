@@ -690,6 +690,9 @@ const projectFilters = computed(() => {
   if (snapshot.value?.companion?.providers.cursor === true) {
     filters.push({ id: 'cursor', label: '只显示 Cursor' })
   }
+  if (snapshot.value?.companion?.providers.orca === true) {
+    filters.push({ id: 'orca', label: '只显示 Orca' })
+  }
   return filters
 })
 
