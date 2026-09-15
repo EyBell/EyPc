@@ -4653,3 +4653,99 @@ describe('per-task phase transition diagnostics', () => {
     expect(kernel.getLatest().tasks[0].lastQuestionAt).toBe(900)
   })
 })
+
+describe('shortcut opens acknowledge the displayed completion immediately', () => {
+  const providers = { codex: true, claude: true, cursor: true, orca: true }
+  const kinds: Record<string, string> = { codex: 'codex-thread', claude: 'claude-session', cursor: 'cursor-session', orca: 'orca-session' }
+  const row = (provider: string, overrides: Record<string, unknown> = {}) => task({
+    key: `${provider}-shortcut`, provider, kind: kinds[provider], actionAlias: `${provider}-shortcut`,
+    phase: 'completed', unread: true, terminalAt: 100, turnStartedAt: 50, ...overrides
+  })
+  function setup(open: (target?: any) => Promise<any> = async () => ({ outcome: 'dispatched' })) {
+    const preflight = vi.fn()
+    const kernel = createCompanionTaskKernel({
+      adapters: Object.fromEntries(Object.keys(providers).map(provider => [provider, { open }])),
+      preflight, initialConfiguration: { enabled: true, providers }
+    })
+    const lease = kernel.attach({ enabled: true, providers }).lease
+    const publish = (rows: any[], revision = 1) => kernel.syncPackage({ lease, draft: draft(rows, revision, {
+      providers, sourceGenerations: { codex: revision, claude: revision, cursor: revision, orca: revision }
+    }) })
+    return { kernel, publish, preflight }
+  }
+
+  it.each(Object.keys(providers))('clears only the opened %s completion without changing native handoff or rereading providers', async provider => {
+    const { kernel, publish, preflight } = setup()
+    publish([row(provider), row(provider, { key: 'other', actionAlias: 'other' })])
+    await Promise.resolve() // settle the attach-triggered initial preflight dispatch
+    const readsBeforeOpen = preflight.mock.calls.length
+    const result = await kernel.dispatch({ action: 'open', key: `${provider}-shortcut`, source: 'global-shortcut' })
+    expect(result).toMatchObject({ outcome: 'dispatched', confirmsRead: false })
+    expect(kernel.getLatest().tasks.find((task: any) => task.key === `${provider}-shortcut`)).toMatchObject({ phase: 'completed', unread: false })
+    expect(kernel.getLatest().tasks.find((task: any) => task.key === 'other').unread).toBe(true)
+    expect(preflight).toHaveBeenCalledTimes(readsBeforeOpen)
+    kernel.close()
+  })
+
+  it.each(['task-cycle', 'manual-quick-jump'])('applies local read for the %s entry', async source => {
+    const { kernel, publish } = setup()
+    publish([row('cursor')])
+    await kernel.dispatch({ action: 'open', key: 'cursor-shortcut', source })
+    expect(kernel.getLatest().tasks[0].unread).toBe(false)
+    kernel.close()
+  })
+
+  it('clears the task actually selected by a next-task shortcut', async () => {
+    const { kernel, publish } = setup()
+    publish([row('codex'), row('cursor')])
+    const result = await kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut' })
+    expect(result.outcome).toBe('dispatched')
+    expect(kernel.getLatest().tasks.find((task: any) => task.key === result.key).unread).toBe(false)
+    expect(kernel.getLatest().tasks.filter((task: any) => task.unread)).toHaveLength(1)
+    kernel.close()
+  })
+
+  it('keeps a metadata-only/native-unread replay read, but accepts a new running round and completion', async () => {
+    const { kernel, publish } = setup()
+    publish([row('codex')])
+    await kernel.dispatch({ action: 'open', key: 'codex-shortcut', source: 'local-shortcut' })
+    publish([row('codex', { revisionAt: 200, unreadRevision: 200, displayOrder: 2 })], 2)
+    expect(kernel.getLatest().tasks[0].unread).toBe(false)
+    publish([row('codex', { phase: 'running', turnStartedAt: 300, phaseRevision: 300, statusEnteredAt: 300, terminalAt: 0 })], 3)
+    expect(kernel.getLatest().tasks[0].phase).toBe('running')
+    publish([row('codex', { turnStartedAt: 300, phaseRevision: 400, statusEnteredAt: 400, terminalAt: 400 })], 4)
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'completed', unread: true })
+    kernel.close()
+  })
+
+  it.each(['codex', 'claude'])('does not acknowledge a newer %s completion arriving while native open is pending', async provider => {
+    let release!: (value: any) => void
+    const { kernel, publish } = setup(() => new Promise(resolve => { release = resolve }))
+    publish([row(provider)])
+    const pending = kernel.dispatch({ action: 'open', key: `${provider}-shortcut`, source: 'global-shortcut' })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    publish([row(provider, { turnStartedAt: 200, phaseRevision: 300, statusEnteredAt: 300, terminalAt: 300 })], 2)
+    release(nativeOpened(true))
+    await pending
+    expect(kernel.getLatest().tasks[0].unread).toBe(true)
+    kernel.close()
+  })
+
+  it.each(['failed', 'unavailable'])('does not clear unread on %s dispatch', async outcome => {
+    const { kernel, publish } = setup(async () => ({ outcome }))
+    publish([row('codex')])
+    await kernel.dispatch({ action: 'open', key: 'codex-shortcut', source: 'global-shortcut' })
+    expect(kernel.getLatest().tasks[0].unread).toBe(true)
+    kernel.close()
+  })
+
+  it('leaves working tasks unchanged and applies the same immediate rule to the unread shortcut selector', async () => {
+    const { kernel, publish } = setup()
+    publish([row('codex', { phase: 'running', terminalAt: 0 }), row('cursor')])
+    await kernel.dispatch({ action: 'open', key: 'codex-shortcut', source: 'global-shortcut' })
+    expect(kernel.getLatest().tasks.find((task: any) => task.provider === 'codex')).toMatchObject({ phase: 'running', unread: true })
+    await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread', source: 'global-shortcut' })
+    expect(kernel.getLatest().tasks.find((task: any) => task.provider === 'cursor').unread).toBe(false)
+    kernel.close()
+  })
+})

@@ -1,5 +1,6 @@
 "use strict"
 const { trace: freezeTrace } = require('../freeze-trace.cjs')
+const { createShortcutReadReceipts, isShortcutSource } = require('./shortcut-read.cjs')
 
 const { createCompanionNavigation } = require('./navigation.cjs')
 const { createCompanionTaskActions } = require('./task-actions.cjs')
@@ -941,6 +942,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     completedUnread: []
   }
   const readAcknowledgements = new Map()
+  const shortcutReads = createShortcutReadReceipts()
+  let shortcutReadInputs = new Map()
   const consumerAcknowledgements = new Map()
   const commandResults = new Map()
   const commandQueues = new Map()
@@ -970,13 +973,29 @@ function createCompanionTaskKernel(dependencies = {}) {
     clearTimeout: clearTimer,
     queueMicrotask: dependencies.queueMicrotask,
     record,
-    openTarget: (target, request) => actions.open({
-      key: target.key,
-      target,
-      trustedResolvedTarget: request?.trustedResolvedTarget === true,
-      source: request?.source || 'task-cycle',
-      operationId: request?.operationId
-    })
+    openTarget: async (target, request) => {
+      const before = shortcutReadInputs.get(target.key)
+      const source = request?.source || 'task-cycle'
+      const token = shortcutReads.capture(before?.task, before?.members, source)
+      const result = await actions.open({
+        key: target.key,
+        target,
+        trustedResolvedTarget: request?.trustedResolvedTarget === true,
+        source: request?.source || 'task-cycle',
+        operationId: request?.operationId
+      })
+      const current = shortcutReadInputs.get(target.key)
+      if (!disposed && shortcutReads.accept(token, current?.task, current?.members, result?.outcome)) {
+        publishPrivateTopology('shortcut-open-local-read')
+        record({ level: 'info', scope: 'task-kernel', event: 'shortcut-local-read',
+          outcome: 'applied', provider: target.provider, taskRef: target.key,
+          source: request?.source, operationId: request?.operationId,
+          packageRevision: currentPackage.packageRevision })
+      } else if (!disposed && !isShortcutSource(source)) {
+        acknowledgeOpenedTask(before?.task, result)
+      }
+      return result
+    }
   })
   let navigationLease = 0
 
@@ -1305,8 +1324,9 @@ function createCompanionTaskKernel(dependencies = {}) {
   function acknowledgeOpenedTask(task, result) {
     if (result?.confirmsRead !== true) return
     if (!task || !providerTraits(task.provider).readAcknowledgements || task.phase !== 'completed' || task.unread !== true) return
+    const current = taskForKey(task.key)
     const epoch = taskTerminalEpoch(task)
-    if (!epoch) return
+    if (!epoch || current?.phase !== 'completed' || taskTerminalEpoch(current) !== epoch) return
     readAcknowledgements.set(task.key, epoch)
     commitLocalTaskState(task, { unread: false, unreadKnown: true }, 'provider-open-read-hint')
   }
@@ -1511,6 +1531,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     attentionWalks.input = []
     attentionWalks.completedUnread = []
     readAcknowledgements.clear()
+    shortcutReads.clear()
+    shortcutReadInputs.clear()
     lastDraftRevisionByProducer.clear()
     lastDraft = null
     const next = emptyPackage(providers)
@@ -1670,10 +1692,15 @@ function createCompanionTaskKernel(dependencies = {}) {
       relations: [...relationStore.values()],
       generationFloor: Object.fromEntries(PROVIDERS.map((provider) => [provider, currentLanes[provider].topology]))
     })
+    const nextShortcutInputs = new Map()
     const tasks = topology.rootGroups.map(({ root, members }) => {
-      const finalized = publicRootTask(finalizeCanonicalTask(aggregateKernelRoot(root, members)))
+      const canonical = finalizeCanonicalTask(aggregateKernelRoot(root, members))
+      nextShortcutInputs.set(root.key, { task: canonical, members })
+      const finalized = publicRootTask(finalizeTask(shortcutReads.project(canonical, members)))
       return assignSemanticRevision(previousPublicByKey.get(finalized.key), finalized).task
     }).sort(compareByLatestQuestion)
+    shortcutReadInputs = nextShortcutInputs
+    shortcutReads.retain(new Set(nextShortcutInputs.keys()))
     let topologyRevision = currentPackage.topologyRevision
     const firstTopology = currentPackage.topologyRevision === 0
     if (firstTopology || topology.fingerprint !== topologyFingerprint) {
@@ -2718,7 +2745,6 @@ function createCompanionTaskKernel(dependencies = {}) {
         source: input.source || 'attention-shortcut',
         operationId: input.operationId
       })
-      if (result?.outcome === 'opened' || result?.outcome === 'dispatched') acknowledgeOpenedTask(task, result)
       return result
     })
     attentionQueues[kind] = run.then(() => undefined, () => undefined)
@@ -2789,7 +2815,6 @@ function createCompanionTaskKernel(dependencies = {}) {
         source: input.source || 'manual-row-open',
         operationId: input.operationId
       })
-      if (task && (result?.outcome === 'opened' || result?.outcome === 'dispatched')) acknowledgeOpenedTask(task, result)
       return result
     }
     if (input.action === 'archive') {
@@ -3266,6 +3291,8 @@ function createCompanionTaskKernel(dependencies = {}) {
   function close() {
     if (disposed) return
     disposed = true
+    shortcutReads.clear()
+    shortcutReadInputs.clear()
     clearUnknownTimer()
     clearVisibilityTimer()
     packageListeners.clear()

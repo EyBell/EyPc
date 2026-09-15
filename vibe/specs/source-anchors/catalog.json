@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 62,
+    "source_documents": 63,
     "ordered_anchors": 356,
     "raw_parent_ordered": 230,
     "unparented_ordered": 126,
@@ -627,10 +627,20 @@
       "source_task": "260913/orca-companion",
       "source_path": "vibe/specs/260913/orca-companion/raw-requirement.md",
       "spec_id": "SPEC-260913-ORCA-COMPANION",
-      "content_sha256": "841889715a1ec36710e73a6919ec8811f18aa3ab92d88c66f6a4864564787b79",
+      "content_sha256": "91087bec6b58c65b4d51040f899d895c9b765c80d04126a9b78e99d7d92380f3",
       "raw_identity_count": 2,
       "ordered_anchor_count": 13,
       "raw_parent_ordered_count": 13,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260915/shortcut-immediate-read",
+      "source_path": "vibe/specs/260915/shortcut-immediate-read/raw-requirement.md",
+      "spec_id": "SPEC-260915-SHORTCUT-IMMEDIATE-READ",
+      "content_sha256": "f65905b09eef7caf9edbdb5f4efa3ac638789d3fb6d5c73ff883049660241290",
+      "raw_identity_count": 1,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
       "unparented_ordered_count": 0
     }
   ],

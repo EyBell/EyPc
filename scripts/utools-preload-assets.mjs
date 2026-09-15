@@ -25,7 +25,7 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
   {
     id: 'companion',
     directory: 'companion',
-    files: ['provider-manifest.json', 'provider-registry.cjs', 'contracts-v7.cjs', 'evidence-adapter-v7.cjs', 'harness-labels.cjs', 'task-topology.cjs', 'branch-causality.cjs', 'open-handoff.cjs', 'open-readiness.cjs', 'navigation.cjs', 'task-actions.cjs', 'persisted-side-state.cjs', 'task-kernel.cjs']
+    files: ['shortcut-read.cjs', 'provider-manifest.json', 'provider-registry.cjs', 'contracts-v7.cjs', 'evidence-adapter-v7.cjs', 'harness-labels.cjs', 'task-topology.cjs', 'branch-causality.cjs', 'open-handoff.cjs', 'open-readiness.cjs', 'navigation.cjs', 'task-actions.cjs', 'persisted-side-state.cjs', 'task-kernel.cjs']
   },
   {
     id: 'windows',
