@@ -1,4 +1,5 @@
-'use strict'
+"use strict"
+const { trace: freezeTrace } = require('./freeze-trace.cjs')
 
 const DIAGNOSTICS_REVISION = 'eypc-runtime-diagnostics-v3'
 const DEFAULT_DIAGNOSTICS_ENABLED = true
@@ -237,6 +238,8 @@ function createRuntimeDiagnostics(dependencies = {}) {
   }
 
   function drainWrites() {
+    const freezeSpan = freezeTrace.begin('main.drain-writes')
+    try {
     drainScheduled = false
     const queue = pendingWrites
     pendingWrites = []
@@ -246,6 +249,8 @@ function createRuntimeDiagnostics(dependencies = {}) {
       if (!writeNow(item.event, item.line, item.bytes)) ok = false
     }
     return ok
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   function scheduleDrain() {

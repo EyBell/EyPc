@@ -1,4 +1,5 @@
-'use strict'
+"use strict"
+const { trace: freezeTrace } = require('../freeze-trace.cjs')
 
 /**
  * Owns the Codex Float overlay window end to end: creation and teardown,
@@ -112,6 +113,7 @@ function createCodexFloatBridge(dependencies = {}) {
   }
 
   let codexFloatWindow = null
+  let codexFloatWindowGeneration = 0
   let codexFloatExpanded = false
   let codexFloatPinned = false
   let codexFloatEdge = 'right'
@@ -436,6 +438,8 @@ function createCodexFloatBridge(dependencies = {}) {
   }
 
   function pushCodexFloatSnapshot(options = {}) {
+    const freezeSpan = freezeTrace.begin('codex.push-codex-float-snapshot')
+    try {
     if (!codexFloatAlive() || !codexFloatSnapshot) return false
     const baseRevision = Number(codexFloatSnapshot.baseRevision) || 0
     if (record(options).force !== true
@@ -470,6 +474,8 @@ function createCodexFloatBridge(dependencies = {}) {
       runtimeDiagnostics.record({ scope: 'float-bridge', event: 'snapshot-send', outcome: 'failed', code: 'send-failed', durationMs: Date.now() - startedAt, level: 'error' })
       return false
     }
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   function pushCodexFloatState() {
@@ -537,6 +543,8 @@ function createCodexFloatBridge(dependencies = {}) {
   }
 
   function closeExistingCodexFloatWindows(keep) {
+    const freezeSpan = freezeTrace.begin('codex.close-existing-codex-float-windows')
+    try {
     const seen = new Set()
     const stashed = (() => { try { return globalThis[CODEX_FLOAT_WINDOW_SLOT] || null } catch { return null } })()
     const candidates = [stashed, ...listBrowserWindows()]
@@ -550,15 +558,22 @@ function createCodexFloatBridge(dependencies = {}) {
       try { win.close() } catch {}
     }
     if (!keep) stashCodexFloatWindow(null)
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   function createCodexFloat(position) {
+    const freezeSpan = freezeTrace.begin('codex.create-codex-float')
+    try {
+    const generation = ++codexFloatWindowGeneration
     closeExistingCodexFloatWindows(null)
     if (!utools || typeof utools.createBrowserWindow !== 'function') return false
     const initial = initialCodexFloatBounds(position)
     const developmentEntry = codexFloatDevelopmentEntry()
     let redirectedToDevelopment = false
+    const isCurrentWindow = () => generation === codexFloatWindowGeneration && codexFloatWindow !== null
     const finishCreateCodexFloat = () => {
+      if (!isCurrentWindow()) return
       applyCodexFloatWorkspaceVisibility()
       try {
         if (typeof codexFloatWindow?.showInactive === 'function') codexFloatWindow.showInactive()
@@ -568,7 +583,7 @@ function createCodexFloatBridge(dependencies = {}) {
     }
     try {
       codexFloatEdge = initial.edge
-      codexFloatWindow = utools.createBrowserWindow('float.html', {
+      codexFloatWindow = freezeTrace.run('float.sdk-create-browser-window', () => (utools.createBrowserWindow('float.html', {
         show: false,
         title: CODEX_FLOAT_WINDOW_TITLE,
         x: initial.bounds.x,
@@ -591,6 +606,7 @@ function createCodexFloatBridge(dependencies = {}) {
         autoHideMenuBar: true,
         webPreferences: { preload: 'float-preload.js' }
       }, () => {
+        if (!isCurrentWindow()) return
         if (developmentEntry && !redirectedToDevelopment && typeof codexFloatWindow?.loadURL === 'function') {
           redirectedToDevelopment = true
           try {
@@ -600,11 +616,11 @@ function createCodexFloatBridge(dependencies = {}) {
           } catch {}
         }
         finishCreateCodexFloat()
-      })
+      })))
       codexFloatLastHeartbeatAt = Date.now()
-      try { codexFloatWindow?.on?.('unresponsive', () => requestCodexFloatRecreate('window-unresponsive')) } catch {}
-      try { codexFloatWindow?.webContents?.on?.('render-process-gone', () => requestCodexFloatRecreate('render-process-gone')) } catch {}
-      try { codexFloatWindow?.webContents?.on?.('did-fail-load', () => requestCodexFloatRecreate('did-fail-load')) } catch {}
+      try { codexFloatWindow?.on?.('unresponsive', () => { if (isCurrentWindow()) requestCodexFloatRecreate('window-unresponsive') }) } catch {}
+      try { codexFloatWindow?.webContents?.on?.('render-process-gone', () => { if (isCurrentWindow()) requestCodexFloatRecreate('render-process-gone') }) } catch {}
+      try { codexFloatWindow?.webContents?.on?.('did-fail-load', () => { if (isCurrentWindow()) requestCodexFloatRecreate('did-fail-load') }) } catch {}
       applyCodexFloatWorkspaceVisibility()
       stashCodexFloatWindow(codexFloatWindow)
       return true
@@ -613,6 +629,8 @@ function createCodexFloatBridge(dependencies = {}) {
       stashCodexFloatWindow(null)
       return false
     }
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   function isLifecycleRecreateCode(code) {
@@ -754,6 +772,8 @@ function createCodexFloatBridge(dependencies = {}) {
   }
 
   function closeCodexFloat() {
+    // Invalidate callbacks before close can emit any lifecycle events.
+    codexFloatWindowGeneration += 1
     const closing = codexFloatWindow
     if (codexFloatAlive()) {
       try { codexFloatWindow.close() } catch {}

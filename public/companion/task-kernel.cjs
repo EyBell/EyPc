@@ -1,4 +1,5 @@
-'use strict'
+"use strict"
+const { trace: freezeTrace } = require('../freeze-trace.cjs')
 
 const { createCompanionNavigation } = require('./navigation.cjs')
 const { createCompanionTaskActions } = require('./task-actions.cjs')
@@ -1350,9 +1351,13 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function emitPackage(packageValue) {
+    const freezeSpan = freezeTrace.begin('companion.emit-package')
+    try {
     for (const listener of packageListeners) {
       try { listener(packageValue) } catch {}
     }
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   function applyPauseReceipt(task) {
@@ -1544,6 +1549,8 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function syncConsumers(packageValue) {
+    const freezeSpan = freezeTrace.begin('companion.sync-consumers')
+    try {
     reconcileAttentionProgress(packageValue)
     const retainedKeys = new Set(packageValue.tasks.map((task) => task.key))
     for (const key of readAcknowledgements.keys()) if (!retainedKeys.has(key)) readAcknowledgements.delete(key)
@@ -1567,6 +1574,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       cycleKeys: packageValue.views.cycleKeys,
       groups: packageValue.views.groups
     })
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   function actionTargetForTask(task) {
@@ -1958,6 +1967,8 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   /** 吃证据的唯一入口：schema/revision 失败则整批丢掉，且不消耗 producer revision。 */
   function commitDraft(draft, forceUnknown = false) {
+    const freezeSpan = freezeTrace.begin('companion.commit-draft')
+    try {
     if (disposed || !draft || draft.schema !== COMPANION_TASK_DRAFT_REVISION) return null
     const producer = draftProducer(draft.producer)
     const draftRevision = finiteInteger(draft.draftRevision)
@@ -2238,6 +2249,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     emitPackage(currentPackage)
     scheduleVisibilityTransition()
     return currentPackage
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   /** Group counts name the flood; per-task phase flips name the culprit. A
@@ -2338,6 +2351,8 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function configureConsumer(input = {}) {
+    const freezeSpan = freezeTrace.begin('companion.configure-consumer')
+    try {
     if (!Number.isInteger(input.lease) || input.lease !== activeLease || disposed) return null
     configure(input)
     const focusedKey = typeof input.focusedKey === 'string'
@@ -2359,6 +2374,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     if (enabled && !currentPackage.complete) void ensureReady().catch(() => undefined)
     return currentPackage
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   /**

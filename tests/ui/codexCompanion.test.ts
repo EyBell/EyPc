@@ -349,6 +349,42 @@ afterEach(() => {
 })
 
 describe('Codex Companion V4 UI contract', () => {
+  it('waits for the first host snapshot without recreating, then rejects an actual identity mismatch', async () => {
+    const requestRecreate = vi.fn(() => true)
+    let currentIdentity: NonNullable<CodexFloatSnapshotV1['runtimeIdentity']> | undefined
+    let receiveSnapshot: ((value: CodexFloatSnapshotV1) => void) | undefined
+    const { wrapper } = mountFloat(false, floatSnapshot(), {
+      getSnapshot: () => null,
+      onSnapshot: (listener) => { receiveSnapshot = listener; return () => undefined },
+      requestRecreate,
+      runtimeIdentity: {
+        revision: 'runtime-identity-v2',
+        handshake: (expected) => {
+          currentIdentity = {
+            revision: 'runtime-identity-v2', status: 'host-loaded', expected, actual: expected,
+            kernelRevision: expected.kernelRevision, taskPackageRevision: expected.taskPackageRevision,
+            message: 'loaded'
+          }
+          return currentIdentity
+        }
+      }
+    })
+    await flushPromises()
+    expect(wrapper.get('.float-runtime-reload').text()).toContain('正在连接')
+    expect(requestRecreate).not.toHaveBeenCalled()
+    receiveSnapshot!({ ...floatSnapshot(), runtimeIdentity: currentIdentity })
+    await flushPromises()
+    expect(wrapper.find('.float-runtime-reload').exists()).toBe(false)
+    expect(requestRecreate).not.toHaveBeenCalled()
+    receiveSnapshot!({
+      ...floatSnapshot(), baseRevision: 2,
+      runtimeIdentity: { ...currentIdentity!, actual: { ...currentIdentity!.actual, hostAssetId: 'host-retired' } }
+    })
+    await flushPromises()
+    expect(wrapper.get('.float-runtime-reload').text()).toContain('需要重载')
+    expect(requestRecreate).toHaveBeenCalledExactlyOnceWith('identity-mismatch')
+  })
+
   it('renders Plan-ready four-slot actions, two-click execute confirmation and complete drawer/batch actions', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)

@@ -18,6 +18,15 @@ try {
 } catch (error) {
   runtimeIdentityLoadError = String(error && error.message || error || 'runtime identity unavailable')
 }
+const freezeTrace = (() => {
+  try {
+    const trace = require('./freeze-trace.cjs').trace
+    if (process.type === 'renderer' && globalThis.utools) trace.start({ enabled: process.env.EYPC_FREEZE_TRACE !== '0', identity: runtimeIdentityArtifact?.hostAssetId })
+    return trace
+  } catch { return { begin: () => null, end: () => {} } }
+})()
+const preloadFreezeSpan = freezeTrace.begin('main.preload-initialize')
+
 let childEnvelopeContractsV7 = null
 try { childEnvelopeContractsV7 = require('./companion/contracts-v7.cjs') } catch {}
 // Companion dbStorage side-state lives in its own module. The require is
@@ -1767,15 +1776,21 @@ async function killProcess(request) {
 }
 
 function readState() {
+    const freezeSpan = freezeTrace.begin('main.read-state')
+    try {
   try {
     if (!globalThis.utools || !globalThis.utools.dbStorage) return null
     return globalThis.utools.dbStorage.getItem(STORAGE_KEY)
   } catch {
     return null
   }
-}
+
+    } finally { freezeTrace.end(freezeSpan) }
+  }
 
 function writeState(state) {
+    const freezeSpan = freezeTrace.begin('main.write-state')
+    try {
   const startedAt = Date.now()
   try {
     if (!globalThis.utools || !globalThis.utools.dbStorage) {
@@ -1817,7 +1832,9 @@ function writeState(state) {
     })
   } catch {}
   return true
-}
+
+    } finally { freezeTrace.end(freezeSpan) }
+  }
 
 // A failed load treats every candidate as an unusable preference (''):
 // callers already read an empty preference as "fall through to automatic
@@ -1937,6 +1954,8 @@ function resolveClaudeDataDirectory() {
 }
 
 function resolveMqttUserDataDir() {
+    const freezeSpan = freezeTrace.begin('main.resolve-mqtt-user-data-dir')
+    try {
   try {
     if (globalThis.utools && typeof globalThis.utools.getPath === 'function') {
       const userData = String(globalThis.utools.getPath('userData') || '').trim()
@@ -1951,7 +1970,9 @@ function resolveMqttUserDataDir() {
   } catch {
     return path.join(process.cwd(), '.eypc')
   }
-}
+
+    } finally { freezeTrace.end(freezeSpan) }
+  }
 
 function resolveRuntimeDiagnosticsDirectory() {
   return path.join(resolveMqttUserDataDir(), 'eypc-diagnostics')
@@ -9402,6 +9423,8 @@ function codexSyncRolloutDecisionTrackers(rows, turnStatuses) {
 }
 
 function readCodexNativePrimaryState() {
+    const freezeSpan = freezeTrace.begin('main.read-codex-native-primary-state')
+    try {
   const paths = codexNativeStatePaths()
   const stat = fs.statSync(paths.primary)
   if (!stat || typeof stat.size !== 'number' || stat.size <= 0 || stat.size > CODEX_NATIVE_STATE_MAX_BYTES) {
@@ -9413,7 +9436,9 @@ function readCodexNativePrimaryState() {
   try { value = JSON.parse(text) } catch { throw codexError('protocol-error', 'Codex native project state is invalid') }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw codexError('protocol-error', 'Codex native project state is invalid')
   return { paths, stat, buffer, value, registry: parseCodexNativeRegistryText(text) }
-}
+
+    } finally { freezeTrace.end(freezeSpan) }
+  }
 
 function codexProbeExactProcess(command, args, noMatchCode = 1) {
   return codexDesktopProcessProbe
@@ -10271,6 +10296,8 @@ async function readCodexSnapshot(options) {
 }
 
 function readCompanionCodexPreflightSnapshotV7() {
+    const freezeSpan = freezeTrace.begin('main.read-companion-codex-preflight-snapshot-v7')
+    try {
   const cached = companionCodexVerifiedSnapshotCacheV7
   const currentFingerprint = typeof codexActivitySourceFingerprint === 'string' ? codexActivitySourceFingerprint : ''
   const currentKeys = [...codexActivityInventory.values()]
@@ -10304,7 +10331,9 @@ function readCompanionCodexPreflightSnapshotV7() {
     return Promise.resolve(result)
   }
   return readCodexSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
-}
+
+    } finally { freezeTrace.end(freezeSpan) }
+  }
 
 async function removeCodexProject(actionAlias, request) {
   const input = codexRecord(request)
@@ -13344,6 +13373,8 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
 }
 
 function queueCompanionHostReconciliation(provider = '') {
+    const freezeSpan = freezeTrace.begin('main.reconciliation-dispatch')
+    try {
   if (!companionTaskKernel) return
   const requestedProvider = companionProviderOrder.includes(provider) ? provider : ''
   if (companionHostReconcileInFlight) {
@@ -13451,7 +13482,9 @@ function queueCompanionHostReconciliation(provider = '') {
         queueMicrotask(() => queueCompanionHostReconciliation(nextProvider))
       }
     })
-}
+
+    } finally { freezeTrace.end(freezeSpan) }
+  }
 
 if (companionTaskKernel) {
   codexActivityListeners.add(applyCodexActivityToCompanionKernel)
@@ -13562,6 +13595,8 @@ function runtimeIdentityTaskFailure(outcome = 'failed') {
 
 if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') {
   globalThis.utools.onPluginEnter((action) => {
+    const freezeSpan = freezeTrace.begin('main.plugin-enter')
+    try {
     ensureCodexInventoryMembershipWatchers({ reconcile: false })
     requestCodexInventoryMembershipReconciliation('plugin-enter', { forceTasksOnly: true })
     codexFloatBridge?.handlePluginEnter?.(action)
@@ -13598,6 +13633,8 @@ if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') 
         listener(lastEnterPayload)
       } catch {}
     }
+
+    } finally { freezeTrace.end(freezeSpan) }
   })
 }
 
@@ -14719,3 +14756,5 @@ window.eypcPlatform = {
     }
   }
 }
+
+freezeTrace.end(preloadFreezeSpan)

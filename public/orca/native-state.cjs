@@ -1,4 +1,5 @@
-'use strict'
+"use strict"
+const { trace: freezeTrace } = require('../freeze-trace.cjs')
 
 /**
  * Read Orca tab pins from the native session store. Conversation bodies,
@@ -36,6 +37,8 @@ function userDataPath(env, homeDir) {
 }
 
 function profileDataFile(root, io) {
+    const freezeSpan = freezeTrace.begin('orca.profile-data-file')
+    try {
   if (!root) return ''
   let profileId = 'local-default'
   try {
@@ -46,7 +49,9 @@ function profileDataFile(root, io) {
     /* default profile */
   }
   return path.join(root, 'profiles', profileId, 'orca-data.json')
-}
+
+    } finally { freezeTrace.end(freezeSpan) }
+  }
 
 function collectPinnedTabIds(session) {
   const ids = new Set()
@@ -74,10 +79,12 @@ function createNativeStateReader(dependencies = {}) {
   let cached = new Set()
 
   function pinnedTabIds() {
+    const freezeSpan = freezeTrace.begin('orca.pinned-tab-ids')
+    try {
     if (!file) return cached
     let stat
     try {
-      stat = io.statSync(file)
+      stat = freezeTrace.run('orca.native-stat', () => io.statSync(file))
     } catch {
       cachedMtime = -1
       cached = new Set()
@@ -86,7 +93,8 @@ function createNativeStateReader(dependencies = {}) {
     const mtime = Number(stat.mtimeMs) || 0
     if (mtime === cachedMtime) return cached
     try {
-      const parsed = JSON.parse(io.readFileSync(file, 'utf8'))
+      const raw = freezeTrace.run('orca.native-read', () => io.readFileSync(file, 'utf8'), { bytes: Number(stat.size) || 0 })
+      const parsed = freezeTrace.run('orca.native-parse', () => JSON.parse(raw), { bytes: Buffer.byteLength(raw) })
       cached = collectPinnedTabIds(parsed && parsed.workspaceSession)
       cachedMtime = mtime
     } catch {
@@ -94,6 +102,8 @@ function createNativeStateReader(dependencies = {}) {
       cached = new Set()
     }
     return cached
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   return {

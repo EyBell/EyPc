@@ -199,8 +199,20 @@ const runtimeReloadRequired = computed(() => (
   || snapshot.value?.runtimeIdentity?.actual.hostAssetId !== __EYPC_HOST_ASSET_ID__
   || snapshot.value?.runtimeIdentity?.actual.rendererAssetId !== __EYPC_RENDERER_ASSET_ID__
 ))
+// The first host snapshot arrives asynchronously. Keep actions gated while
+// waiting, but absence is not evidence that recreating the window will help.
+const runtimeIdentityMismatch = computed(() => (
+  (floatRuntimeIdentity.value !== null && floatRuntimeIdentity.value.status !== 'host-loaded')
+  || (snapshot.value !== null && (
+    snapshot.value.runtimeIdentity?.status !== 'host-loaded'
+    || snapshot.value.runtimeIdentity?.actual.hostAssetId !== __EYPC_HOST_ASSET_ID__
+    || snapshot.value.runtimeIdentity?.actual.rendererAssetId !== __EYPC_RENDERER_ASSET_ID__
+  ))
+))
 const runtimeReloadMessage = computed(() => (
-  floatRuntimeIdentity.value?.status === 'reload-required'
+  !runtimeIdentityMismatch.value
+    ? '正在等待主插件完成连接'
+    : floatRuntimeIdentity.value?.status === 'reload-required'
     ? floatRuntimeIdentity.value.message
     : snapshot.value?.runtimeIdentity?.message || 'Float 与主插件运行版本不一致，请重新接入并重新打开 Float'
 ))
@@ -3224,9 +3236,6 @@ onMounted(() => {
       errorCode: 'identity-handshake-failed'
     }
   }
-  if (floatRuntimeIdentity.value?.status === 'reload-required') {
-    window.eypcFloat?.requestRecreate?.('identity-mismatch')
-  }
   const applySnapshot = (value: CodexFloatSnapshotV1 | null) => {
     if (!value) return false
     const baseRevision = value.baseRevision || 0
@@ -3265,7 +3274,6 @@ onMounted(() => {
     return true
   }
   applySnapshot(window.eypcFloat?.getSnapshot() || null)
-  if (runtimeReloadRequired.value) window.eypcFloat?.requestRecreate?.('identity-mismatch')
   floatState.value = window.eypcFloat?.getState() || floatState.value
   expanded.value = floatState.value.expanded
   desiredExpanded = expanded.value
@@ -3293,9 +3301,9 @@ onMounted(() => {
     requestExpansion(true)
     void nextTick(() => payload.command === 'new-thread' ? openComposer() : focusCurrent())
   }) || null
-  watch(runtimeReloadRequired, (needed) => {
+  watch(runtimeIdentityMismatch, (needed) => {
     if (needed) window.eypcFloat?.requestRecreate?.('identity-mismatch')
-  })
+  }, { immediate: true })
   window.addEventListener('keydown', onWindowKeydown, true)
   window.addEventListener('keyup', onWindowKeyup, true)
   window.addEventListener('blur', onWindowBlur)
@@ -3354,7 +3362,7 @@ onUnmounted(() => {
       @pointerdown.stop
       @click.stop
     >
-      <strong>需要重载</strong>
+      <strong>{{ runtimeIdentityMismatch ? '需要重载' : '正在连接' }}</strong>
       <span v-if="expanded">{{ runtimeReloadMessage }}</span>
     </div>
     <div v-if="!expanded" class="float-compact-shell" :class="settings?.style === 'card' ? 'card-shell' : 'water-shell'">

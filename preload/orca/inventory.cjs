@@ -1,4 +1,5 @@
-'use strict'
+"use strict"
+const { trace: freezeTrace } = require('../freeze-trace.cjs')
 
 /**
  * Read-only Orca Agents inventory.
@@ -346,6 +347,8 @@ function createInventoryReader(dependencies = {}) {
   const unreadBridge = dependencies.unreadBridge
 
   async function readInventory() {
+    const freezeSpan = freezeTrace.begin('orca.read-inventory')
+    try {
     const readAt = Date.now()
     if (cli.available === false) {
       return {
@@ -395,6 +398,8 @@ function createInventoryReader(dependencies = {}) {
       truncated: collected.truncated === true || ps.result.truncated === true,
       readAt
     }
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   return {

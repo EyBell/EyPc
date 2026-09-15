@@ -288,6 +288,7 @@ function loadPreloadHarness(options: { leftoverWindows?: Array<Record<string, an
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const ipcHandlers = new Map<string, (...args: unknown[]) => void>()
   const sent: Array<{ channel: string; payload: unknown }> = []
+  const windowLoadedCallbacks: Array<() => void> = []
   const pluginOutListeners: Array<(isKill: boolean) => void> = []
   const pluginEnterListeners: Array<(action: { code?: string } | null) => void> = []
   const displays = [
@@ -314,7 +315,8 @@ function loadPreloadHarness(options: { leftoverWindows?: Array<Record<string, an
     getAllDisplays: () => displays,
     getCursorScreenPoint: () => ({ x: 2500, y: 300 }),
     getDisplayNearestPoint: (point: { x: number }) => point.x < 0 ? displays[0] : displays[1],
-    createBrowserWindow: vi.fn((_url: string, options: Rect) => {
+    createBrowserWindow: vi.fn((_url: string, options: Rect, loaded: () => void) => {
+      windowLoadedCallbacks.push(loaded)
       floatDestroyed = false
       floatBounds = { x: options.x, y: options.y, width: options.width, height: options.height }
       return floatWindow
@@ -383,6 +385,7 @@ function loadPreloadHarness(options: { leftoverWindows?: Array<Record<string, an
     displays,
     sent,
     floatWindow,
+    windowLoadedCallbacks,
     bounds: () => floatBounds as Rect,
     createCount: () => utools.createBrowserWindow.mock.calls.length,
     triggerPluginOut: (isKill: boolean) => pluginOutListeners.forEach((listener) => listener(isKill)),
@@ -854,6 +857,25 @@ describe('Codex float preload sizing', () => {
     await vi.advanceTimersByTimeAsync(5_001)
     ipcHandlers.get('eypc-float:recreate')?.({}, { code: 'identity-mismatch' })
     expect(createCount()).toBe(3)
+  })
+
+  it('ignores a retired window load callback after recreation and after close', () => {
+    vi.useFakeTimers()
+    const { bridge, triggerPluginEnter, floatWindow, windowLoadedCallbacks } = loadPreloadHarness()
+    bridge.sync({ visible: true, snapshot: snapshot() })
+    triggerPluginEnter({ code: 'eypc-main' })
+    expect(windowLoadedCallbacks).toHaveLength(2)
+    floatWindow.showInactive.mockClear()
+    floatWindow.webContents.send.mockClear()
+    windowLoadedCallbacks[0]!()
+    expect(floatWindow.showInactive).not.toHaveBeenCalled()
+    expect(floatWindow.webContents.send).not.toHaveBeenCalled()
+    windowLoadedCallbacks[1]!()
+    expect(floatWindow.showInactive).toHaveBeenCalledOnce()
+    bridge.close()
+    floatWindow.showInactive.mockClear()
+    windowLoadedCallbacks[1]!()
+    expect(floatWindow.showInactive).not.toHaveBeenCalled()
   })
 
   it('recreates when the main renderer identity changes or the float reports a newer revision than the host', async () => {

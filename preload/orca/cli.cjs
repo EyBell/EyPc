@@ -1,4 +1,5 @@
-'use strict'
+"use strict"
+const { trace: freezeTrace } = require('../freeze-trace.cjs')
 
 /**
  * Resolve and invoke the Orca CLI. Linux must never fall through to the GNOME
@@ -58,7 +59,9 @@ function createOrcaCli(dependencies = {}) {
   const timeoutMs = Number(dependencies.timeoutMs) > 0 ? Math.trunc(Number(dependencies.timeoutMs)) : DEFAULT_TIMEOUT_MS
   const executable = resolveOrcaExecutable(dependencies)
 
-  function run(args, options = {}) {
+  async function run(args, options = {}) {
+    const freezeSpan = freezeTrace.begin('orca.run')
+    try {
     if (!executable) {
       return Promise.resolve({ ok: false, error: { code: 'missing-cli', message: '未找到 Orca CLI' } })
     }
@@ -66,7 +69,7 @@ function createOrcaCli(dependencies = {}) {
       return Promise.resolve({ ok: false, error: { code: 'exec-unavailable', message: '无法调用 Orca CLI' } })
     }
     const argv = Array.isArray(args) ? args.filter((value) => typeof value === 'string') : []
-    return new Promise((resolve) => {
+    return await new Promise((resolve) => {
       try {
         execFile(executable, argv, {
           timeout: Number(options.timeoutMs) > 0 ? Math.trunc(Number(options.timeoutMs)) : timeoutMs,
@@ -101,6 +104,8 @@ function createOrcaCli(dependencies = {}) {
         })
       }
     })
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   return {

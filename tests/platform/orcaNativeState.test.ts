@@ -59,3 +59,20 @@ describe('Orca native session pin index', () => {
     expect(reader.pinnedTabIds().has(TAB)).toBe(false)
   })
 })
+
+it('reuses unchanged native pin state without reading or parsing the full file again', () => {
+  let dataReads = 0
+  const reader = native.createNativeStateReader({
+    env: { ORCA_USER_DATA_PATH: '/tmp/orca' }, homedir: '/tmp',
+    fs: {
+      statSync: () => ({ mtimeMs: 10, size: 100 }),
+      readFileSync: (file: string) => {
+        if (file.endsWith('orca-profile-index.json')) return '{}'
+        dataReads++
+        return JSON.stringify({ workspaceSession: { unifiedTabs: { a: [{ id: TAB, isPinned: true }] } } })
+      }
+    }
+  })
+  for (let i = 0; i < 200; i++) expect(reader.pinnedTabIds().has(TAB)).toBe(true)
+  expect(dataReads).toBe(1)
+})

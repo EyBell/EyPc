@@ -1,3 +1,4 @@
+const { trace: freezeTrace } = require('../freeze-trace.cjs')
 'use strict'
 
 const { createNativeWindowCommandRunner } = require('./native-command.cjs')
@@ -189,12 +190,20 @@ function createWindowSubsystem(options = {}) {
   }
 
   async function capabilities() {
-    return platform ? platform.capabilities() : protocol.capability('unsupported')
+    const freezeSpan = freezeTrace.begin('windows.capabilities')
+    try {
+    return platform ? await platform.capabilities() : protocol.capability('unsupported')
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   async function list() {
-    if (platform) return platform.list()
+    const freezeSpan = freezeTrace.begin('windows.list')
+    try {
+    if (platform) return await platform.list()
     return { capability: protocol.capability('unsupported'), windows: [], completeness: 'partial', message: '当前系统不支持窗口跳转' }
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   async function probeInstance(window) {
