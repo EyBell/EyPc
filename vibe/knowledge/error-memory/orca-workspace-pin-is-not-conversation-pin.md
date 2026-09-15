@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: orca-worktree-ispinned__copied-onto-every-agent-card__user-wanted-tab-conversation-pin__same-grain-as-codex-thread
 first_seen: 2026-09-14
-last_verified: 2026-09-14
+last_verified: 2026-09-15
 review_after: 2027-09-14
 evidence:
   - user-corrected
@@ -40,13 +40,13 @@ Orca Workspace 侧栏的 Pinned 区等于 Codex 线程置顶。`worktree.isPinne
 
 ## Prevention Rule
 
-入站只认 `terminal.isPinned === true`。出站用 `orca terminal pin --terminal <handle> --pinned|--no-pinned`，桌面路径必须通知 renderer `pinTab`/`unpinTab`。不要把工作区钉扇到组内每张卡。
+入站优先原生 `terminal.isPinned` 的显式布尔，false 也必须压过旧文件 true；字段缺失才读会话文件 tab 钉。出站用 `orca terminal pin --terminal <handle> --pinned|--no-pinned`，桌面路径必须通知 renderer `pinTab`/`unpinTab`。写回收到同 handle/tab 回执后，再用 terminal list 核验同 handle/paneKey 及请求布尔；缺字段、错目标、旧 handle 或未更新均不报原生成功。不要把工作区钉扇到组内每张卡。同 tab 分屏共享标签钉。
 
 ## Alternative Route
 
 - 状态: `verified`
 - 前置条件: Orca CLI 已有 `terminal pin`，库存 join 了 `terminal.list`。
-- 有序步骤: 卡片 pin 读 tab 布尔；写回走 handle 而不是 worktreeId。
-- 验证: `orcaInventory` 工作区钉且标签未钉 → `pinned:false`；`orcaPin` 发出 `terminal pin --terminal`。
+- 有序步骤: 卡片 pin 读 tab 布尔；写前校验 lookup 仍为原 pane；写回走 handle；随后核验同一目标元数据。
+- 验证: `orcaInventory` 原生 false 压过文件 true；`orcaPin` 同目标 pin/unpin、错目标及未确认拒绝。本地测试通过，真实宿主待验收。
 - 适用边界: Orca companion 置顶。工作区钉仍可存在于 Orca 侧栏，只是不是 EyPc 任务置顶。
 - 回退: 写回失败时保留 EyPc `localPin`。

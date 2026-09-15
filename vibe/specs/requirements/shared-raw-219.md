@@ -4,7 +4,7 @@ qualified_source: SPEC-260913-ORCA-COMPANION::RAW-219
 status: active
 domain: companion-shared
 authority: user-stated
-source_annotations: "implementation-landed / focused-automated-pending / host-reload-pending"
+source_annotations: "implemented-local / focused-tests-passed / artifact-ready / installed-host-pending"
 scoped_relations:
   - kind: refines
     target: eypc-req-shared-raw-217

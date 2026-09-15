@@ -201,8 +201,11 @@ function mergeSession(agent, terminal, worktree, tabTitles, tabOrdinals, nativeP
     connected,
     state,
     unread: agent.unread === true,
+    nativeUnread: typeof agent.unread === 'boolean',
     unreadExplicit: typeof agent.unread === 'boolean',
-    pinned: terminal.isPinned === true || (nativePins instanceof Set && nativePins.has(tabId)),
+    pinned: typeof terminal.isPinned === 'boolean'
+      ? terminal.isPinned
+      : nativePins instanceof Set && nativePins.has(tabId),
     lastUpdatedAt,
     lastQuestionAt,
     stateStartedAt: startedAt || updatedAt,
@@ -389,6 +392,7 @@ function createInventoryReader(dependencies = {}) {
     const nativePins = nativeState && typeof nativeState.pinnedTabIds === 'function'
       ? nativeState.pinnedTabIds()
       : new Set()
+    if (unreadBridge && typeof unreadBridge.ready === 'function') await unreadBridge.ready()
     const collected = collectSessions(worktrees, terminals, visualLayouts, nativePins, unreadBridge)
     return {
       revision: ORCA_INVENTORY_REVISION,

@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: orca-worktree-unread-summary__copied-onto-every-agent-card__group-shows-many-completed-unread__attribute-to-newest-finished-pane
 first_seen: 2026-09-14
-last_verified: 2026-09-14
+last_verified: 2026-09-15
 review_after: 2027-09-14
 evidence:
   - preload/orca/inventory.cjs
@@ -34,7 +34,7 @@ Orca 一个工作区里只有一条实际未读对话，EyPc「已完成未读�
 
 1. 同一 `worktreeId` 下有多条 `done` 卡同时 `unread=true`，而 Orca 侧栏只有一条未读，就是本条。
 2. 先看库存是否把工作树 `unread` 直接抄到每条 session。
-3. 点「已完成未读」却打开同窗左侧标签：先对照 visual layout `tabs` 最右侧 done 是否就是未读卡；再看时钟/`paneKey` 是否抢了邻居。
+3. 点未读卡却进入邻居：先核对同一 `paneKey` 与 handle 的关联，再核对 agent 原生布尔；没有逐窗格证据时不得用 visual layout 顺序或时钟归因。
 4. 不要先去改 Kernel 未读合并。CLI `terminal switch` 在 handle 正确时会切到目标标签，根因在归因。
 
 ## Prevention Rule
@@ -52,12 +52,14 @@ Orca 一个 Workspace 窗口里多条 Agent 标签共用工作区 `unread`。橙
 - 有序步骤:
   1. `mergeSession` 不写工作树 unread。
   2. 有 agent.`unread` 布尔时跟窗格。否则仅当该工作树只有一条已完成会话才吃汇总。`lastUpdatedAt` 不得含工作区 `lastActivityAt`。
-  3. 测试：左侧标签更新、paneKey 更大，右侧标签更早结束，未读必须在右侧。无布局时仍按 `stateStartedAt`。
+  3. 测试：多 done 且只有汇总时不猜；每个原生 true/false 各跟本窗格；显式 false 胜过临时账本；打开派发不得清原生 true。
 - 验证: `pnpm exec vitest run tests/platform/orcaInventory.test.ts`
 - 适用边界: Orca Companion 卡片未读。不把工作树汇总当成项目未读角标的另一套算法。
-- 回退: 没有任何 agent.unread 字段且工作树 unread=false 时组内全部已读；有 agent.unread=true 时不得回退成已读。
+- 回退: 缺原生字段时临时账本保留已观测 working → done 的未读；单 done 可用汇总补充。原生 true/false 存在时不被汇总或账本覆盖。
 
 ## Occurrence History
+
+以下最新/最右侧归因曾作为尝试，现均 superseded；当前路线以 [Spec](../../specs/260913/orca-companion/spec.md#L1) 与上述 Prevention Rule 为准。2026-09-15 的本地合同测试已覆盖原生接管，真实宿主尚未验收。
 
 | 日期 | 任务 | 触发 | 失败路线 | 证据 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- | --- | --- |

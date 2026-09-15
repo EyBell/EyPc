@@ -153,10 +153,12 @@ function createOrcaBridge(dependencies = {}) {
     openTask: async (paneKey, options) => {
       const result = await opener.openTask(String(paneKey || ''), options || {})
       if (result && (result.outcome === 'dispatched' || result.outcome === 'opened')) {
-        unreadBridge.markViewed(paneKey)
         const key = String(paneKey || '').toLowerCase()
+        const native = cache.sessions.find((session) => session.paneKey === key)?.nativeUnread === true
+        if (typeof unreadBridge.ready === 'function') await unreadBridge.ready()
+        if (!native) unreadBridge.markViewed(paneKey)
         for (const session of cache.sessions) {
-          if (session.paneKey === key && session.state !== 'working') session.unread = false
+          if (session.paneKey === key && session.state !== 'working' && session.nativeUnread !== true) session.unread = false
         }
         cache.fingerprint = fingerprintOf(cache.sessions)
         broadcast()

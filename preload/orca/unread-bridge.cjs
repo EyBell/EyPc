@@ -1,4 +1,5 @@
-'use strict'
+"use strict"
+const { trace: freezeTrace } = require('../freeze-trace.cjs')
 
 /**
  * Temporary EyPc-owned completed-unread ledger for Orca.
@@ -53,46 +54,41 @@ function createMemoryStore(initial) {
   }
 }
 
-function defaultStore() {
-  const db = globalThis.utools && globalThis.utools.dbStorage
-  if (db && typeof db.getItem === 'function' && typeof db.setItem === 'function') {
-    return {
-      getItem: (key) => db.getItem(key),
-      setItem: (key, value) => db.setItem(key, value)
+// dbStorage uses synchronous IPC. Use the same document envelope through the
+// public asynchronous API so existing receipts need no migration.
+function defaultStore(host) {
+  const db = host && host.db && host.db.promises
+  if (!db || typeof db.get !== 'function' || typeof db.put !== 'function') {
+    return createMemoryStore(null)
+  }
+  return {
+    async getItem(key) {
+      const doc = await freezeTrace.run('orca.unread-db-get', () => db.get(key))
+      if (doc && doc.error) throw new Error('unread-storage-read-failed')
+      return doc ? doc.value : null
+    },
+    async setItem(key, value) {
+      const doc = await freezeTrace.run('orca.unread-db-get', () => db.get(key))
+      if (doc && doc.error) throw new Error('unread-storage-read-failed')
+      const result = await freezeTrace.run('orca.unread-db-put', () => db.put({ _id: key, ...(doc && doc._rev ? { _rev: doc._rev } : {}), value }), { count: Object.keys(value.records).length })
+      if (!result || result.error) throw new Error('unread-storage-write-failed')
     }
   }
-  return createMemoryStore(null)
 }
 
-function loadRecords(store) {
+function loadRecords(parsed) {
   const map = new Map()
-  let parsed = store.getItem(STORAGE_KEY)
   if (typeof parsed === 'string') {
     try { parsed = JSON.parse(parsed) } catch { parsed = null }
   }
   const rows = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-    ? parsed.records
-    : null
+    ? parsed.records : null
   if (!rows || typeof rows !== 'object' || Array.isArray(rows)) return map
   for (const [key, value] of Object.entries(rows)) {
     const paneKey = paneKeyOf(key)
-    if (!paneKey) continue
-    map.set(paneKey, recordOf(value))
+    if (paneKey) map.set(paneKey, recordOf(value))
   }
-  return map
-}
-
-function persistRecords(store, records) {
-  const rows = {}
-  for (const [key, value] of records) rows[key] = recordOf(value)
-  try {
-    store.setItem(STORAGE_KEY, {
-      revision: ORCA_UNREAD_BRIDGE_REVISION,
-      records: rows
-    })
-  } catch {
-    /* dbStorage may be absent in tests */
-  }
+  return prune(map)
 }
 
 function prune(records) {
@@ -111,17 +107,69 @@ function prune(records) {
 function createUnreadBridge(dependencies = {}) {
   const store = dependencies.store && typeof dependencies.store.getItem === 'function'
     ? dependencies.store
-    : defaultStore()
+    : defaultStore(dependencies.utools)
   const clock = typeof dependencies.now === 'function' ? dependencies.now : Date.now
-  let records = loadRecords(store)
+  let records = new Map()
+  let initialized = false
+  let writable = false
+  let dirty = false
+  let writing = null
+  let persistenceError = null
+  // A stalled host read must not hold the inventory indefinitely. On failure
+  // retain a session-only ledger and never overwrite the unknown stored one.
+  const ready = new Promise((resolve) => {
+    const timer = setTimeout(() => finish(null, 'load-timeout'), dependencies.loadTimeoutMs ?? 1000)
+    function finish(value, error) {
+      if (initialized) return
+      clearTimeout(timer)
+      records = loadRecords(value)
+      initialized = true
+      writable = !error
+      persistenceError = error
+      resolve()
+    }
+    Promise.resolve().then(() => store.getItem(STORAGE_KEY))
+      .then((value) => finish(value, null), () => finish(null, 'load-failed'))
+  })
+
+  function schedulePersist() {
+    if (!writable || !dirty || writing) return
+    // One writer, one latest in-memory snapshot; no queue per pane or poll.
+    writing = Promise.resolve().then(async () => {
+      while (dirty) {
+        dirty = false
+        const rows = {}
+        for (const [key, value] of records) rows[key] = recordOf(value)
+        try {
+          await store.setItem(STORAGE_KEY, { revision: ORCA_UNREAD_BRIDGE_REVISION, records: rows })
+          persistenceError = null
+        } catch {
+          dirty = true
+          persistenceError = 'write-failed'
+          break // retry only on a later observation, never a tight retry loop
+        }
+      }
+    }).finally(() => {
+      writing = null
+      if (dirty && !persistenceError) schedulePersist()
+    })
+  }
 
   function remember(paneKey, next) {
-    records.set(paneKey, recordOf(next))
+    const normalized = recordOf(next)
+    const previous = records.get(paneKey)
+    if (previous && previous.seenWorkingAt === normalized.seenWorkingAt
+      && previous.completionEpoch === normalized.completionEpoch
+      && previous.viewedAt === normalized.viewedAt) return
+    records.set(paneKey, normalized)
     records = prune(records)
-    persistRecords(store, records)
+    dirty = true
   }
 
   function observe(sessions, observedAt) {
+    const freezeSpan = freezeTrace.begin('orca.observe', { count: Array.isArray(sessions) ? sessions.length : 0 })
+    try {
+    if (!initialized) return
     const now = timeOf(observedAt) || clock()
     const rows = Array.isArray(sessions) ? sessions : []
     for (const session of rows) {
@@ -138,8 +186,6 @@ function createUnreadBridge(dependencies = {}) {
       if (current.seenWorkingAt > 0 && current.completionEpoch === 0) {
         current.completionEpoch = now
         remember(paneKey, current)
-      } else if (current.seenWorkingAt > 0) {
-        remember(paneKey, current)
       }
       // unreadExplicit is "CLI sent a boolean", not "the pane is unread".
       if (session.unreadExplicit === true) continue
@@ -149,14 +195,18 @@ function createUnreadBridge(dependencies = {}) {
         session.unread = false
       }
     }
+    schedulePersist()
+
+    } finally { freezeTrace.end(freezeSpan) }
   }
 
   function markViewed(paneKey, viewedAt) {
     const key = paneKeyOf(paneKey)
-    if (!key) return emptyRecord()
+    if (!initialized || !key) return emptyRecord()
     const current = recordOf(records.get(key) || emptyRecord())
     const next = { ...current, viewedAt: timeOf(viewedAt) || clock() }
     remember(key, next)
+    schedulePersist()
     return next
   }
 
@@ -166,6 +216,9 @@ function createUnreadBridge(dependencies = {}) {
 
   return {
     revision: ORCA_UNREAD_BRIDGE_REVISION,
+    ready: () => ready,
+    flush: async () => { await ready; schedulePersist(); if (writing) await writing },
+    persistenceStatus: () => ({ initialized, writable, dirty, writing: !!writing, error: persistenceError }),
     observe,
     markViewed,
     recordFor

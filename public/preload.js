@@ -315,6 +315,7 @@ try {
   const createOrcaBridge = orcaModule && orcaModule.createOrcaBridge
   if (typeof createOrcaBridge !== 'function') throw orcaRelativeLoadError || new Error('orca module factory unavailable')
   orcaBridge = createOrcaBridge({
+    utools: globalThis.utools,
     fs,
     path,
     env: process.env,

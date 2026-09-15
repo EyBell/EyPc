@@ -627,3 +627,14 @@ describe('Orca agent inventory', () => {
     expect(inventory.fingerprintOf([session])).toBe(inventory.fingerprintOf([{ ...session, extra: 'nope' }]))
   })
 })
+
+it('native unpin overrides a stale file pin without affecting another pane', () => {
+  const { sessions } = inventory.collectSessions([{ repo: 'test', agents: [
+    { paneKey: `${TAB}:${LEAF}`, state: 'done', agentType: 'grok' },
+    { paneKey: `${NEW_TAB}:${NEW_LEAF}`, state: 'done', agentType: 'grok' }
+  ] }], [
+    { handle: HANDLE, tabId: TAB, leafId: LEAF, agentIdentity: 'grok', isPinned: false },
+    { handle: 'term_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', tabId: NEW_TAB, leafId: NEW_LEAF, agentIdentity: 'grok' }
+  ], undefined, new Set([TAB, NEW_TAB]))
+  expect(sessions.map(row => row.pinned)).toEqual([false, true])
+})

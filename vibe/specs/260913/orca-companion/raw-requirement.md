@@ -51,3 +51,12 @@ text: >
 2. 在 Orca 导出之前，EyPc 做临时中转：只要库存曾经读到该窗格「进行中」，之后变成 `done` 时进入「已完成未读」，不得直接变成「已完成已读」。冷启动时已经是已完成、且从未观测到进行中的窗格，不为此中转凭空标未读。
 3. 只有插件跳转或点击查看之后，这一轮才变成「已完成已读」。进行中点卡片不得改成已完成。Orca 窗口里点标签仍不作为 EyPc 已读（原生焦点仍不确认）。
 4. CLI 已给出 `agent.unread` 布尔时仍以该字段为准。工作区汇总未读不得扇出。History / 左侧树仍禁止当未读来源。
+
+## 2026-09-15 F1/F2 实施确认
+
+capture_fidelity: normalized-material-requirement
+source_kind: chat-requirement-summary
+source_lineage: Codex task 01a0a3c0-f790-7680-a529-962a851aa3f1, selected F1/F2
+privacy_boundary: no-verbatim-prompt-or-transcript
+
+沿用 RAW-219/220 收敛文档并完成原生状态同步：原生逐窗格未读优先，打开仅派发时不提前清原生未读；标签钉写后须同一目标回读才确认。旧 CLI 保留临时账本和 tab pin 文件回退。共用既有 Kernel 快照与各功能 Tab；真实宿主 F3、提交和推送不在本轮范围。前述“插件查看后已读”仅属于缺原生字段时的临时账本。
