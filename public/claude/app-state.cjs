@@ -99,6 +99,14 @@ function parseAppStateLine(line) {
     const sessionId = normalizeLocalId(match[1])
     return sessionId ? { kind: 'session-end', sessionId, requestId: '', at } : null
   }
+  // Closing a Code conversation window emits this immediately. The generic
+  // "Stopping shell PTY for session" line also fires when the PTY is recycled
+  // while the window stays open, so it must not be treated as teardown.
+  match = /^LocalSessions\.stopShellPty: sessionId=(local_[0-9a-f-]+)$/.exec(message)
+  if (match) {
+    const sessionId = normalizeLocalId(match[1])
+    return sessionId ? { kind: 'session-end', sessionId, requestId: '', at } : null
+  }
   match = /^\[(?:Result|Stop hook)\] (?:Turn|Query) (?:failed|interrupted) for session (local_[0-9a-f-]+)$/.exec(message)
   if (match) {
     const sessionId = normalizeLocalId(match[1])

@@ -38,6 +38,10 @@ describe('Claude App privacy-bounded state log', () => {
       .toMatchObject({ kind: 'focus-changed', sessionId: LOCAL_A })
     expect(appState.parseAppStateLine(line('2026-08-07 10:00:02', '[CCD] LocalSessions.setFocusedSession: sessionId=null')))
       .toMatchObject({ kind: 'focus-changed', sessionId: '' })
+    expect(appState.parseAppStateLine(line('2026-08-07 10:00:02', `LocalSessions.stopShellPty: sessionId=${LOCAL_A}`)))
+      .toMatchObject({ kind: 'session-end', sessionId: LOCAL_A })
+    expect(appState.parseAppStateLine(line('2026-08-07 10:00:02', `Stopping shell PTY for session ${LOCAL_A}`))).toBeNull()
+    expect(appState.parseAppStateLine(line('2026-08-07 10:00:02', `LocalSessions.stopShellPty: sessionId=${LOCAL_A} extra`))).toBeNull()
     expect(appState.parseAppStateLine(warningLine(
       '2026-08-07 10:00:03',
       `[CCD CycleHealth] ${LOCAL_A} api_error (success): You've reached your Fable 5 limit. Switch to another model, or manage usage credits at claude.ai/settings/usage?from=cc_cli_limit_message, to continue.`

@@ -570,6 +570,12 @@ describe('ordered Claude App log state', () => {
       line('2026-08-08 09:59:58', `Stopping session ${LOCAL_A}`)
     ])
     expect(generic.state.get(LOCAL_A)?.phase).toBe('stopped')
+    const closedWindow = appState.foldAppStateEvents([
+      line('2026-08-08 09:59:56', `Sending message to session ${LOCAL_A}`),
+      line('2026-08-08 09:59:58', `LocalSessions.stopShellPty: sessionId=${LOCAL_A}`)
+    ])
+    expect(closedWindow.state.get(LOCAL_A)?.phase).toBe('stopped')
+    expect(closedWindow.state.get(LOCAL_A)?.lastSessionEndAt).toBe(Date.parse('2026-08-08T09:59:58'))
     const interrupted = appState.foldAppStateEvents([
       line('2026-08-08 09:59:56', `Sending message to session ${LOCAL_A}`),
       line('2026-08-08 09:59:58', `[Result] Turn interrupted for session ${LOCAL_A}`)
