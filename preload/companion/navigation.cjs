@@ -112,9 +112,8 @@ function createCompanionNavigation(dependencies = {}) {
   let snapshot = { ready: false, targets: new Map(), cycleKeys: [], groups: emptyGroups() }
   let snapshotFingerprint = ''
   let cursorKey = ''
-  // A cursor that leaves the ring is not a lost cursor. `cycleKeys` carries only
-  // the first non-empty tier, so an ordinary tier change drops the cursor out of
-  // it while the task itself is still perfectly alive in `targets`. Treating that
+  // A cursor that leaves the ring is not a lost cursor. A task can lose its
+  // state-earned cycle eligibility while still being alive in `targets`. Treating that
   // as "no cursor" made every later press fall back to index 0, which pins a
   // one-entry tier to a single task forever — the badge still counts the others,
   // and nothing reaches them. The displaced side records which neighbour we
@@ -239,21 +238,7 @@ function createCompanionNavigation(dependencies = {}) {
     return ''
   }
 
-  function ringFromSelection(origin) {
-    const name = groupContaining(origin)
-    if (!name) return snapshot.cycleKeys
-    const own = snapshot.groups[name]
-    if (own.length > 1) return own
-    const index = GROUP_ORDER.indexOf(name)
-    const concatenated = uniquePresentKeys([
-      ...GROUP_ORDER.slice(index).flatMap((item) => snapshot.groups[item]),
-      ...GROUP_ORDER.slice(0, index).flatMap((item) => snapshot.groups[item])
-    ], snapshot.targets)
-    return concatenated.length ? concatenated : snapshot.cycleKeys
-  }
-
   function ringForCycle(now) {
-    const origin = walkOrigin()
     if (walkHeld(now)) {
       const alive = walkRing.filter((key) => snapshot.targets.has(key))
       if (alive.length) {
@@ -261,8 +246,7 @@ function createCompanionNavigation(dependencies = {}) {
         // task published into the ring mid-walk joins at the tail: the badge
         // already counts it, and every press renews the hold, so a steady walk
         // would otherwise never reach it at all.
-        const intended = ringFromSelection(origin || alive[0])
-        const fresh = intended.filter((key) => !alive.includes(key))
+        const fresh = snapshot.cycleKeys.filter((key) => !alive.includes(key))
         if (fresh.length) {
           walkMergedCount += 1
           record({
@@ -279,7 +263,9 @@ function createCompanionNavigation(dependencies = {}) {
       }
     }
     const previous = walkRing.length ? walkRing : snapshot.cycleKeys
-    walkRing = ringFromSelection(origin)
+    // Kernel owns both eligibility and tier order. Display groups include
+    // completed-read and parked pins, so they cannot replace this ring.
+    walkRing = snapshot.cycleKeys
     walkAdoptedCount += 1
     if (cursorKey && walkRing.length && !walkRing.includes(cursorKey)) recoverCursor(previous)
     return walkRing
@@ -390,7 +376,7 @@ function createCompanionNavigation(dependencies = {}) {
     if (cursorKey && !targets.has(cursorKey)) {
       cursorKey = ''
       cursorDisplacedSide = ''
-    } else if (cursorKey && !walkHeld() && !cycleKeys.includes(cursorKey) && !groupContaining(cursorKey)) {
+    } else if (cursorKey && !walkHeld() && !cycleKeys.includes(cursorKey)) {
       recoverCursor(previousCycleKeys)
     }
     return true
@@ -410,10 +396,10 @@ function createCompanionNavigation(dependencies = {}) {
       const result = normalizeOpenResult(await openTarget(request.target, request), request.target)
       const currentOperationId = result.operationId || request.operationId
       if (result.outcome === 'opened' || result.outcome === 'dispatched') {
-        // Any confirmed open of a live target owns the cursor, including a
-        // completed row that is not on the urgency ring. Previous/next then
-        // walk that task's display group instead of resuming the old ring head.
-        if (snapshot.targets.has(request.target.key)) {
+        // Opening a row always publishes a result for Kernel focusedKey, but
+        // only an in-ring target owns the cycle cursor. A completed-read card
+        // must not divert later shortcuts away from the actionable tasks.
+        if ((walkHeld() ? walkRing : snapshot.cycleKeys).includes(request.target.key)) {
           cursorKey = request.target.key
           cursorDisplacedSide = ''
         }

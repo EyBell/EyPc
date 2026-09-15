@@ -4,11 +4,13 @@ status: verified
 scope: project
 fingerprint: one-set-membership-condition-hand-written-at-each-consumer-instead-of-read-from-a-single-owner__widening-the-set-updates-some-copies__a-missed-copy-produces-no-type-or-test-error__the-set-means-different-things-to-badge-list-ring-and-entry
 first_seen: 2026-08-28
-last_verified: 2026-08-28
-review_after: 2027-02-28
+last_verified: 2026-09-15
+review_after: 2027-03-15
 evidence:
   - preload/companion/task-kernel.cjs
   - tests/platform/companionTaskKernel.test.ts
+  - preload/companion/navigation.cjs
+  - tests/platform/companionNavigationBridge.test.ts
 tags:
   - codex-companion
   - kernel-package
@@ -57,14 +59,28 @@ tags:
 
 **一个集合只能有一个 owner，其余消费者读它的结论，不复述它的条件。**
 
-- 本项目的 owner 是 `derivedDynamicGroup`：它回答「这条任务属于哪个显示分组」。角标、环层、专用入口、进度身份一律读 `dynamicGroup === '...'`，不再写相位条件。
+- 当前 Kernel 分别拥有状态资格与展示分组：`derivedDynamicGroup` 回答显示位置，`derivedAttentionState` / `derivedCycleTier` 决定状态资格。Navigation 只读已生成的 `views.cycleKeys`，不能把当前卡片的 `views.groups` 当成循环候选。旧版「全部读 dynamicGroup」建议不再适用，见 [RAW-215](../../specs/requirements/shared-raw-215.md#L1)。
 - 判断是否该收归：若一个条件表达式在文件里出现两次以上，或它同时决定「显示在哪」和「快捷键能否到达」，它就必须有 owner。
 - 同类先例已经存在：[task-phase.cjs](../../../preload/task-phase.cjs#L1) 正是为消灭同一份相位词汇的多处手写而建；`unread` 与 `input` 这两支当时没被收进去，本记录补上。
-- 不变式要能被测试表达：断言「角标 = 分组去掉不可打开的」「入口 = 分组按序拼接」，这类关系在拷贝漂移时会红；只断言某个具体集合的内容不会。
+- 不变式要穿过消费者：除了验证 Kernel 候选，还要在直接打开、状态分组变化、冻结期间刷新后派发上一／下一，核对目标仍来自状态候选并能跨来源到达。只检查 Snapshot 数组不能发现 Navigation 二次改写。
 
 ## Latest Applicable Implementation
 
-`derivedDynamicGroup` 是唯一定义处。`derivedCycleTier`、`views.counts.input/active/unread`、`views.attentionKeys.input/completedUnread` 与 `attentionInstance` 全部改读 `dynamicGroup`。单一 owner 不变式由[聚焦测试](../../../tests/platform/companionTaskKernel.test.ts#L1065)守护：全相位 × 置顶 × 未读 × 可打开的矩阵下，角标必须等于其分组中可打开的条数，入口必须等于对应分组按序拼接；测试自带非空断言，避免全绿于空集。
+Kernel 通过 `buildViews` 生成状态候选与展示分组；Navigation 保留环顺序、在途游标与派发职责，不再通过展示分组重选成员。Kernel `focusedKey` 接收所有成功派发的打开结果；环外打开不接管循环游标。[本次任务与验证](../../specs/260915/companion-cycle-authority/task-card.md#L1)。
+
+## Alternative Route
+
+1. 前置条件：Kernel 分组和计数正确，快捷键实际选中集合不同。
+2. 依次核对匿名导航诊断、Kernel `cycleKeys`、Navigation 首次及冻结期间采用的数组、打开回执对游标的影响。
+3. 用混合来源、环内／环外卡片及双向连续跳转回归验证；生产构建与真实宿主验收分别报告。
+4. 适用边界：通用任务循环，不适用于列表焦点移动或专用未读入口。证据不足时保留现状，继续定位实际选中集合。
+5. 状态：`verified`（自动化）；真实新产物 `host-not-retested`。
+
+## Occurrence History
+
+| 日期 | 触发与失败路线 | 恢复与证据 | 结果 |
+| --- | --- | --- | --- |
+| 2026-09-15 | 展示正确，导航用已完成展示组替换状态候选，连续跳至 Orca | 移除分组接管；导航红绿回归与 Kernel 混合来源双向回归，见任务卡 | 140 项通过；新宿主未验收 |
 
 ## Related
 

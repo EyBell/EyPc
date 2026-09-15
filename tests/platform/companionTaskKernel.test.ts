@@ -1894,6 +1894,45 @@ describe('CompanionTaskKernel', () => {
     expect(kernel.diagnostics().navigation.lastOutcome).toBe('opened')
   })
 
+  // RAW-182 + RAW-183/215: display groups cannot replace state-earned cycle eligibility.
+  // Validate dispatch and focusedKey together; checking cycleKeys alone missed this regression.
+  it.each([1, -1])('keeps running tasks reachable after opening a completed Orca row (direction %s)', async (direction) => {
+    const providers = { codex: true, claude: true, cursor: false, orca: true }
+    const opened: string[] = []
+    const open = async (target: { key: string }) => {
+      opened.push(target.key)
+      return { outcome: 'dispatched' }
+    }
+    const kernel = createCompanionTaskKernel({
+      adapters: { codex: { open }, claude: { open }, orca: { open } },
+      initialConfiguration: { enabled: true, providers }
+    })
+    const receipt = kernel.attach({ enabled: true, providers })
+    const completed = Array.from({ length: 22 }, (_, index) => task({
+      key: `orca:completed-${index}`, provider: 'orca', kind: 'orca-session',
+      actionAlias: `orca-completed-${index}`, phase: 'completed', unread: false,
+      lastQuestionAt: 900 - index
+    }))
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([
+      task({ key: 'codex-active', lastQuestionAt: 500 }),
+      task({ key: 'claude-active', provider: 'claude', kind: 'claude-session', actionAlias: 'local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', lastQuestionAt: 400 }),
+      ...completed
+    ], 1, { providers, sourceGenerations: { codex: 1, claude: 1, cursor: 0, orca: 1 } }) })
+    expect(kernel.getLatest().views.groups.completed).toHaveLength(22)
+    expect(kernel.getLatest().views.cycleKeys).toEqual(['codex-active', 'claude-active'])
+
+    await kernel.dispatch({ action: 'open', key: completed[0].key, source: 'card-click' })
+    expect(kernel.getLatest().focusedKey).toBe(completed[0].key)
+    const expected = direction === 1 ? ['codex-active', 'claude-active'] : ['claude-active', 'codex-active']
+    for (const key of [...expected, ...expected]) {
+      await expect(kernel.dispatch({ action: 'cycle', direction, source: 'global-shortcut' }))
+        .resolves.toMatchObject({ outcome: 'dispatched', key })
+      expect(kernel.getLatest().focusedKey).toBe(key)
+    }
+    expect(opened).toEqual([completed[0].key, ...expected, ...expected])
+    kernel.close()
+  })
+
   it('routes a first-class Cursor root through the same snapshot and command gateway', async () => {
     const openedCursor: string[] = []
     const kernel = createCompanionTaskKernel({

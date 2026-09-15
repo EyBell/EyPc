@@ -567,7 +567,9 @@ describe('process-lifetime companion navigation', () => {
     expect(opened).toEqual(['codex-a', 'codex-b', 'codex-a'])
   })
 
-  it('lets a completed-row open own the cursor and walk that display group', async () => {
+  // Accepted contract: SPEC-260827-COMPANION-CYCLE-RING-ORDER::RAW-182.
+  // An off-ring row may own visible focus, but must not replace cycle membership.
+  it('keeps completed-row opens from replacing the state-earned cycle ring', async () => {
     const extra = { key: 'codex-c', provider: 'codex', actionAlias: 'ct_codex_c_1234567890', revisionAt: 104, phase: 'completed', canArchive: true }
     const { navigation, receipt } = readyNavigation({
       openTarget: async (target: { provider: string }) => target.provider === 'claude'
@@ -591,11 +593,32 @@ describe('process-lifetime companion navigation', () => {
     await expect(navigation.open({ key: 'codex-b', source: 'card-click' }))
       .resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
     expect(navigation.diagnostics()).toMatchObject({
-      cursorKey: 'codex-b',
-      selectionGroup: 'completed'
+      cursorKey: 'codex-a',
+      selectionGroup: 'active'
     })
-    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-c' })
-    expect(navigation.diagnostics().cursorKey).toBe('codex-c')
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'dispatched', key: 'claude:local_a' })
+    await expect(navigation.cycle(-1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+  })
+
+  // RAW-182: tier union and provider-neutral reachability survive downstream navigation.
+  it('walks across state groups and providers after a direct open and a held-ring refresh', async () => {
+    const orca = { key: 'orca:unread', provider: 'orca', actionAlias: 'orca-unread', revisionAt: 104, phase: 'completed' }
+    const navigation = navigationModule.createCompanionNavigation({ openTarget: async () => ({ outcome: 'dispatched' }) })
+    const providers = { codex: true, claude: true, orca: true }
+    const receipt = navigation.begin({ enabled: true, providers })
+    const input = {
+      lease: receipt.lease, enabled: true, providers, ready: true,
+      targets: [...targets, orca],
+      cycleKeys: ['codex-a', 'claude:local_a', orca.key],
+      groups: { active: ['codex-a', 'claude:local_a'], unread: [orca.key], completed: ['codex-b'] }
+    }
+    navigation.sync(input)
+    await navigation.open({ key: 'claude:local_a', source: 'card-click' })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ key: orca.key })
+    navigation.sync({ ...input, targets: input.targets.map((target) => ({ ...target, revisionAt: target.revisionAt + 1 })) })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'codex-a' })
+    await expect(navigation.cycle(-1)).resolves.toMatchObject({ key: orca.key })
+    expect(navigation.diagnostics().walkRingCount).toBe(3)
   })
 
   it('downgrades an unverified opened result to dispatched without granting read authority', async () => {
