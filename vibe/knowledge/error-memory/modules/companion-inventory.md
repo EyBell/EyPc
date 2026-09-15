@@ -8,6 +8,8 @@ Link-only route for task inventory membership, Turn parsing, missing rows and li
 
 ## Current Authorities And Routes
 
+- [Orca companion state](orca-companion.md#L1)
+
 - [Architecture](../../ARCHITECTURE.md#L1)
 - [Current requirements](../../../specs/PRODUCT_REQUIREMENTS.md#L1)
 
@@ -19,10 +21,6 @@ Link-only route for task inventory membership, Turn parsing, missing rows and li
 - [Explicit archive bypasses inventory quarantine](../codex-explicit-archive-event-bypasses-inventory-quarantine.md#L1)
 - [Inventory dropout is not deletion](../codex-inventory-dropout-is-not-task-deletion.md#L1)
 - [Task count/list projection convergence](../codex-task-count-list-projection-divergence.md#L1)
-- [Orca spinner OSC title is not the card topic](../orca-spinner-osc-title-is-not-card-topic.md#L1)
-- [Orca workspace pin is not conversation pin](../orca-workspace-pin-is-not-conversation-pin.md#L1)
-- [Orca Session History has no unread or pin](../orca-session-history-has-no-unread-or-pin.md#L1)
-- [Orca closed pane must leave inventory](../orca-closed-pane-must-leave-inventory.md#L1)
 
 ## Related Error Records
 

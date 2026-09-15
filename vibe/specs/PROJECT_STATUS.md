@@ -1,5 +1,22 @@
 # EyPc Project Status Hub
 
+- 2026-09-15 本地分批交付：Claude 关窗 `b2d74ee`、独立追踪 `ee70097`、Float 启动 `24571a2`、Orca 状态 `a6a4811`、状态候选循环 `359dfbf`、快捷即时已读 `7deac2b` 已提交。当前组合定向回归 406/406；源码与 15:35:50 产物身份一致；需求、来源与错误索引检查通过。未推送、未重载或实机验收；入口预算超限与卡顿验收仍未解决。下列日期项保留当时验证快照，当前提交状态以本条及 Git 为准。
+
+- 2026-09-15 RAW-221 快捷打开立即已读：四 Provider 共用 Kernel 本轮内存投影，成功派发后立即清实际选中项未读，不增加存储/扫描/等待；旧快照、新轮次、迟到确认、成员变化与重建均隔离，原生交接不伪造。4 套件 211/211，生产构建与镜像通过。产物 `host-0f2f731bf53e95875d86 / renderer-e8d47a2a95408bba843c`，北京时间 `2026/09/15 15:35:50`。入口预算仍超 82 行；插件保持屏蔽，卡顿未实机验收。[需求](260915/shortcut-immediate-read/raw-requirement.md#L11) · [冲突设计](260915/shortcut-immediate-read/spec.md#L1) · [实现/验证](260915/shortcut-immediate-read/task-card.md#L1)。
+
+- 2026-09-15 上一／下一被已完成分组接管：现场导航使用 22 项已完成环，连续跳往 Orca。恢复 Kernel 状态候选权威，环外打开保留高亮、不会接管循环。导航红绿回归与 Kernel 混合来源双向回归 140/140，类型检查、生产构建及产物校验通过。产物 EyPc V7 `host-0f2f731bf53e95875d86 / renderer-e8d47a2a95408bba843c`，北京时间 `2026/09/15 15:35:21`；`artifact-ready / host-not-retested`。未重载宿主、未提交／推送。[任务与验证](260915/companion-cycle-authority/task-card.md#L1)。
+
+- 2026-09-15 Orca 状态同步 F1/F2：既有 RAW-219/220 与 Orca R4 文档收敛；原生未读优先、跳转不提前清原生未读、原生 false 压过旧文件 true、标签钉同目标读回完成。EyPc 48 项 / Orca 77 项定向测试，受影响类型检查与双方本地构建通过。EyPc 产物 `host-c0c1c1a37eb7640fe99e / renderer-3cfd6e065ca3409f634a`，北京时间 `2026/09/15 15:04:11`；`artifact-ready / installed-host-pending`。正式 Orca 1.4.202 未替换，插件保持屏蔽，未现场验收、未提交/推送。[任务与验证](260913/orca-companion/spec.md#L1)。
+
+
+- 2026-09-15 昨日 10 提交完整复核与临时独立文件追踪：确认 Orca 无条件启动 watcher 的历史调用差异；关联回归 643/645，2 项历史失败在隔离 HEAD 重现；新追踪/Orca/窗口/日志 101/101，Float 精确 SDK 追踪 34/34。构建、92 对镜像及新增模块逐字节比对通过，入口行数门禁仍超 82 行。产物 `host-b657e94d7d43b7ccbc56 / renderer-c712a58d9da0cd70f9fa`，北京时间 `2026/09/15 14:37:00`；`diagnostic-artifact-ready / host-not-retested`。插件保持屏蔽，尚未确认现场唯一根因。[审计](260914/plugin-startup-freeze/yesterday-audit.md#L1) · [日志与归因](260914/plugin-startup-freeze/trace-guide.md#L1)。
+
+- 2026-09-15 Orca 未读存储阻塞链：同步 SDK 存储改为异步文档读写、每轮合并、未变化跳过、串行单写者；49 项 Orca 回归、构建、92 对镜像通过。产物 `host-2b5607cca0aed647e385 / renderer-92ebffb17fd1fd6e3764`，北京时间 `2026/09/15 14:23:45`。入口预算仍失败（原有超限 42 行，本次注入 +1 行）；插件保持屏蔽，`artifact-ready / host-not-retested`，真实卡顿未宣告修复。[实现与边界](260914/plugin-startup-freeze/task-card.md#L57)。
+
+- 2026-09-15 插件启动卡顿真实复验失败：确认已加载 09-14 21:41:54 修复产物，仍捕获原生等待，启动日志 1.296 秒后停止。主要卡顿未解决，状态更新为 `host-reproduced-failure`。[现场复验证据](260914/plugin-startup-freeze/task-card.md#L37)。
+
+- 2026-09-14 插件启动卡死排查：修复 Float 首快照未到即判版本不匹配的误重建，以及旧窗口异步回调操作新窗口的竞态。90 项相关回归、类型检查和生产构建通过；真实卡死消除未验收。产物 EyPc V7 `host-bbd433e1d90d4b1cc58b / renderer-5c78ebd1efc8929bada4`，北京时间 `2026/09/14 21:41:54`；`artifact-ready / host-reload-pending`。[诊断、实现与验证](260914/plugin-startup-freeze/task-card.md#L1)。
+
 Tool: codex
 Date: 2026-09-02
 
@@ -23,12 +40,13 @@ This hub routes current implementation, verification gates and durable authoriti
 
 ## Current Snapshot
 
-- 2026-09-14 打开即选定：快捷键/卡片/角标打开后记住当前任务，「上一个/下一个」从所在动态组继续，浮窗高亮跟到这一条。聚焦 `companionNavigationBridge` 21/21 + Kernel 107/107。产物 `host-fdd4db7152835a3481be / renderer-ffe5b25be773f9456de9`，builtAt `2026-09-14T11:51:55.939Z`（北京时间 `2026/09/14 19:51:55`）。`artifact-ready / host-reload-pending`。
+- 2026-09-14 Claude 关对话窗立刻收进行中：解析 `LocalSessions.stopShellPty`，不再等退出或 15 分钟空闲。不把 PTY 回收行当成关窗。聚焦 `claudeAppStateBridge` + `claudeBridge` 110/110。产物 `host-b034f59bce4dea101132 / renderer-1f63be5b616dfc5bc9f5`，builtAt `2026-09-14T13:13:19.318Z`（北京时间 `2026/09/14 21:13:19`）。`artifact-ready / host-reload-pending`。
+- 2026-09-14 打开即选定（历史回归，按显示组循环已由 [09-15 修复](260915/companion-cycle-authority/task-card.md#L1) 撤销；高亮行为保留）：快捷键/卡片/角标打开后记住当前任务，「上一个/下一个」从所在动态组继续，浮窗高亮跟到这一条。聚焦 `companionNavigationBridge` 21/21 + Kernel 107/107。产物 `host-fdd4db7152835a3481be / renderer-ffe5b25be773f9456de9`，builtAt `2026-09-14T11:51:55.939Z`（北京时间 `2026/09/14 19:51:55`）。`artifact-ready / host-reload-pending`。
 - 2026-09-14 Orca 标签栏已完成未读：正式 CLI 不导出 `unreadAgentCompletionPanes`。需求 RAW-220 登记到 EyPc。临时中转：曾观测到进行中的会话变成 `done` 后进已完成未读，插件跳转/点击后才已读。用户已核验插件内可用。聚焦 `orcaUnreadBridge` 6/6。Current authority: [spec](260913/orca-companion/spec.md#L1)。
 - 2026-09-14 Orca 窗口关掉的对话不再留在 EyPc：`terminal list` 没有该窗格时丢掉 `worktree ps` 残留 agent；列表失败不当成全部关闭。聚焦 `orcaInventory`。Current authority: [spec](260913/orca-companion/spec.md#L1)；错忆 [closed pane](../knowledge/error-memory/orca-closed-pane-must-leave-inventory.md#L1)。
-- 2026-09-14 Orca「已完成未读」Workspace 偏移：同一窗口多标签时，工作区未读要标在标签条最右侧已完成项。先前用 `lastActivityAt`/`paneKey` 会标到左侧邻居，点卡片就打开邻居并清未读。CLI `terminal switch` 在 handle 正确时不偏格。聚焦 `orcaInventory` 17/17。Current authority: [spec](260913/orca-companion/spec.md#L1)；错忆 [worktree unread](../knowledge/error-memory/orca-worktree-unread-must-not-fan-out.md#L1)。
+- 2026-09-14 历史方案（superseded，后续已撤销最右侧归因；以 [当前 Spec](260913/orca-companion/spec.md#L1) 为准）：Orca「已完成未读」Workspace 偏移：同一窗口多标签时，工作区未读要标在标签条最右侧已完成项。先前用 `lastActivityAt`/`paneKey` 会标到左侧邻居，点卡片就打开邻居并清未读。CLI `terminal switch` 在 handle 正确时不偏格。聚焦 `orcaInventory` 17/17。Current authority: [spec](260913/orca-companion/spec.md#L1)；错忆 [worktree unread](../knowledge/error-memory/orca-worktree-unread-must-not-fan-out.md#L1)。
 - 2026-09-14 Orca 未读标错卡：工作区 unread 被标到标签条最右「清工」，真正未读的是左侧 KM-8765。多条已完成不再猜最右。标签钉从 `orca-data.json` 直读 tab 布尔。聚焦 `orcaInventory` 23/23 + `orcaNativeState` 2/2。产物 `host-6485133dff328f4f2554 / renderer-b4a2b81940d8be07a1b5`，builtAt `2026-09-14T10:12:58.557Z`（北京时间 `2026/09/14 18:12:58`）。`artifact-ready / host-reload-pending`。Current authority: [spec](260913/orca-companion/spec.md#L1)；错忆 [worktree unread](../knowledge/error-memory/orca-worktree-unread-must-not-fan-out.md#L1)。
-- 2026-09-14 Orca 标签置顶双向同步：一张卡 = 一个对话/标签。入站只认 `terminal.isPinned`；出站 `terminal pin`。活 CLI 尚无该命令、`terminal list` 也不带 `isPinned`，所以重启后 EyPc 里的 Orca 钉只能是本地钉，不是 Orca 标签栏。Current authority: [spec](260913/orca-companion/spec.md#L1)；错忆 [workspace pin](../knowledge/error-memory/orca-workspace-pin-is-not-conversation-pin.md#L1)。
+- 2026-09-14 Orca 标签置顶初始核验（现由 [09-15 续接](260913/orca-companion/spec.md#L1) 更新）：当时正式 CLI 无原生字段与命令；入站现已有原生文件 tab 布尔回退，不能继续概括为“重启后只能本地钉”。原生写回仍需要新宿主能力。Current authority: [spec](260913/orca-companion/spec.md#L1)；错忆 [workspace pin](../knowledge/error-memory/orca-workspace-pin-is-not-conversation-pin.md#L1)。
 - 当前最新 Claude 产物：`host-f61f16dec0c48c947364 / renderer-6f025f7528c18e6b14af`，北京时间 `2026/09/10 21:43:29`。跨来源 Turn 关联修复已通过 304 项相关测试；新包真实浮窗未验收。[当前任务与验证](260910/claude-terminal-turn-identity/task-card.md#L1)。
 - 2026-09-10 Claude App 精确终态后未证实 Hook 提问 is `implementation-landed / focused-automated-verified / artifact-ready / host-reload-pending`。App `exact-terminal` 之后，仅提问类 Hook 新 Turn 超过 60s 空窗回 App；宽限期或 live progress 仍 Hook。聚焦 `claudeBridge` + `claudeAppStateBridge` + `claudeBridgeSafety` `128/128`。产物 `host-949c7234c0c5e1323833 / renderer-d44854f40fbe509259c1`，builtAt `2026-09-10T12:34:59.660Z`（北京时间 `2026/09/10 20:34:59`）。Current authority: [task-card](260910/claude-uncorroborated-hook-turn/task-card.md#L1)；错忆 [uncorroborated prompt-submit](../knowledge/error-memory/claude-exact-terminal-uncorroborated-prompt-submit.md#L1)。
 - 2026-09-08 自动区分 Codex Host 与原生 Codex（RAW-218）is `implementation-landed / focused-automated-verified / artifact-ready / host-reload-pending`。Host 额外进程行标 `XH` /「归属 Codex Host」，仍属 Codex 来源、不新增 Provider。原生（含 Codex++）官方 `active` 且 `turns/list` 为空时合成 `inProgress`，idle 空页仍丢弃。不修 Host 会合点。聚焦 `companionPresentation` + `codexAppServerBridge` `255/255`。产物 `host-1506c34de538d54e1a2b / renderer-5f69c5d47a0476037656`，builtAt `2026-09-08T05:54:42.644Z`（北京时间 `2026/09/08 13:54:42`）。Current authority: [spec](260908/codex-native-host-origin/spec.md#L1)；错忆 [empty turns](../knowledge/error-memory/codex-native-active-empty-turns-not-nonconversation.md#L1)。

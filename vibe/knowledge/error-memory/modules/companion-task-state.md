@@ -8,6 +8,8 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 
 ## Current Authorities And Routes
 
+- [Orca companion state](orca-companion.md#L1)
+
 - [Inventory membership and Turn parsing](companion-inventory.md#L1)
 
 - [Controlled task-state specification](../../../specs/260810/1155-install-runtime-diagnostics/spec.md#L1)
@@ -45,8 +47,6 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 - [Watcher callback latency is not publication latency](../watcher-callback-latency-is-not-end-to-end-publication-latency.md#L1)
 - [Cursor hook terminal beats leftover unfinishedRunAt](../cursor-hook-terminal-beats-stale-unfinished-run.md#L1)
 - [Kernel must admit the manifest taskKind](../kernel-must-admit-manifest-taskkind.md#L1)
-- [Orca Grok wait stays done until tool](../orca-grok-wait-stays-done-until-tool.md#L1)
-- [Orca worktree unread must not fan out](../orca-worktree-unread-must-not-fan-out.md#L1)
 
 ## Related Error Records
 

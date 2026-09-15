@@ -11,5 +11,6 @@ For code, UI, data, build, deployment or runtime work, read the relevant [local 
 - durable documentation or recovery: [documentation.md](documentation.md).
 - DB/SQL; read before authoring or running queries: [vibe/ai-db/README.md](../ai-db/README.md).
 - continuation or current acceptance: [vibe/specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md).
+- existing business behavior changes: follow the shared [BusinessChangeReview](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/engineering/rules.md#business-change-protection), using this project's [requirement registry and coverage](../specs/requirements/README.md#L1) and affected original sources; local evidence stays with the task.
 
 Keep this index and local-context.md project-owned. Global rules live only in CodeNote and are loaded from there; generated host entries are updated from CodeNote, and this project keeps no copy of global procedures.
