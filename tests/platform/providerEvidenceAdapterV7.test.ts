@@ -189,6 +189,30 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
     }).candidates.some((candidate: { kind: string }) => candidate.kind === 'turn-running')).toBe(false)
   })
 
+  it('keeps native Codex++ group-active running after the parent Turn completed', () => {
+    const observation = codexBranchObservationV7({
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      activityEvidence: 'activity-event',
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'turn-completed',
+      activeEvidenceSequence: 40,
+      terminalEvidenceSequence: 50,
+      turnStartedAt: 10,
+      terminalAt: 20,
+      goalStatus: 'complete',
+      goalFreshness: 'fresh',
+      goalEvidenceSequence: 45,
+      goalUpdatedAt: 18,
+      unreadKnown: true,
+      hasUnreadTurn: true
+    })
+    expect(observation.candidates.some((candidate: { kind: string }) => candidate.kind === 'turn-running')).toBe(true)
+    expect(observation.candidates.some((candidate: { kind: string; authority: string }) => (
+      candidate.kind === 'turn-completed' && (candidate.authority === 'terminal' || candidate.authority === 'goal')
+    ))).toBe(false)
+  })
+
   it('treats Host extra-process connector-active as live running', () => {
     expect(codexBranchObservationV7({
       status: 'active',

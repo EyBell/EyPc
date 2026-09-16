@@ -58,21 +58,33 @@ function codexBranchObservationV7(value = {}) {
     || branch.statusAuthority === 'app-server-live'
     || branch.statusAuthority === 'persisted-decision'
     || hostExternalLive
+  const hasLiveShape = branch.activityEvidence === 'activity-event'
+    || activeSequence > 0
+    || flags.length > 0
+    || branch.planImplementationOnly === true
+    || hostExternalLive
+  const hostSettled = branch.hostExternal === true && exactTerminal && flags.length === 0
+  // Native Codex++ / Cloud splits keep thread/list `active` while a child is
+  // still working after the parent Turn completed. That group-active signal
+  // must not be closed by the parent's terminal or Goal-complete candidate.
+  const nativeGroupStillActive = branch.hostExternal !== true
+    && branch.status === 'active'
+    && liveAuthority
+    && hasLiveShape
   const live = branch.status === 'active' && liveAuthority
-    && !terminalNewer
-    && !(branch.hostExternal === true && exactTerminal && flags.length === 0)
-    && (branch.activityEvidence === 'activity-event'
-      || activeSequence > 0
-      || flags.length > 0
-      || branch.planImplementationOnly === true
-      || hostExternalLive)
+    && !hostSettled
+    && (nativeGroupStillActive || !terminalNewer)
+    && hasLiveShape
   const goalFresh = branch.goalFreshness !== 'verifying'
     && branch.goalStatus !== 'unknown'
     && branch.goalStatus !== 'none'
-  const goalSuperseded = goalFresh && branch.goalStatus !== 'active' && activeSequence > 0 && (
-    integer(branch.turnStartedAt) > integer(branch.goalUpdatedAt)
-    || (integer(branch.turnStartedAt) === integer(branch.goalUpdatedAt) && activeSequence > goalSequence)
-    || (integer(branch.goalUpdatedAt) === 0 && activeSequence > goalSequence)
+  const goalSuperseded = goalFresh && branch.goalStatus !== 'active' && (
+    live
+    || (activeSequence > 0 && (
+      integer(branch.turnStartedAt) > integer(branch.goalUpdatedAt)
+      || (integer(branch.turnStartedAt) === integer(branch.goalUpdatedAt) && activeSequence > goalSequence)
+      || (integer(branch.goalUpdatedAt) === 0 && activeSequence > goalSequence)
+    ))
   )
   const goalCurrent = goalFresh && !goalSuperseded
   const candidates = []
@@ -127,7 +139,7 @@ function codexBranchObservationV7(value = {}) {
       })
     }
   }
-  if (exactTerminal) {
+  if (exactTerminal && !live) {
     candidates.push({
       kind: branch.lastTurnStatus === 'completed' ? 'turn-completed'
         : branch.lastTurnStatus === 'failed' ? 'turn-failed' : 'turn-interrupted',
@@ -139,7 +151,7 @@ function codexBranchObservationV7(value = {}) {
       turnStartedAt: integer(branch.turnStartedAt),
       terminalAt: integer(branch.terminalAt)
     })
-  } else if (['completed', 'interrupted', 'failed'].includes(branch.lastTurnStatus)
+  } else if (!live && ['completed', 'interrupted', 'failed'].includes(branch.lastTurnStatus)
     && branch.lastTurnEvidence === 'inventory') {
     candidates.push({
       kind: branch.lastTurnStatus === 'completed' ? 'turn-completed'

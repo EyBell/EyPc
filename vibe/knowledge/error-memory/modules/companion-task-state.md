@@ -47,6 +47,7 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 - [Watcher callback latency is not publication latency](../watcher-callback-latency-is-not-end-to-end-publication-latency.md#L1)
 - [Cursor hook terminal beats leftover unfinishedRunAt](../cursor-hook-terminal-beats-stale-unfinished-run.md#L1)
 - [Kernel must admit the manifest taskKind](../kernel-must-admit-manifest-taskkind.md#L1)
+- [Native group-active survives parent Turn complete](../codex-native-group-active-survives-parent-turn.md#L1)
 
 ## Related Error Records
 
