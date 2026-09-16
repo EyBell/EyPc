@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 63,
+    "source_documents": 65,
     "ordered_anchors": 356,
     "raw_parent_ordered": 230,
     "unparented_ordered": 126,
@@ -631,6 +631,26 @@
       "raw_identity_count": 2,
       "ordered_anchor_count": 13,
       "raw_parent_ordered_count": 13,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260915/companion-cycle-priority",
+      "source_path": "vibe/specs/260915/companion-cycle-priority/raw-requirement.md",
+      "spec_id": "SPEC-260915-COMPANION-CYCLE-PRIORITY",
+      "content_sha256": "f2fe9f0f05f42cc4e69e1dd2f58c647ebd866389576f0b63a1b4f172185eb593",
+      "raw_identity_count": 1,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260915/float-edge-rail",
+      "source_path": "vibe/specs/260915/float-edge-rail/raw-requirement.md",
+      "spec_id": "SPEC-260915-FLOAT-EDGE-RAIL",
+      "content_sha256": "43a96b0722c7cc27c161c71fe2d06869e6fb07bbc668caa2a8b3a09c320aa058",
+      "raw_identity_count": 1,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
       "unparented_ordered_count": 0
     },
     {
@@ -8287,7 +8307,7 @@
       "marker_occurrence": 1,
       "parent_raw_id": "RAW-219",
       "qualified_source": "SPEC-260913-ORCA-COMPANION::RAW-219#4",
-      "clause_sha256": "cbdbc7536d5e6100583e087e9aff7730b666821081568142fbb270d74f31e57a",
+      "clause_sha256": "79095770e7e360f07fee46509bc023d41fe5088343e305e3e91346284bdf0f92",
       "classification": "raw-child-requirement",
       "disposition": "registry-review-required",
       "semantic_module": null,

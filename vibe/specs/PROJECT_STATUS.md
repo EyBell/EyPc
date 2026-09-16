@@ -1,8 +1,28 @@
 # EyPc Project Status Hub
 
+- 2026-09-16 Orca 任务识别：标签标题优先于窗格 spinner/`◑`；进行中时未读铃不得折成已完成；项目仍按工作树。`orcaInventory` 30/30、`orcaUnreadBridge` 13/13，类型检查、生产构建和 uTools 校验通过。产物 `host-e49c14c39605f2aeb018` / `renderer-f992ca5455cf2a09de2c`，北京时间 `2026/09/16 15:34:27`。已本地提交，未推送。[错忆](../knowledge/error-memory/orca-spinner-osc-title-is-not-card-topic.md#L1)。
+
+- 2026-09-16 Codex++ / Cloud 主子组仍 active：父 Turn 或 Goal complete 不得把根卡送进已完成；原生 connector 仍 `active` 时保持进行中。`providerEvidenceAdapterV7` 13/13、`companionTaskKernel` 126/126，类型检查、生产构建和 uTools 校验通过。产物 `host-a49ba79527d06e988c5c` / `renderer-bcac0307ab5279288cc1`，北京时间 `2026/09/16 14:59:39`。已本地提交，未推送；请重载插件看该条是否回到进行中。[错忆](../knowledge/error-memory/codex-native-group-active-survives-parent-turn.md#L1)。
+
 - 2026-09-16 Orca Claude 主轮次结束仍 `working`：`workingMode=monitoring` / `turnCompletedAt` / 窗格 `unread=true` 收成已完成，OSC `✳` 不再钉进行中；未读中转认 working→monitoring，工作区汇总不得落到旁边已完成的 Cursor。`orcaInventory` 28/28、`orcaUnreadBridge` 13/13。用户确认插件已离开进行中。未推送。[Orca Spec](260913/orca-companion/spec.md#L1) · [错忆](../knowledge/error-memory/orca-claude-monitoring-is-lead-complete.md#L1)。
 
-- 2026-09-15 本地分批交付：Claude 关窗 `b2d74ee`、独立追踪 `ee70097`、Float 启动 `24571a2`、Orca 状态 `a6a4811`、状态候选循环 `359dfbf`、快捷即时已读 `7deac2b` 已提交。当前组合定向回归 406/406；源码与 15:35:50 产物身份一致；需求、来源与错误索引检查通过。未推送、未重载或实机验收；入口预算超限与卡顿验收仍未解决。下列日期项保留当时验证快照，当前提交状态以本条及 Git 为准。
+- 2026-09-16 C 微型读数与水球裁剪：采用用户选中的一体窄底板、双周额度读数与彩色状态点数量；水球窗口裁掉顶部 5 DIP，104×99，原生锚点顶部偏移同步归零，球体保持比例。126/126 定向回归、类型检查、生产构建和 uTools 校验通过。EyPc V7 · `host-9f3764599b2deb15f7e7` · `renderer-32c7e3a4730aa7b46f79` · 北京时间 `2026/09/16 10:02:40`，`artifact-ready / real-host-pending`；尚无像素对照验收，已本地提交，未推送。[本次实现与边界](260915/float-edge-rail/spec.md#L94)。
+
+- 2026-09-16 双色贴边线视觉收紧：每条 4 DIP、总厚 8 DIP，角标改为朝线内侧对齐，恒定 1 DIP 间隔；原生槽位仍为 40 DIP。124/124 定向回归、类型检查、生产构建和 uTools 校验通过。EyPc V7 · `host-5410250eeacee2b9fe55` · `renderer-6cad8ddfbd2863e8b0e0` · 北京时间 `2026/09/16 09:57:22`，`artifact-ready / host-retest-pending`。未实机视觉验收，已本地提交，未推送；拖出恢复水球的交互缺口仍未处理。[实现与验证](260915/float-edge-rail/spec.md#L85)。
+
+- 2026-09-15 自动双色条停靠与顶部触发：此前只吸附、不切换样式的源码缺口已补齐；有效拖动后 style/position 原子保存，样式与布局同消息输出，旧快照不回退。顶角结合向外位移和 macOS 可达顶部识别，最终采用原生读回；不承诺覆盖菜单栏。125/125 定向回归、类型检查与生产构建通过。EyPc V7 · `host-ea0fbde477e437692187` · `renderer-ee95a82fc6d1f135a9aa` · 北京时间 `2026/09/15 22:19:54`，`artifact-ready / host-retest-pending`。前一产物现场已有 3 次保存成功，仍有 2 次原生参数错误；新自动停靠未实机验收。已本地提交，未推送。[本轮实现与边界](260915/float-edge-rail/spec.md#L72)。
+
+- 2026-09-15 拖动日志核验与整数坐标修正：当前加载 21:28 产物的现场记录显示 4 次拖动进入宿主、136 次原生位移阶段失败。发现新平移路径漏掉旧 clamp 的整数处理；严格原生 Rectangle 替身下三种形态小数位移 3/3 先失败，取整后通过；相关 45/45、类型检查和生产构建通过。细分 write/read/readback 错误且同手势去重。EyPc V7 · `host-56c177f012ea5ab27ab1` · `renderer-73c464d8593f40d12280` · 北京时间 `2026/09/15 21:45:41`，`artifact-ready / host-retest-pending`。现场唯一原因与修复后移动待新产物回验。[日志与修正](260915/float-edge-rail/spec.md#L61)。
+
+- 2026-09-15 底部全宽拖动区：确认用户已加载上一修正产物仍反馈不可拖；水球、卡片和贴边线新增覆盖整个下半区的矩形命中层及 grab/grabbing 光标，数字按钮保持上层；新增匿名拖动链路诊断。106/106 定向回归、类型检查、生产/uTools 构建通过。EyPc V7 · `host-1849b57a9d594698dd00` · `renderer-1a9344e9204272dcbd92` · 北京时间 `2026/09/15 21:28:20`，`artifact-ready / host-retest-pending`；原有入口预算超限 82 行未改。[本次修正](260915/float-edge-rail/spec.md#L50)。
+
+- 2026-09-15 双色线拖动不可用反馈修正：按下仅隐藏预览，原生视口到松手才调整；捕获异常不再跳过 dragStart，捕获转移不再直接取消，window 事件接续移动/松手。桥接与实际 FloatApp 102/102，类型检查和生产构建通过；真实 uTools 拖动恢复未验收。产物 EyPc V7 · `host-d84faab0802b1c220a0b` · `renderer-c35acd30d036d82a4754` · 北京时间 `2026/09/15 21:20:12`，`artifact-ready / host-retest-pending`。原有入口预算超限 82 行仍未改。[修正记录](260915/float-edge-rail/spec.md#L43)。
+
+- 2026-09-15 双色贴边线：新增 2+2 DIP、长 120 DIP 的四边形态，保持原任务预览与角标动作；独立 paint 锚点、200ms 悬停/220ms 收起、5px 拖动、图钉恢复、取消与失败不落盘、缺屏借用/接回恢复。161 项定向回归、类型检查、生产构建、镜像与需求校验通过；原有入口行数超预算 82 行仍存在，本轮未改入口。产物 EyPc V7 · `host-3bc47ebd19fc25b9ca1c` · `renderer-e817a8f1044c77883962` · 北京时间 `2026/09/15 21:12:37`；`artifact-ready / host-not-tested`，顶部覆盖与真实拖动待 uTools 重载验收，已本地提交，未推送。[任务与验证](260915/float-edge-rail/spec.md#L1)。
+
+- 2026-09-15 RAW-222 上一／下一四级互斥：进行中 → 待输入 → 已完成未读＋待继续 → 已完成已读置顶，只取最高非空层；隐藏/暂停即时排除，取消未派发的失格目标。7 套件 330/330、类型检查、生产构建与文档检查通过。产物 `host-27cfc29ab25a704d1ec6 / renderer-bc38fb20131e59778cc4`，北京时间 `2026/09/15 17:18:40`；`artifact-ready / host-not-tested`。已本地提交，未推送；既有启动卡顿验收与入口预算问题未结案。[需求与验证](260915/companion-cycle-priority/spec.md#L1)。
+
+- 2026-09-15 本地分批交付：Claude 关窗 `b2d74ee`、独立追踪 `ee70097`、Float 启动 `24571a2`、Orca 状态 `a6a4811`、状态候选循环 `359dfbf`、快捷即时已读 `7deac2b` 已提交。当前组合定向回归 406/406；源码与 15:35:50 产物身份一致；需求、来源与错误索引检查通过。未推送、未重载或实机验收；入口预算超限与卡顿验收仍未解决。此条及下列日期项保留当时验证快照；后续增量状态见更新日期项，提交状态以 Git 为准。
 
 - 2026-09-15 RAW-221 快捷打开立即已读：四 Provider 共用 Kernel 本轮内存投影，成功派发后立即清实际选中项未读，不增加存储/扫描/等待；旧快照、新轮次、迟到确认、成员变化与重建均隔离，原生交接不伪造。4 套件 211/211，生产构建与镜像通过。产物 `host-0f2f731bf53e95875d86 / renderer-e8d47a2a95408bba843c`，北京时间 `2026/09/15 15:35:50`。入口预算仍超 82 行；插件保持屏蔽，卡顿未实机验收。[需求](260915/shortcut-immediate-read/raw-requirement.md#L11) · [冲突设计](260915/shortcut-immediate-read/spec.md#L1) · [实现/验证](260915/shortcut-immediate-read/task-card.md#L1)。
 

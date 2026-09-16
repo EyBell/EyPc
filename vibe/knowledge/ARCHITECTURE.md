@@ -17,6 +17,10 @@ uTools feature entry / keyboard input
   -> uTools storage / local archive
 ```
 
+## Float placement boundary
+
+`preload/codex/float-placement.cjs` owns the compact paint anchor, normalized edge offset and preferred-display recovery for Companion. `float-bridge.cjs` applies native bounds and reads them back before committing a completed drag; preview bounds are derived, not persisted as the compact position. The effective display may be borrowed without overwriting the preferred display. The water native viewport is 104×99 DIP after removing only its 5 DIP top padding; its 94×94 artwork remains proportional and native anchor writes/readback use zero top inset. The edge readout groups actual weekly values and status-dot counts within the existing slot. An active press retains the native viewport size: edge-preview content hides immediately, movement translates that viewport using integer DIP Rectangle coordinates (pointer deltas may be fractional), and release applies the final collapsed/pinned geometry. Pointer capture rejection/transfer cannot itself cancel the drag; explicit cancellation and lifecycle recovery remain separate. `CompanionEdgeRail.vue` and `FloatApp.vue` retain a stable rail node while rendering the existing task preview in a separate local rectangle. A successful drag switches water/card to edge and persists displayStyle with the actual position through the existing position-save action. Native presentation style travels with geometry in the state lane, without manufacturing a quota base revision; pre-drop settings snapshots cannot revert a pending dock. Near corners the snap chooser considers outward motion and the macOS reachable work-area top, while native readback remains authoritative for menu-bar clamping. Quota and task state still come from the existing snapshot. [RAW-223 implementation and acceptance](../specs/260915/float-edge-rail/spec.md#L1).
+
 ## Core Invariants
 
 - Action Runtime is the only user-visible mutation entry.
@@ -24,7 +28,7 @@ uTools feature entry / keyboard input
 - Platform functions isolate uTools, shell, process, file-system, clipboard, and local storage APIs.
 - Reusable uTools host contracts (packaging, child-window HMR, redirect-only hotkeys, Esc capture, `mainHide` diagnostics) are owned by the CodeNote [uTools module](../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/README.md#L1); this file keeps EyPc feature implementation only.
 - UI renders projections and dispatches intents; it does not call shell, storage, MQTT, or filesystem side effects directly.
-- Companion 普通上一／下一只消费 Kernel `views.cycleKeys` 的候选与层序；`views.groups` 仅描述展示分组，不能接管循环。打开结果继续更新 `focusedKey`，仅环内任务更新导航游标。验证见[分组接管回归修复](../specs/260915/companion-cycle-authority/task-card.md#L1)。
+- Companion 普通上一／下一只消费 Kernel `views.cycleKeys` 的最高非空层：进行中 → 待输入 → 已完成未读＋待继续 → 已完成已读置顶；`views.groups` 仅描述展示分组，不能接管循环。打开结果继续更新 `focusedKey`，仅当前合格的环内任务更新导航游标。连续按键只保留同层幸存项次序，隐藏/降级/更高层出现即时裁剪并取消未派发失格请求；专用入口不依赖通用 cycleTier。四层裁决与验证见[RAW-222 Spec](../specs/260915/companion-cycle-priority/spec.md#L1)。原分组接管验证见[分组接管回归修复](../specs/260915/companion-cycle-authority/task-card.md#L1)。
 - Project interaction taste is recorded in [developer-soul.md](developer-soul.md#L1).
 - Process status and task routing live in [../specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1), not in architecture memory.
 - The unique global current product truth lives in [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1). This architecture is a fingerprinted implementation input to that truth and never a second product-contract owner.
