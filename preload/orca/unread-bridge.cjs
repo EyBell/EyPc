@@ -178,6 +178,7 @@ function createUnreadBridge(dependencies = {}) {
       if (!paneKey) continue
       const current = recordOf(records.get(paneKey) || emptyRecord())
       const state = textOf(session.state).toLowerCase()
+      // Inventory already folded Claude monitoring / turnCompletedAt into done.
       if (state === 'working') {
         remember(paneKey, { ...current, seenWorkingAt: now, completionEpoch: 0 })
         continue

@@ -138,6 +138,13 @@ function oscIndicatesWorking(title) {
   return Boolean(raw) && OSC_WORKING_PREFIX.test(raw)
 }
 
+function leadTurnCompleted(agent) {
+  if (!agent || typeof agent !== 'object') return false
+  if (textOf(agent.workingMode).toLowerCase() === 'monitoring') return true
+  if (timeOf(agent.turnCompletedAt) > 0) return true
+  return agent.unread === true
+}
+
 function isLiveAgent(agent, terminal) {
   const state = textOf(agent && agent.state).toLowerCase()
   if (state === 'working' || state === 'waiting' || state === 'blocked') return true
@@ -159,7 +166,11 @@ function sessionState(agent, connected, terminalTitle) {
   if (flagOf(agent.interrupted)) return 'interrupted'
   if (connected === false) return 'interrupted'
   const state = textOf(agent.state).toLowerCase()
-  if (state === 'working' || state === 'waiting' || state === 'blocked') return 'working'
+  if (state === 'waiting' || state === 'blocked') return 'working'
+  // Claude Stop can keep agents[].state=working (monitoring / turnCompletedAt)
+  // while the tab is already completed-unread. OSC ✳ would otherwise pin it.
+  if (leadTurnCompleted(agent)) return 'done'
+  if (state === 'working') return 'working'
   if (oscIndicatesWorking(terminalTitle)) return 'working'
   return 'done'
 }
@@ -422,6 +433,7 @@ module.exports = {
   indexTabTitles,
   indexTabOrdinals,
   oscIndicatesWorking,
+  leadTurnCompleted,
   attributeWorktreeUnread,
   finishUnread,
   createInventoryReader

@@ -1,5 +1,7 @@
 # EyPc Project Status Hub
 
+- 2026-09-16 Orca Claude 主轮次结束仍 `working`：`workingMode=monitoring` / `turnCompletedAt` / 窗格 `unread=true` 收成已完成，OSC `✳` 不再钉进行中；未读中转认 working→monitoring，工作区汇总不得落到旁边已完成的 Cursor。`orcaInventory` 28/28、`orcaUnreadBridge` 13/13。用户确认插件已离开进行中。未推送。[Orca Spec](260913/orca-companion/spec.md#L1) · [错忆](../knowledge/error-memory/orca-claude-monitoring-is-lead-complete.md#L1)。
+
 - 2026-09-15 本地分批交付：Claude 关窗 `b2d74ee`、独立追踪 `ee70097`、Float 启动 `24571a2`、Orca 状态 `a6a4811`、状态候选循环 `359dfbf`、快捷即时已读 `7deac2b` 已提交。当前组合定向回归 406/406；源码与 15:35:50 产物身份一致；需求、来源与错误索引检查通过。未推送、未重载或实机验收；入口预算超限与卡顿验收仍未解决。下列日期项保留当时验证快照，当前提交状态以本条及 Git 为准。
 
 - 2026-09-15 RAW-221 快捷打开立即已读：四 Provider 共用 Kernel 本轮内存投影，成功派发后立即清实际选中项未读，不增加存储/扫描/等待；旧快照、新轮次、迟到确认、成员变化与重建均隔离，原生交接不伪造。4 套件 211/211，生产构建与镜像通过。产物 `host-0f2f731bf53e95875d86 / renderer-e8d47a2a95408bba843c`，北京时间 `2026/09/15 15:35:50`。入口预算仍超 82 行；插件保持屏蔽，卡顿未实机验收。[需求](260915/shortcut-immediate-read/raw-requirement.md#L11) · [冲突设计](260915/shortcut-immediate-read/spec.md#L1) · [实现/验证](260915/shortcut-immediate-read/task-card.md#L1)。

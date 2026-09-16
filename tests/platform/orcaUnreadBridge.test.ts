@@ -113,6 +113,73 @@ describe('Orca completed-unread bridge', () => {
       .toBe(true)
   })
 
+  it('marks Claude monitoring completed-unread after a live working turn', async () => {
+    let now = 100
+    const bridge = unreadModule.createUnreadBridge({ store: memoryStore(), now: () => now })
+    await bridge.ready()
+    const working = {
+      worktrees: [{
+        repo: 'EyPc',
+        unread: true,
+        agents: [{ paneKey: PANE, state: 'working', agentType: 'claude', updatedAt: 10 }]
+      }],
+      terminals: [{
+        handle: HANDLE,
+        tabId: TAB,
+        leafId: LEAF,
+        title: '. investigating',
+        connected: true,
+        agentIdentity: 'claude'
+      }]
+    }
+    expect(inventory.collectSessions(working.worktrees, working.terminals, undefined, undefined, bridge).sessions[0])
+      .toMatchObject({ unread: false, state: 'working' })
+    now = 200
+    const monitoring = {
+      worktrees: [{
+        repo: 'EyPc',
+        unread: true,
+        agents: [
+          {
+            paneKey: PANE,
+            state: 'working',
+            workingMode: 'monitoring',
+            agentType: 'claude',
+            updatedAt: 20
+          },
+          {
+            paneKey: `${SIBLING_TAB}:${SIBLING_LEAF}`,
+            state: 'done',
+            agentType: 'cursor',
+            updatedAt: 10
+          }
+        ]
+      }],
+      terminals: [
+        {
+          handle: HANDLE,
+          tabId: TAB,
+          leafId: LEAF,
+          title: '✳ Claude',
+          connected: true,
+          agentIdentity: 'claude'
+        },
+        {
+          handle: 'term_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          tabId: SIBLING_TAB,
+          leafId: SIBLING_LEAF,
+          title: 'Cursor ready',
+          connected: true,
+          agentIdentity: 'cursor'
+        }
+      ]
+    }
+    expect(inventory.collectSessions(monitoring.worktrees, monitoring.terminals, undefined, undefined, bridge).sessions.map((row) => [row.agentType, row.state, row.unread])).toEqual([
+      ['claude', 'done', true],
+      ['cursor', 'done', false]
+    ])
+  })
+
   it('can mark one finished sibling unread without guessing the other', async () => {
     let now = 100
     const bridge = unreadModule.createUnreadBridge({ store: memoryStore(), now: () => now })

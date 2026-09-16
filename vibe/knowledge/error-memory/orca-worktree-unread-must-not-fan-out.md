@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: orca-worktree-unread-summary__copied-onto-every-agent-card__group-shows-many-completed-unread__attribute-to-newest-finished-pane
 first_seen: 2026-09-14
-last_verified: 2026-09-15
+last_verified: 2026-09-16
 review_after: 2027-09-14
 evidence:
   - preload/orca/inventory.cjs
@@ -67,3 +67,4 @@ Orca 一个 Workspace 窗口里多条 Agent 标签共用工作区 `unread`。橙
 | 2026-09-14 | 完成窗格未读被标已读 | EyPc 工作树 1 done + 1 working | 汇总 unread=false 整组清零 | Orca Agents 仍按窗格未读 | agent.unread 优先于汇总 | pending-host |
 | 2026-09-14 | 已完成未读跳到左侧对话 | CodeNote 最后一格未读，点击进左边 fork 会话 | lastUpdatedAt 吃进工作区 lastActivityAt，平手后按 paneKey 选中邻居 | 同组 lastActivityAt 相同，左侧 paneKey 更大 | 归因改用 stateStartedAt | pending-host |
 | 2026-09-14 | Workspace 标签条偏移 | 最后一格金标未读，跳进同窗左侧对话 | 时钟/paneKey 归因不是标签条最右侧完成项 | CLI switch 用对 handle 能切到最后一格 | 有布局时按 tabs 顺序取最右侧 done | pending-host |
+| 2026-09-16 | Claude 结束后未读落到 Cursor | 同工作区 Claude `working+monitoring` + Cursor `done`，工作区 unread=true | 只把汇总给唯一 done 行 | 现场 CLI 无窗格 unread | Claude 主轮次结束信号先折成 done，两条 done 不再猜汇总 | verified |

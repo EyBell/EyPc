@@ -14,6 +14,7 @@ const inventory = require_(resolve(process.cwd(), 'preload/orca/inventory.cjs'))
   displayTitle: (title: string, agentType: string, repoName: string, tabTitle?: string) => string
   indexTabTitles: (visualLayouts: unknown) => Map<string, string>
   oscIndicatesWorking: (title: string) => boolean
+  leadTurnCompleted: (agent: Record<string, unknown>) => boolean
   createInventoryReader: (dependencies: {
     cli: { available?: boolean; json: (args: string[]) => Promise<unknown> }
     nativeState?: { pinnedTabIds: () => Set<string> }
@@ -495,6 +496,121 @@ describe('Orca agent inventory', () => {
       ['done', false],
       ['done', true]
     ])
+  })
+
+  it('treats Claude lead-complete monitoring as done even with an OSC working frame', () => {
+    expect(inventory.leadTurnCompleted({ state: 'working', workingMode: 'monitoring' })).toBe(true)
+    expect(inventory.leadTurnCompleted({ state: 'working', turnCompletedAt: 1_700_000_000_000 })).toBe(true)
+    expect(inventory.leadTurnCompleted({ state: 'working', unread: true })).toBe(true)
+    expect(inventory.leadTurnCompleted({ state: 'working' })).toBe(false)
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      unread: true,
+      worktreeId: 'eypc-main',
+      agents: [
+        {
+          paneKey: `${TAB}:${LEAF}`,
+          state: 'working',
+          workingMode: 'monitoring',
+          agentType: 'claude',
+          updatedAt: 80,
+          stateStartedAt: 10
+        },
+        {
+          paneKey: `${NEW_TAB}:${NEW_LEAF}`,
+          state: 'done',
+          agentType: 'cursor',
+          updatedAt: 40,
+          stateStartedAt: 40
+        }
+      ]
+    }], [
+      {
+        handle: HANDLE,
+        tabId: TAB,
+        leafId: LEAF,
+        title: '✳ Claude',
+        connected: true,
+        agentIdentity: 'claude'
+      },
+      {
+        handle: 'term_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        tabId: NEW_TAB,
+        leafId: NEW_LEAF,
+        title: 'Cursor ready',
+        connected: true,
+        agentIdentity: 'cursor'
+      }
+    ])
+    expect(sessions.map((row) => [row.agentType, row.state, row.unread, row.lastQuestionAt])).toEqual([
+      ['claude', 'done', false, 0],
+      ['cursor', 'done', false, 0]
+    ])
+  })
+
+  it('lets waiting beat a stale monitoring flag', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      agents: [{
+        paneKey: `${TAB}:${LEAF}`,
+        state: 'waiting',
+        workingMode: 'monitoring',
+        agentType: 'claude',
+        updatedAt: 20,
+        stateStartedAt: 10
+      }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '✳ Claude',
+      connected: true,
+      agentIdentity: 'claude'
+    }])
+    expect(sessions[0]).toMatchObject({ state: 'working', lastQuestionAt: 10 })
+  })
+
+  it('treats an exported turnCompletedAt as done while CLI state is still working', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      agents: [{
+        paneKey: `${TAB}:${LEAF}`,
+        state: 'working',
+        turnCompletedAt: 1_700_000_000_500,
+        agentType: 'claude',
+        updatedAt: 20,
+        stateStartedAt: 10
+      }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '✳ Claude',
+      connected: true,
+      agentIdentity: 'claude'
+    }])
+    expect(sessions[0]).toMatchObject({ state: 'done', lastQuestionAt: 0 })
+  })
+
+  it('keeps a foreground Claude turn working when OSC has a working frame', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      agents: [{
+        paneKey: `${TAB}:${LEAF}`,
+        state: 'working',
+        agentType: 'claude',
+        updatedAt: 20,
+        stateStartedAt: 10
+      }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '. investigating the failing test',
+      connected: true,
+      agentIdentity: 'claude'
+    }])
+    expect(sessions[0]).toMatchObject({ state: 'working', unread: false, lastQuestionAt: 10 })
   })
 
   it('treats Grok waiting-for-response OSC frames as working before any tool output', () => {

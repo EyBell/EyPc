@@ -18,6 +18,7 @@ Link-only route for Orca inventory, phase, unread, tab pin and exact-target oper
 - [History is not state authority](../orca-session-history-has-no-unread-or-pin.md#L1)
 - [Closed pane leaves inventory](../orca-closed-pane-must-leave-inventory.md#L1)
 - [Grok waiting phase](../orca-grok-wait-stays-done-until-tool.md#L1)
+- [Claude monitoring is lead-complete](../orca-claude-monitoring-is-lead-complete.md#L1)
 - [Per-pane unread and fallback](../orca-worktree-unread-must-not-fan-out.md#L1)
 
 ## Related Error Records
