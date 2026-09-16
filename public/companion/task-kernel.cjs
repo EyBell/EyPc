@@ -50,15 +50,10 @@ const PREFLIGHT_TIMEOUT_MS = 5_000
 const UNKNOWN_GRACE_MS = 250
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 /**
- * Cycle tiers in priority order.
- *
- * The order is what expresses priority — it is deliberately not a filter. The
- * ring used to be the first non-empty tier alone, which meant a single task
- * entering `waiting-input` replaced the whole ring mid-walk and made every
- * `active` task unreachable while its badge still counted it. Ordering keeps the
- * urgent task first without making the rest disappear.
+ * RAW222: only the highest non-empty tier enters the generic cycle. Badges and
+ * dedicated attention entries keep their independent state-based membership.
  */
-const CYCLE_TIER_ORDER = ['attention', 'plan', 'active', 'unread', 'fallback']
+const CYCLE_TIER_ORDER = ['active', 'attention', 'unread', 'fallback']
 /**
  * Dynamic list groups in display order. `none` is not a group — it is the
  * absence of one — so it stays out of the view shape rather than becoming a
@@ -649,23 +644,13 @@ function derivedAttentionState(task) {
 function derivedCycleTier(task) {
   if (task.hidden || task.paused) return 'none'
   const attention = derivedAttentionState(task)
-  if (attention === 'input') {
-    return task.planImplementation ? 'plan' : 'attention'
-  }
-  if (task.phase === 'stopped' && task.planReady) return 'plan'
   if (task.phase === 'running' && (task.dynamicEligible || taskPinned(task))) return 'active'
-  // Deliberately not gated on `dynamicEligible`: the unread badge counts every
-  // visible completed-unread root, so the ring must reach exactly the same set
-  // or the count is advertising something the shortcut cannot deliver.
+  if (attention === 'input') return 'attention'
+  // Completed-unread keeps its existing activity-window exemption. Continuable
+  // tasks join this cycle tier without changing their phase or display group.
   if (attention === 'unread') return 'unread'
-  // Parked pins — completed-read or unknown, with no state-earned tier at
-  // all — are exactly the set the dedicated fast-access entry serves, so they
-  // must not also ride the ring. A pin whose state is still continuable
-  // (stopped without a Plan, a retired running task) keeps the fallback tier
-  // so the ring can reach it; the two sets never overlap.
-  if (taskPinned(task)) {
-    return task.phase === 'completed' || task.phase === 'unknown' ? 'none' : 'fallback'
-  }
+  if (task.phase === 'stopped' && (task.dynamicEligible || taskPinned(task) || task.planReady)) return 'unread'
+  if (task.phase === 'completed' && taskPinned(task)) return 'fallback'
   return 'none'
 }
 
@@ -819,11 +804,8 @@ function buildViews(tasks) {
       .sort(group === 'pinned' ? compareByPinnedOrder : compareByLatestQuestion)
       .map((task) => task.key)
   }
-  // A badge is a promise that something is reachable, so it counts what the
-  // ring can actually open — an unopenable task used to be counted and then
-  // silently skipped by every shortcut. Counts read the state-earned
-  // attention (not the parked pin group): a pinned waiting-input task sits
-  // in 待输入 and must still be counted there.
+  // Badges count openable tasks in each state, including lower tiers currently
+  // suppressed by the generic cycle. Dedicated entries remain available.
   const countable = visible.filter((task) => task.capabilities.open)
   views.counts.input = countable.filter((task) => derivedAttentionState(task) === 'input').length
   views.counts.active = countable.filter((task) => (
@@ -834,9 +816,9 @@ function buildViews(tasks) {
   const cycleCandidates = [...visible]
     .filter((task) => task.capabilities.open && task.cycleTier !== 'none')
     .sort(compareByLatestQuestion)
-  views.cycleKeys = CYCLE_TIER_ORDER.flatMap((tier) => cycleCandidates
+  views.cycleKeys = CYCLE_TIER_ORDER.map((tier) => cycleCandidates
     .filter((task) => task.cycleTier === tier)
-    .map((task) => task.key))
+    .map((task) => task.key)).find((keys) => keys.length > 0) || []
 
   const attention = [...visible].sort(compareByLatestQuestion)
   const inputAttention = attention
@@ -846,17 +828,14 @@ function buildViews(tasks) {
   // an unrelated pinned/completed task. Membership is state-earned, so a
   // pinned waiting-input task is in the input group and this entry.
   views.attentionKeys.input = inputAttention
-  // "已完成未读" is also the fallback entry for pins that have no other
-  // shortcut, but the two sets must never share one walk. While a real unread
-  // completion exists, every press stays inside that backlog; only an empty
-  // backlog lets the first press start cycling those parked pins — exactly
-  // the pins whose cycle tier is the fallback tier, so this entry and the
-  // ordinary ring never overlap.
+  // The dedicated unread entry retains RAW188: real unread completions first,
+  // then parked pins (including unknown pins). It does not inherit the generic
+  // cycle's RAW222 tiers or its continuable-task membership.
   const unreadAttention = attention
     .filter((task) => task.capabilities.open && derivedAttentionState(task) === 'unread')
   const pinnedOrder = new Map(views.groups.pinned.map((key, index) => [key, index]))
   const pinnedAttention = attention
-    .filter((task) => task.capabilities.open && taskPinned(task) && task.cycleTier === 'none')
+    .filter((task) => task.capabilities.open && taskPinned(task) && task.dynamicGroup === 'pinned')
     .sort((left, right) => (pinnedOrder.get(left.key) ?? 0) - (pinnedOrder.get(right.key) ?? 0))
   views.attentionKeys.completedUnread = (unreadAttention.length > 0 ? unreadAttention : pinnedAttention)
     .map((task) => task.key)

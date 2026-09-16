@@ -240,12 +240,14 @@ function createCompanionNavigation(dependencies = {}) {
 
   function ringForCycle(now) {
     if (walkHeld(now)) {
-      const alive = walkRing.filter((key) => snapshot.targets.has(key))
+      const previous = walkRing
+      const eligible = new Set(snapshot.cycleKeys)
+      const alive = walkRing.filter((key) => eligible.has(key))
       if (alive.length) {
         // The hold freezes the order the user is walking, not membership. A
-        // task published into the ring mid-walk joins at the tail: the badge
-        // already counts it, and every press renews the hold, so a steady walk
-        // would otherwise never reach it at all.
+        // task published into the selected tier mid-walk joins at the tail.
+        // Hidden tasks and lower tiers leave immediately, even if manually
+        // openable targets still contain them.
         const fresh = snapshot.cycleKeys.filter((key) => !alive.includes(key))
         if (fresh.length) {
           walkMergedCount += 1
@@ -259,15 +261,16 @@ function createCompanionNavigation(dependencies = {}) {
           })
         }
         walkRing = fresh.length ? [...alive, ...fresh] : alive
+        if (cursorKey && !walkRing.includes(cursorKey)) recoverCursor(previous)
         return walkRing
       }
     }
     const previous = walkRing.length ? walkRing : snapshot.cycleKeys
-    // Kernel owns both eligibility and tier order. Display groups include
-    // completed-read and parked pins, so they cannot replace this ring.
+    // Kernel owns tier selection and eligibility. Display groups cannot
+    // replace the highest non-empty tier selected for this cycle.
     walkRing = snapshot.cycleKeys
     walkAdoptedCount += 1
-    if (cursorKey && walkRing.length && !walkRing.includes(cursorKey)) recoverCursor(previous)
+    if (cursorKey && !walkRing.includes(cursorKey)) recoverCursor(previous)
     return walkRing
   }
 
@@ -376,9 +379,17 @@ function createCompanionNavigation(dependencies = {}) {
     if (cursorKey && !targets.has(cursorKey)) {
       cursorKey = ''
       cursorDisplacedSide = ''
-    } else if (cursorKey && !walkHeld() && !cycleKeys.includes(cursorKey)) {
+    }
+    // A hold preserves order only. Reconcile at publication so queued opens
+    // and late in-flight results cannot keep an obsolete tier or hidden row.
+    if (walkHeld()) {
+      ringForCycle(Date.now())
+    } else if (cursorKey && !cycleKeys.includes(cursorKey)) {
+      walkRing = cycleKeys
       recoverCursor(previousCycleKeys)
     }
+    if (queuedCycle && !cycleKeys.includes(queuedCycle.target.key)) cancelPendingCycle()
+    if (pendingCursorKey && !cycleKeys.includes(pendingCursorKey)) pendingCursorKey = ''
     return true
   }
 
@@ -397,9 +408,9 @@ function createCompanionNavigation(dependencies = {}) {
       const currentOperationId = result.operationId || request.operationId
       if (result.outcome === 'opened' || result.outcome === 'dispatched') {
         // Opening a row always publishes a result for Kernel focusedKey, but
-        // only an in-ring target owns the cycle cursor. A completed-read card
-        // must not divert later shortcuts away from the actionable tasks.
-        if ((walkHeld() ? walkRing : snapshot.cycleKeys).includes(request.target.key)) {
+        // only a currently eligible target owns the cycle cursor. An already
+        // dispatched open cannot be recalled when its tier or visibility changes.
+        if (snapshot.cycleKeys.includes(request.target.key)) {
           cursorKey = request.target.key
           cursorDisplacedSide = ''
         }

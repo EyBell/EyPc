@@ -46,6 +46,7 @@
 - [RAW-219](../shared-raw-219.md#L1) — `active` · 第四个独立来源 Orca：CLI 库存/跳转/跟踪，默认关闭，不读对话正文
 - [RAW-220](../shared-raw-220.md#L1) — `active` · Orca 标签栏已完成未读应按窗格导出；未导出前 EyPc 中转：曾观测进行中不得直接已完成已读，插件跳转/点击后才已读
 - [RAW-221](../shared-raw-221.md#L1) — `active` · 四 Provider 快捷打开成功派发后立即清本轮 EyPc 未读；动态变化与原生交接分开
+- [RAW-222](../shared-raw-222.md#L1) — `active` · 上一／下一只循环最高非空类别；进行中优先，隐藏即时排除
 
 
 ### 编号条款

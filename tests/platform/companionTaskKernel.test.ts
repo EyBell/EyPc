@@ -621,7 +621,7 @@ describe('CompanionTaskKernel', () => {
     expect(ready.tasks[0]).toMatchObject({
       phase: 'stopped',
       dynamicGroup: 'stopped',
-      cycleTier: 'plan',
+      cycleTier: 'unread',
       planReady: true,
       planLifecycleRevision: 200
     })
@@ -699,7 +699,7 @@ describe('CompanionTaskKernel', () => {
       capabilities: { open: true, archive: false, pause: true, resume: true, executePlan: true }
     })], 2, { producer: 'host-evidence', providers: { codex: true, claude: false } }))
     expect(exactPlanWait.tasks[0]).toMatchObject({
-      cycleTier: 'plan',
+      cycleTier: 'attention',
       planLifecycleRevision: 200,
       capabilities: { pause: true, resume: false, executePlan: true }
     })
@@ -725,7 +725,7 @@ describe('CompanionTaskKernel', () => {
     expect(current.tasks[0]).toMatchObject({
       phase: 'stopped',
       dynamicGroup: 'stopped',
-      cycleTier: 'plan',
+      cycleTier: 'unread',
       planReady: true,
       capabilities: { pause: true, resume: false, executePlan: true }
     })
@@ -776,7 +776,7 @@ describe('CompanionTaskKernel', () => {
       phase: 'waiting-input',
       unread: true,
       planImplementation: true,
-      cycleTier: 'plan',
+      cycleTier: 'attention',
       dynamicGroup: 'input'
     })
     expect(planChoice.views).toMatchObject({ groups: { input: ['codex-a'], unread: [] }, counts: { input: 1, unread: 0 } })
@@ -1293,7 +1293,7 @@ describe('CompanionTaskKernel', () => {
     expect(pinned.tasks.find((value: { key: string }) => value.key === 'codex-a')).toMatchObject({
       localPin: true,
       kind: 'local-pin',
-      cycleTier: 'none'
+      cycleTier: 'fallback'
     })
 
     // A completed Plan owns the pause lane for hiding, but stays pinnable.
@@ -1330,7 +1330,7 @@ describe('CompanionTaskKernel', () => {
     const byKey = new Map(latest.tasks.map((value: any) => [value.key, value]))
     // Local pins keep EyPc order first; provider pins follow in the provider's order.
     expect(latest.views.groups.pinned).toEqual(['codex-local-pin', 'claude-star', 'codex-native-pin'])
-    expect(byKey.get('codex-native-pin')).toMatchObject({ dynamicGroup: 'pinned', cycleTier: 'none', providerPin: true, providerPinOrder: 2, providerPinAuthority: 'app-server', localPin: false })
+    expect(byKey.get('codex-native-pin')).toMatchObject({ dynamicGroup: 'pinned', cycleTier: 'fallback', providerPin: true, providerPinOrder: 2, providerPinAuthority: 'app-server', localPin: false })
     // A running provider pin stays in 进行中; the pin is only a row marker.
     expect(byKey.get('codex-native-pin-first')).toMatchObject({ dynamicGroup: 'active', cycleTier: 'active', providerPin: true })
     expect(byKey.get('claude-star')).toMatchObject({ dynamicGroup: 'pinned', providerPinAuthority: 'claude-metadata' })
@@ -1582,9 +1582,8 @@ describe('CompanionTaskKernel', () => {
     expect(current.views.groups.active).toEqual([])
     expect(current.views.counts).toEqual({ input: 1, active: 0, unread: 1 })
     expect(current.views.attentionKeys).toMatchObject({ input: ['old-input'], completedUnread: ['old-unread'] })
-    // Both badges count these, so both must be reachable: tier order puts the
-    // input task first without excluding the unread one from the ring.
-    expect(current.views.cycleKeys).toEqual(['old-input', 'old-unread'])
+    // RAW222: badges stay independent; only the highest nonempty tier cycles.
+    expect(current.views.cycleKeys).toEqual(['old-input'])
   })
 
   it('keeps a pinned finished task in the dynamic list after the activity window retires it', () => {
@@ -1702,14 +1701,12 @@ describe('CompanionTaskKernel', () => {
         expect(entry.has(value.key)).toBe(false)
         expect(ring.has(value.key)).toBe(false)
       } else {
-        // Its state-earned reachability survives the pin marker: pinning must
-        // neither add a ring slot nor take one away.
-        expect(ring.has(value.key)).toBe(true)
+        // RAW222: the running tier suppresses all lower tiers, even if pinned.
+        expect(ring.has(value.key)).toBe(value.phase === 'running')
       }
     }
-    // The unread backlog is deliberately reachable both ways: the entry is the
-    // fast path to it, the ring still walks it as a tier. Parked pins become the
-    // entry's fallback only after this backlog is empty.
+    // Dedicated unread access remains available while the generic cycle serves
+    // running tasks. Its parked-pin fallback still requires an empty backlog.
     expect([...entry].sort()).toEqual(
       (current.tasks as Array<Record<string, any>>)
         .filter((value) => value.phase === 'completed' && value.unread)
@@ -2525,7 +2522,7 @@ describe('CompanionTaskKernel', () => {
     ])
   })
 
-  it('keeps a pinned live task in every shortcut its own state earns it', async () => {
+  it('keeps pinned status groups and dedicated entries while the generic cycle prioritizes running', async () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
@@ -2539,9 +2536,9 @@ describe('CompanionTaskKernel', () => {
       ], 1, { providers: { codex: true, claude: false } })
     })
 
-    // Pinning must never quietly remove a task from the entries its own phase
-    // earns it; live / attention / unread rows stay in those status groups.
-    expect(current.views.cycleKeys).toEqual(['codex-pin-input', 'codex-pin-running', 'codex-pin-unread'])
+    // RAW222 prioritizes running; pinning preserves the independent status
+    // groups, badge counts and dedicated attention entries.
+    expect(current.views.cycleKeys).toEqual(['codex-pin-running'])
     expect(current.views.attentionKeys.input).toEqual(['codex-pin-input'])
     expect(current.views.groups.pinned).toEqual([])
     expect(current.views.groups.input).toEqual(['codex-pin-input'])
@@ -2550,7 +2547,7 @@ describe('CompanionTaskKernel', () => {
     expect(current.views.counts).toEqual({ input: 1, active: 1, unread: 1 })
   })
 
-  it('gives a finished, already-read pin its own fast-access entry instead of the ring', async () => {
+  it('keeps a read pin in the dedicated entry and the fourth generic tier', async () => {
     const opened: string[] = []
     const kernel = createCompanionTaskKernel({
       adapters: {
@@ -2573,8 +2570,8 @@ describe('CompanionTaskKernel', () => {
 
     expect(packageValue.views.counts.input).toBe(0)
     expect(packageValue.views.attentionKeys.input).toEqual([])
-    // The one pin that leaves the ring: it has a dedicated entry instead.
-    expect(packageValue.views.cycleKeys).toEqual([])
+    // RAW222 adds the read pin as the fourth tier; RAW188 access stays intact.
+    expect(packageValue.views.cycleKeys).toEqual(['codex-pin'])
     // A finished, already-read pin is what the dedicated pinned group collects.
     expect(packageValue.views.groups.pinned).toEqual(['codex-pin'])
     expect(packageValue.views.attentionKeys.completedUnread).toEqual(['codex-pin'])
@@ -2832,7 +2829,7 @@ describe('CompanionTaskKernel', () => {
     expect(current.views.cycleKeys).toEqual(['claude-new', 'codex-pinned-middle', 'codex-old'])
   })
 
-  it('keeps an ordinary stopped local pin in the fourth navigation layer', () => {
+  it('keeps an ordinary stopped local pin in the third navigation layer', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
@@ -2847,9 +2844,9 @@ describe('CompanionTaskKernel', () => {
         capabilities: { open: true, archive: true, pause: false, resume: false, executePlan: false }
       })], 1, { providers: { codex: true, claude: false } })
     })
-    expect(current.tasks[0].cycleTier).toBe('fallback')
+    expect(current.tasks[0].cycleTier).toBe('unread')
     expect(current.views.cycleKeys).toEqual(['codex-a'])
-    // A continuable stopped pin sits in 待继续 and rides the ring's fourth
+    // A continuable stopped pin sits in 待继续 and rides the ring's third
     // layer, not the parked fast-access entry.
     expect(current.views.groups.pinned).toEqual([])
     expect(current.views.groups.stopped).toEqual(['codex-a'])
@@ -3750,6 +3747,46 @@ describe('source lane units', () => {
     expect(kernel.getPackage().tasks[0]).toMatchObject({ topology: { memberCount: 2, liveCount: 1 } })
   })
 
+  it('keeps a native Codex++ parent running after its last Turn completed while the group is still active', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'running' })], 1, { providers: { codex: true, claude: false } })
+    })
+    publishCodexParentEvidenceV7(kernel, 2, [{
+      key: 'codex-a',
+      complete: true,
+      branches: [{
+        ref: 'branch-main-anonymous',
+        status: 'active',
+        statusAuthority: 'desktop-live',
+        activityEvidence: 'activity-event',
+        activeFlags: [],
+        lastTurnStatus: 'completed',
+        lastTurnEvidence: 'turn-completed',
+        activeEvidenceSequence: 40,
+        terminalEvidenceSequence: 50,
+        turnStartedAt: 10,
+        terminalAt: 20,
+        goalStatus: 'complete',
+        goalFreshness: 'fresh',
+        goalEvidenceSequence: 45,
+        goalUpdatedAt: 18,
+        unreadKnown: true,
+        hasUnreadTurn: true
+      }]
+    }])
+    expect(kernel.getPackage().tasks[0]).toMatchObject({
+      key: 'codex-a',
+      phase: 'running',
+      unreadKnown: true,
+      unread: true
+    })
+  })
+
   it('lets a Claude parent leave running when its hook children go inactive at the same timestamps', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: false, claude: true } }
@@ -4454,7 +4491,7 @@ describe('hand-set phase for an unknown task', () => {
     }, 1).tasks[0]).toMatchObject({ phase: 'unknown', manualPhase: '' })
   })
 
-  it('moves a hand-set pin between the two rings without ever leaving it in both', () => {
+  it('applies exclusive cycle priority to hand-set phases while preserving dedicated entries', () => {
     const kernel = createCompanionTaskKernel({
       now: () => 1_000_000_000,
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
@@ -4478,23 +4515,15 @@ describe('hand-set phase for an unknown task', () => {
 
     const ring = new Set<string>(current.views.cycleKeys)
     const entry = new Set<string>(current.views.attentionKeys.completedUnread)
-    // Hand-setting a phase is what hands the pin back to its own status group,
-    // so it leaves the fast-access entry and rejoins the ordinary ring in the
-    // same commit. Both derivations read the applied phase, so there is no
-    // moment where the two disagree and the pin is served twice.
-    for (const phase of phases) {
-      const key = `codex-manual-${phase}`
-      expect([...ring, ...entry].filter((value) => value === key)).toHaveLength(1)
-    }
-    // `completed` is the one hand-set phase with no status group of its own, so
-    // it stays with the pins; every other answer earns the ring back.
+    // RAW222 selects running alone; hand-set phases still drive the unchanged
+    // display groups and dedicated input / parked-pin entry.
     expect([...entry]).toEqual(['codex-manual-completed'])
-    expect([...ring].sort()).toEqual([
-      'codex-manual-running',
-      'codex-manual-stopped',
-      'codex-manual-waiting-approval',
-      'codex-manual-waiting-input'
+    expect([...ring]).toEqual(['codex-manual-running'])
+    expect(current.views.attentionKeys.input).toEqual([
+      'codex-manual-waiting-input', 'codex-manual-waiting-approval'
     ])
+    expect(current.views.groups.stopped).toEqual(['codex-manual-stopped'])
+    expect(current.views.groups.pinned).toEqual(['codex-manual-completed'])
   })
 
   it('sends a hand-set completion that is unread to the unread backlog, not the pin group', () => {
@@ -4747,5 +4776,90 @@ describe('shortcut opens acknowledge the displayed completion immediately', () =
     await kernel.dispatch({ action: 'open-attention', kind: 'completed-unread', source: 'global-shortcut' })
     expect(kernel.getLatest().tasks.find((task: any) => task.provider === 'cursor').unread).toBe(false)
     kernel.close()
+  })
+})
+
+// RAW-222: only the highest nonempty class participates in generic navigation.
+describe('exclusive cycle priority', () => {
+  it.each([1, -1])('walks one class across providers and drops hidden members immediately (%s)', async direction => {
+    const providers = { codex: true, claude: true, cursor: true, orca: true }
+    const opened: string[] = []
+    const open = async (target: { key: string }) => { opened.push(target.key); return { outcome: 'dispatched' } }
+    const kernel = createCompanionTaskKernel({
+      adapters: Object.fromEntries(Object.keys(providers).map(provider => [provider, { open }])),
+      initialConfiguration: { enabled: true, providers }
+    })
+    const lease = kernel.attach({ enabled: true, providers }).lease
+    const row = (key: string, provider: string, phase: string, extra = {}) => task({
+      key, provider, phase, kind: { codex: 'codex-thread', claude: 'claude-session', cursor: 'cursor-session', orca: 'orca-session' }[provider],
+      actionAlias: key, lastQuestionAt: 100, ...extra
+    })
+    const rows = [
+      row('run-a', 'codex', 'running', { lastQuestionAt: 400 }),
+      row('run-b', 'claude', 'running', { lastQuestionAt: 300, localPin: true }),
+      row('input', 'cursor', 'waiting-input', { lastQuestionAt: 900 }),
+      row('approval', 'orca', 'waiting-approval', { lastQuestionAt: 800 }),
+      row('unread', 'orca', 'completed', { unread: true, terminalAt: 100, lastQuestionAt: 700 }),
+      row('continue', 'codex', 'stopped', { lastQuestionAt: 600 }),
+      row('plan', 'codex', 'stopped', { planReady: true, planLifecycleRevision: 200, lastQuestionAt: 500, capabilities: { open: true, pause: true, resume: false, executePlan: true, archive: false } }),
+      row('read-pin', 'cursor', 'completed', { localPin: true, lastQuestionAt: 1000 }),
+      row('read-plain', 'codex', 'completed'),
+      row('unknown-pin', 'codex', 'unknown', { localPin: true }),
+      row('hidden-running', 'orca', 'running', { hidden: true, lastQuestionAt: 2000 })
+    ]
+    const hide = async (key: string) => {
+      const current = kernel.getLatest().tasks.find((value: any) => value.key === key)
+      // Plans retain their existing pause/resume control instead of generic hide.
+      if (current.planReady) {
+        await expect(kernel.dispatch({ action: 'pause', key, planLifecycleRevision: current.planLifecycleRevision }))
+          .resolves.toMatchObject({ outcome: 'paused' })
+      } else {
+        expect(kernel.setVisibility({ lease, key, revisionAt: current.revisionAt, hidden: true })).not.toBeNull()
+      }
+    }
+    try {
+      kernel.syncPackage({ lease, draft: draft(rows, 1, {
+        providers, sourceGenerations: { codex: 1, claude: 1, cursor: 1, orca: 1 }
+      }) })
+      expect(kernel.getLatest().views.counts).toEqual({ active: 2, input: 2, unread: 1 })
+      const levels = [['run-a', 'run-b'], ['input', 'approval'], ['unread', 'continue', 'plan'], ['read-pin']]
+      for (const level of levels) {
+        expect(kernel.getLatest().views.cycleKeys).toEqual(level)
+        // Traverse the current level repeatedly; completing a read may remove
+        // only that unread member, never admit the next class while peers remain.
+        for (let i = 0; i < level.length * 2; i++) {
+          const candidates = kernel.getLatest().views.cycleKeys
+          const result = await kernel.dispatch({ action: 'cycle', direction, source: 'global-shortcut' })
+          expect(result.outcome).toBe('dispatched')
+          expect(candidates).toContain(result.key)
+          expect(level).toContain(result.key)
+        }
+        for (const key of level) await hide(key)
+      }
+      expect(kernel.getLatest().views.cycleKeys).toEqual([])
+      await expect(kernel.dispatch({ action: 'cycle', direction })).resolves.toMatchObject({ outcome: 'unavailable' })
+      expect(opened).not.toContain('hidden-running')
+      expect(opened).not.toContain('read-plain')
+      expect(opened).not.toContain('unknown-pin')
+    } finally { kernel.close() }
+  })
+
+  it('preempts a held unread walk as soon as running reappears, and downgrades when it finishes', async () => {
+    const providers = { codex: true, claude: false }
+    const open = async () => ({ outcome: 'dispatched' })
+    const kernel = createCompanionTaskKernel({ adapters: { codex: { open } }, initialConfiguration: { enabled: true, providers } })
+    const lease = kernel.attach({ enabled: true, providers }).lease
+    const unread = task({ key: 'unread', actionAlias: 'unread', phase: 'completed', unread: true, terminalAt: 100 })
+    const input = task({ key: 'input', actionAlias: 'input', phase: 'waiting-input' })
+    const publish = (rows: any[], revision: number) => kernel.syncPackage({ lease, draft: draft(rows, revision, { providers }) })
+    try {
+      publish([unread], 1)
+      await kernel.dispatch({ action: 'cycle', direction: 1 })
+      publish([unread, input, task({ key: 'running', actionAlias: 'running', lastQuestionAt: 300 })], 2)
+      await expect(kernel.dispatch({ action: 'cycle', direction: 1 })).resolves.toMatchObject({ key: 'running' })
+      publish([unread, input, task({ key: 'running', actionAlias: 'running', phase: 'completed', unread: true, phaseRevision: 400, terminalAt: 400 })], 3)
+      expect(kernel.getLatest().views.cycleKeys).toEqual(['input'])
+      await expect(kernel.dispatch({ action: 'cycle', direction: 1 })).resolves.toMatchObject({ key: 'input' })
+    } finally { kernel.close() }
   })
 })

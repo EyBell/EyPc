@@ -470,15 +470,15 @@ describe('process-lifetime companion navigation', () => {
     await navigation.cycle(1)
     expect(navigation.diagnostics()).toMatchObject({ walkHeld: true, walkRingCount: 3 })
 
-    // A republish mid-walk reorders the ring and drops a member. The walk in
-    // progress must not be re-pointed underneath the user.
+    // Metadata reorders the same eligible tier. RAW222 preserves held order
+    // while separate membership tests require immediate removal of stale rows.
     expect(navigation.sync({
       lease: receipt.lease,
       enabled: true,
       providers: { codex: true, claude: true },
       ready: true,
       targets,
-      cycleKeys: ['codex-b']
+      cycleKeys: ['claude:local_a', 'codex-b', 'codex-a']
     })).toBe(true)
     await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'claude:local_a' })
     expect(navigation.diagnostics()).toMatchObject({ walkHeld: true, walkAdoptedCount: 1 })
@@ -486,7 +486,7 @@ describe('process-lifetime companion navigation', () => {
     // Once the walk lapses, the next press adopts the published ring.
     vi.advanceTimersByTime(navigationModule.CYCLE_WALK_HOLD_MS + 1)
     await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'codex-b' })
-    expect(navigation.diagnostics()).toMatchObject({ walkRingCount: 1, walkAdoptedCount: 2 })
+    expect(navigation.diagnostics()).toMatchObject({ walkRingCount: 3, walkAdoptedCount: 2 })
     expect(opened).toEqual(['codex-a', 'claude:local_a', 'codex-b'])
   })
 
@@ -600,7 +600,7 @@ describe('process-lifetime companion navigation', () => {
     await expect(navigation.cycle(-1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
   })
 
-  // RAW-182: tier union and provider-neutral reachability survive downstream navigation.
+  // RAW-222: the third tier spans unread/stopped display groups and Providers.
   it('walks across state groups and providers after a direct open and a held-ring refresh', async () => {
     const orca = { key: 'orca:unread', provider: 'orca', actionAlias: 'orca-unread', revisionAt: 104, phase: 'completed' }
     const navigation = navigationModule.createCompanionNavigation({ openTarget: async () => ({ outcome: 'dispatched' }) })
@@ -608,9 +608,9 @@ describe('process-lifetime companion navigation', () => {
     const receipt = navigation.begin({ enabled: true, providers })
     const input = {
       lease: receipt.lease, enabled: true, providers, ready: true,
-      targets: [...targets, orca],
+      targets: [...targets.map(target => ({ ...target, phase: target.key === 'codex-b' ? 'completed' : 'stopped' })), orca],
       cycleKeys: ['codex-a', 'claude:local_a', orca.key],
-      groups: { active: ['codex-a', 'claude:local_a'], unread: [orca.key], completed: ['codex-b'] }
+      groups: { stopped: ['codex-a', 'claude:local_a'], unread: [orca.key], completed: ['codex-b'] }
     }
     navigation.sync(input)
     await navigation.open({ key: 'claude:local_a', source: 'card-click' })
@@ -631,5 +631,39 @@ describe('process-lifetime companion navigation', () => {
       confirmsRead: false,
       message: '打开请求已发送，等待原生确认'
     })
+  })
+})
+
+// RAW-222: holding order never retains a hidden/lower-priority cycle target.
+describe('exclusive cycle membership during in-flight navigation', () => {
+  it('cancels a queued target when Kernel removes it and ignores a late cursor takeover', async () => {
+    let release!: (value: unknown) => void
+    const opened: string[] = []
+    const { navigation, receipt } = readyNavigation({ openTarget: (target: { key: string }) => {
+      opened.push(target.key)
+      return opened.length === 1 ? new Promise(resolve => { release = resolve }) : Promise.resolve(nativeOpened())
+    } })
+    const first = navigation.cycle(1)
+    const queued = navigation.cycle(1)
+    navigation.sync({ lease: receipt.lease, enabled: true, providers: { codex: true, claude: true }, ready: true,
+      targets, cycleKeys: ['codex-b'] })
+    release(nativeOpened())
+    await first
+    await expect(queued).resolves.toMatchObject({ outcome: 'unavailable', errorCode: 'superseded' })
+    expect(navigation.diagnostics().cursorKey).not.toBe('codex-a')
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'codex-b' })
+    expect(opened).toEqual(['codex-a', 'codex-b'])
+    navigation.dispose()
+  })
+
+  it('immediately removes a hidden current member while preserving the eligible neighbours', async () => {
+    const { navigation, receipt } = readyNavigation({ openTarget: async () => nativeOpened() })
+    await navigation.cycle(1)
+    await navigation.cycle(1)
+    navigation.sync({ lease: receipt.lease, enabled: true, providers: { codex: true, claude: true }, ready: true,
+      targets, cycleKeys: ['codex-a', 'codex-b'] })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'codex-b' })
+    await expect(navigation.cycle(-1)).resolves.toMatchObject({ key: 'codex-a' })
+    navigation.dispose()
   })
 })
