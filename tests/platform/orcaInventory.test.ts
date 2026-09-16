@@ -498,10 +498,85 @@ describe('Orca agent inventory', () => {
     ])
   })
 
+  it('keeps a working Grok tab on its custom title, not the spinner or an unread bell', () => {
+    expect(inventory.oscIndicatesWorking('⠋ Grok')).toBe(true)
+    expect(inventory.oscIndicatesWorking('◑ 页面加载规范优化')).toBe(true)
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      unread: true,
+      agents: [{
+        paneKey: `${TAB}:${LEAF}`,
+        state: 'working',
+        unread: true,
+        agentType: 'grok',
+        updatedAt: 80,
+        stateStartedAt: 10
+      }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '⠋ Grok',
+      connected: true,
+      agentIdentity: 'grok'
+    }], [{
+      root: {
+        tabs: [{
+          tabId: TAB,
+          activeLeafId: LEAF,
+          title: '260916-KM-修成套柜联系栏',
+          panes: { tabId: TAB, leafId: LEAF, handle: HANDLE, type: 'leaf', title: '⠋ Grok' }
+        }]
+      }
+    }])
+    expect(sessions[0]).toMatchObject({
+      state: 'working',
+      unread: true,
+      lastQuestionAt: 10,
+      name: 'gr · 260916-KM-修成套柜联系栏',
+      projectName: 'EyPc'
+    })
+  })
+
+  it('strips watch-frame OSC from Claude titles and still treats them as working', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'km-site-ref',
+      agents: [{
+        paneKey: `${TAB}:${LEAF}`,
+        state: 'working',
+        agentType: 'claude',
+        updatedAt: 20,
+        stateStartedAt: 10
+      }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '◑ 页面加载规范优化',
+      connected: true,
+      agentIdentity: 'claude'
+    }], [{
+      root: {
+        tabs: [{
+          tabId: TAB,
+          activeLeafId: LEAF,
+          title: '页面加载规范优化',
+          panes: { tabId: TAB, leafId: LEAF, handle: HANDLE, type: 'leaf', title: '◑ 页面加载规范优化' }
+        }]
+      }
+    }])
+    expect(sessions[0]).toMatchObject({
+      state: 'working',
+      name: 'cc · 页面加载规范优化',
+      projectName: 'km-site-ref'
+    })
+  })
+
   it('treats Claude lead-complete monitoring as done even with an OSC working frame', () => {
     expect(inventory.leadTurnCompleted({ state: 'working', workingMode: 'monitoring' })).toBe(true)
     expect(inventory.leadTurnCompleted({ state: 'working', turnCompletedAt: 1_700_000_000_000 })).toBe(true)
-    expect(inventory.leadTurnCompleted({ state: 'working', unread: true })).toBe(true)
+    expect(inventory.leadTurnCompleted({ state: 'working', unread: true })).toBe(false)
+    expect(inventory.leadTurnCompleted({ state: 'done', unread: true })).toBe(true)
     expect(inventory.leadTurnCompleted({ state: 'working' })).toBe(false)
     const { sessions } = inventory.collectSessions([{
       repo: 'EyPc',

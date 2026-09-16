@@ -16,8 +16,8 @@ const BARE_AGENT_TITLE = /^(grok|claude|claude-code|codex|cursor|pi|omp|dsh|open
 const TAB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const HANDLE = /^term_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_SESSIONS = 200
-const SPINNER_PREFIX = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\s]+/
-const OSC_WORKING_PREFIX = /^(?:[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳]|[.] )/
+const SPINNER_PREFIX = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳◑◐◒◓●\s]+/
+const OSC_WORKING_PREFIX = /^(?:[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳◑◐◒◓●]|[.] )/
 
 function textOf(value) {
   return typeof value === 'string' ? value.trim() : ''
@@ -142,6 +142,10 @@ function leadTurnCompleted(agent) {
   if (!agent || typeof agent !== 'object') return false
   if (textOf(agent.workingMode).toLowerCase() === 'monitoring') return true
   if (timeOf(agent.turnCompletedAt) > 0) return true
+  const state = textOf(agent.state).toLowerCase()
+  // Tree unread bells can sit on a still-working pane. Unread is not
+  // lead-complete while Agents still report working/waiting/blocked.
+  if (state === 'working' || state === 'waiting' || state === 'blocked') return false
   return agent.unread === true
 }
 

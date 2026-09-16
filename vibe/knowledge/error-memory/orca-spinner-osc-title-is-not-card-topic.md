@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: orca-working-card-title__osc-spinner-grok-strips-to-repo__new-pane-looks-like-old-running__prefer-visual-layout-tab-title
 first_seen: 2026-09-14
-last_verified: 2026-09-14
+last_verified: 2026-09-16
 review_after: 2027-09-14
 evidence:
   - preload/orca/inventory.cjs
@@ -41,7 +41,7 @@ Orca 顶栏 / Agents 用标签 `customTitle`。`terminal list` / `terminal show`
 
 ## Prevention Rule
 
-Orca 抬头只从带 `activeLeafId`、不带 `handle`/`leafId` 的 tab 节点取 `title`。禁止用同 `tabId` 的 pane OSC 标题覆盖。没有标签标题时才回退剥装饰后的 OSC，再没有才用仓库名。不要把 spinner 或裸 harness 名当主题。不要从 visual layout 带出路径或 preview。
+Orca 抬头只从带 `activeLeafId`、不带 `handle`/`leafId` 的 tab 节点取 `title`。禁止用同 `tabId` 的 pane OSC 标题覆盖。没有标签标题时才回退剥装饰后的 OSC，再没有才用仓库名。不要把 spinner、`◑` 或裸 harness 名当主题。Agents 仍为 `working` 时，未读铃/`unread=true` 不得把相位折成已完成。不要从 visual layout 带出路径或 preview。项目名跟工作树，不按标题前缀改归属。
 
 ## Alternative Route
 
@@ -61,3 +61,4 @@ Orca 抬头只从带 `activeLeafId`、不带 `handle`/`leafId` 的 tab 节点取
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-09-14 | Orca 状态跟踪 | 已读后新开对话仍见 `gr · EyPc` 进行中 | 只用 OSC pane title | 旧 pane `done`，新 pane `working` + spinner | 库存改读 visual layout | 未完成 |
 | 2026-09-14 | 插件标题未同步 | Orca 顶栏正常，EyPc 仍是 spinner/仓库名 | 递归把 pane.`title` 盖掉 tab.`title` | 同 `tabId` 的 pane 节点带 OSC `⠋ Grok` | 只认 `activeLeafId` 的 tab 节点 | verified |
+| 2026-09-16 | Orca 任务识别 | EyPc 工作树里 KM 标题行带信封 | 未读铃盖住进行中，或 unread=true 被当成主轮次结束 | 标签 `260916-KM-…`，窗格 `⠋ Grok`，`state=working`，CLI 无 unread | 抬头继续用标签；working 时 unread 不折成 done；`◑` 也当工作帧 | verified |
