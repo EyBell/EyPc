@@ -4,6 +4,10 @@ qualified_source: SPEC-260718-1148-CODEX-QUOTA-FLOAT::RAW-083
 status: active
 domain: companion-codex
 authority: user-stated
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-223
+    scope: "新增双色贴边线独立命中与悬停规则；线条全长拖动且单击无动作，预览标题空白可拖，固定独立；旧水球分区保留"
 source_annotations: "active / supersedes-RAW-048-compact-hit-zone-geometry"
 ---
 

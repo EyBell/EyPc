@@ -230,7 +230,13 @@ ipcRenderer.on(CHANNELS.state, (_event, state) => {
     height: Number.isFinite(state.expandedSize.height) ? state.expandedSize.height : 0,
     manual: state.expandedSize.manual === true
   } : null
-  lastState = { expanded: state.expanded === true, pinned: state.pinned === true, resizing: state.resizing === true, resizeCorner, expandedSize }
+  const safeRect = (value) => value && ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(value[key])) && value.width > 0 && value.height > 0
+    ? { x: value.x, y: value.y, width: value.width, height: value.height } : null
+  const geometry = state.placement
+  const placement = geometry && safeRect(geometry.bounds) && safeRect(geometry.rail) && safeRect(geometry.slot)
+    ? { bounds: safeRect(geometry.bounds), rail: safeRect(geometry.rail), slot: safeRect(geometry.slot), panel: safeRect(geometry.panel) } : undefined
+  const extra = { ...(['water', 'card', 'edge'].includes(state.style) ? { style: state.style } : {}), ...(typeof state.dragging === 'boolean' ? { dragging: state.dragging } : {}), ...(['left', 'right', 'top', 'bottom'].includes(state.edge) ? { edge: state.edge } : {}), ...(placement ? { placement } : {}) }
+  lastState = { ...extra, expanded: state.expanded === true, pinned: state.pinned === true, resizing: state.resizing === true, resizeCorner, expandedSize }
   for (const listener of stateListeners) {
     try { listener(lastState) } catch {}
   }

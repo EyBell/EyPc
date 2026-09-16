@@ -26,6 +26,7 @@ import {
   X
 } from '@lucide/vue'
 import CodexWaterBall from './components/CodexWaterBall.vue'
+import CompanionEdgeRail from './components/CompanionEdgeRail.vue'
 import {
   buildCompanionQuotaStrip,
   buildCompanionTaskMetaLine,
@@ -232,6 +233,8 @@ let stopState: (() => void) | null = null
 let stopActivate: (() => void) | null = null
 let drag: { x: number; y: number; moved: boolean; pointerId: number } | null = null
 let resize: { pointerId: number; corner: CodexFloatResizeCorner } | null = null
+let railHoverTimer: ReturnType<typeof setTimeout> | null = null
+let suppressRailHover = false
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 let planExecuteTimer: ReturnType<typeof setTimeout> | null = null
@@ -257,7 +260,9 @@ let archiveConfirmationSequence = 0
 const fallbackColors = CODEX_THEME_PRESETS[0].colors
 const fallbackWaterAppearance = CODEX_THEME_PRESETS[0].waterAppearance
 const fallbackExpandedCardAppearance = CODEX_THEME_PRESETS[0].expandedCardAppearance
-const settings = computed(() => snapshot.value)
+// Native style and geometry travel in one state message, independently of
+// quota snapshot revisions, so a drop can display the rail immediately.
+const settings = computed(() => snapshot.value ? { ...snapshot.value, style: floatState.value.style || snapshot.value.style } : null)
 const quota = computed(() => snapshot.value?.quota)
 const emptyTaskSnapshot = emptyCompanionTaskPackage()
 const taskState = computed(() => {
@@ -297,6 +302,30 @@ function projectMatchesProvider(project: CodexProjectCard) {
 }
 const primaryPercent = computed(() => compact.value.primary?.bucket.remainingPercent ?? 0)
 const selectedWeekly = computed(() => codexWeeklyReading(compact.value.primary, compact.value.secondary))
+const edgeStyle = computed(() => settings.value?.style === 'edge')
+const edgePanelStyle = computed(() => rectStyle(floatState.value.placement?.panel))
+const edgeSlotStyle = computed(() => rectStyle(floatState.value.placement?.slot))
+function rectStyle(rect?: { x: number; y: number; width: number; height: number } | null) {
+  return rect ? { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px` } : undefined
+}
+function clearRailHover() {
+  if (railHoverTimer) clearTimeout(railHoverTimer)
+  railHoverTimer = null
+}
+function onRailHover(event: PointerEvent) {
+  clearRailHover()
+  if (event.pointerType === 'touch' || suppressRailHover || drag || floatState.value.dragging || expanded.value) return
+  railHoverTimer = setTimeout(() => {
+    railHoverTimer = null
+    if (!drag && !floatState.value.dragging && !suppressRailHover) requestExpansion(true)
+  }, 200)
+}
+function onRailLeave() { clearRailHover(); if (!drag && !floatState.value.dragging) suppressRailHover = false }
+function togglePreviewPin() {
+  if (drag || floatState.value.dragging) return
+  window.eypcFloat?.setExpansion(true, !floatState.value.pinned)
+}
+
 /** Window family short labels come from the shared vocabulary; the card must not author `5h` on its own. */
 const windowShortLabels = { short: CLAUDE_QUOTA_WINDOW_LABELS.short.short, weekly: CLAUDE_QUOTA_WINDOW_LABELS.weekly.short }
 const compactSurfaceTheme = computed(() => resolveCodexSurfaceTheme(settings.value?.style || 'water', settings.value?.colors || fallbackColors, primaryPercent.value))
@@ -309,6 +338,8 @@ const surfaceTheme = computed(() => expanded.value ? expandedSurfaceTheme.value 
 const rootStyle = computed<Record<string, string | number>>(() => ({
   ...codexThemeCssVars(surfaceTheme.value),
   ...codexWaterAppearanceCssVars(settings.value?.waterAppearance || fallbackWaterAppearance, settings.value?.colors || fallbackColors),
+  '--edge-codex': expandedSurfaceTheme.value.quotaCodex,
+  '--edge-claude': expandedSurfaceTheme.value.quotaClaude,
   '--water-level': `${primaryPercent.value}%`,
   '--codex-counter-input': settings.value?.counterColors?.input || '#E5486F',
   '--codex-counter-active': settings.value?.counterColors?.active || '#258BC7',
@@ -1395,17 +1426,17 @@ const drawerActions = computed<DrawerAction[]>(() => {
 })
 
 function action(actionId: string, args: Record<string, unknown> = {}) {
-  if (floatState.value.resizing || resize) return false
+  if (floatState.value.resizing || resize || drag || floatState.value.dragging) return false
   const dispatched = window.eypcFloat?.action(actionId, args) === true
   if (!dispatched) liveMessage.value = '浮窗操作未送达，请重新打开 EyPc 后重试'
   return dispatched
 }
 
 function requestExpansion(nextExpanded: boolean) {
-  if (floatState.value.resizing || resize) return
+  if (floatState.value.resizing || resize || drag || floatState.value.dragging) return
   if (collapseTimer) clearTimeout(collapseTimer)
   desiredExpanded = nextExpanded
-  window.eypcFloat?.setExpansion(nextExpanded, false)
+  window.eypcFloat?.setExpansion(nextExpanded, nextExpanded && floatState.value.pinned)
 }
 
 function compactSurfaceVerticalRatio(event: MouseEvent | PointerEvent, surface: HTMLElement) {
@@ -2718,13 +2749,17 @@ function onRootKeydown(event: KeyboardEvent) {
   }
 }
 
-function eventInsideRoot(event: KeyboardEvent) {
+function eventInsideRoot(event: Event) {
   const target = event.target
   return target instanceof Node && Boolean(rootElement.value?.contains(target))
 }
 
 /** 返回 true 表示事件已被 window 层完全消费，不再继续派发。 */
 function handleWindowLevelKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && drag) {
+    event.preventDefault(); event.stopImmediatePropagation()
+    drag = null; window.eypcFloat?.cancelInteraction?.(); return true
+  }
   if (shortcutFromEvent(event) === 'Shift+Escape') {
     event.preventDefault()
     event.stopPropagation()
@@ -2801,6 +2836,7 @@ function taskCanRestore(task: CodexTaskCard) {
 }
 
 function onWindowBlur() {
+  clearRailHover()
   drag = null
   resize = null
   window.eypcFloat?.cancelInteraction?.()
@@ -2823,17 +2859,23 @@ function onWindowResize() {
 
 function onPointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement
+  if (event.button !== 0 || drag || target.closest('button, input, textarea, select, [contenteditable="true"]') && !target.closest('.float-compact')) return
   if (expanded.value && !target.closest('input, textarea, select, [contenteditable="true"]')) {
     rootElement.value?.focus({ preventScroll: true })
   }
   if (pendingConfirm.value && !target.closest('[data-confirm-slot]')) clearConfirm()
   if (resize || target.closest('.float-resize-handle')) return
   const compactTarget = target.closest<HTMLElement>('.float-compact')
-  if (!compactTarget && !target.closest('.float-drag-handle')) return
+  if (!compactTarget && !target.closest('.float-drag-handle, .float-compact-drag-zone')) return
   if (compactTarget && !isCompactDragZone(event, compactTarget)) return
+  event.preventDefault()
+  clearRailHover()
+  if (collapseTimer) clearTimeout(collapseTimer)
+  suppressRailHover = edgeStyle.value
+  focusWithin = false
   drag = { x: event.screenX, y: event.screenY, moved: false, pointerId: event.pointerId }
-  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
-  window.eypcFloat?.dragStart(event.screenX, event.screenY)
+  try { rootElement.value?.setPointerCapture?.(event.pointerId) } catch { /* Window listeners retain the gesture if capture is unavailable. */ }
+  if (window.eypcFloat?.dragStart(event.screenX, event.screenY) !== true) drag = null
 }
 
 function onPointerMove(event: PointerEvent) {
@@ -2846,15 +2888,28 @@ function onPointerUp(event: PointerEvent) {
   if (!drag || drag.pointerId !== event.pointerId) return
   ignoreCompactClick = drag.moved
   drag = null
+  const captureTarget = rootElement.value
+  if (captureTarget?.hasPointerCapture?.(event.pointerId)) captureTarget.releasePointerCapture(event.pointerId)
   window.eypcFloat?.dragEnd()
 }
 
 function onPointerCancel(event: PointerEvent) {
   if (!drag || drag.pointerId !== event.pointerId) return
-  ignoreCompactClick = drag.moved
+  ignoreCompactClick = true
   drag = null
-  window.eypcFloat?.dragEnd()
+  window.eypcFloat?.cancelInteraction?.()
 }
+
+function onLostDragCapture(event: PointerEvent) {
+  if (!drag || drag.pointerId !== event.pointerId) return
+  if (rootElement.value?.hasPointerCapture?.(event.pointerId)) return
+  // Capture can transfer from a child or be released by a native bounds update.
+  // A loss notification alone is not a user cancellation.
+  try { rootElement.value?.setPointerCapture?.(event.pointerId) } catch { /* window fallback */ }
+}
+function onWindowPointerMove(event: PointerEvent) { if (!eventInsideRoot(event)) onPointerMove(event) }
+function onWindowPointerUp(event: PointerEvent) { if (!eventInsideRoot(event)) onPointerUp(event) }
+function onWindowPointerCancel(event: PointerEvent) { if (!eventInsideRoot(event)) onPointerCancel(event) }
 
 function onMouseEnter() {
   hoverInside = true
@@ -2870,13 +2925,15 @@ function onCompactSurfacePointer(event: PointerEvent) {
 
 function scheduleCollapse() {
   if (collapseTimer) clearTimeout(collapseTimer)
-  if (focusWithin || resize || composer.value || panel.value || aliasEditor.value || quickJump.value.open || shiftPreview.value) return
+  if (drag || floatState.value.dragging || floatState.value.pinned || pendingConfirm.value || focusWithin || resize || composer.value || panel.value || aliasEditor.value || quickJump.value.open || shiftPreview.value) return
   collapseTimer = setTimeout(() => {
-    if (!hoverInside && !focusWithin && !resize && !composer.value && !panel.value && !aliasEditor.value && !quickJump.value.open && !shiftPreview.value) requestExpansion(false)
+    if (!hoverInside && !drag && !floatState.value.dragging && !floatState.value.pinned && !pendingConfirm.value && !focusWithin && !resize && !composer.value && !panel.value && !aliasEditor.value && !quickJump.value.open && !shiftPreview.value) requestExpansion(false)
   }, FLOAT_COLLAPSE_DELAY_MS)
 }
 
 function onMouseLeave() {
+  clearRailHover()
+  if (!drag && !floatState.value.dragging) suppressRailHover = false
   hoverInside = false
   hoveredTaskKey.value = ''
   clearActionHint()
@@ -3279,6 +3336,15 @@ onMounted(() => {
   desiredExpanded = expanded.value
   stopSnapshot = window.eypcFloat?.onSnapshot((value) => { applySnapshot(value) }) || null
   stopState = window.eypcFloat?.onState((value) => {
+    if (value.style === 'edge' && !edgeStyle.value) {
+      clearRailHover()
+      suppressRailHover = true
+    }
+    if (floatState.value.dragging && !value.dragging && drag) {
+      const pointerId = drag.pointerId
+      drag = null
+      if (rootElement.value?.hasPointerCapture?.(pointerId)) rootElement.value.releasePointerCapture(pointerId)
+    }
     floatState.value = value
     expanded.value = value.expanded
     desiredExpanded = value.expanded
@@ -3306,11 +3372,15 @@ onMounted(() => {
   }, { immediate: true })
   window.addEventListener('keydown', onWindowKeydown, true)
   window.addEventListener('keyup', onWindowKeyup, true)
+  window.addEventListener('pointermove', onWindowPointerMove)
+  window.addEventListener('pointerup', onWindowPointerUp)
+  window.addEventListener('pointercancel', onWindowPointerCancel)
   window.addEventListener('blur', onWindowBlur)
   window.addEventListener('resize', onWindowResize)
 })
 
 onUnmounted(() => {
+  clearRailHover()
   window.eypcFloat?.cancelInteraction?.()
   if (collapseTimer) clearTimeout(collapseTimer)
   clearActionHint()
@@ -3328,6 +3398,9 @@ onUnmounted(() => {
   searchLayoutObserver?.disconnect()
   window.removeEventListener('keydown', onWindowKeydown, true)
   window.removeEventListener('keyup', onWindowKeyup, true)
+  window.removeEventListener('pointermove', onWindowPointerMove)
+  window.removeEventListener('pointerup', onWindowPointerUp)
+  window.removeEventListener('pointercancel', onWindowPointerCancel)
   window.removeEventListener('blur', onWindowBlur)
   window.removeEventListener('resize', onWindowResize)
   stopSnapshot?.()
@@ -3340,7 +3413,7 @@ onUnmounted(() => {
   <main
     ref="rootElement"
     class="codex-float-root"
-    :class="[{ expanded, resizing: floatState.resizing, card: settings?.style === 'card', water: settings?.style !== 'card' }, floatState.resizeCorner ? `resize-${floatState.resizeCorner}` : '']"
+    :class="[{ expanded, resizing: floatState.resizing, card: settings?.style === 'card', water: settings?.style === 'water', edge: edgeStyle, dragging: floatState.dragging }, floatState.resizeCorner ? `resize-${floatState.resizeCorner}` : '']"
     :style="rootStyle"
     :data-companion-revision="renderedTaskRevision || undefined"
     tabindex="-1"
@@ -3348,6 +3421,7 @@ onUnmounted(() => {
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
+    @lostpointercapture="onLostDragCapture"
     @pointerenter="onMouseEnter"
     @pointerleave="onMouseLeave"
     @focusin="onFocusIn"
@@ -3365,7 +3439,12 @@ onUnmounted(() => {
       <strong>{{ runtimeIdentityMismatch ? '需要重载' : '正在连接' }}</strong>
       <span v-if="expanded">{{ runtimeReloadMessage }}</span>
     </div>
-    <div v-if="!expanded" class="float-compact-shell" :class="settings?.style === 'card' ? 'card-shell' : 'water-shell'">
+    <CompanionEdgeRail v-if="edgeStyle" class="float-edge-anchor" :style="edgeSlotStyle"
+      :edge="floatState.edge || 'right'" :codex-percent="companionSlice?.providers.codex === false ? null : selectedWeekly?.bucket.remainingPercent ?? null"
+      :claude-percent="companionSlice?.providers.claude ? companionSlice.claudeQuota.weekly?.remainingPercent ?? null : null"
+      :counts="compactCounts" @action="openCompactStatus" @hover="onRailHover" @leave="onRailLeave" @pointerenter="onMouseEnter" @pointerleave="onMouseLeave" />
+    <div v-if="!expanded && !edgeStyle" class="float-compact-drag-zone" aria-hidden="true" @click.stop />
+    <div v-if="!expanded && !edgeStyle" class="float-compact-shell" :class="settings?.style === 'card' ? 'card-shell' : 'water-shell'">
       <button
         type="button"
         class="float-compact"
@@ -3420,7 +3499,12 @@ onUnmounted(() => {
       <div v-if="compactCounterHintText" class="float-compact-counter-hint" role="tooltip">{{ compactCounterHintText }}</div>
     </div>
 
-    <section v-else class="float-expanded-card" aria-label="Codex Companion">
+    <section v-if="expanded" class="float-expanded-card" :style="edgeStyle ? edgePanelStyle : undefined" aria-label="Codex Companion" @pointerenter="onMouseEnter" @pointerleave="onMouseLeave">
+      <header v-if="edgeStyle" class="float-edge-preview-header float-drag-handle">
+        <span>Companion</span>
+        <button type="button" :class="{ pinned: floatState.pinned }" :aria-pressed="floatState.pinned"
+          :aria-label="floatState.pinned ? '取消固定预览' : '固定预览'" @pointerdown.stop @click.stop="togglePreviewPin"><Pin :size="13" /></button>
+      </header>
       <div class="float-task-tabs" role="tablist" aria-label="会话分组">
         <button
           v-for="tab in tabs"
@@ -3458,7 +3542,7 @@ onUnmounted(() => {
         <span aria-live="polite">{{ projectCount }} 项目 · {{ projectTaskCount }} 任务</span>
       </div>
 
-      <div class="float-drag-handle" aria-hidden="true" />
+      <div v-if="!edgeStyle" class="float-drag-handle" aria-hidden="true" />
 
       <label class="float-search">
         <button

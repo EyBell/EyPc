@@ -38,7 +38,7 @@ afterEach(() => vi.useRealTimers())
 interface FloatSnapshot {
   version?: 1 | 2
   baseRevision?: number
-  style: 'water' | 'card'
+  style: 'water' | 'card' | 'edge'
   conversationInboxEnabled: boolean
   expandedFields: string[]
   quota: Record<string, unknown>
@@ -283,7 +283,8 @@ function snapshot(overrides: Partial<FloatSnapshot> = {}): FloatSnapshot {
   }
 }
 
-function loadPreloadHarness(options: { leftoverWindows?: Array<Record<string, any>> } = {}) {
+function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Array<Record<string, any>> } = {}) {
+  const nativeBounds = (bounds: Rect): Rect => ({ ...bounds, y: Math.max(options.minimumY ?? -Infinity, bounds.y) })
   const leftoverWindows = options.leftoverWindows || []
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const ipcHandlers = new Map<string, (...args: unknown[]) => void>()
@@ -300,7 +301,10 @@ function loadPreloadHarness(options: { leftoverWindows?: Array<Record<string, an
   const floatWindow = {
     isDestroyed: () => floatDestroyed,
     getBounds: () => ({ ...(floatBounds as Rect) }),
-    setBounds: vi.fn((bounds: Rect) => { floatBounds = { ...bounds } }),
+    setBounds: vi.fn((bounds: Rect) => {
+      if (!Object.values(bounds).every(Number.isInteger)) throw new TypeError('Rectangle requires integer coordinates')
+      floatBounds = nativeBounds(bounds)
+    }),
     close: vi.fn(() => { floatDestroyed = true }),
     setAlwaysOnTop: vi.fn(),
     isAlwaysOnTop: vi.fn(() => true),
@@ -318,7 +322,7 @@ function loadPreloadHarness(options: { leftoverWindows?: Array<Record<string, an
     createBrowserWindow: vi.fn((_url: string, options: Rect, loaded: () => void) => {
       windowLoadedCallbacks.push(loaded)
       floatDestroyed = false
-      floatBounds = { x: options.x, y: options.y, width: options.width, height: options.height }
+      floatBounds = nativeBounds({ x: options.x, y: options.y, width: options.width, height: options.height })
       return floatWindow
     }),
     onPluginEnter: (listener: (action: { code?: string } | null) => void) => { pluginEnterListeners.push(listener) },
@@ -569,7 +573,7 @@ describe('Codex float preload sizing', () => {
   it('uses exact compact dimensions for the water and horizontal card skins', () => {
     const { geometry } = loadPreloadHarness()
 
-    expect({ ...geometry.codexFloatDesiredSize(snapshot({ style: 'water' }), false) }).toEqual({ width: 104, height: 104 })
+    expect({ ...geometry.codexFloatDesiredSize(snapshot({ style: 'water' }), false) }).toEqual({ width: 104, height: 99 })
     expect({ ...geometry.codexFloatDesiredSize(snapshot({ style: 'card' }), false) }).toEqual({ width: 166, height: 92 })
   })
 
@@ -635,13 +639,13 @@ describe('Codex float preload sizing', () => {
     const position = { displayId: 'right', x: 3244, y: 120, edge: 'right' }
 
     expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
-    expect(bounds()).toEqual({ x: 3244, y: 120, width: 104, height: 104 })
+    expect(bounds()).toEqual({ x: 3261, y: 125, width: 104, height: 99 })
     expect(floatWindow.setAlwaysOnTop).toHaveBeenCalledWith(true, 'floating')
     expect(floatWindow.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, { visibleOnFullScreen: true })
     expect(bridge.diagnostics()).toMatchObject({ supported: true, alwaysOnTop: true, allWorkspaces: true, visibleOnFullScreen: true })
 
     expect(bridge.sync({ visible: true, snapshot: snapshot({ style: 'card' }), position })).toBe(true)
-    expect(bounds()).toEqual({ x: 3182, y: 120, width: 166, height: 92 })
+    expect(bounds()).toEqual({ x: 3199, y: 120, width: 166, height: 92 })
 
     setExpansion(ipcHandlers, true, false)
     expect(bounds()).toEqual({ x: 2988, y: 120, width: 360, height: 370 })
@@ -671,7 +675,7 @@ describe('Codex float preload sizing', () => {
     bridge.sync({ visible: true, snapshot: snapshot(), position })
 
     expect(bridge.activate()).toBe(true)
-    expect(bounds()).toEqual({ x: 2988, y: 120, width: 360, height: 370 })
+    expect(bounds()).toEqual({ x: 2988, y: 125, width: 360, height: 370 })
     expect(floatWindow.show).toHaveBeenCalledTimes(1)
     expect(floatWindow.focus).toHaveBeenCalledTimes(1)
     expect(sent.some((item) => item.channel === 'eypc-float:activate')).toBe(true)
@@ -688,14 +692,14 @@ describe('Codex float preload sizing', () => {
 
     ipcHandlers.get('eypc-float:resize-start')?.({}, { screenX: original.x, screenY: original.y + original.height, corner: 'bottom-left' })
     ipcHandlers.get('eypc-float:resize-move')?.({}, { screenX: original.x - 100, screenY: original.y + 400 })
-    expect(bounds()).toEqual({ x: 2888, y: 120, width: 460, height: 400 })
+    expect(bounds()).toEqual({ x: 2888, y: 125, width: 460, height: 400 })
     expect(actions).toHaveLength(0)
 
     ipcHandlers.get('eypc-float:resize-end')?.()
     expect(actions).toEqual([{
       actionId: 'codex.float.geometry.save',
       args: {
-        position: { displayId: 'right', x: 2888, y: 120, edge: 'right' },
+        position: { displayId: 'right', x: 3244, y: 120, edge: 'right' },
         expandedSize: expect.objectContaining({ displayId: 'right', width: 460, height: 400 })
       }
     }])
@@ -734,7 +738,7 @@ describe('Codex float preload sizing', () => {
     await vi.advanceTimersByTimeAsync(10_001)
     setExpansion(ipcHandlers, false, false)
 
-    expect(bounds()).toEqual({ x: 3244, y: 120, width: 104, height: 104 })
+    expect(bounds()).toEqual({ x: 3261, y: 125, width: 104, height: 99 })
   })
 
   it('does not convert auto size to a manual preference when the resize handle is only clicked', () => {
@@ -758,7 +762,7 @@ describe('Codex float preload sizing', () => {
     expect(bounds()).toEqual({ x: 1932, y: -88, width: 1416, height: 876 })
 
     expect(bridge.resetGeometry({ position: { ...position, displayId: 'right' }, expandedSizes: [{ displayId: 'left', width: 700, height: 600, updatedAt: 100 }] })).toBe(true)
-    expect(bounds()).toEqual({ x: 2988, y: 120, width: 360, height: 370 })
+    expect(bounds()).toEqual({ x: 2988, y: 125, width: 360, height: 370 })
   })
 
   it('retains the persisted edge at corners where nearest-edge inference is ambiguous', () => {
@@ -766,10 +770,10 @@ describe('Codex float preload sizing', () => {
     const position = { displayId: 'right', x: 3000, y: 684, edge: 'bottom' }
 
     expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
-    expect(bounds()).toEqual({ x: 3000, y: 684, width: 104, height: 104 })
+    expect(bounds()).toEqual({ x: 3000, y: 706, width: 104, height: 99 })
 
     expect(bridge.sync({ visible: true, snapshot: snapshot({ style: 'card' }), position })).toBe(true)
-    expect(bounds()).toEqual({ x: 3000, y: 696, width: 166, height: 92 })
+    expect(bounds()).toEqual({ x: 3000, y: 713, width: 166, height: 92 })
 
     setExpansion(ipcHandlers, true, true)
     expect(bounds()).toEqual({ x: 2988, y: 418, width: 360, height: 370 })
@@ -931,4 +935,199 @@ describe('Codex float preload sizing', () => {
       expect(createCount()).toBe(2)
     }
   })
+})
+
+describe('edge rail native interaction contract', () => {
+  const position = { version: 2, displayId: 'right', edge: 'right', edgeOffset: .5, x: 3352, y: 290 }
+  const state = (sent: Array<{ channel: string; payload: any }>) => sent.filter((item) => item.channel === 'eypc-float:state').at(-1)!.payload
+  it('preserves the line anchor when pinned, restores after cancellation, and never saves a click', () => {
+    const h = loadPreloadHarness()
+    const actions: unknown[] = []
+    h.bridge.onAction((action) => actions.push(action))
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position })
+    setExpansion(h.ipcHandlers, true, true)
+    const before = state(h.sent)
+    expect(before.pinned).toBe(true)
+    expect(before.placement.bounds.x + before.placement.rail.x).toBe(3352)
+    expect(h.floatWindow.setAlwaysOnTop).toHaveBeenCalledWith(true, 'pop-up-menu')
+    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: 3357, screenY: 300 })
+    expect(h.bounds()).toEqual(before.placement.bounds)
+    expect(state(h.sent).placement.rail).toEqual(before.placement.rail)
+    expect(state(h.sent)).toMatchObject({ expanded: false, pinned: true, dragging: true })
+    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: 3300, screenY: 320 })
+    expect(h.bounds()).toMatchObject({ width: before.placement.bounds.width, height: before.placement.bounds.height })
+    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: 3357, screenY: 300 })
+    h.ipcHandlers.get('eypc-float:drag-end')!({}, {})
+    expect(state(h.sent)).toMatchObject({ expanded: true, pinned: true, dragging: false })
+    expect(actions).toEqual([])
+    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: 3357, screenY: 300 })
+    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: -500, screenY: 100 })
+    h.ipcHandlers.get('eypc-float:interaction-cancel')!({}, {})
+    expect(state(h.sent).placement).toEqual(before.placement)
+    expect(actions).toEqual([])
+    h.bridge.close()
+  })
+  it('snaps a cross-screen drag, reads back actual coordinates, and retains them on stale sync', () => {
+    const h = loadPreloadHarness()
+    const actions: any[] = []
+    h.bridge.onAction((action) => actions.push(action))
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position })
+    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: 3357, screenY: 300 })
+    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: -600, screenY: 5 })
+    h.ipcHandlers.get('eypc-float:drag-end')!({}, {})
+    expect(actions).toHaveLength(1)
+    expect(actions[0].args.position).toMatchObject({ version: 2, displayId: 'left', edge: 'top', y: 0 })
+    const placed = state(h.sent).placement
+    expect(actions[0].args.position.x).toBe(h.bounds().x + placed.rail.x)
+    expect(placed.rail).toMatchObject({ width: 120, height: 8 })
+    const dropped = { ...h.bounds() }
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position })
+    expect(h.bounds()).toEqual(dropped)
+    h.bridge.close()
+  })
+  it('persists native readback and restores the same normalized point on a fresh window', () => {
+    const h = loadPreloadHarness()
+    const actions: any[] = []
+    h.bridge.onAction((action) => actions.push(action))
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position })
+    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: 3357, screenY: 300 })
+    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: 3300, screenY: 450 })
+    const nativeSet = h.floatWindow.setBounds.getMockImplementation()!
+    h.floatWindow.setBounds.mockImplementationOnce((bounds) => nativeSet({ ...bounds, y: bounds.y + 9 }))
+    h.ipcHandlers.get('eypc-float:drag-end')!({}, {})
+    const saved = actions[0].args.position
+    expect(saved.y).toBe(449)
+    expect(saved.y).toBe(h.bounds().y + state(h.sent).placement.rail.y)
+    const fresh = loadPreloadHarness()
+    fresh.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position: saved })
+    expect(fresh.bounds()).toEqual(h.bounds())
+    h.bridge.close()
+    fresh.bridge.close()
+  })
+  it('does not rewrite ownership when the native window ignores a move', () => {
+    const h = loadPreloadHarness()
+    const actions: any[] = []
+    h.bridge.onAction((action) => actions.push(action))
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position })
+    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: 3357, screenY: 300 })
+    h.floatWindow.setBounds.mockImplementationOnce(() => undefined)
+    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: -600, screenY: 5 })
+    h.ipcHandlers.get('eypc-float:drag-end')!({}, {})
+    expect(actions).toEqual([])
+    h.bridge.close()
+  })
+  it.each(['water', 'card', 'edge'] as const)('rounds fractional screen-pointer deltas before %s native bounds calls', (style) => {
+    const h = loadPreloadHarness()
+    const actions: any[] = []
+    h.bridge.onAction((action) => actions.push(action))
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style }), position })
+    const before = { ...h.bounds() }
+    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: 3300.2, screenY: 300.4 })
+    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: 3288.8, screenY: 325.9 })
+    expect(h.bounds()).toEqual({ ...before, x: Math.round(before.x - 11.4), y: Math.round(before.y + 25.5) })
+    expect(h.bounds()).not.toEqual(before)
+    h.ipcHandlers.get('eypc-float:drag-end')!({}, {})
+    expect(actions).toHaveLength(1)
+    expect(Object.values(h.bounds()).every(Number.isInteger)).toBe(true)
+    h.bridge.close()
+  })
+  it('does not persist failed native positioning', () => {
+    const h = loadPreloadHarness()
+    const actions: any[] = []
+    h.bridge.onAction((action) => actions.push(action))
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position })
+    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: 3357, screenY: 300 })
+    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: 3000, screenY: 200 })
+    h.floatWindow.setBounds.mockImplementationOnce(() => { throw new Error('native positioning failed') })
+    h.ipcHandlers.get('eypc-float:drag-end')!({}, {})
+    expect(actions).toEqual([])
+    expect(state(h.sent).placement.bounds.x + state(h.sent).placement.rail.x).toBe(3352)
+    h.bridge.close()
+  })
+  it('returns to an absent preferred screen after reconnect without rewriting its preference', () => {
+    const h = loadPreloadHarness()
+    const actions: any[] = []
+    h.bridge.onAction((action) => actions.push(action))
+    const preferred = { ...position, displayId: 'external', displayHint: { bounds: { x: 4000, y: 0, width: 1200, height: 800 } } }
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position: preferred })
+    expect(state(h.sent).placement.bounds.x + state(h.sent).placement.rail.x).toBe(3352)
+    h.displays.push({ id: 'external', bounds: preferred.displayHint.bounds, workArea: preferred.displayHint.bounds })
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position: preferred })
+    expect(state(h.sent).placement.bounds.x + state(h.sent).placement.rail.x).toBe(5192)
+    expect(actions).toEqual([])
+    h.bridge.close()
+  })
+})
+
+
+describe('automatic strip docking', () => {
+  const position = { version: 2, displayId: 'right', edge: 'right', edgeOffset: .5 }
+  const state = (h: ReturnType<typeof loadPreloadHarness>) => h.sent.filter((item) => item.channel === 'eypc-float:state').at(-1)!.payload as any
+  it.each(['water', 'card'] as const)('turns %s into a top strip at the reachable macOS boundary and persists both settings', (style) => {
+    const h = loadPreloadHarness()
+    h.displays[1]!.workArea = { ...h.displays[1]!.bounds, y: -68, height: 868 }
+    const nativeSet = h.floatWindow.setBounds.getMockImplementation()!
+    h.floatWindow.setBounds.mockImplementation((bounds) => nativeSet({ ...bounds, y: Math.max(-68, bounds.y) }))
+    const actions: any[] = []
+    h.bridge.onAction((action) => actions.push(action))
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style, baseRevision: 10 }), position })
+    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: 3300, screenY: 300 })
+    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: 3300, screenY: -100 })
+    h.ipcHandlers.get('eypc-float:drag-end')!({}, {})
+    expect(actions).toHaveLength(1)
+    expect(actions[0].args).toMatchObject({ displayStyle: 'edge', position: { edge: 'top', y: -68, displayId: 'right' } })
+    expect(state(h)).toMatchObject({ style: 'edge', edge: 'top', expanded: false, placement: { rail: { width: 120, height: 8 } } })
+    const dropped = h.bounds()
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style, baseRevision: 11 }), position })
+    expect(state(h).style).toBe('edge')
+    expect(h.bounds()).toEqual(dropped)
+    const saved = actions[0].args.position
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge', baseRevision: 12 }), position: saved })
+    setExpansion(h.ipcHandlers, true, false)
+    expect(h.bounds().y + state(h).placement.rail.y).toBe(-68)
+    setExpansion(h.ipcHandlers, false, false)
+    expect(h.bounds()).toEqual(dropped)
+    const fresh = loadPreloadHarness({ minimumY: -68 })
+    fresh.displays[1]!.workArea = h.displays[1]!.workArea
+    const freshSet = fresh.floatWindow.setBounds.getMockImplementation()!
+    fresh.floatWindow.setBounds.mockImplementation((bounds) => freshSet({ ...bounds, y: Math.max(-68, bounds.y) }))
+    fresh.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position: saved })
+    expect(fresh.bounds()).toEqual(dropped)
+    // An explicit style selection still takes effect after persistence acknowledges the drop.
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style, baseRevision: 13 }), position: saved })
+    expect(state(h).style).toBe(style)
+    h.bridge.close(); fresh.bridge.close()
+  })
+  it.each(['cancel', 'failed', 'click'])('retains water style and settings on %s', (finish) => {
+    const h = loadPreloadHarness()
+    const actions: any[] = []
+    h.bridge.onAction((action) => actions.push(action))
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'water' }), position })
+    const before = h.bounds()
+    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: 3300, screenY: 300 })
+    if (finish !== 'click') h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: 3300, screenY: 100 })
+    if (finish === 'failed') h.floatWindow.setBounds.mockImplementationOnce(() => { throw new Error('write rejected') })
+    h.ipcHandlers.get(finish === 'cancel' ? 'eypc-float:interaction-cancel' : 'eypc-float:drag-end')!({}, {})
+    expect(state(h).style).toBe('water')
+    expect(h.bounds()).toEqual(before)
+    expect(actions).toEqual([])
+    h.bridge.close()
+  })
+})
+
+
+it('crops only the water top padding and restores its paint anchor after cancel and expansion', () => {
+  const h = loadPreloadHarness()
+  const position = { version: 2, displayId: 'right', edge: 'top', edgeOffset: .5 }
+  h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'water' }), position })
+  const before = h.bounds()
+  expect(before).toMatchObject({ y: -100, width: 104, height: 99 })
+  h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: before.x + 40, screenY: -40 })
+  h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: before.x + 70, screenY: 40 })
+  h.ipcHandlers.get('eypc-float:interaction-cancel')!({}, {})
+  expect(h.bounds()).toEqual(before)
+  setExpansion(h.ipcHandlers, true, false)
+  setExpansion(h.ipcHandlers, false, false)
+  expect(h.bounds()).toEqual(before)
+  h.bridge.close()
 })

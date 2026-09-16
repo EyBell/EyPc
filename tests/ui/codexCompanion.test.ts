@@ -5,6 +5,8 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import CodexWaterBall from '../../src/components/CodexWaterBall.vue'
 import FloatApp from '../../src/FloatApp.vue'
+import CompanionEdgeRail from '../../src/components/CompanionEdgeRail.vue'
+import type { CodexFloatWindowState } from '../../src/float-env'
 import CodexPage from '../../src/pages/CodexPage.vue'
 import {
   CODEX_TASK_STATE_REVISION,
@@ -1937,4 +1939,213 @@ describe('Codex Companion V4 UI contract', () => {
     expect(stale.wrapper.find('.float-search-meta').text()).not.toContain('数据已过期')
   })
 
+})
+
+
+describe('full-width compact lower drag area', () => {
+  it.each(['water', 'card', 'edge'] as const)('drags from %s bottom padding/corners without consulting circular button geometry', async (style) => {
+    const source = floatSnapshot()
+    source.style = style
+    const { wrapper, setExpansion } = mountFloat(false, source)
+    await wrapper.vm.$nextTick()
+    const zone = wrapper.get('.float-compact-drag-zone')
+    const compactRect = wrapper.find('.float-compact').exists() ? vi.spyOn(wrapper.get('.float-compact').element, 'getBoundingClientRect') : null
+    const width = style === 'water' ? 104 : style === 'card' ? 166 : 40
+    for (const x of [0, width / 2, width - 1]) {
+      await zone.trigger('pointerdown', { button: 0, pointerId: 1, clientX: x, clientY: 103, screenX: x, screenY: 103 })
+      await zone.trigger('pointermove', { pointerId: 1, screenX: x + 10, screenY: 113 })
+      await zone.trigger('pointerup', { pointerId: 1 })
+      await zone.trigger('click', { detail: 1 })
+    }
+    expect(window.eypcFloat!.dragStart).toHaveBeenCalledTimes(3)
+    expect(window.eypcFloat!.dragMove).toHaveBeenCalledTimes(3)
+    expect(window.eypcFloat!.dragEnd).toHaveBeenCalledTimes(3)
+    expect(setExpansion).not.toHaveBeenCalled()
+    if (compactRect) expect(compactRect).not.toHaveBeenCalled()
+    const starts = vi.mocked(window.eypcFloat!.dragStart).mock.calls.length
+    for (const badge of wrapper.findAll('.float-counter, .edge-counters button')) await badge.trigger('pointerdown', { button: 0, pointerId: 2 })
+    expect(window.eypcFloat!.dragStart).toHaveBeenCalledTimes(starts)
+  })
+  it('paints one full-width lower-half grab surface below the counter buttons', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
+    const style = document.createElement('style')
+    style.textContent = css
+    document.head.append(style)
+    const root = document.createElement('main')
+    root.className = 'codex-float-root'
+    root.innerHTML = '<div class="float-compact-drag-zone"></div><div class="float-compact-shell"><button class="float-counter">1</button></div>'
+    document.body.append(root)
+    const zone = getComputedStyle(root.firstElementChild!)
+    expect([zone.top, zone.left, zone.right, zone.bottom]).toEqual(['50%', '0px', '0px', '0px'])
+    expect(zone.cursor).toBe('grab')
+    expect(Number(zone.zIndex)).toBeLessThan(Number(getComputedStyle(root.querySelector('button')!).zIndex))
+    root.classList.add('dragging')
+    expect(getComputedStyle(root.firstElementChild!).cursor).toBe('grabbing')
+    root.remove()
+    style.remove()
+  })
+})
+
+describe('edge rail gestures', () => {
+  it('waits 200ms, cancels hover on press, requires 5px and cancels instead of committing', async () => {
+    vi.useFakeTimers()
+    const source = floatSnapshot()
+    source.style = 'edge'
+    const cancelInteraction = vi.fn(() => true)
+    const { wrapper, setExpansion } = mountFloat(false, source, { cancelInteraction })
+    await wrapper.vm.$nextTick()
+    const rail = wrapper.get('.companion-edge-line')
+    await rail.trigger('pointerenter', { pointerType: 'mouse' })
+    await vi.advanceTimersByTimeAsync(199)
+    expect(setExpansion).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(setExpansion).toHaveBeenLastCalledWith(true, false)
+    setExpansion.mockClear()
+    await rail.trigger('pointerleave')
+    await rail.trigger('pointerdown', { button: 0, screenX: 10, screenY: 10, pointerId: 1 })
+    expect(window.eypcFloat!.dragStart).toHaveBeenCalledWith(10, 10)
+    await rail.trigger('pointerenter', { pointerType: 'mouse' })
+    await vi.advanceTimersByTimeAsync(250)
+    expect(setExpansion).not.toHaveBeenCalled()
+    await rail.trigger('pointermove', { screenX: 13, screenY: 13, pointerId: 1 })
+    expect(window.eypcFloat!.dragMove).not.toHaveBeenCalled()
+    await rail.trigger('pointermove', { screenX: 13, screenY: 14, pointerId: 1 })
+    expect(window.eypcFloat!.dragMove).toHaveBeenCalledExactlyOnceWith(13, 14)
+    await rail.trigger('pointercancel', { pointerId: 1 })
+    expect(cancelInteraction).toHaveBeenCalledTimes(1)
+    expect(window.eypcFloat!.dragEnd).not.toHaveBeenCalled()
+  })
+  it('continues after lost capture, cancels explicit pointercancel, and unlocks after a host timeout', async () => {
+    const source = floatSnapshot()
+    source.style = 'edge'
+    let receiveState!: (value: CodexFloatWindowState) => void
+    const cancelInteraction = vi.fn(() => true)
+    const { wrapper } = mountFloat(false, source, { cancelInteraction, onState: (listener) => { receiveState = listener; return () => undefined } })
+    await wrapper.vm.$nextTick()
+    const rail = wrapper.get('.companion-edge-line')
+    await rail.trigger('pointerdown', { button: 0, screenX: 10, screenY: 10, pointerId: 1 })
+    await wrapper.trigger('lostpointercapture', { pointerId: 1 })
+    expect(cancelInteraction).not.toHaveBeenCalled()
+    await rail.trigger('pointermove', { screenX: 20, screenY: 10, pointerId: 1 })
+    expect(window.eypcFloat!.dragMove).toHaveBeenCalledWith(20, 10)
+    await rail.trigger('pointercancel', { pointerId: 1 })
+    expect(cancelInteraction).toHaveBeenCalledTimes(1)
+    expect(window.eypcFloat!.dragEnd).not.toHaveBeenCalled()
+    await rail.trigger('pointerdown', { button: 0, screenX: 10, screenY: 10, pointerId: 2 })
+    const state = { expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null }
+    receiveState({ ...state, dragging: true })
+    receiveState({ ...state, dragging: false })
+    await rail.trigger('pointerdown', { button: 0, screenX: 10, screenY: 10, pointerId: 3 })
+    expect(window.eypcFloat!.dragStart).toHaveBeenCalledTimes(3)
+  })
+  it('starts despite native capture rejection and finishes through window-level events', async () => {
+    const source = floatSnapshot()
+    source.style = 'edge'
+    const { wrapper } = mountFloat(false, source)
+    await wrapper.vm.$nextTick()
+    Object.defineProperty(wrapper.element, 'setPointerCapture', { configurable: true, value: () => { throw new DOMException('No active pointer', 'NotFoundError') } })
+    const rail = wrapper.get('.companion-edge-line')
+    await rail.trigger('pointerdown', { button: 0, screenX: 10, screenY: 10, pointerId: 1 })
+    expect(window.eypcFloat!.dragStart).toHaveBeenCalledWith(10, 10)
+    window.dispatchEvent(new PointerEvent('pointermove', { screenX: 20, screenY: 25, pointerId: 1, buttons: 1 }))
+    expect(window.eypcFloat!.dragMove).toHaveBeenCalledWith(20, 25)
+    window.dispatchEvent(new PointerEvent('pointerup', { screenX: 20, screenY: 25, pointerId: 1 }))
+    expect(window.eypcFloat!.dragEnd).toHaveBeenCalledTimes(1)
+  })
+  it('retains the rail through expansion, pins independently, and allows the header blank area to drag', async () => {
+    const source = floatSnapshot()
+    source.style = 'edge'
+    let receiveState!: (value: CodexFloatWindowState) => void
+    const { wrapper, setExpansion } = mountFloat(false, source, { onState: (listener) => { receiveState = listener; return () => undefined } })
+    await wrapper.vm.$nextTick()
+    const line = wrapper.get('.companion-edge-line').element
+    receiveState({ expanded: true, pinned: false, resizing: false, resizeCorner: null, expandedSize: null, edge: 'top' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.companion-edge-line').element).toBe(line)
+    const pin = wrapper.get('[aria-label="固定预览"]')
+    await pin.trigger('pointerdown', { button: 0, pointerId: 1 })
+    expect(window.eypcFloat!.dragStart).not.toHaveBeenCalled()
+    await pin.trigger('click')
+    expect(setExpansion).toHaveBeenLastCalledWith(true, true)
+    await wrapper.get('.float-edge-preview-header span').trigger('pointerdown', { button: 0, screenX: 10, screenY: 20, pointerId: 2 })
+    expect(window.eypcFloat!.dragStart).toHaveBeenCalledWith(10, 20)
+  })
+  it('collapses after 220ms outside the preview and holds when pinned', async () => {
+    vi.useFakeTimers()
+    const source = floatSnapshot()
+    source.style = 'edge'
+    let receiveState!: (value: CodexFloatWindowState) => void
+    const { wrapper, setExpansion } = mountFloat(true, source, { onState: (listener) => { receiveState = listener; return () => undefined } })
+    await wrapper.vm.$nextTick()
+    const card = wrapper.get('.float-expanded-card')
+    await card.trigger('pointerleave')
+    await vi.advanceTimersByTimeAsync(219)
+    expect(setExpansion).not.toHaveBeenCalled()
+    await card.trigger('pointerenter')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(setExpansion).not.toHaveBeenCalled()
+    await card.trigger('pointerleave')
+    await vi.advanceTimersByTimeAsync(220)
+    expect(setExpansion).toHaveBeenLastCalledWith(false, false)
+    setExpansion.mockClear()
+    receiveState({ expanded: true, pinned: true, resizing: false, resizeCorner: null, expandedSize: null })
+    await card.trigger('pointerleave')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(setExpansion).not.toHaveBeenCalled()
+  })
+  it('isolates counter gestures, cancels release outside, and keeps unavailable quota distinct from zero', async () => {
+    const wrapper = mount(CompanionEdgeRail, { props: { edge: 'right', codexPercent: 0, claudePercent: null, counts: { input: 100, active: 2, unread: 0 } } })
+    mounted.push(wrapper)
+    expect(wrapper.get('.companion-edge-line').attributes('aria-label')).toContain('Codex 周额度 0%')
+    expect(wrapper.get('.companion-edge-line').attributes('aria-label')).toContain('Claude 周额度 暂无数据')
+    expect(wrapper.findAll('.edge-counters button')).toHaveLength(2)
+    const badge = wrapper.get('button.input')
+    expect(badge.text()).toBe('99+')
+    await badge.trigger('pointerdown')
+    await badge.trigger('pointerleave')
+    await badge.trigger('click', { detail: 1 })
+    expect(wrapper.emitted('action')).toBeUndefined()
+    await badge.trigger('pointerdown')
+    await badge.trigger('click', { detail: 1 })
+    expect(wrapper.emitted('action')).toEqual([['input']])
+  })
+})
+
+
+it('renders a native auto-docked strip before the newer quota snapshot and suppresses immediate hover', async () => {
+  vi.useFakeTimers()
+  const source = floatSnapshot()
+  source.style = 'water'
+  source.baseRevision = 10
+  let receiveState: ((state: import('../../src/float-env').CodexFloatWindowState) => void) | undefined
+  const { wrapper, setExpansion } = mountFloat(false, source, { onState: (listener) => { receiveState = listener; return () => undefined } })
+  receiveState!({ style: 'edge', edge: 'top', expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null,
+    placement: { bounds: { x: 400, y: 32, width: 120, height: 40 }, rail: { x: 0, y: 0, width: 120, height: 8 }, slot: { x: 0, y: 0, width: 120, height: 40 }, panel: null } })
+  await wrapper.vm.$nextTick()
+  expect(wrapper.find('.float-compact-shell').exists()).toBe(false)
+  const rail = wrapper.get('.companion-edge-line')
+  expect(wrapper.classes()).toContain('edge')
+  await rail.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(250)
+  expect(setExpansion).not.toHaveBeenCalled()
+  await rail.trigger('pointerleave')
+  await rail.trigger('pointerenter', { pointerType: 'mouse' })
+  await vi.advanceTimersByTimeAsync(200)
+  expect(setExpansion).toHaveBeenLastCalledWith(true, false)
+})
+
+
+it('groups real quota readings and separate status-dot buttons in the micro readout', async () => {
+  const wrapper = mount(CompanionEdgeRail, { props: { edge: 'right', codexPercent: 19, claudePercent: 37, counts: { input: 0, active: 1, unread: 100 } } })
+  mounted.push(wrapper)
+  expect(wrapper.findAll('.edge-reading strong').map((node) => node.text())).toEqual(['19', '37'])
+  expect(wrapper.get('.edge-reading.codex').attributes('aria-label')).toBe('Codex 周额度 19%')
+  expect(wrapper.get('.edge-readout-body').findAll('button')).toHaveLength(2)
+  expect(wrapper.findAll('.edge-counter-dot')).toHaveLength(2)
+  await wrapper.get('button.active').trigger('click', { detail: 0 })
+  expect(wrapper.emitted('action')).toEqual([['active']])
+  await wrapper.setProps({ edge: 'top', codexPercent: null })
+  expect(wrapper.classes()).toContain('horizontal')
+  expect(wrapper.get('.edge-reading.codex strong').text()).toBe('—')
+  expect(wrapper.get('button.unread span').text()).toBe('99+')
 })

@@ -35,6 +35,7 @@ const { trace: freezeTrace } = require('../freeze-trace.cjs')
  */
 
 const { createCodexFloatWindowSize } = require('./float-window-size.cjs')
+const placement = require('./float-placement.cjs')
 
 const CODEX_FLOAT_BRIDGE_REVISION = 'codex-float-bridge-v1'
 const CODEX_FLOAT_WINDOW_TITLE = 'EyPc Codex'
@@ -70,7 +71,7 @@ const CODEX_FLOAT_CHANNELS = {
   recreate: 'eypc-float:recreate'
 }
 
-const CODEX_FLOAT_WATER_SIZE = { width: 104, height: 104 }
+const CODEX_FLOAT_WATER_SIZE = { width: 104, height: 99 }
 const CODEX_FLOAT_CARD_SIZE = { width: 166, height: 92 }
 const CODEX_FLOAT_EXPANDED_WIDTH = 360
 const CODEX_FLOAT_EXPANDED_MIN_WIDTH = 340
@@ -118,6 +119,7 @@ function createCodexFloatBridge(dependencies = {}) {
   let codexFloatPinned = false
   let codexFloatEdge = 'right'
   let codexFloatSnapshot = null
+  let codexFloatPendingDock = null
   let codexFloatBaseLastSentRevision = 0
   let codexFloatTaskLastSentRevision = 0
   let codexFloatTaskAppliedRevision = 0
@@ -136,6 +138,11 @@ function createCodexFloatBridge(dependencies = {}) {
   let codexFloatHealthTimer = null
   let codexFloatExpandedSizes = []
   let codexFloatPositionDisplayId = ''
+  let codexFloatAnchor = null
+  let codexFloatRailLayout = null
+  let codexFloatPreferredPosition = {}
+  let codexFloatSyncedPosition = ''
+  let codexFloatDisplaySignature = ''
   let codexFloatPersistent = false
   let codexFloatBoundMainRendererId = ''
   let codexFloatWorkspaceDiagnostics = {
@@ -147,6 +154,71 @@ function createCodexFloatBridge(dependencies = {}) {
     errorCode: process.platform === 'darwin' ? 'not-checked' : 'unsupported'
   }
   const codexFloatActionListeners = new Set()
+
+  const isEdgeFloat = () => codexFloatSnapshot?.style === 'edge'
+  function allFloatDisplays() {
+    try { return utools?.getAllDisplays?.().filter((display) => display && (display.bounds || display.workArea)) || [] } catch { return [] }
+  }
+  function resolveFloatDisplay(position) {
+    const displays = allFloatDisplays()
+    // Only a first use without saved coordinates follows the pointer.
+    const fallback = position?.displayId ? displays[0] : floatDisplayForPosition(null)
+    return placement.resolveDisplay(position, displays, fallback || floatDisplayForPosition(null)).display
+  }
+  function currentFloatDisplay() {
+    return allFloatDisplays().find((display) => String(display.id) === codexFloatPositionDisplayId)
+      || resolveFloatDisplay(codexFloatPreferredPosition)
+  }
+  function adoptFloatPosition(position) {
+    const display = resolveFloatDisplay(position)
+    const restored = placement.restoreAnchor(position, display, codexFloatSnapshot?.style)
+    codexFloatAnchor = restored.anchor
+    codexFloatEdge = restored.edge
+    codexFloatPositionDisplayId = String(display.id)
+    return display
+  }
+  function applyRailGeometry(expanded) {
+    if (!codexFloatAnchor || !codexFloatAlive()) return false
+    const display = currentFloatDisplay()
+    const size = expanded ? codexFloatDesiredSize(codexFloatSnapshot, true, display) : null
+    const layout = placement.railLayout(codexFloatAnchor, display, codexFloatEdge, size)
+    try {
+      const current = codexFloatWindow.getBounds()
+      if (['x', 'y', 'width', 'height'].some((key) => current[key] !== layout.bounds[key])) codexFloatWindow.setBounds(layout.bounds)
+      const actual = codexFloatWindow.getBounds()
+      codexFloatAnchor = { ...codexFloatAnchor, x: codexFloatAnchor.x + actual.x - layout.bounds.x, y: codexFloatAnchor.y + actual.y - layout.bounds.y }
+      codexFloatRailLayout = { ...layout, bounds: actual }
+      codexFloatExpanded = expanded
+      return true
+    } catch {
+      runtimeDiagnostics.record({ scope: 'float-geometry', event: 'position', outcome: 'failed', code: 'set-bounds-failed', level: 'error' })
+      return false
+    }
+  }
+  function persistFloatAnchor(display, autoDock = false) {
+    if (!codexFloatAnchor) return
+    const position = placement.savePosition(codexFloatAnchor, display, codexFloatEdge)
+    codexFloatPreferredPosition = position
+    emitCodexFloatAction('codex.float.position.save', { position, ...(autoDock ? { displayStyle: 'edge' } : {}) })
+  }
+  function reconcileFloatDisplays() {
+    if (!codexFloatAlive() || codexFloatDrag || codexFloatResize) return
+    const displays = allFloatDisplays()
+    if (!displays.length) return
+    const signature = JSON.stringify(displays.map((display) => [String(display.id), display.bounds, display.workArea, display.scaleFactor]))
+    if (signature === codexFloatDisplaySignature) return
+    const display = adoptFloatPosition(codexFloatPreferredPosition)
+    if (isEdgeFloat()) { if (!applyRailGeometry(codexFloatExpanded)) return }
+    else {
+      const initial = initialCodexFloatBounds(codexFloatPreferredPosition)
+      try { codexFloatWindow.setBounds(initial.bounds) } catch { return }
+      if (codexFloatExpanded) resizeCodexFloat(true, false)
+    }
+    codexFloatDisplaySignature = signature
+    codexFloatPositionDisplayId = String(display.id)
+    applyCodexFloatWorkspaceVisibility()
+    pushCodexFloatState()
+  }
 
   function codexFloatAlive() {
     if (!codexFloatWindow) return false
@@ -171,7 +243,7 @@ function createCodexFloatBridge(dependencies = {}) {
       return false
     }
     try {
-      codexFloatWindow.setAlwaysOnTop(true, 'floating')
+      codexFloatWindow.setAlwaysOnTop(true, isEdgeFloat() ? 'pop-up-menu' : 'floating')
       diagnostics.alwaysOnTop = typeof codexFloatWindow.isAlwaysOnTop === 'function' ? codexFloatWindow.isAlwaysOnTop() === true : true
     } catch {
       diagnostics.errorCode = 'always-on-top-failed'
@@ -286,7 +358,7 @@ function createCodexFloatBridge(dependencies = {}) {
     const displayId = String(display?.id || '')
     const exact = codexFloatExpandedSizes.find((entry) => entry.displayId === displayId)
     if (exact) return exact
-    if (codexFloatPositionDisplayId && codexFloatPositionDisplayId === displayId) return null
+    if (codexFloatPreferredPosition?.displayId && String(codexFloatPreferredPosition.displayId) === displayId) return null
     return codexFloatExpandedSizes[0] || null
   }
 
@@ -488,11 +560,15 @@ function createCodexFloatBridge(dependencies = {}) {
         expanded: codexFloatExpanded,
         pinned: codexFloatPinned,
         resizing: Boolean(codexFloatResize),
-        resizeCorner: codexFloatExpanded ? codexFloatResizeCorner(bounds, display, codexFloatEdge) : null,
+        dragging: Boolean(codexFloatDrag),
+        style: codexFloatSnapshot?.style,
+        edge: codexFloatEdge,
+        ...(isEdgeFloat() && codexFloatRailLayout ? { placement: codexFloatRailLayout } : {}),
+        resizeCorner: codexFloatExpanded && !isEdgeFloat() ? codexFloatResizeCorner(bounds, display, codexFloatEdge) : null,
         expandedSize: codexFloatExpanded ? {
           displayId: String(display.id || ''),
-          width: bounds.width,
-          height: bounds.height,
+          width: isEdgeFloat() ? codexFloatRailLayout?.panel?.width || bounds.width : bounds.width,
+          height: isEdgeFloat() ? codexFloatRailLayout?.panel?.height || bounds.height : bounds.height,
           manual: Boolean(preference)
         } : null
       })
@@ -503,15 +579,14 @@ function createCodexFloatBridge(dependencies = {}) {
   }
 
   function initialCodexFloatBounds(position) {
-    const display = floatDisplayForPosition(position)
-    const area = display.workArea || display.bounds
-    const size = codexFloatDesiredSize(codexFloatSnapshot, false, display)
-    const fallback = { x: area.x + area.width - size.width - CODEX_FLOAT_MARGIN, y: area.y + Math.round((area.height - size.height) / 2), ...size }
-    const requested = position && Number.isFinite(position.x) && Number.isFinite(position.y)
-      ? { x: position.x, y: position.y, ...size }
-      : fallback
-    const requestedEdge = position && validCodexFloatEdge(position.edge) ? position.edge : 'right'
-    return { display, bounds: alignFloatBoundsToEdge(requested, display, requestedEdge), edge: requestedEdge }
+    const display = adoptFloatPosition(position)
+    if (isEdgeFloat()) {
+      codexFloatRailLayout = placement.railLayout(codexFloatAnchor, display, codexFloatEdge)
+      return { display, bounds: codexFloatRailLayout.bounds, edge: codexFloatEdge }
+    }
+    codexFloatRailLayout = null
+    const size = codexFloatCollapsedSize(codexFloatSnapshot)
+    return { display, bounds: { x: codexFloatAnchor.x - 5, y: codexFloatAnchor.y - collapsedTopInset(), ...size }, edge: codexFloatEdge }
   }
 
   function codexFloatDevelopmentEntry() {
@@ -580,6 +655,7 @@ function createCodexFloatBridge(dependencies = {}) {
         else codexFloatWindow?.show()
       } catch {}
       pushCodexFloatSnapshot()
+      pushCodexFloatState()
     }
     try {
       codexFloatEdge = initial.edge
@@ -661,17 +737,14 @@ function createCodexFloatBridge(dependencies = {}) {
     if (codexFloatLastRecreateAt > 0 && now - codexFloatLastRecreateAt < cooldown) return false
     codexFloatLastRecreateAt = now
     const expanded = codexFloatExpanded
+    const pinned = codexFloatPinned
     const edge = codexFloatEdge
-    let position = { displayId: codexFloatPositionDisplayId, x: null, y: null, edge }
-    if (codexFloatAlive() && typeof codexFloatWindow.getBounds === 'function') {
-      try {
-        const bounds = codexFloatWindow.getBounds()
-        position = { displayId: codexFloatPositionDisplayId, x: bounds.x, y: bounds.y, edge }
-      } catch {}
-    }
+    let position = codexFloatPreferredPosition
+    // Recreate from the durable anchor, never the expanded preview rectangle.
     runtimeDiagnostics.record({ scope: 'float-health', event: 'controlled-recreate', outcome: 'started', code, level: 'info' })
     closeCodexFloat()
     codexFloatExpanded = expanded
+    codexFloatPinned = pinned
     codexFloatEdge = edge
     const created = createCodexFloat(position)
     if (created && expanded) resizeCodexFloat(true, false)
@@ -717,6 +790,7 @@ function createCodexFloatBridge(dependencies = {}) {
       codexFloatHealthTimer = null
       const now = Date.now()
       if (codexFloatPersistent && codexFloatAlive()) {
+        reconcileFloatDisplays()
         const age = codexFloatLastHeartbeatAt ? now - codexFloatLastHeartbeatAt : Number.POSITIVE_INFINITY
         if (codexFloatRecoveryDeadline && now >= codexFloatRecoveryDeadline && !codexFloatRecoveryReported) {
           codexFloatRecoveryReported = true
@@ -741,13 +815,38 @@ function createCodexFloatBridge(dependencies = {}) {
     codexFloatInteractionTimer = null
   }
 
+  // Only the card retains top padding. The water window is cropped to the
+  // ball's top edge while its 94 DIP artwork and bottom badges keep their size.
+  const collapsedTopInset = () => codexFloatSnapshot?.style === 'card' ? 5 : 0
+
+  function applyCollapsedAnchor() {
+    if (isEdgeFloat()) return applyRailGeometry(false)
+    try {
+      codexFloatWindow.setBounds({ x: codexFloatAnchor.x - 5, y: codexFloatAnchor.y - collapsedTopInset(), ...codexFloatCollapsedSize(codexFloatSnapshot) })
+      const actual = codexFloatWindow.getBounds()
+      codexFloatAnchor = { ...codexFloatAnchor, x: actual.x + 5, y: actual.y + collapsedTopInset() }
+      codexFloatExpanded = false
+      return true
+    } catch { return false }
+  }
+
   function cancelCodexFloatInteraction(restore = true) {
     clearCodexFloatInteractionTimer()
-    const bounds = codexFloatResize?.bounds || codexFloatDrag?.bounds || null
+    const start = codexFloatDrag
+    if (start) runtimeDiagnostics.record({ scope: 'float-drag', event: 'cancel', outcome: restore ? 'restored' : 'cleared', level: 'info' })
+    const bounds = codexFloatResize?.bounds || start?.bounds || null
     codexFloatDrag = null
     codexFloatResize = null
     if (restore && bounds && codexFloatAlive()) {
-      try { codexFloatWindow.setBounds(bounds) } catch {}
+      if (start) {
+        codexFloatAnchor = start.anchor
+        codexFloatEdge = start.edge
+        codexFloatPositionDisplayId = start.displayId
+        codexFloatPinned = start.pinned
+        codexFloatExpanded = start.expanded
+        if (isEdgeFloat()) applyRailGeometry(start.expanded)
+        else { try { codexFloatWindow.setBounds(bounds) } catch {} }
+      } else { try { codexFloatWindow.setBounds(bounds) } catch {} }
     }
     if (codexFloatAlive()) pushCodexFloatState()
   }
@@ -817,6 +916,7 @@ function createCodexFloatBridge(dependencies = {}) {
       closeCodexFloat()
       return true
     }
+    const previousStyle = codexFloatSnapshot?.style
     const rendererSnapshot = source.snapshot && typeof source.snapshot === 'object' ? source.snapshot : null
     const incomingIdentity = incomingMainRendererIdentity(rendererSnapshot)
     const identityChanged = Boolean(
@@ -836,10 +936,24 @@ function createCodexFloatBridge(dependencies = {}) {
       : rendererSnapshot
     codexFloatExpandedSizes = normalizeCodexExpandedSizes(source.expandedSizes || record(source.snapshot).expandedSizes)
     const position = record(source.position)
-    codexFloatPositionDisplayId = typeof position.displayId === 'string' ? position.displayId : ''
+    const positionKey = JSON.stringify(position)
+    // Retain the native drop presentation until its atomic settings write
+    // arrives; quota refreshes may still carry the pre-drop settings.
+    if (codexFloatPendingDock) {
+      if (codexFloatSnapshot?.style === codexFloatPendingDock.style && positionKey === codexFloatPendingDock.positionKey) {
+        codexFloatSnapshot = { ...codexFloatSnapshot, style: 'edge' }
+      } else codexFloatPendingDock = null
+    }
+    if (positionKey !== codexFloatSyncedPosition) {
+      codexFloatPreferredPosition = position
+      codexFloatSyncedPosition = positionKey
+    }
+    if (previousStyle !== codexFloatSnapshot?.style && codexFloatAlive()) adoptFloatPosition(codexFloatPreferredPosition)
     if (!codexFloatAlive() && !createCodexFloat(position)) return false
     applyCodexFloatWorkspaceVisibility()
-    if (!codexFloatResize) resizeCodexFloat(codexFloatExpanded, false)
+    reconcileFloatDisplays()
+    if (!codexFloatResize && !codexFloatDrag) resizeCodexFloat(codexFloatExpanded, false)
+    pushCodexFloatState()
     const snapshotSent = pushCodexFloatSnapshot({ force: identityChanged })
     const taskPackage = codexFloatSnapshot?.taskSnapshot
     if (codexFloatTaskPackageRevision(taskPackage) > codexFloatTaskLastSentRevision) {
@@ -862,17 +976,23 @@ function createCodexFloatBridge(dependencies = {}) {
 
   function resizeCodexFloat(expanded, notifyState = true) {
     if (!codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
+    if (isEdgeFloat()) {
+      if (applyRailGeometry(expanded) && notifyState) pushCodexFloatState()
+      return
+    }
     const current = codexFloatWindow.getBounds()
     const display = floatDisplayForPoint({ x: current.x + current.width / 2, y: current.y + current.height / 2 })
     const edge = validCodexFloatEdge(codexFloatEdge) ? codexFloatEdge : nearestFloatEdge(current, display)
     const size = codexFloatDesiredSize(codexFloatSnapshot, expanded, display)
-    const resized = resizeFloatBounds(current, size, display, edge)
+    const resized = !expanded && codexFloatAnchor
+      ? { bounds: { x: codexFloatAnchor.x - 5, y: codexFloatAnchor.y - collapsedTopInset(), ...size }, edge }
+      : resizeFloatBounds(current, size, display, edge)
     if (current.x !== resized.bounds.x || current.y !== resized.bounds.y || current.width !== resized.bounds.width || current.height !== resized.bounds.height) {
       try { codexFloatWindow.setBounds(resized.bounds) } catch {}
     }
     codexFloatEdge = resized.edge
     codexFloatExpanded = expanded
-    codexFloatPinned = false
+    if (!expanded) codexFloatPinned = false
     if (notifyState) pushCodexFloatState()
   }
 
@@ -884,18 +1004,16 @@ function createCodexFloatBridge(dependencies = {}) {
     codexFloatDrag = null
     codexFloatResize = null
     const position = record(source.position)
-    codexFloatPositionDisplayId = typeof position.displayId === 'string' ? position.displayId : ''
-    const display = floatDisplayForPosition(position)
-    const area = display.workArea || display.bounds
-    const size = codexFloatDesiredSize(codexFloatSnapshot, codexFloatExpanded, display)
-    const edge = validCodexFloatEdge(position.edge) ? position.edge : 'right'
-    const requested = Number.isFinite(position.x) && Number.isFinite(position.y)
-      ? { x: position.x, y: position.y, ...size }
-      : { x: area.x + area.width - size.width - CODEX_FLOAT_MARGIN, y: area.y + Math.round((area.height - size.height) / 2), ...size }
-    const bounds = alignFloatBoundsToEdge(requested, display, edge)
-    try { codexFloatWindow.setBounds(bounds) } catch { return false }
+    codexFloatPreferredPosition = position
+    codexFloatSyncedPosition = JSON.stringify(position)
+    const initial = initialCodexFloatBounds(position)
+    if (isEdgeFloat()) {
+      if (!applyRailGeometry(codexFloatExpanded)) return false
+    } else {
+      try { codexFloatWindow.setBounds(initial.bounds) } catch { return false }
+      if (codexFloatExpanded) resizeCodexFloat(true, false)
+    }
     applyCodexFloatWorkspaceVisibility()
-    codexFloatEdge = edge
     pushCodexFloatState()
     return true
   }
@@ -927,9 +1045,10 @@ function createCodexFloatBridge(dependencies = {}) {
     const ipc = electronIpcRenderer()
     if (!ipc || typeof ipc.on !== 'function') return
     ipc.on(CODEX_FLOAT_CHANNELS.expansion, (_event, payload) => {
-      if (codexFloatResize) return
+      if (codexFloatResize || codexFloatDrag) return
       const source = record(payload)
       const expanded = source.expanded === true
+      codexFloatPinned = expanded && source.pinned === true
       resizeCodexFloat(expanded, true)
     })
     ipc.on(CODEX_FLOAT_CHANNELS.returnFocus, () => {
@@ -1032,52 +1151,107 @@ function createCodexFloatBridge(dependencies = {}) {
       try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.threadOpenResult, { requestId, result }) } catch {}
     })
     ipc.on(CODEX_FLOAT_CHANNELS.dragStart, (_event, payload) => {
-      if (codexFloatResize || !codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
+      if (codexFloatDrag || codexFloatResize || !codexFloatAlive() || !codexFloatAnchor) return
       const point = record(payload)
       if (!Number.isFinite(point.screenX) || !Number.isFinite(point.screenY)) return
       codexFloatDrag = {
         interactionId: codexFloatInteractionId(point.interactionId, `legacy-drag-${Date.now()}`),
-        pointerX: point.screenX,
-        pointerY: point.screenY,
-        bounds: codexFloatWindow.getBounds()
+        pointerX: point.screenX, pointerY: point.screenY,
+        bounds: codexFloatWindow.getBounds(), anchor: { ...codexFloatAnchor },
+        edge: codexFloatEdge, displayId: codexFloatPositionDisplayId,
+        expanded: codexFloatExpanded, pinned: codexFloatPinned, moved: false
       }
+      // Native resize during an active press can release Chromium's pointer
+      // capture. Hide the edge preview, but retain the native viewport until up.
+      if (isEdgeFloat()) codexFloatExpanded = false
+      runtimeDiagnostics.record({ scope: 'float-drag', event: 'start', outcome: 'accepted', level: 'info' })
       armCodexFloatInteractionTimeout()
+      pushCodexFloatState()
     })
     ipc.on(CODEX_FLOAT_CHANNELS.dragMove, (_event, payload) => {
       if (!sameCodexFloatInteraction(codexFloatDrag, payload) || !codexFloatAlive()) return
       const point = record(payload)
       if (!Number.isFinite(point.screenX) || !Number.isFinite(point.screenY)) return
-      const candidate = {
-        ...codexFloatDrag.bounds,
-        x: codexFloatDrag.bounds.x + point.screenX - codexFloatDrag.pointerX,
-        y: codexFloatDrag.bounds.y + point.screenY - codexFloatDrag.pointerY
+      const dx = point.screenX - codexFloatDrag.pointerX
+      const dy = point.screenY - codexFloatDrag.pointerY
+      if (!codexFloatDrag.moved && Math.hypot(dx, dy) < 5) return
+      const display = floatDisplayForPoint({ x: point.screenX, y: point.screenY })
+      const start = codexFloatDrag
+      let stage = 'write'
+      try {
+        // PointerEvent screen coordinates can be fractional DIP. Electron's
+        // Rectangle contract requires integers, including after subtraction.
+        codexFloatWindow.setBounds({ ...start.bounds, x: Math.round(start.bounds.x + dx), y: Math.round(start.bounds.y + dy) })
+        stage = 'read'
+        const actual = codexFloatWindow.getBounds()
+        stage = 'readback'
+        if (!actual || !['x', 'y', 'width', 'height'].every((key) => Number.isFinite(actual[key]))) throw new TypeError('Invalid native bounds')
+        codexFloatAnchor = { ...start.anchor, x: start.anchor.x + actual.x - start.bounds.x, y: start.anchor.y + actual.y - start.bounds.y }
+        codexFloatPositionDisplayId = String(display.id)
+        start.intent = { dx, dy }
+        if (isEdgeFloat() && codexFloatRailLayout) codexFloatRailLayout = { ...codexFloatRailLayout, bounds: actual }
+        const moved = actual.x !== start.bounds.x || actual.y !== start.bounds.y
+        if (moved && !codexFloatDrag.moved) runtimeDiagnostics.record({ scope: 'float-drag', event: 'move', outcome: 'native-moved', level: 'info' })
+        codexFloatDrag.moved = moved
+        start.lastErrorStage = ''
+      } catch (error) {
+        // One classified failure per stage/gesture; never flood logs with every
+        // pointer frame or retain raw native messages/coordinates.
+        if (start.lastErrorStage !== stage) {
+          const errorName = ['Error', 'TypeError', 'RangeError'].includes(error?.name) ? error.name : 'Error'
+          const message = String(error?.message || '')
+          const reason = /integer|conversion|argument/i.test(message) ? 'invalid-native-argument' : /not a function/i.test(message) ? 'method-unavailable' : 'native-call-failed'
+          runtimeDiagnostics.record({ scope: 'float-geometry', event: 'drag-move', outcome: 'failed', code: `${stage}-bounds-failed`, level: 'error', details: { stage, errorName, reason } })
+          start.lastErrorStage = stage
+        }
       }
-      const display = floatDisplayForPoint({ x: candidate.x + candidate.width / 2, y: candidate.y + candidate.height / 2 })
-      try { codexFloatWindow.setBounds(clampFloatBounds(candidate, display)) } catch {}
       armCodexFloatInteractionTimeout()
+      pushCodexFloatState()
     })
     ipc.on(CODEX_FLOAT_CHANNELS.dragEnd, (_event, payload) => {
-      if (!sameCodexFloatInteraction(codexFloatDrag, payload) || !codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
+      if (!sameCodexFloatInteraction(codexFloatDrag, payload) || !codexFloatAlive()) return
       clearCodexFloatInteractionTimer()
-      const current = codexFloatWindow.getBounds()
-      const startBounds = codexFloatDrag.bounds
-      if (current.x === startBounds.x && current.y === startBounds.y && current.width === startBounds.width && current.height === startBounds.height) {
+      const start = codexFloatDrag
+      if (start.moved && (codexFloatAnchor.x !== start.anchor.x || codexFloatAnchor.y !== start.anchor.y)) {
+        const display = currentFloatDisplay()
+        const previousStyle = codexFloatSnapshot?.style
+        const autoDock = previousStyle !== 'edge'
+        const snapped = placement.snapAnchor(codexFloatAnchor, display, codexFloatEdge, 'edge', {
+          ...start.intent, ...(process.platform === 'darwin' ? { topBoundary: display.workArea?.y } : {})
+        })
+        if (autoDock) codexFloatSnapshot = { ...codexFloatSnapshot, style: 'edge' }
+        applyCodexFloatWorkspaceVisibility()
+        codexFloatAnchor = snapped.anchor
+        codexFloatEdge = snapped.edge
+        // Commit only after a successful native write and actual-bounds readback.
+        if (!applyCollapsedAnchor()) {
+          codexFloatSnapshot = { ...codexFloatSnapshot, style: previousStyle }
+          cancelCodexFloatInteraction(true)
+          applyCodexFloatWorkspaceVisibility()
+          return
+        }
+        const actualDisplay = floatDisplayForPoint({ x: codexFloatAnchor.x + codexFloatAnchor.width / 2, y: codexFloatAnchor.y + codexFloatAnchor.height / 2 })
+        codexFloatPositionDisplayId = String(actualDisplay.id)
+        if (autoDock) codexFloatPendingDock = { style: previousStyle, positionKey: codexFloatSyncedPosition }
+        // Finish the gesture before the settings action can synchronously sync.
         codexFloatDrag = null
-        return
+        persistFloatAnchor(actualDisplay, autoDock)
+        const topInset = Math.max(0, Math.round(codexFloatAnchor.y - placement.areaOf(actualDisplay).y))
+        runtimeDiagnostics.record({ scope: 'float-drag', event: 'end', outcome: 'saved', level: 'info', details: { edge: codexFloatEdge, style: 'edge', autoDock, ...(codexFloatEdge === 'top' ? { topInset } : {}) } })
+      } else {
+        codexFloatAnchor = start.anchor
+        codexFloatEdge = start.edge
+        codexFloatPositionDisplayId = start.displayId
+        applyCollapsedAnchor()
       }
-      const display = floatDisplayForPoint({ x: current.x + current.width / 2, y: current.y + current.height / 2 })
-      const snapped = snapFloatBounds(current, display)
-      try { codexFloatWindow.setBounds(snapped.bounds) } catch {}
-      applyCodexFloatWorkspaceVisibility()
-      codexFloatEdge = snapped.edge
-      codexFloatPositionDisplayId = String(display.id || '')
       codexFloatDrag = null
-      emitCodexFloatAction('codex.float.position.save', {
-        position: { displayId: String(display.id || ''), x: snapped.bounds.x, y: snapped.bounds.y, edge: snapped.edge }
-      })
+      codexFloatPinned = start.pinned
+      if (start.pinned || (!isEdgeFloat() && start.expanded)) resizeCodexFloat(true, false)
+      applyCodexFloatWorkspaceVisibility()
+      pushCodexFloatState()
     })
     ipc.on(CODEX_FLOAT_CHANNELS.resizeStart, (_event, payload) => {
-      if (!codexFloatExpanded || codexFloatDrag || codexFloatResize || !codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
+      if (isEdgeFloat() || !codexFloatExpanded || codexFloatDrag || codexFloatResize || !codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
       const point = record(payload)
       if (!Number.isFinite(point.screenX) || !Number.isFinite(point.screenY) || !validCodexResizeCorner(point.corner)) return
       const bounds = codexFloatWindow.getBounds()
@@ -1112,7 +1286,7 @@ function createCodexFloatBridge(dependencies = {}) {
       pushCodexFloatState()
       if (bounds.width === resize.bounds.width && bounds.height === resize.bounds.height) return
       emitCodexFloatAction('codex.float.geometry.save', {
-        position: { displayId: resize.displayId, x: bounds.x, y: bounds.y, edge: resize.edge },
+        position: codexFloatPreferredPosition,
         expandedSize: { displayId: resize.displayId, width: bounds.width, height: bounds.height, updatedAt: Date.now() }
       })
     })
@@ -1212,7 +1386,8 @@ function createCodexFloatBridge(dependencies = {}) {
       codexFloatCollapsedSize,
       resizeFloatBounds,
       snapFloatBounds,
-      moveCodexFloatResize
+      moveCodexFloatResize,
+      reconcileFloatDisplays
     }
   }
 }

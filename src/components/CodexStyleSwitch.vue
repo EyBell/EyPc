@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Droplets, PanelsTopLeft } from '@lucide/vue'
+import { Droplets, PanelsTopLeft, PanelRight } from '@lucide/vue'
 import type { CodexDisplayStyle } from '../domain/codex'
 
 defineProps<{
@@ -32,15 +32,18 @@ const emit = defineEmits<{
       <PanelsTopLeft :size="compact ? 13 : 15" aria-hidden="true" />
       <span>卡片</span>
     </button>
+    <button type="button" :class="{ active: modelValue === 'edge' }" :aria-pressed="modelValue === 'edge'" @click.stop="emit('update:modelValue', 'edge')">
+      <PanelRight :size="compact ? 13 : 15" aria-hidden="true" /><span>贴边线</span>
+    </button>
   </div>
 </template>
 
 <style>
 .codex-style-switch {
   display: grid;
-  width: 176px;
+  width: 246px;
   height: 34px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
   padding: 3px;
   border: 1px solid var(--switch-border, #c8d4d7);
@@ -49,7 +52,7 @@ const emit = defineEmits<{
 }
 
 .codex-style-switch.compact {
-  width: 112px;
+  width: 184px;
   height: 30px;
   border-radius: 9px;
 }

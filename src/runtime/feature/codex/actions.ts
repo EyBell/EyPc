@@ -277,7 +277,7 @@ export function registerCodexActions(host: FeatureActionHostV7): void {
     } })
     register({ id: 'codex.float.position.save', title: '保存 Codex 悬浮球位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 92, when: () => true, run: (_ctx, args) => {
       const position = args?.position
-      return position && typeof position === 'object' ? host.codexController.updateSettings({ position: position as CodexFloatPosition }) : false
+      return position && typeof position === 'object' ? host.codexController.updateSettings({ position: position as CodexFloatPosition, ...(args?.displayStyle === 'edge' ? { displayStyle: 'edge' as const } : {}) }) : false
     } })
     register({ id: 'codex.float.geometry.save', title: '保存 Codex 展开尺寸与位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 92, when: () => true, run: (_ctx, args) => {
       const position = args?.position

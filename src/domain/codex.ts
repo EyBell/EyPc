@@ -7,7 +7,7 @@ import { COMPANION_V7_REVISIONS } from './generated/companionContractsV7'
 // erased and the emitted `codexAppearance` module has no imports at all.
 import { defaultCompanionQuotaTones } from './codexAppearance'
 
-export type CodexDisplayStyle = 'water' | 'card'
+export type CodexDisplayStyle = 'water' | 'card' | 'edge'
 export const CODEX_DEFAULT_QUOTA_REFRESH_SECONDS = 5 * 60
 export const CODEX_MIN_QUOTA_REFRESH_SECONDS = 1
 export const CODEX_MAX_QUOTA_REFRESH_SECONDS = 24 * 60 * 60
@@ -591,10 +591,29 @@ export interface CodexThreadReceipt {
 }
 
 export interface CodexFloatPosition {
+  version?: 2
   displayId: string
   x: number | null
   y: number | null
   edge: CodexFloatEdge
+  edgeOffset?: number
+  displayHint?: { bounds: { x: number; y: number; width: number; height: number }; label?: string; internal?: boolean }
+}
+
+function normalizeFloatAnchorFields(position: Record<string, unknown>): Partial<CodexFloatPosition> {
+  if (position.version !== 2) return {}
+  const result: Partial<CodexFloatPosition> = { version: 2 }
+  if (typeof position.edgeOffset === 'number' && Number.isFinite(position.edgeOffset)) result.edgeOffset = Math.max(0, Math.min(1, position.edgeOffset))
+  const hint = record(position.displayHint)
+  const bounds = record(hint.bounds)
+  if (['x', 'y', 'width', 'height'].every((key) => typeof bounds[key] === 'number' && Number.isFinite(bounds[key])) && Number(bounds.width) > 0 && Number(bounds.height) > 0) {
+    result.displayHint = {
+      bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) },
+      ...(typeof hint.label === 'string' ? { label: hint.label.slice(0, 120) } : {}),
+      ...(typeof hint.internal === 'boolean' ? { internal: hint.internal } : {})
+    }
+  }
+  return result
 }
 
 export interface CodexColorSettings {
@@ -1418,7 +1437,7 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
   const counterColors = normalizeCounterColors(source.counterColors, fallback.counterColors)
   return {
     floatEnabled: source.floatEnabled === true,
-    displayStyle: enumValue(source.displayStyle, ['water', 'card'] as const, fallback.displayStyle),
+    displayStyle: enumValue(source.displayStyle, ['water', 'card', 'edge'] as const, fallback.displayStyle),
     conversationInboxEnabled: source.conversationInboxEnabled !== false,
     quotaRefreshSeconds: boundedInteger(
       Number(source.quotaRefreshSeconds) === 0 ? fallback.quotaRefreshSeconds : source.quotaRefreshSeconds,
@@ -1464,7 +1483,8 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
       displayId: typeof position.displayId === 'string' ? position.displayId.slice(0, 120) : '',
       x: typeof position.x === 'number' && Number.isFinite(position.x) ? Math.round(position.x) : null,
       y: typeof position.y === 'number' && Number.isFinite(position.y) ? Math.round(position.y) : null,
-      edge: enumValue(position.edge, ['left', 'right', 'top', 'bottom'] as const, fallback.position.edge)
+      edge: enumValue(position.edge, ['left', 'right', 'top', 'bottom'] as const, fallback.position.edge),
+      ...normalizeFloatAnchorFields(position)
     },
     expandedSizes: normalizeExpandedSizes(source.expandedSizes)
   }

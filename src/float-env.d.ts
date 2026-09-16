@@ -5,7 +5,12 @@ import type { RuntimeIdentityBridgeV1 } from './platform/eypcPlatform'
 export {}
 
 export type CodexFloatResizeCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
+export interface FloatRect { x: number; y: number; width: number; height: number }
 export interface CodexFloatWindowState {
+  style?: 'water' | 'card' | 'edge'
+  dragging?: boolean
+  edge?: 'left' | 'right' | 'top' | 'bottom'
+  placement?: { bounds: FloatRect; rail: FloatRect; slot: FloatRect; panel: FloatRect | null }
   expanded: boolean
   pinned: boolean
   resizing: boolean
