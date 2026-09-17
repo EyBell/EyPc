@@ -17,12 +17,12 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
 | 需求登记 | 361 leaves / 7 modules / 337 active / 22 superseded / 2 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 141 scoped |
+| 取代关系 | 22 whole / 142 scoped |
 | 原始来源 | 65 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-f4b93a9925cbe01dc88a / renderer-3214eb941478a3e03659` · `artifact-ready` |
-| 当前构建时间 | `2026/09/16 14:11:26`（`2026-09-16T06:11:26.971Z`） |
+| 当前构建产物 | `host-71b779413369b732aa21 / renderer-80c5fe6e0442179b5c1e` · `artifact-ready` |
+| 当前构建时间 | `2026/09/16 19:52:12`（`2026-09-16T11:52:12.759Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -42,7 +42,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 141
+    "scoped_relations": 142
   },
   "source_anchor_catalog": {
     "documents": 65,
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-f4b93a9925cbe01dc88a",
-    "renderer_asset": "renderer-3214eb941478a3e03659",
+    "host_asset": "host-71b779413369b732aa21",
+    "renderer_asset": "renderer-80c5fe6e0442179b5c1e",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-16T06:11:26.971Z",
-    "built_at_local": "2026/09/16 14:11:26",
+    "built_at": "2026-09-16T11:52:12.759Z",
+    "built_at_local": "2026/09/16 19:52:12",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "1b20488b6cb27d31351b4b06e8657a4c652a15866c846e40906bc57ab14adf2b",
-    "raw_sources": "9c08394ca1c2180fb126375245338c0d58a8d50a74c8331c6ce086ae733f47bb",
-    "source_anchor_catalog": "b414648020e15d5d33307e5cd04189ff988ded4f69ccdd94f2c71bd3e73f68dd",
-    "product_body": "7226e24c54fcbef1c5208d3b9a4049bf9b345100484c3423994fdfe9a2b71993",
+    "requirement_registry": "87780d2afefaf20d67f4f08db3956f81ae003e27b61e34d8de117262198a6aa5",
+    "raw_sources": "8c317f8db4006276bbf6c47cee650b5b97dc18856dd9fabc158eb78fd4bdadc0",
+    "source_anchor_catalog": "bc8c0899116fa39f9e310ce4e763e2fd6585ebf29de8bebbd6c4824dcd78f6d2",
+    "product_body": "976b623b1d0f7d78c69a172bf052012825a7c3e2b668efe71dfc70517603f994",
     "architecture": "2bcc46f12df7e3d92cd46a1430ea2fa3988801fb1379c35b7b75b73ec7dd40c0",
-    "runtime_contract": "cd71cfdf076c02fd670edc251295bb371f07d100de9c2c837bd9977fa38db3d8"
+    "runtime_contract": "ab372475f8b1fc09c7a9db03ad7dd1161366fd2a06cb62f58f728b49e4de72ea"
   }
 }
 ```

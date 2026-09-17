@@ -1,5 +1,9 @@
 # EyPc Project Status Hub
 
+- 2026-09-16 Orca Claude 活状态不得因 monitoring 折成已完成已读：现场已加载 17:05 包仍振荡 completed↔running（工具间隙无 toolName 就收成 done，快捷打开变已读）。Agents 仍 `working/waiting/blocked` 时 `monitoring` / `turnCompletedAt` 一律不 lead-complete；已完成未读只在 Agents `done` 时记账。`orcaInventory` 31/31、`orcaUnreadBridge` 13/13，类型检查、生产构建和 uTools 校验通过。产物 `host-71b779413369b732aa21` / `renderer-80c5fe6e0442179b5c1e`，北京时间 `2026/09/16 19:52:12`。已本地提交，未推送；宿主已加载该产物。[错忆](../knowledge/error-memory/orca-claude-monitoring-is-lead-complete.md#L1) · [Orca Spec](260913/orca-companion/spec.md#L32)。
+
+- 2026-09-16 Orca Claude 在途 Bash 不得因 monitoring 离开进行中：侧栏仍显示 `toolName=Bash`、OSC 工作帧时保持进行中；无在途工具的 `monitoring` / `turnCompletedAt` 仍收成已完成。`orcaInventory` 31/31、`orcaUnreadBridge` 13/13，类型检查、生产构建和 uTools 校验通过。产物 `host-3511f71c23bb5ea98b6d` / `renderer-2f73b31728ab61469455`，北京时间 `2026/09/16 17:05:30`。该条已被上一条取代。已本地提交，未推送。[错忆](../knowledge/error-memory/orca-claude-monitoring-is-lead-complete.md#L1) · [Orca Spec](260913/orca-companion/spec.md#L32)。
+
 - 2026-09-16 Orca 任务识别：标签标题优先于窗格 spinner/`◑`；进行中时未读铃不得折成已完成；项目仍按工作树。`orcaInventory` 30/30、`orcaUnreadBridge` 13/13，类型检查、生产构建和 uTools 校验通过。产物 `host-e49c14c39605f2aeb018` / `renderer-f992ca5455cf2a09de2c`，北京时间 `2026/09/16 15:34:27`。已本地提交，未推送。[错忆](../knowledge/error-memory/orca-spinner-osc-title-is-not-card-topic.md#L1)。
 
 - 2026-09-16 Codex++ / Cloud 主子组仍 active：父 Turn 或 Goal complete 不得把根卡送进已完成；原生 connector 仍 `active` 时保持进行中。`providerEvidenceAdapterV7` 13/13、`companionTaskKernel` 126/126，类型检查、生产构建和 uTools 校验通过。产物 `host-a49ba79527d06e988c5c` / `renderer-bcac0307ab5279288cc1`，北京时间 `2026/09/16 14:59:39`。已本地提交，未推送；请重载插件看该条是否回到进行中。[错忆](../knowledge/error-memory/codex-native-group-active-survives-parent-turn.md#L1)。

@@ -113,14 +113,14 @@ describe('Orca completed-unread bridge', () => {
       .toBe(true)
   })
 
-  it('marks Claude monitoring completed-unread after a live working turn', async () => {
+  it('does not mark Claude unread while monitoring still reports working', async () => {
     let now = 100
     const bridge = unreadModule.createUnreadBridge({ store: memoryStore(), now: () => now })
     await bridge.ready()
     const working = {
       worktrees: [{
         repo: 'EyPc',
-        unread: true,
+        unread: false,
         agents: [{ paneKey: PANE, state: 'working', agentType: 'claude', updatedAt: 10 }]
       }],
       terminals: [{
@@ -138,7 +138,7 @@ describe('Orca completed-unread bridge', () => {
     const monitoring = {
       worktrees: [{
         repo: 'EyPc',
-        unread: true,
+        unread: false,
         agents: [
           {
             paneKey: PANE,
@@ -175,6 +175,42 @@ describe('Orca completed-unread bridge', () => {
       ]
     }
     expect(inventory.collectSessions(monitoring.worktrees, monitoring.terminals, undefined, undefined, bridge).sessions.map((row) => [row.agentType, row.state, row.unread])).toEqual([
+      ['claude', 'working', false],
+      ['cursor', 'done', false]
+    ])
+    now = 300
+    const finished = {
+      worktrees: [{
+        repo: 'EyPc',
+        unread: false,
+        agents: [
+          {
+            paneKey: PANE,
+            state: 'done',
+            agentType: 'claude',
+            updatedAt: 30
+          },
+          {
+            paneKey: `${SIBLING_TAB}:${SIBLING_LEAF}`,
+            state: 'done',
+            agentType: 'cursor',
+            updatedAt: 10
+          }
+        ]
+      }],
+      terminals: [
+        {
+          handle: HANDLE,
+          tabId: TAB,
+          leafId: LEAF,
+          title: 'Claude',
+          connected: true,
+          agentIdentity: 'claude'
+        },
+        monitoring.terminals[1]
+      ]
+    }
+    expect(inventory.collectSessions(finished.worktrees, finished.terminals, undefined, undefined, bridge).sessions.map((row) => [row.agentType, row.state, row.unread])).toEqual([
       ['claude', 'done', true],
       ['cursor', 'done', false]
     ])

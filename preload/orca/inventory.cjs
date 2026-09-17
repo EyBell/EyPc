@@ -140,12 +140,13 @@ function oscIndicatesWorking(title) {
 
 function leadTurnCompleted(agent) {
   if (!agent || typeof agent !== 'object') return false
+  const state = textOf(agent.state).toLowerCase()
+  // Agents still working/waiting/blocked is the live turn, including Claude
+  // Stop leftover monitoring between tools. Folding that to done made the
+  // card oscillate completed-read ↔ running.
+  if (state === 'working' || state === 'waiting' || state === 'blocked') return false
   if (textOf(agent.workingMode).toLowerCase() === 'monitoring') return true
   if (timeOf(agent.turnCompletedAt) > 0) return true
-  const state = textOf(agent.state).toLowerCase()
-  // Tree unread bells can sit on a still-working pane. Unread is not
-  // lead-complete while Agents still report working/waiting/blocked.
-  if (state === 'working' || state === 'waiting' || state === 'blocked') return false
   return agent.unread === true
 }
 
@@ -171,8 +172,8 @@ function sessionState(agent, connected, terminalTitle) {
   if (connected === false) return 'interrupted'
   const state = textOf(agent.state).toLowerCase()
   if (state === 'waiting' || state === 'blocked') return 'working'
-  // Claude Stop can keep agents[].state=working (monitoring / turnCompletedAt)
-  // while the tab is already completed-unread. OSC ✳ would otherwise pin it.
+  // monitoring / turnCompletedAt only complete a turn after Agents leave
+  // working/waiting/blocked. OSC ✳ may still lift a true done pane.
   if (leadTurnCompleted(agent)) return 'done'
   if (state === 'working') return 'working'
   if (oscIndicatesWorking(terminalTitle)) return 'working'

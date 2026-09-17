@@ -14,11 +14,11 @@ status: implementing
 实现要点：
 
 - Manifest `orca`：opt-in，`open` / `archive` / `topology`，pin inbound+outbound。入站优先 `terminal.isPinned`，CLI 缺字段时直读 `orca-data.json` 会话库 tab 布尔。EyPc 置顶写回 `terminal pin --pinned/--no-pinned`，收到同 handle/tab 的回执后，再用 `terminal list` 核对同 handle/paneKey 的布尔才确认。显式 false 优先于旧文件 true。仅有 `agentIdentity`、没有对话的工具栏窗格不进清单。Orca 窗口里已关掉的窗格不进清单：`terminal list` 没有该 `paneKey` 时丢掉 `worktree ps` 残留行。
-- Preload `preload/orca/`：CLI 解析、inventory、switch、pane close。成功的 `terminal list` 是还开着的窗格权威；关在 Orca 窗口里、list 已没有的 `paneKey` 不得再用 `worktree ps` 残留行合成卡片。`terminal list --include-visual-layouts` 只取 **tab** 节点（`tabId` + `activeLeafId` + `title`）作抬头；同 `tabId` 的 pane OSC 标题（工作中常是 spinner）不是主题，但是进行中相位：Grok `Waiting for response` 会被 Orca 规范化成 `⠋ Grok`，EyPc 在 `agent.state` 仍为 `done`、尚无 toolName 时也要标进行中。Claude 主轮次已结束的公开信号（`workingMode=monitoring`、`turnCompletedAt`、或窗格 `unread=true`）压过仍为 `working` 的 `agent.state` 和 OSC `✳` / `. ` 工作帧，收成已完成；`waiting` / `blocked` 与中断仍优先。失败则回退无布局的 `terminal list`。Orca 三处状态不是一份：标签卡才有已完成未读和标签钉；左侧树只有 working/done/interrupted；Agent Session History（`aiVault.listSessions`）无 unread/pin/phase，禁止当未读或钉，也禁止读 preview。工作树 `unread` 是汇总；CLI agent 行带布尔 `unread` 时卡片跟该字段。没有按窗格字段时，仅当该工作树只有一条已完成会话才可吃汇总；多条已完成不得猜最右/最新。禁止扇出到组内每一条。Claude 主轮次结束后若仍 `working`+`monitoring`，不得把工作区汇总未读记到旁边已是 `done` 的窗格。
+- Preload `preload/orca/`：CLI 解析、inventory、switch、pane close。成功的 `terminal list` 是还开着的窗格权威；关在 Orca 窗口里、list 已没有的 `paneKey` 不得再用 `worktree ps` 残留行合成卡片。`terminal list --include-visual-layouts` 只取 **tab** 节点（`tabId` + `activeLeafId` + `title`）作抬头；同 `tabId` 的 pane OSC 标题（工作中常是 spinner）不是主题，但是进行中相位：Grok `Waiting for response` 会被 Orca 规范化成 `⠋ Grok`，EyPc 在 `agent.state` 仍为 `done`、尚无 toolName 时也要标进行中。Agents 仍为 `working` / `waiting` / `blocked` 时不得因 `workingMode=monitoring` 或 `turnCompletedAt` 收成已完成；`waiting` / `blocked` 与中断仍优先。主轮次结束以 Agents 离开活状态为准，`unread=true` 只在已非活状态时记已完成未读。失败则回退无布局的 `terminal list`。Orca 三处状态不是一份：标签卡才有已完成未读和标签钉；左侧树只有 working/done/interrupted；Agent Session History（`aiVault.listSessions`）无 unread/pin/phase，禁止当未读或钉，也禁止读 preview。工作树 `unread` 是汇总；CLI agent 行带布尔 `unread` 时卡片跟该字段。没有按窗格字段时，仅当该工作树只有一条已完成会话才可吃汇总；多条已完成不得猜最右/最新。禁止扇出到组内每一条。仍为 `working` 的 Claude 窗格不得吃工作区汇总未读。
 - 排序与行上时钟：`lastQuestionAt` 只取进入 `working` 的 `stateStartedAt`。`lastOutputAt`、中途 `updatedAt`、轮询 `acceptedAt` 不得进入提问钟。完成/中断发 `lastQuestionAt: 0`，Kernel `incoming || previous` 保留上一问。
 - 打开成功后列表高亮跟到当前任务；「上一个 / 下一个」沿用 Kernel `cycleKeys` 状态候选顺序，只有环内打开会接管循环游标。已读完成项的展示分组不得覆盖循环候选（[RAW-182 修复](../../260915/companion-cycle-authority/task-card.md#L1)）。
 - Kernel 经现有 V7 证据车道消费；Host 1 秒轮询 `watchInventory` 后 `queueCompanionHostReconciliation('orca')`。
-- RAW-220：标签栏已完成未读应在 Orca 按窗格导出。未导出前，EyPc `unread-bridge` 把「曾观测到进行中 → done」记成本地已完成未读（含 Claude `working`→`monitoring` 这一折）；缺原生字段时，插件 `terminal switch` 派发成功后只清临时账本这一轮；已有原生布尔时不清本地缓存中的原生未读，等后续轮询原生 false。进行中点卡片仍不得改成已完成。CLI `agent.unread` 布尔优先。原生 `dispatched` 仍不确认 Orca 窗口已读。
+- RAW-220：标签栏已完成未读应在 Orca 按窗格导出。未导出前，EyPc `unread-bridge` 把「曾观测到进行中 → Agents `done`」记成本地已完成未读；`working`+`monitoring` 仍算进行中，不记账。缺原生字段时，插件 `terminal switch` 派发成功后只清临时账本这一轮；已有原生布尔时不清本地缓存中的原生未读，等后续轮询原生 false。进行中点卡片仍不得改成已完成。CLI `agent.unread` 布尔优先。原生 `dispatched` 仍不确认 Orca 窗口已读。
 - 设置页「接入 Orca」；Float 项目筛选增加「只显示 Orca」。
 
 ## Verification
@@ -32,8 +32,9 @@ Real uTools / 浮窗对照需用户明确授权后再做。
 ## 2026-09-16 Claude 主轮次结束信号
 
 - 授权范围：用户确认 Grok 已完成未读可通、Orca 内 Claude 任务结束后 EyPc 仍不跟进；把 Claude `workingMode=monitoring` / `turnCompletedAt` / 窗格 `unread=true` 收成主轮次已完成，并禁止工作区汇总落到旁路 done 行。
-- 当前：implemented-local / focused-tests-passed / host-verified。`orcaInventory` 28/28、`orcaUnreadBridge` 13/13。正式 CLI 仍不导出 `agents[].unread`。现场回放：Claude `working+monitoring` 已折成 `done`，旁路 Cursor 不再吃工作区未读。用户确认插件已离开进行中。
-- VerificationImpactTrace：Orca Claude Stop→monitoring/turnCompletedAt → inventory `sessionState` → unread-bridge 投影 → Kernel 已完成未读。聚焦 `orcaInventory` / `orcaUnreadBridge`；不运行全仓测试。
+- 当前：implemented-local / focused-tests-passed / host-retest-pending。`orcaInventory` 31/31、`orcaUnreadBridge` 13/13。正式 CLI 仍不导出 `agents[].unread`。17:05 包的 toolName 短路已被二次纠正取代。
+- 2026-09-16 用户纠正（二次）：已加载 `host-3511f71c23bb5ea98b6d` 后仍把该卡显示为已完成已读。诊断 `phase-transition` 在 completed↔running 间振荡（工具间隙 `monitoring` 无 toolName 就折成 done，快捷打开变成已读，下一工具又拉回 running）。改为：Agents 仍 `working/waiting/blocked` 时 `monitoring` / `turnCompletedAt` 一律不 lead-complete；已完成未读只在 Agents `done` 时记账。
+- VerificationImpactTrace：Orca Agents live state → inventory `sessionState` → unread-bridge 只观察 projected `working→done`。聚焦 `orcaInventory` / `orcaUnreadBridge`；不运行全仓测试。
 
 ## 2026-09-15 状态同步收敛（F1、F2）
 
@@ -53,7 +54,7 @@ Orca 同一窗格完成/已读 → 原生 graph → CLI 布尔 → EyPc inventor
 | 旧版未读 | 缺字段时观测 working → done 的临时账本；打开清本轮 | 插件查看记忆，不冒充 Orca 橙点 |
 | 标签钉 | terminal.isPinned 布尔优先，缺字段才读会话文件；写后同目标 list 回读 | 同 tab 的分屏共享标签钉；其他 tab 不受影响 |
 | 写失败 | 不宣告原生成功，保留本地偏好回退 | CLI 缺命令、旧 handle、回执错目标、缺字段均失败 |
-| 已完成/排序 | 沿用现有 phase 与提问时钟；不因打开或置顶重造相位 | 前景 `working` 不得变成完成；Claude `monitoring` / `turnCompletedAt` / 窗格 `unread=true` 是主轮次已完成 |
+| 已完成/排序 | 沿用现有 phase 与提问时钟；不因打开或置顶重造相位 | 前景 `working/waiting/blocked` 不得变成完成；`monitoring` / `turnCompletedAt` 不能在活状态下收成已完成；Agents `done` 且无工作帧才是已完成 |
 
 ### 定向验证
 

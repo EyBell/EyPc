@@ -8,7 +8,7 @@ source_annotations: "implemented-local / focused-tests-passed / artifact-ready /
 scoped_relations:
   - kind: refines
     target: eypc-req-shared-raw-219
-    scope: "Orca 标签栏已完成未读应按窗格导出；未导出前 EyPc 中转：曾观测进行中的会话不得直接已完成已读，插件跳转/点击后才已读。不改变仍 working 不得被点卡片改成已完成"
+    scope: "Orca 标签栏已完成未读应按窗格导出；未导出前 EyPc 中转：曾观测进行中后 Agents done 才已完成未读，插件跳转/点击后才已读。working/waiting/blocked 时 monitoring 不得收成已完成，点卡片不得改相位"
 ---
 
 # RAW-220 · companion-shared

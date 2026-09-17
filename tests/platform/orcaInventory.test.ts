@@ -572,15 +572,17 @@ describe('Orca agent inventory', () => {
     })
   })
 
-  it('treats Claude lead-complete monitoring as done even with an OSC working frame', () => {
-    expect(inventory.leadTurnCompleted({ state: 'working', workingMode: 'monitoring' })).toBe(true)
-    expect(inventory.leadTurnCompleted({ state: 'working', turnCompletedAt: 1_700_000_000_000 })).toBe(true)
+  it('keeps Claude working while Agents still report working, even under monitoring', () => {
+    expect(inventory.leadTurnCompleted({ state: 'working', workingMode: 'monitoring' })).toBe(false)
+    expect(inventory.leadTurnCompleted({ state: 'working', turnCompletedAt: 1_700_000_000_000 })).toBe(false)
+    expect(inventory.leadTurnCompleted({ state: 'working', workingMode: 'monitoring', toolName: 'Write' })).toBe(false)
     expect(inventory.leadTurnCompleted({ state: 'working', unread: true })).toBe(false)
     expect(inventory.leadTurnCompleted({ state: 'done', unread: true })).toBe(true)
+    expect(inventory.leadTurnCompleted({ state: 'done', turnCompletedAt: 1_700_000_000_000 })).toBe(true)
     expect(inventory.leadTurnCompleted({ state: 'working' })).toBe(false)
     const { sessions } = inventory.collectSessions([{
       repo: 'EyPc',
-      unread: true,
+      unread: false,
       worktreeId: 'eypc-main',
       agents: [
         {
@@ -618,9 +620,36 @@ describe('Orca agent inventory', () => {
       }
     ])
     expect(sessions.map((row) => [row.agentType, row.state, row.unread, row.lastQuestionAt])).toEqual([
-      ['claude', 'done', false, 0],
+      ['claude', 'working', false, 10],
       ['cursor', 'done', false, 0]
     ])
+  })
+
+  it('keeps Claude working while a named tool is still in flight under monitoring', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'km-site-ref',
+      agents: [{
+        paneKey: `${TAB}:${LEAF}`,
+        state: 'working',
+        workingMode: 'monitoring',
+        toolName: 'Bash',
+        agentType: 'claude',
+        updatedAt: 20,
+        stateStartedAt: 10
+      }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '✳ Claude',
+      connected: true,
+      agentIdentity: 'claude'
+    }])
+    expect(sessions[0]).toMatchObject({
+      state: 'working',
+      projectName: 'km-site-ref',
+      lastQuestionAt: 10
+    })
   })
 
   it('lets waiting beat a stale monitoring flag', () => {
@@ -645,7 +674,7 @@ describe('Orca agent inventory', () => {
     expect(sessions[0]).toMatchObject({ state: 'working', lastQuestionAt: 10 })
   })
 
-  it('treats an exported turnCompletedAt as done while CLI state is still working', () => {
+  it('does not treat turnCompletedAt as done while CLI state is still working', () => {
     const { sessions } = inventory.collectSessions([{
       repo: 'EyPc',
       agents: [{
@@ -664,7 +693,7 @@ describe('Orca agent inventory', () => {
       connected: true,
       agentIdentity: 'claude'
     }])
-    expect(sessions[0]).toMatchObject({ state: 'done', lastQuestionAt: 0 })
+    expect(sessions[0]).toMatchObject({ state: 'working', lastQuestionAt: 10 })
   })
 
   it('keeps a foreground Claude turn working when OSC has a working frame', () => {
