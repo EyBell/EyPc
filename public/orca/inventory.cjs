@@ -283,10 +283,21 @@ function finishUnread(sessions, unreadBridge) {
   for (const session of sessions) stripAttributionFields(session)
 }
 
+function indexWorktrees(worktrees) {
+  const byId = new Map()
+  for (const row of worktrees) {
+    const worktree = recordOf(row)
+    const worktreeId = textOf(worktree.worktreeId)
+    if (worktreeId && !byId.has(worktreeId)) byId.set(worktreeId, worktree)
+  }
+  return byId
+}
+
 function collectSessions(worktrees, terminals, visualLayouts, nativePins, unreadBridge) {
   const { byPane } = indexTerminals(terminals)
   const tabTitles = indexTabTitles(visualLayouts)
   const tabOrdinals = indexTabOrdinals(visualLayouts)
+  const worktreeById = indexWorktrees(worktrees)
   const seen = new Set()
   const sessions = []
   for (const row of worktrees) {
@@ -319,13 +330,26 @@ function collectSessions(worktrees, terminals, visualLayouts, nativePins, unread
     const agent = {
       paneKey,
       agentType: row.agentIdentity,
-      state: 'done',
       updatedAt: row.lastOutputAt
     }
     // Toolbar-only panes publish agentIdentity before any conversation exists.
     // Keep a live working frame; idle identity without a worktree.ps row stays out.
-    if (!isLiveAgent(agent, row)) continue
-    const session = mergeSession(agent, row, { repo: '', displayName: '', unread: false, isPinned: false }, tabTitles, tabOrdinals, nativePins)
+    // Do not stamp Agents `done` here: Claude leftover ✳ after a real `done`
+    // must not lift, but a toolbar OSC frame with no ps row is still live.
+    // Devin drops its ps agent row entirely when the run ends and the pane
+    // reverts to an idle "ready" terminal — without this gate the card would
+    // vanish instead of reaching done/unread. Only a pane the unread bridge
+    // already observed working may synthesize a done session; a fresh ready
+    // pane that never ran a task stays out.
+    if (!isLiveAgent(agent, row)) {
+      const record = unreadBridge && typeof unreadBridge.recordFor === 'function'
+        ? unreadBridge.recordFor(paneKey)
+        : null
+      if (!record || record.seenWorkingAt <= 0) continue
+    }
+    const worktree = worktreeById.get(textOf(row.worktreeId))
+      || { repo: '', displayName: '', unread: false, isPinned: false }
+    const session = mergeSession(agent, row, worktree, tabTitles, tabOrdinals, nativePins)
     if (!session) continue
     seen.add(session.paneKey)
     sessions.push(session)

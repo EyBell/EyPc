@@ -91,6 +91,77 @@ describe('Orca completed-unread bridge', () => {
       .toBe(true)
   })
 
+  it('keeps a finished Devin pane in inventory and marks it completed-unread', async () => {
+    // Devin drops its worktree.ps agent row when the run ends; only the idle
+    // "Devin ready" terminal remains. The card must survive as done/unread
+    // instead of vanishing before the bridge can stamp a completion.
+    let now = 100
+    const bridge = unreadModule.createUnreadBridge({ store: memoryStore(), now: () => now })
+    await bridge.ready()
+    const worktreeId = 'repo-1::/repo/eypc'
+    const terminal = {
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '⠋ Devin',
+      connected: true,
+      agentIdentity: 'devin',
+      worktreeId
+    }
+    const working = {
+      worktrees: [{
+        repo: 'EyPc',
+        worktreeId,
+        unread: false,
+        agents: [{ paneKey: PANE, state: 'working', agentType: 'devin', updatedAt: 10 }]
+      }],
+      terminals: [terminal]
+    }
+    expect(inventory.collectSessions(working.worktrees, working.terminals, undefined, undefined, bridge).sessions[0])
+      .toMatchObject({ agentType: 'devin', state: 'working', unread: false })
+
+    // A transient ps gap mid-run must stay a working card, not an early done.
+    now = 150
+    const gap = {
+      worktrees: [{ repo: 'EyPc', worktreeId, unread: false, agents: [] }],
+      terminals: [{ ...terminal, title: '⠧ Devin' }]
+    }
+    expect(inventory.collectSessions(gap.worktrees, gap.terminals, undefined, undefined, bridge).sessions[0])
+      .toMatchObject({ agentType: 'devin', state: 'working', unread: false })
+
+    now = 200
+    const finished = {
+      worktrees: [{ repo: 'EyPc', worktreeId, unread: false, agents: [] }],
+      terminals: [{ ...terminal, title: 'Devin ready' }]
+    }
+    const done = inventory.collectSessions(finished.worktrees, finished.terminals, undefined, undefined, bridge).sessions[0]
+    expect(done).toMatchObject({ agentType: 'devin', state: 'done', unread: true, projectName: 'EyPc', name: 'dv · Devin ready' })
+
+    now = 300
+    bridge.markViewed(PANE, 300)
+    expect(inventory.collectSessions(finished.worktrees, finished.terminals, undefined, undefined, bridge).sessions[0])
+      .toMatchObject({ state: 'done', unread: false })
+  })
+
+  it('does not synthesize a card for a Devin pane that never ran a task', async () => {
+    const bridge = unreadModule.createUnreadBridge({ store: memoryStore(), now: () => 100 })
+    await bridge.ready()
+    const fresh = {
+      worktrees: [{ repo: 'EyPc', worktreeId: 'repo-2::/repo/other', unread: false, agents: [] }],
+      terminals: [{
+        handle: 'term_cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        tabId: SIBLING_TAB,
+        leafId: SIBLING_LEAF,
+        title: 'Devin ready',
+        connected: true,
+        agentIdentity: 'devin',
+        worktreeId: 'repo-2::/repo/other'
+      }]
+    }
+    expect(inventory.collectSessions(fresh.worktrees, fresh.terminals, undefined, undefined, bridge).sessions)
+      .toHaveLength(0)
+  })
+
   it('does not mark a cold already-done pane unread', async () => {
     const bridge = unreadModule.createUnreadBridge({ store: memoryStore(), now: () => 100 })
     await bridge.ready()
