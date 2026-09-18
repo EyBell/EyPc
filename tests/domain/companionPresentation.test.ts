@@ -204,13 +204,15 @@ describe('water ball presentation', () => {
     expect(result.percentOverride).toBe(45)
   })
 
-  it('treats a zero codex reading as no reading for the channels', () => {
+  it('keeps the codex channels on a real zero (exhausted) reading', () => {
+    // 0% is real data — quota exhausted — not an absent reading. The channels
+    // stay with codex at 0 rather than borrowing claude's values.
     const result = resolveCompanionWaterBallPresentation(slice(), {
       primary: codexReading('short', 0),
       secondary: codexReading('weekly', 0)
     })
-    expect(result.liquidPercent).toBe(70)
-    expect(result.ringPercent).toBe(45)
+    expect(result.liquidPercent).toBeNull()
+    expect(result.ringPercent).toBeNull()
   })
 
   it('lets claude fill liquid and ring in claude-only mode', () => {

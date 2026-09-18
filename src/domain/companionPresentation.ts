@@ -208,13 +208,16 @@ export function resolveCompanionWaterBallPresentation(
     weekly: channel('claude', slice.claudeQuota.weekly, '周')
   }
   const codexPrimary = codex.primary ?? null
+  // A 0% reading is real data — the quota is exhausted — not an absent reading.
+  // The channel stays with the mapped provider at 0; fallback is only for a
+  // provider with no reading object at all.
   const codexChannels = {
-    short: codexPrimary?.kind === 'short' && codexPrimary.bucket.remainingPercent > 0
+    short: codexPrimary?.kind === 'short'
       ? { provider: 'codex' as const, remainingPercent: codexPrimary.bucket.remainingPercent, resetAt: null, label: codexPrimary.label }
       : null,
     weekly: (() => {
       const weekly = codexWeeklyReading(codexPrimary, codex.secondary ?? null)
-      return weekly && weekly.bucket.remainingPercent > 0
+      return weekly
         ? { provider: 'codex' as const, remainingPercent: weekly.bucket.remainingPercent, resetAt: null, label: weekly.label }
         : null
     })()
