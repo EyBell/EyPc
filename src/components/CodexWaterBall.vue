@@ -28,18 +28,30 @@ const props = withDefaults(defineProps<{
   scopedPercent?: number | null
   /** Short provider label shown beside an overridden percentage. */
   percentProviderLabel?: string
+  /**
+   * Liquid level owned by the centre provider when the mapped provider has no
+   * positive reading. Null keeps the Codex-derived level — the compatibility
+   * path — so the override only ever moves an otherwise-empty channel.
+   */
+  liquidPercent?: number | null
+  /** Same fallback for the outer weekly ring. */
+  ringPercent?: number | null
 }>(), {
   taskCount: 0,
   signal: 'quiet',
   decorative: false,
   percentOverride: null,
   scopedPercent: null,
-  percentProviderLabel: ''
+  percentProviderLabel: '',
+  liquidPercent: null,
+  ringPercent: null
 })
 
-// Liquid level always follows this ball's own primary reading; an override only
-// replaces the displayed number.
+// Liquid level follows this ball's own primary reading; an override only
+// replaces it when the mapped provider has nothing to show.
 const percent = computed(() => props.primary?.bucket.remainingPercent ?? 0)
+const hasLiquidOverride = computed(() => typeof props.liquidPercent === 'number' && Number.isFinite(props.liquidPercent))
+const liquidLevel = computed(() => hasLiquidOverride.value ? props.liquidPercent as number : percent.value)
 const hasPercentOverride = computed(() => typeof props.percentOverride === 'number' && Number.isFinite(props.percentOverride))
 const displayPercent = computed(() => hasPercentOverride.value ? props.percentOverride as number : props.primary?.bucket.remainingPercent ?? null)
 // A pair only renders when both halves are real readings; a lone scoped value
@@ -50,14 +62,16 @@ const dualReading = computed(() => hasPercentOverride.value
   ? { scoped: props.scopedPercent as number, primary: props.percentOverride as number }
   : null)
 const weekly = computed(() => codexWeeklyReading(props.primary, props.secondary))
-const weeklyPercent = computed(() => weekly.value?.bucket.remainingPercent ?? 0)
+const hasRingOverride = computed(() => typeof props.ringPercent === 'number' && Number.isFinite(props.ringPercent))
+const weeklyPercent = computed(() => hasRingOverride.value ? props.ringPercent as number : weekly.value?.bucket.remainingPercent ?? 0)
+const ringVisible = computed(() => weekly.value !== null || hasRingOverride.value)
 const activeWeeklySegments = computed(() => Math.ceil(weeklyPercent.value / 5))
 const wavePath = 'M0 12 C12.5 0 37.5 0 50 12 S87.5 24 100 12 C112.5 0 137.5 0 150 12 S187.5 24 200 12 L200 24 L0 24 Z'
 const percentTextIsBold = computed(() => props.appearance.inner.percentTextStyle === 'bold' || props.appearance.inner.percentTextStyle === 'bold-italic')
 const percentTextIsItalic = computed(() => props.appearance.inner.percentTextStyle === 'italic' || props.appearance.inner.percentTextStyle === 'bold-italic')
 const style = computed(() => ({
-  ...codexWaterAppearanceCssVars(props.appearance, props.colors, percent.value, weekly.value ? weeklyPercent.value : percent.value),
-  '--water-level': `${percent.value}%`,
+  ...codexWaterAppearanceCssVars(props.appearance, props.colors, liquidLevel.value, ringVisible.value ? weeklyPercent.value : liquidLevel.value),
+  '--water-level': `${liquidLevel.value}%`,
   '--weekly-ring': String(weeklyPercent.value),
   '--water-percent-size': `${props.appearance.inner.percentSize}px`,
   '--water-percent-color': props.appearance.inner.percentColor,
@@ -78,7 +92,7 @@ const style = computed(() => ({
     <div class="codex-water-ball__surface" aria-hidden="true">
       <i class="refraction refraction-a" />
       <i class="refraction refraction-b" />
-      <div v-if="primary && percent > 0" class="codex-water-ball__liquid">
+      <div v-if="liquidLevel > 0" class="codex-water-ball__liquid">
         <i class="liquid-base" />
         <svg class="liquid-wave wave-a" viewBox="0 0 200 24" preserveAspectRatio="none"><path :d="wavePath" /></svg>
         <svg class="liquid-wave wave-b" viewBox="0 0 200 24" preserveAspectRatio="none"><path :d="wavePath" /></svg>
@@ -87,7 +101,7 @@ const style = computed(() => ({
       <i class="glass-highlight" />
     </div>
 
-    <svg v-if="weekly" class="codex-water-ball__ring" viewBox="0 0 100 100" aria-hidden="true">
+    <svg v-if="ringVisible" class="codex-water-ball__ring" viewBox="0 0 100 100" aria-hidden="true">
       <template v-if="appearance.outer.style === 'segmented'">
         <line
           v-for="index in 20"
@@ -108,7 +122,7 @@ const style = computed(() => ({
     </svg>
 
     <div v-if="!primary || appearance.inner.showPercent" class="codex-water-ball__value" :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary && !hasPercentOverride }]">
-      <span v-if="primary?.family === 'spark'" class="codex-water-ball__spark" aria-hidden="true">S</span>
+      <span v-if="primary?.family === 'spark' && !hasLiquidOverride" class="codex-water-ball__spark" aria-hidden="true">S</span>
       <strong v-if="dualReading" class="codex-water-ball__pair">
         <span>{{ dualReading.scoped }}</span><i aria-hidden="true">/</i><span>{{ dualReading.primary }}</span>
       </strong>
@@ -315,11 +329,11 @@ const style = computed(() => ({
   letter-spacing: -.01em;
 }
 .codex-water-ball__value strong.codex-water-ball__pair i {
-  margin: 0 .1em;
-  font-size: .68em;
+  margin: 0 .08em;
+  font-size: .72em;
   font-style: normal;
-  font-weight: 500;
-  opacity: .5;
+  font-weight: 600;
+  opacity: .82;
   transform: translateY(-.04em);
 }
 .codex-water-ball__value.percent-center,

@@ -138,6 +138,9 @@ const companionPreview = computed(() => resolveCompanionWaterBallPresentation({
   providers: props.snapshot.settings.providers,
   claudeQuota: props.snapshot.claudeQuota,
   claudeEnvironment: props.snapshot.claudeEnvironment
+}, {
+  primary: waterPreview.value.primary,
+  secondary: waterPreview.value.secondary
 }))
 
 const waterPreviewStyle = computed<Record<string, string>>(() => {
@@ -936,6 +939,8 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 :percent-override="companionPreview.percentOverride"
                 :scoped-percent="companionPreview.scopedPercent"
                 :percent-provider-label="companionPreview.percentProviderLabel"
+                :liquid-percent="companionPreview.liquidPercent"
+                :ring-percent="companionPreview.ringPercent"
                 :appearance="waterDraft"
                 :colors="snapshot.settings.colors"
                 decorative

@@ -7,8 +7,14 @@ import {
   isClaudeAvailable,
   type ClaudeEnvironmentSnapshot,
   type ClaudeQuotaAccessSnapshot,
-  type ClaudeQuotaSnapshot
+  type ClaudeQuotaSnapshot,
+  type ClaudeQuotaWindow
 } from './claude'
+import {
+  type CompanionQuotaChannelReading,
+  resolveCompanionWaterBallReadings
+} from './companionAggregate'
+import { codexWeeklyReading, type CodexQuotaReading } from './codexPresentation'
 import {
   COMPANION_PROVIDER_CYCLE_ORDER,
   COMPANION_PROVIDER_LABELS,
@@ -135,8 +141,22 @@ export interface CompanionWaterBallPresentation {
   scopedLabel: string
   /** Short provider label for the overridden channel; empty when not overridden. */
   percentProviderLabel: string
+  /**
+   * Liquid level owned by a non-Codex provider, or null to keep the
+   * Codex-derived level. Set only when the mapped provider has no positive
+   * reading and the channel fell back to the centre owner.
+   */
+  liquidPercent: number | null
+  /** Same fallback for the outer weekly ring; null keeps the Codex ring. */
+  ringPercent: number | null
   /** Accessible suffix describing the override; empty when not overridden. */
   ariaSuffix: string
+}
+
+/** The Codex compact readings the float already resolved; the ball keeps them authoritative for Codex-owned channels. */
+export interface CompanionWaterBallCodexReadings {
+  primary?: CodexQuotaReading | null
+  secondary?: CodexQuotaReading | null
 }
 
 const EMPTY_PRESENTATION: CompanionWaterBallPresentation = {
@@ -145,6 +165,8 @@ const EMPTY_PRESENTATION: CompanionWaterBallPresentation = {
   scopedPercent: null,
   scopedLabel: '',
   percentProviderLabel: '',
+  liquidPercent: null,
+  ringPercent: null,
   ariaSuffix: ''
 }
 
@@ -160,7 +182,8 @@ function clampQuotaPercent(value: number): number {
  * as it did before this feature existed.
  */
 export function resolveCompanionWaterBallPresentation(
-  slice: CompanionSnapshotSlice | null | undefined
+  slice: CompanionSnapshotSlice | null | undefined,
+  codex: CompanionWaterBallCodexReadings = {}
 ): CompanionWaterBallPresentation {
   if (!slice) return EMPTY_PRESENTATION
   const appQuotaReadable = claudeAppQuotaReadable(slice)
@@ -171,6 +194,36 @@ export function resolveCompanionWaterBallPresentation(
   const window = claudePrimaryQuotaWindow(slice.claudeQuota)
   if (!window) return { ...EMPTY_PRESENTATION, mapping }
   const percent = clampQuotaPercent(window.remainingPercent)
+  // A channel whose mapped provider has no positive reading falls back to the
+  // centre owner instead of leaving dead glass under a foreign number. The
+  // early return above already proves Claude is live, so the fallback can
+  // never leak a disabled provider into the ball.
+  const channel = (provider: CompanionProviderId, quotaWindow: ClaudeQuotaWindow | null | undefined, label: string): CompanionQuotaChannelReading | null => (
+    quotaWindow && quotaWindow.remainingPercent > 0
+      ? { provider, remainingPercent: quotaWindow.remainingPercent, resetAt: quotaWindow.resetAt, label }
+      : null
+  )
+  const claudeChannels = {
+    short: channel('claude', slice.claudeQuota.short, '5h'),
+    weekly: channel('claude', slice.claudeQuota.weekly, '周')
+  }
+  const codexPrimary = codex.primary ?? null
+  const codexChannels = {
+    short: codexPrimary?.kind === 'short' && codexPrimary.bucket.remainingPercent > 0
+      ? { provider: 'codex' as const, remainingPercent: codexPrimary.bucket.remainingPercent, resetAt: null, label: codexPrimary.label }
+      : null,
+    weekly: (() => {
+      const weekly = codexWeeklyReading(codexPrimary, codex.secondary ?? null)
+      return weekly && weekly.bucket.remainingPercent > 0
+        ? { provider: 'codex' as const, remainingPercent: weekly.bucket.remainingPercent, resetAt: null, label: weekly.label }
+        : null
+    })()
+  }
+  const resolved = resolveCompanionWaterBallReadings(mapping, { codex: codexChannels, claude: claudeChannels })
+  const foreignPercent = (reading: CompanionQuotaChannelReading | null) =>
+    reading && reading.provider !== 'codex' ? clampQuotaPercent(reading.remainingPercent) : null
+  const liquidPercent = foreignPercent(resolved.liquid ?? claudeChannels.short ?? claudeChannels.weekly)
+  const ringPercent = foreignPercent(resolved.ring ?? claudeChannels.weekly ?? claudeChannels.short)
   // The scoped reading joins the centre only when the trailing number really is
   // the plain weekly window. Pairing it with the 5-hour fallback would put two
   // different window lengths behind one slash and read as one comparison.
@@ -181,6 +234,8 @@ export function resolveCompanionWaterBallPresentation(
       mapping,
       percentOverride: percent,
       percentProviderLabel: COMPANION_PROVIDER_LABELS.claude,
+      liquidPercent,
+      ringPercent,
       ariaSuffix: `，Claude 剩余 ${percent}%`
     }
   }
@@ -191,6 +246,8 @@ export function resolveCompanionWaterBallPresentation(
     scopedPercent,
     scopedLabel: scoped.scope,
     percentProviderLabel: COMPANION_PROVIDER_LABELS.claude,
+    liquidPercent,
+    ringPercent,
     ariaSuffix: `，Claude ${scoped.scope}周限额剩余 ${scopedPercent}%，普通周限额剩余 ${percent}%`
   }
 }

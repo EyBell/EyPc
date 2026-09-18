@@ -33,6 +33,7 @@ import {
   companionQuotaRefreshReceiptText
 } from '../../src/domain/companionPresentation'
 import { emptyClaudeEnvironment, emptyClaudeQuota, normalizeClaudeQuota } from '../../src/domain/claude'
+import type { CodexQuotaReading } from '../../src/domain/codexPresentation'
 
 const READY_ENVIRONMENT = {
   ...emptyClaudeEnvironment(),
@@ -50,6 +51,17 @@ function slice(patch: Partial<CompanionSnapshotSlice> = {}): CompanionSnapshotSl
     claudeQuota: normalizeClaudeQuota({ five_hour: { used_percentage: 30 }, seven_day: { used_percentage: 55 } }),
     claudeEnvironment: READY_ENVIRONMENT,
     ...patch
+  }
+}
+
+function codexReading(kind: 'short' | 'weekly', remainingPercent: number): CodexQuotaReading {
+  return {
+    kind,
+    family: 'normal',
+    label: kind === 'short' ? '5h' : 'Weekly',
+    longLabel: kind === 'short' ? '5 小时限额' : '周限额',
+    bucket: { remainingPercent, resetAt: null, windowMinutes: null },
+    limitName: ''
   }
 }
 
@@ -171,6 +183,46 @@ describe('water ball presentation', () => {
     }))
     expect(result.percentOverride).toBe(70)
     expect(result.scopedPercent).toBeNull()
+  })
+
+  it('keeps the codex channels while codex has a positive reading', () => {
+    const result = resolveCompanionWaterBallPresentation(slice(), {
+      primary: codexReading('short', 62),
+      secondary: codexReading('weekly', 40)
+    })
+    expect(result.liquidPercent).toBeNull()
+    expect(result.ringPercent).toBeNull()
+    expect(result.percentOverride).toBe(45)
+  })
+
+  it('lets claude take the empty channels when codex has no reading', () => {
+    // The broken state: a claude centre over dead codex glass. With nothing
+    // codex-side, liquid follows the 5-hour window and the ring the weekly.
+    const result = resolveCompanionWaterBallPresentation(slice(), {})
+    expect(result.liquidPercent).toBe(70)
+    expect(result.ringPercent).toBe(45)
+    expect(result.percentOverride).toBe(45)
+  })
+
+  it('treats a zero codex reading as no reading for the channels', () => {
+    const result = resolveCompanionWaterBallPresentation(slice(), {
+      primary: codexReading('short', 0),
+      secondary: codexReading('weekly', 0)
+    })
+    expect(result.liquidPercent).toBe(70)
+    expect(result.ringPercent).toBe(45)
+  })
+
+  it('lets claude fill liquid and ring in claude-only mode', () => {
+    const result = resolveCompanionWaterBallPresentation(slice({ providers: { codex: false, claude: true, cursor: false } }), {})
+    expect(result.liquidPercent).toBe(70)
+    expect(result.ringPercent).toBe(45)
+  })
+
+  it('never leaks claude into the codex-only compatibility path', () => {
+    const result = resolveCompanionWaterBallPresentation(slice({ providers: { codex: true, claude: false, cursor: false } }), {})
+    expect(result.liquidPercent).toBeNull()
+    expect(result.ringPercent).toBeNull()
   })
 
   it('keeps the pair out of every compatibility path', () => {

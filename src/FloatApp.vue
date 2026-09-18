@@ -281,7 +281,10 @@ const compact = computed(() => buildCodexCompactPresentation({
 }))
 const compactCounts = computed(() => compact.value.taskCounts)
 const companionSlice = computed(() => snapshot.value?.companion || null)
-const companionWaterBall = computed(() => resolveCompanionWaterBallPresentation(companionSlice.value))
+const companionWaterBall = computed(() => resolveCompanionWaterBallPresentation(companionSlice.value, {
+  primary: compact.value.primary,
+  secondary: compact.value.secondary
+}))
 function taskFocusItem(task: CodexTaskCard): Extract<FocusItem, { kind: 'task' }> {
   return { kind: 'task', key: `task:${task.key}`, task, marker: resolveCompanionRowMarker(task)! }
 }
@@ -3466,6 +3469,8 @@ onUnmounted(() => {
           :percent-override="companionWaterBall.percentOverride"
           :scoped-percent="companionWaterBall.scopedPercent"
           :percent-provider-label="companionWaterBall.percentProviderLabel"
+          :liquid-percent="companionWaterBall.liquidPercent"
+          :ring-percent="companionWaterBall.ringPercent"
           decorative
         />
         <template v-else>

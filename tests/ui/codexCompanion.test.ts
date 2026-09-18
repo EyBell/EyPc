@@ -662,6 +662,63 @@ describe('Codex Companion V4 UI contract', () => {
     expect(single.get('.codex-water-ball__value strong').text()).toBe('45%')
   })
 
+  it('fills the empty codex channels from the centre provider overrides', () => {
+    // No codex reading at all: without the overrides the ball is dead glass,
+    // which is the state the companion fix exists to prevent.
+    const dead = mount(CodexWaterBall, {
+      props: { primary: null, secondary: null, stateLabel: '', label: '', appearance: defaults.waterAppearance, colors: defaults.colors, percentOverride: 45, percentProviderLabel: 'Claude' }
+    })
+    mounted.push(dead)
+    expect(dead.find('.codex-water-ball__liquid').exists()).toBe(false)
+    expect(dead.find('.codex-water-ball__ring').exists()).toBe(false)
+
+    const wrapper = mount(CodexWaterBall, {
+      props: {
+        primary: null,
+        secondary: null,
+        stateLabel: '',
+        label: '',
+        appearance: defaults.waterAppearance,
+        colors: defaults.colors,
+        percentOverride: 45,
+        percentProviderLabel: 'Claude',
+        liquidPercent: 70,
+        ringPercent: 45
+      }
+    })
+    mounted.push(wrapper)
+    expect(wrapper.find('.codex-water-ball__liquid').exists()).toBe(true)
+    expect(wrapper.find('.codex-water-ball__ring').exists()).toBe(true)
+    expect(wrapper.get('.codex-water-ball').attributes('style')).toContain('--water-level: 70%')
+    expect(wrapper.get('.codex-water-ball').attributes('style')).toContain('--weekly-ring: 45')
+    expect(wrapper.get('.codex-water-ball__value strong').text()).toBe('45%')
+  })
+
+  it('keeps the codex channels authoritative when codex has a reading', () => {
+    const compact = buildCodexCompactPresentation({
+      quota: quota(true, true),
+      compactFields: [],
+      conversationInboxEnabled: true,
+      taskCounts: { input: 0, active: 0, unread: 0 }
+    })
+    const wrapper = mount(CodexWaterBall, {
+      props: {
+        primary: compact.primary,
+        secondary: compact.secondary,
+        stateLabel: '',
+        label: compact.ariaLabel,
+        appearance: defaults.waterAppearance,
+        colors: defaults.colors,
+        percentOverride: 45,
+        percentProviderLabel: 'Claude'
+      }
+    })
+    mounted.push(wrapper)
+    // No channel overrides: liquid and ring stay on the codex readings.
+    expect(wrapper.get('.codex-water-ball').attributes('style')).toContain(`--water-level: ${compact.primary!.bucket.remainingPercent}%`)
+    expect(wrapper.find('.codex-water-ball__ring').exists()).toBe(true)
+  })
+
   it('marks Spark quota with S and switches the outer ring to Spark weekly quota', () => {
     const presentation = buildCodexCompactPresentation({
       quota: sparkQuota(),
