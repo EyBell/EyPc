@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 65 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-71b779413369b732aa21 / renderer-80c5fe6e0442179b5c1e` · `artifact-ready` |
-| 当前构建时间 | `2026/09/16 19:52:12`（`2026-09-16T11:52:12.759Z`） |
+| 当前构建产物 | `host-55a0345f71a4f670443c / renderer-6b9a6a2936342cb56587` · `artifact-ready` |
+| 当前构建时间 | `2026/09/18 11:36:25`（`2026-09-18T03:36:25.688Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-71b779413369b732aa21",
-    "renderer_asset": "renderer-80c5fe6e0442179b5c1e",
+    "host_asset": "host-55a0345f71a4f670443c",
+    "renderer_asset": "renderer-6b9a6a2936342cb56587",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-09-16T11:52:12.759Z",
-    "built_at_local": "2026/09/16 19:52:12",
+    "built_at": "2026-09-18T03:36:25.688Z",
+    "built_at_local": "2026/09/18 11:36:25",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "87780d2afefaf20d67f4f08db3956f81ae003e27b61e34d8de117262198a6aa5",
-    "raw_sources": "8c317f8db4006276bbf6c47cee650b5b97dc18856dd9fabc158eb78fd4bdadc0",
-    "source_anchor_catalog": "bc8c0899116fa39f9e310ce4e763e2fd6585ebf29de8bebbd6c4824dcd78f6d2",
-    "product_body": "976b623b1d0f7d78c69a172bf052012825a7c3e2b668efe71dfc70517603f994",
-    "architecture": "2bcc46f12df7e3d92cd46a1430ea2fa3988801fb1379c35b7b75b73ec7dd40c0",
-    "runtime_contract": "ab372475f8b1fc09c7a9db03ad7dd1161366fd2a06cb62f58f728b49e4de72ea"
+    "requirement_registry": "8b40774882428eda1b02bd36761fc806eb294cc24993e69d5dd64ca775697c46",
+    "raw_sources": "e4eb9c721277f879bce3d6a0c7ecbdb5a1d2c7ffa2fe0d2b5bc163870a538864",
+    "source_anchor_catalog": "4a6a58efd6ee419b6f31abd76fe7dfbc8aa34aa7f48fc6b9ad211ac17b3a0800",
+    "product_body": "5b77fdc214225f4ef6d098d8e2ab87d5bfc42eb3584c91cdfcbc94863aa738ab",
+    "architecture": "7da8f029e4ccc1b13374e466e871de99abcc8e92c9366256d728966bd1a52a38",
+    "runtime_contract": "22fd41eddea6390486f08627b7d1368c8eeb63e0c526373287f4c00ad0313d36"
   }
 }
 ```
