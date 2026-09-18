@@ -699,6 +699,49 @@ describe('Orca agent inventory', () => {
     expect(sessions[0]).toMatchObject({ state: 'working', lastQuestionAt: 10 })
   })
 
+  it('does not keep Claude working on leftover OSC asterisk after Agents is done', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'km-srm-ref',
+      agents: [{
+        paneKey: `${TAB}:${LEAF}`,
+        state: 'done',
+        toolName: 'Bash',
+        agentType: 'claude',
+        updatedAt: 20,
+        stateStartedAt: 10
+      }]
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '✳ leftover topic',
+      connected: true,
+      agentIdentity: 'claude'
+    }])
+    expect(sessions[0]).toMatchObject({
+      state: 'done',
+      unread: false,
+      lastQuestionAt: 0,
+      projectName: 'km-srm-ref'
+    })
+  })
+
+  it('still treats a Claude toolbar-only working OSC frame as live', () => {
+    const { sessions } = inventory.collectSessions([{
+      repo: 'EyPc',
+      agents: []
+    }], [{
+      handle: HANDLE,
+      tabId: TAB,
+      leafId: LEAF,
+      title: '✳ Claude',
+      connected: true,
+      agentIdentity: 'claude'
+    }])
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0]).toMatchObject({ state: 'working', agentType: 'claude' })
+  })
+
   it('keeps a foreground Claude turn working when OSC has a working frame', () => {
     const { sessions } = inventory.collectSessions([{
       repo: 'EyPc',

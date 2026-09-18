@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: orca-agent-state-done__osc-spinner-working-frame__wait-for-response-not-running__treat-public-working-title-as-running
 first_seen: 2026-09-14
-last_verified: 2026-09-14
+last_verified: 2026-09-17
 review_after: 2027-09-14
 evidence:
   - preload/orca/inventory.cjs
@@ -36,13 +36,13 @@ Codex Host `creating`/`running`、Claude `UserPromptSubmit`、Cursor `prompt-sub
 ## Detection Order
 
 1. 对照 `agents[].state` 与同 pane 的 `terminal.title`。
-2. 标题以 braille spinner / `✳` / Claude `. ` 开头，而 state 仍是 `done`，就是本条。
+2. Grok 标题以 braille spinner / `⠋` 开头，而 `agent.state` 仍是 `done`，就是本条。Claude Agents 已是 `done`、窗格残留 `✳` 走 [Claude leftover OSC](orca-claude-done-asterisk-must-not-stay-working.md#L1)，不要按本条抬回进行中。
 3. 不要用 `toolName` 或助手正文是否出现来开门。
 4. 抬头仍用 tab `customTitle`，不要把 `⠋ Grok` 当主题。
 
 ## Prevention Rule
 
-相位：`working` / `waiting` / `blocked`，或 OSC 工作帧 → 进行中。无工作帧的 `done` 才是已完成。不发明待输入。不要把 spinner 标题写进卡片主题。
+相位：`working` / `waiting` / `blocked`，或 **Grok** OSC 工作帧 → 进行中。Grok 无工作帧的 `done` 才是已完成。Claude Agents `done` 不被残留 OSC 抬升。不发明待输入。不要把 spinner 标题写进卡片主题。
 
 ## Alternative Route
 

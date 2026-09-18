@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: orca-claude-stop-stays-working-monitoring__osc-asterisk-keeps-running__sibling-worktree-unread__fold-lead-complete-to-done
 first_seen: 2026-09-16
-last_verified: 2026-09-16
+last_verified: 2026-09-17
 review_after: 2027-09-16
 evidence:
   - preload/orca/inventory.cjs
@@ -44,7 +44,7 @@ Orca Claude 的 Stop 在还有后台 shell / cron 时对外仍是 `state=working
 
 ## Prevention Rule
 
-Agents 仍为 `working` / `waiting` / `blocked` 时，`workingMode=monitoring` 与 `turnCompletedAt` 一律不是 lead-complete。工具间隙的 monitoring 会把卡片折成已完成，快捷打开变成已读，下一工具再拉回进行中。已完成未读只在 projected `session.state` 进入 `done` 后记账。`unread=true` 只在已非活状态时作为完成未读。OSC 工作帧仍可把真正 `done` 的窗格抬回进行中。
+Agents 仍为 `working` / `waiting` / `blocked` 时，`workingMode=monitoring` 与 `turnCompletedAt` 一律不是 lead-complete。工具间隙的 monitoring 会把卡片折成已完成，快捷打开变成已读，下一工具再拉回进行中。已完成未读只在 projected `session.state` 进入 `done` 后记账。`unread=true` 只在已非活状态时作为完成未读。Grok 的 OSC 等待帧仍可把真正 `done` 的窗格抬回进行中；Claude Agents 已是 `done` 时，残留 `✳` 不得再抬升，见 [Claude leftover OSC](orca-claude-done-asterisk-must-not-stay-working.md#L1)。
 
 ## Alternative Route
 
@@ -56,7 +56,7 @@ Agents 仍为 `working` / `waiting` / `blocked` 时，`workingMode=monitoring` �
   3. 测试：`working+monitoring`（有无 toolName）+ `✳` → `working`；`working+turnCompletedAt` → `working`；曾观测 working 再 Agents `done` → Claude 未读；monitoring 期间不得标未读。
 - 验证: `pnpm exec vitest run tests/platform/orcaInventory.test.ts tests/platform/orcaUnreadBridge.test.ts`
 - 适用边界: Orca Companion。Claude App Provider 仍走 App 日志/Hook。
-- 回退: Agents `done` 且无工作帧才是已完成。
+- 回退: Grok Agents `done` 且无工作帧才是已完成；Claude Agents `done` 即使残留 `✳` 也是已完成。
 
 ## Occurrence History
 

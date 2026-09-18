@@ -11,7 +11,7 @@ scoped_relations:
     scope: "新增 Orca 来源缩写 OR / 归属 Orca；不改变 CC/CX/CS/XH"
   - kind: refined-by
     target: eypc-req-shared-raw-220
-    scope: "Agents 仍 working/waiting/blocked 时 monitoring 与 turnCompletedAt 不得收成已完成；已完成未读只在 Agents done 时记账"
+    scope: "Agents 仍 working/waiting/blocked 时 monitoring 与 turnCompletedAt 不得收成已完成；已完成未读只在 Agents done 时记账；Claude done 不被残留 OSC ✳ 钉在进行中"
 ---
 
 # RAW-219 · companion-shared

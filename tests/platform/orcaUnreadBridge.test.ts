@@ -287,6 +287,53 @@ describe('Orca completed-unread bridge', () => {
     ])
   })
 
+  it('marks Claude unread after Agents done even if OSC asterisk remains', async () => {
+    let now = 100
+    const bridge = unreadModule.createUnreadBridge({ store: memoryStore(), now: () => now })
+    await bridge.ready()
+    const working = {
+      worktrees: [{
+        repo: 'km-srm-ref',
+        unread: false,
+        agents: [{ paneKey: PANE, state: 'working', agentType: 'claude', toolName: 'Bash', updatedAt: 10 }]
+      }],
+      terminals: [{
+        handle: HANDLE,
+        tabId: TAB,
+        leafId: LEAF,
+        title: '✳ leftover topic',
+        connected: true,
+        agentIdentity: 'claude'
+      }]
+    }
+    expect(inventory.collectSessions(working.worktrees, working.terminals, undefined, undefined, bridge).sessions[0])
+      .toMatchObject({ unread: false, state: 'working' })
+    now = 200
+    const finished = {
+      worktrees: [{
+        repo: 'km-srm-ref',
+        unread: false,
+        agents: [{
+          paneKey: PANE,
+          state: 'done',
+          agentType: 'claude',
+          toolName: 'Bash',
+          updatedAt: 30
+        }]
+      }],
+      terminals: [{
+        handle: HANDLE,
+        tabId: TAB,
+        leafId: LEAF,
+        title: '✳ leftover topic',
+        connected: true,
+        agentIdentity: 'claude'
+      }]
+    }
+    expect(inventory.collectSessions(finished.worktrees, finished.terminals, undefined, undefined, bridge).sessions[0])
+      .toMatchObject({ agentType: 'claude', state: 'done', unread: true })
+  })
+
   it('can mark one finished sibling unread without guessing the other', async () => {
     let now = 100
     const bridge = unreadModule.createUnreadBridge({ store: memoryStore(), now: () => now })

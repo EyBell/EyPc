@@ -14,7 +14,7 @@ status: implementing
 实现要点：
 
 - Manifest `orca`：opt-in，`open` / `archive` / `topology`，pin inbound+outbound。入站优先 `terminal.isPinned`，CLI 缺字段时直读 `orca-data.json` 会话库 tab 布尔。EyPc 置顶写回 `terminal pin --pinned/--no-pinned`，收到同 handle/tab 的回执后，再用 `terminal list` 核对同 handle/paneKey 的布尔才确认。显式 false 优先于旧文件 true。仅有 `agentIdentity`、没有对话的工具栏窗格不进清单。Orca 窗口里已关掉的窗格不进清单：`terminal list` 没有该 `paneKey` 时丢掉 `worktree ps` 残留行。
-- Preload `preload/orca/`：CLI 解析、inventory、switch、pane close。成功的 `terminal list` 是还开着的窗格权威；关在 Orca 窗口里、list 已没有的 `paneKey` 不得再用 `worktree ps` 残留行合成卡片。`terminal list --include-visual-layouts` 只取 **tab** 节点（`tabId` + `activeLeafId` + `title`）作抬头；同 `tabId` 的 pane OSC 标题（工作中常是 spinner）不是主题，但是进行中相位：Grok `Waiting for response` 会被 Orca 规范化成 `⠋ Grok`，EyPc 在 `agent.state` 仍为 `done`、尚无 toolName 时也要标进行中。Agents 仍为 `working` / `waiting` / `blocked` 时不得因 `workingMode=monitoring` 或 `turnCompletedAt` 收成已完成；`waiting` / `blocked` 与中断仍优先。主轮次结束以 Agents 离开活状态为准，`unread=true` 只在已非活状态时记已完成未读。失败则回退无布局的 `terminal list`。Orca 三处状态不是一份：标签卡才有已完成未读和标签钉；左侧树只有 working/done/interrupted；Agent Session History（`aiVault.listSessions`）无 unread/pin/phase，禁止当未读或钉，也禁止读 preview。工作树 `unread` 是汇总；CLI agent 行带布尔 `unread` 时卡片跟该字段。没有按窗格字段时，仅当该工作树只有一条已完成会话才可吃汇总；多条已完成不得猜最右/最新。禁止扇出到组内每一条。仍为 `working` 的 Claude 窗格不得吃工作区汇总未读。
+- Preload `preload/orca/`：CLI 解析、inventory、switch、pane close。成功的 `terminal list` 是还开着的窗格权威；关在 Orca 窗口里、list 已没有的 `paneKey` 不得再用 `worktree ps` 残留行合成卡片。`terminal list --include-visual-layouts` 只取 **tab** 节点（`tabId` + `activeLeafId` + `title`）作抬头；同 `tabId` 的 pane OSC 标题（工作中常是 spinner）不是主题。Grok `Waiting for response` 会被 Orca 规范化成 `⠋ Grok`，EyPc 在 `agent.state` 仍为 `done`、尚无 toolName 时也要标进行中。Claude Agents 已是 `done` 时，残留 OSC `✳` 不得抬回进行中。Agents 仍为 `working` / `waiting` / `blocked` 时不得因 `workingMode=monitoring` 或 `turnCompletedAt` 收成已完成；`waiting` / `blocked` 与中断仍优先。主轮次结束以 Agents 离开活状态为准，`unread=true` 只在已非活状态时记已完成未读。失败则回退无布局的 `terminal list`。Orca 三处状态不是一份：标签卡才有已完成未读和标签钉；左侧树只有 working/done/interrupted；Agent Session History（`aiVault.listSessions`）无 unread/pin/phase，禁止当未读或钉，也禁止读 preview。工作树 `unread` 是汇总；CLI agent 行带布尔 `unread` 时卡片跟该字段。没有按窗格字段时，仅当该工作树只有一条已完成会话才可吃汇总；多条已完成不得猜最右/最新。禁止扇出到组内每一条。仍为 `working` 的 Claude 窗格不得吃工作区汇总未读。
 - 排序与行上时钟：`lastQuestionAt` 只取进入 `working` 的 `stateStartedAt`。`lastOutputAt`、中途 `updatedAt`、轮询 `acceptedAt` 不得进入提问钟。完成/中断发 `lastQuestionAt: 0`，Kernel `incoming || previous` 保留上一问。
 - 打开成功后列表高亮跟到当前任务；「上一个 / 下一个」沿用 Kernel `cycleKeys` 状态候选顺序，只有环内打开会接管循环游标。已读完成项的展示分组不得覆盖循环候选（[RAW-182 修复](../../260915/companion-cycle-authority/task-card.md#L1)）。
 - Kernel 经现有 V7 证据车道消费；Host 1 秒轮询 `watchInventory` 后 `queueCompanionHostReconciliation('orca')`。
@@ -28,6 +28,12 @@ Focused：`orcaCli` / `orcaInventory` / `orcaPin` / `orcaOpen` / `orcaArchive` /
 Real uTools / 浮窗对照需用户明确授权后再做。
 
 - 2026-09-15 存储隔离：未读账本每轮扫描合并提交，未变化的完成记录不写；通过宿主注入的 `utools.db.promises.get/put` 沿用 `_id/value/_rev` 文档，禁止这条链调用同步 `dbStorage`。单写者只保留最新待写状态；失败留脏到下一次观测重试。初读最多异步等待 1 秒，失败或超时后仅保留会话内状态，不覆盖未知旧账本；因此异常会话的新回执不保证跨重启保存。该修复尚无真实宿主验收。
+
+## 2026-09-17 Claude 残留 OSC 不得钉进行中
+
+- 授权范围：用户确认 F1/F3。现场 `km-srm-ref` Claude Agents 已是 `done`，窗格 OSC 仍以 `✳` 开头，库存把已结束回合抬回 working，已完成未读进不来。Grok `⠋ Waiting for response` 继续可在 Agents `done` 时标进行中。
+- 当前：implemented-local / focused-tests-passed / artifact-ready / host-reload-pending。`orcaInventory` 33/33、`orcaUnreadBridge` 14/14。产物 `host-2f5fe28e747c664d8f1b` / `renderer-81460a26a4391da4e01a`，北京时间 `2026/09/17 20:49:52`。
+- VerificationImpactTrace：Orca Agents `done` + pane OSC → `sessionState` → unread-bridge 观察 projected working→done。聚焦 `orcaInventory` / `orcaUnreadBridge`；不运行全仓测试。
 
 ## 2026-09-16 Claude 主轮次结束信号
 
@@ -54,7 +60,7 @@ Orca 同一窗格完成/已读 → 原生 graph → CLI 布尔 → EyPc inventor
 | 旧版未读 | 缺字段时观测 working → done 的临时账本；打开清本轮 | 插件查看记忆，不冒充 Orca 橙点 |
 | 标签钉 | terminal.isPinned 布尔优先，缺字段才读会话文件；写后同目标 list 回读 | 同 tab 的分屏共享标签钉；其他 tab 不受影响 |
 | 写失败 | 不宣告原生成功，保留本地偏好回退 | CLI 缺命令、旧 handle、回执错目标、缺字段均失败 |
-| 已完成/排序 | 沿用现有 phase 与提问时钟；不因打开或置顶重造相位 | 前景 `working/waiting/blocked` 不得变成完成；`monitoring` / `turnCompletedAt` 不能在活状态下收成已完成；Agents `done` 且无工作帧才是已完成 |
+| 已完成/排序 | 沿用现有 phase 与提问时钟；不因打开或置顶重造相位 | 前景 `working/waiting/blocked` 不得变成完成；`monitoring` / `turnCompletedAt` 不能在活状态下收成已完成；Grok `done` 且无工作帧才是已完成；Claude Agents `done` 即使残留 `✳` 也是已完成 |
 
 ### 定向验证
 
@@ -92,6 +98,7 @@ Orca 同一窗格完成/已读 → 原生 graph → CLI 布尔 → EyPc inventor
     "src/help/guides/codex.md",
     "vibe/knowledge/error-memory/orca-worktree-unread-must-not-fan-out.md",
     "vibe/knowledge/error-memory/orca-claude-monitoring-is-lead-complete.md",
+    "vibe/knowledge/error-memory/orca-claude-done-asterisk-must-not-stay-working.md",
     "vibe/knowledge/error-memory/orca-workspace-pin-is-not-conversation-pin.md",
     "vibe/knowledge/error-memory/README.md",
     "vibe/knowledge/error-memory/modules/orca-companion.md",
@@ -133,6 +140,7 @@ Orca 同一窗格完成/已读 → 原生 graph → CLI 布尔 → EyPc inventor
     "src/help/guides/codex.md",
     "vibe/knowledge/error-memory/orca-worktree-unread-must-not-fan-out.md",
     "vibe/knowledge/error-memory/orca-claude-monitoring-is-lead-complete.md",
+    "vibe/knowledge/error-memory/orca-claude-done-asterisk-must-not-stay-working.md",
     "vibe/knowledge/error-memory/orca-workspace-pin-is-not-conversation-pin.md",
     "vibe/knowledge/error-memory/README.md",
     "vibe/knowledge/error-memory/modules/orca-companion.md",

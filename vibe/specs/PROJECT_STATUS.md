@@ -1,5 +1,7 @@
 # EyPc Project Status Hub
 
+- 2026-09-17 Orca Claude Agents `done` 后残留 OSC `✳` 不得钉进行中：现场 Agents 已是 `done`，窗格 OSC 仍以 `✳` 开头，库存抬回 working，已完成未读进不来。Grok `⠋ Waiting for response` 仍可在 Agents `done` 时标进行中。`orcaInventory` 33/33、`orcaUnreadBridge` 14/14，类型检查、生产构建和 uTools 校验通过。产物 `host-2f5fe28e747c664d8f1b` / `renderer-81460a26a4391da4e01a`，北京时间 `2026/09/17 20:49:52`。`artifact-ready / host-reload-pending`。未提交、未推送、未重载宿主。[Spec](260913/orca-companion/spec.md#L32) · [错忆](../knowledge/error-memory/orca-claude-done-asterisk-must-not-stay-working.md#L1)。
+
 - 2026-09-16 Orca Claude 活状态不得因 monitoring 折成已完成已读：现场已加载 17:05 包仍振荡 completed↔running（工具间隙无 toolName 就收成 done，快捷打开变已读）。Agents 仍 `working/waiting/blocked` 时 `monitoring` / `turnCompletedAt` 一律不 lead-complete；已完成未读只在 Agents `done` 时记账。`orcaInventory` 31/31、`orcaUnreadBridge` 13/13，类型检查、生产构建和 uTools 校验通过。产物 `host-71b779413369b732aa21` / `renderer-80c5fe6e0442179b5c1e`，北京时间 `2026/09/16 19:52:12`。已本地提交，未推送；宿主已加载该产物。[错忆](../knowledge/error-memory/orca-claude-monitoring-is-lead-complete.md#L1) · [Orca Spec](260913/orca-companion/spec.md#L32)。
 
 - 2026-09-16 Orca Claude 在途 Bash 不得因 monitoring 离开进行中：侧栏仍显示 `toolName=Bash`、OSC 工作帧时保持进行中；无在途工具的 `monitoring` / `turnCompletedAt` 仍收成已完成。`orcaInventory` 31/31、`orcaUnreadBridge` 13/13，类型检查、生产构建和 uTools 校验通过。产物 `host-3511f71c23bb5ea98b6d` / `renderer-2f73b31728ab61469455`，北京时间 `2026/09/16 17:05:30`。该条已被上一条取代。已本地提交，未推送。[错忆](../knowledge/error-memory/orca-claude-monitoring-is-lead-complete.md#L1) · [Orca Spec](260913/orca-companion/spec.md#L32)。

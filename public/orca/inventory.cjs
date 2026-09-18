@@ -167,16 +167,21 @@ function hasConversation(agent, terminal) {
     && !Object.prototype.hasOwnProperty.call(agent || {}, 'toolName')
 }
 
-function sessionState(agent, connected, terminalTitle) {
+function sessionState(agent, connected, terminalTitle, agentType) {
   if (flagOf(agent.interrupted)) return 'interrupted'
   if (connected === false) return 'interrupted'
   const state = textOf(agent.state).toLowerCase()
+  const type = agentTypeOf(agentType) || agentTypeOf(agent.agentType)
   if (state === 'waiting' || state === 'blocked') return 'working'
   // monitoring / turnCompletedAt only complete a turn after Agents leave
-  // working/waiting/blocked. OSC ✳ may still lift a true done pane.
+  // working/waiting/blocked. Grok may sit on Agents `done` while OSC is
+  // still waiting-for-response. Claude leftover ✳ after Agents `done` is
+  // a stale frame, not a live turn.
   if (leadTurnCompleted(agent)) return 'done'
   if (state === 'working') return 'working'
-  if (oscIndicatesWorking(terminalTitle)) return 'working'
+  if (oscIndicatesWorking(terminalTitle) && !(type === 'claude' && state === 'done')) {
+    return 'working'
+  }
   return 'done'
 }
 
@@ -193,7 +198,7 @@ function mergeSession(agent, terminal, worktree, tabTitles, tabOrdinals, nativeP
   const tabOrdinal = tabOrdinals instanceof Map && tabOrdinals.has(tabId) ? tabOrdinals.get(tabId) : -1
   const connected = terminal.connected !== false
   const oscTitle = terminal.title
-  const state = sessionState(agent, connected, oscTitle)
+  const state = sessionState(agent, connected, oscTitle, agentType)
   const startedAt = timeOf(agent.stateStartedAt)
   const updatedAt = timeOf(agent.updatedAt)
   // Pane recency is this terminal's own clocks. worktree.lastActivityAt is a
