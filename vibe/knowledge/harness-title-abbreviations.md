@@ -15,6 +15,7 @@
 | `pi` | `pi` |
 | `omp` | `op` |
 | `dsh` | `ds` |
+| `devin` | `dv` |
 
 未登记的 id 原样使用，不得猜字母。Paseo 等新宿主接入时在本表加一行，并改 `harness-labels.cjs`。
 

@@ -5,7 +5,7 @@
  * the owner. Orca, Paseo and later hosts reuse this table; do not fork it.
  *
  * cc=Claude Code, cx=Codex, gr=Grok, ds=DeepSeek Harness, pi=Pi,
- * op=Oh My Pi/OMP, cs=Cursor. Unknown ids keep their raw token.
+ * op=Oh My Pi/OMP, cs=Cursor, dv=Devin. Unknown ids keep their raw token.
  * Orca agentIdentity uses `claude`; CodexHost extra processes use `claude-code`.
  */
 
@@ -17,7 +17,8 @@ const HARNESS_LABELS = Object.freeze({
   grok: 'gr',
   omp: 'op',
   dsh: 'ds',
-  cursor: 'cs'
+  cursor: 'cs',
+  devin: 'dv'
 })
 
 function harnessLabel(harnessId) {

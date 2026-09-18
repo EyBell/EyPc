@@ -17,6 +17,7 @@ describe('global harness title abbreviations', () => {
     expect(labels.harnessLabel('claude')).toBe('cc')
     expect(labels.harnessLabel('claude-code')).toBe('cc')
     expect(labels.harnessLabel('cursor')).toBe('cs')
+    expect(labels.harnessLabel('devin')).toBe('dv')
     expect(discovery.codexhostHarnessLabel('grok')).toBe(labels.harnessLabel('grok'))
     expect(discovery.codexhostHarnessLabel('claude-code')).toBe(labels.harnessLabel('claude-code'))
   })
