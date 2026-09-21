@@ -49,6 +49,7 @@ import type {
   CodexSavedThemePreset,
   CodexWaterAppearanceSettings, CodexhostLaunchMode } from '../domain/codex'
 import type { RuntimeDiagnosticsLevel } from '../domain/types'
+import { formatShortcutLabel } from '../domain/shortcuts'
 import type { CodexRuntimeView } from '../runtime/codexController'
 
 const props = defineProps<{ snapshot: CodexRuntimeView }>()
@@ -73,6 +74,37 @@ const configTabs: Array<{ id: CodexConfigTabId; label: string }> = [
   { id: 'runtime', label: '运行' }
 ]
 const activeConfigTab = ref<CodexConfigTabId>('shortcuts')
+
+interface CodexHotkeyRow {
+  title: string
+  summary: string
+  configureAction: string
+  bindLabel: string
+  runAction?: string
+  runLabel?: string
+  runShortcutLabel?: string
+}
+
+const hotkeyRows: CodexHotkeyRow[] = [
+  { title: '悬浮球开关', summary: '显示或隐藏悬浮球', configureAction: 'codex.float.toggle.hotkey.configure', bindLabel: '切换 Codex 悬浮球' },
+  { title: '直接展开卡片', summary: '展开并聚焦会话列表', configureAction: 'codex.hotkey.configure', bindLabel: '直接展开 Codex 卡片', runAction: 'codex.float.activate', runLabel: '立即展开', runShortcutLabel: formatShortcutLabel('Ctrl+Alt+Enter') },
+  { title: '快速任务查看', summary: '展开动态列表并编号筛选', configureAction: 'codex.quick.hotkey.configure', bindLabel: '快速任务查看', runAction: 'codex.quick.activate', runLabel: '立即进入', runShortcutLabel: formatShortcutLabel('Ctrl+Alt+K') },
+  { title: '待输入任务', summary: '最新优先，连续打开待输入', configureAction: 'codex.input.hotkey.configure', bindLabel: '打开 Codex 待输入任务' },
+  { title: '已完成未读任务', summary: '最新优先，连续打开已完成未读', configureAction: 'codex.completed-unread.hotkey.configure', bindLabel: '依次打开 Codex 已完成未读任务' },
+  { title: '上一个 Codex 任务', summary: '循环到上一个可切换任务', configureAction: 'codex.task.previous.hotkey.configure', bindLabel: '上一个 Codex 任务' },
+  { title: '下一个 Codex 任务', summary: '循环到下一个可切换任务', configureAction: 'codex.task.next.hotkey.configure', bindLabel: '下一个 Codex 任务' },
+  { title: '归档当前任务', summary: '对当前任务走归档确认', configureAction: 'codex.archive.hotkey.configure', bindLabel: '归档当前 Companion 任务' },
+  { title: 'Action 执行工作台', summary: '打开独立 Action 工作台', configureAction: 'codex.actionRunner.hotkey.configure', bindLabel: '打开 Action 执行工作台' },
+  ...Array.from({ length: 5 }, (_, index) => {
+    const slot = index + 1
+    return {
+      title: `Action 槽 ${slot}`,
+      summary: 'EyPc 等价执行，优先默认项目',
+      configureAction: `codex.action.run.${slot}.hotkey.configure`,
+      bindLabel: `Codex Action 槽 ${slot}`
+    }
+  })
+]
 
 function configureRuntimeDiagnostics(input: { enabled?: boolean; level?: RuntimeDiagnosticsLevel }) {
   const settings = props.snapshot.runtimeDiagnostics?.settings
@@ -652,154 +684,35 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             class="codex-tip"
             aria-label="快捷方式说明"
             data-operation-tooltip="快捷方式说明"
-            data-operation-description="这里只跳转到 uTools 快捷键设置或执行入口动作，不读取、回显任何宿主快捷键绑定。"
-            data-tip="这里只跳转到 uTools 快捷键设置或执行入口动作，不读取、回显任何宿主快捷键绑定。"
+            data-operation-description="只跳转 uTools 绑定或执行入口，不回显宿主快捷键。"
           >i</button>
         </div>
         <div class="codex-shortcut-stack">
-          <div class="codex-hotkey-row">
-            <Keyboard :size="12" aria-hidden="true" />
-            <span><strong>悬浮球开关</strong></span>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键，显示或隐藏 Codex 悬浮球。"
-              data-operation-tooltip="配置悬浮球开关快捷键"
-              data-operation-description="打开 uTools 全局功能，为“切换 Codex 悬浮球”绑定系统级快捷键。"
-              @click="$emit('dispatch', 'codex.float.toggle.hotkey.configure')"
-            >去设置</button>
-          </div>
-          <div class="codex-hotkey-row">
-            <Keyboard :size="12" aria-hidden="true" />
-            <span><strong>直接展开卡片</strong></span>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键，显示并展开卡片、把焦点交给会话列表。"
-              data-operation-tooltip="配置进入卡片快捷键"
-              data-operation-description="打开 uTools 全局功能，为“直接展开 Codex 卡片”绑定系统级快捷键。"
-              @click="$emit('dispatch', 'codex.hotkey.configure')"
-            >去设置</button>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="快捷键也可触发：⌘⌥↵（macOS）或 Ctrl+Alt+Enter（Windows），立即展开并聚焦会话列表。"
-              data-operation-tooltip="立即展开"
-              data-operation-description="快捷键也可触发：⌘⌥↵（macOS）或 Ctrl+Alt+Enter（Windows），立即展开并聚焦会话列表。"
-              @click="$emit('dispatch', 'codex.float.activate')"
-            >立即展开</button>
-          </div>
-          <div class="codex-hotkey-row">
-            <Keyboard :size="12" aria-hidden="true" />
-            <span>
-              <strong>快速任务查看</strong>
-            </span>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键；展开卡片、聚焦搜索并给前 10 条任务编号。"
-              data-operation-tooltip="配置快速任务查看快捷键"
-              data-operation-description="打开 uTools 全局功能，为“快速任务查看”绑定系统级快捷键。"
-              @click="$emit('dispatch', 'codex.quick.hotkey.configure')"
-            >去设置</button>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="快捷键也可触发：⌘⌥K（macOS）或 Ctrl+Alt+K（Windows）。"
-              data-operation-tooltip="立即进入筛选模式"
-              data-operation-description="快捷键也可触发：⌘⌥K（macOS）或 Ctrl+Alt+K（Windows）。"
-              @click="$emit('dispatch', 'codex.quick.activate')"
-            >立即进入</button>
-          </div>
-          <div class="codex-hotkey-row">
-            <Keyboard :size="12" aria-hidden="true" />
-            <span><strong>待输入任务</strong></span>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键；最新优先，连续触发依次打开待输入任务。"
-              data-operation-tooltip="配置待输入快捷键"
-              data-operation-description="打开 uTools 全局功能，为“打开 Codex 待输入任务”绑定系统级快捷键。"
-              @click="$emit('dispatch', 'codex.input.hotkey.configure')"
-            >去设置</button>
-          </div>
-          <div class="codex-hotkey-row">
-            <Keyboard :size="12" aria-hidden="true" />
-            <span><strong>已完成未读任务</strong></span>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键；最新优先，连续触发依次打开已完成未读任务。"
-              data-operation-tooltip="配置已完成未读快捷键"
-              data-operation-description="打开 uTools 全局功能，为“依次打开 Codex 已完成未读任务”绑定系统级快捷键。"
-              @click="$emit('dispatch', 'codex.completed-unread.hotkey.configure')"
-            >去设置</button>
-          </div>
-          <div class="codex-hotkey-row">
-            <Keyboard :size="12" aria-hidden="true" />
-            <span><strong>上一个 Codex 任务</strong></span>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键，在待输入、已完成未读和进行中任务之间循环到上一项。"
-              data-operation-tooltip="配置上一个任务快捷键"
-              data-operation-description="打开 uTools 全局功能，为“上一个 Codex 任务”绑定系统级快捷键。"
-              @click="$emit('dispatch', 'codex.task.previous.hotkey.configure')"
-            >去设置</button>
-          </div>
-          <div class="codex-hotkey-row">
-            <Keyboard :size="12" aria-hidden="true" />
-            <span><strong>下一个 Codex 任务</strong></span>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键，在待输入、已完成未读和进行中任务之间循环到下一项。"
-              data-operation-tooltip="配置下一个任务快捷键"
-              data-operation-description="打开 uTools 全局功能，为“下一个 Codex 任务”绑定系统级快捷键。"
-              @click="$emit('dispatch', 'codex.task.next.hotkey.configure')"
-            >去设置</button>
-          </div>
-          <div class="codex-hotkey-row">
-            <Keyboard :size="12" aria-hidden="true" />
-            <span>
-              <strong>归档当前任务</strong>
-            </span>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键，归档当前 Companion 任务。"
-              data-operation-tooltip="配置归档当前任务快捷键"
-              data-operation-description="打开 uTools 全局功能，为“归档当前 Companion 任务”绑定系统级快捷键。"
-              @click="$emit('dispatch', 'codex.archive.hotkey.configure')"
-            >去设置</button>
-          </div>
-          <div class="codex-hotkey-row">
-            <Keyboard :size="12" aria-hidden="true" />
-            <span><strong>Action 执行工作台</strong></span>
-            <button
-              type="button"
-              class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键，打开独立的 Action Runner 工作台。"
-              data-operation-tooltip="配置 Action Runner 快捷键"
-              data-operation-description="打开 uTools 全局功能，为“打开 Action 执行工作台”绑定系统级快捷键。"
-              @click="$emit('dispatch', 'codex.actionRunner.hotkey.configure')"
-            >去设置</button>
-          </div>
           <div
-            v-for="slot in 5"
-            :key="`action-slot-${slot}`"
+            v-for="row in hotkeyRows"
+            :key="row.configureAction"
             class="codex-hotkey-row"
           >
             <Keyboard :size="12" aria-hidden="true" />
-            <span><strong>Action 槽 {{ slot }}</strong></span>
+            <span>
+              <strong>{{ row.title }}</strong>
+              <small>{{ row.summary }}</small>
+            </span>
             <button
               type="button"
               class="secondary codex-hotkey-cta"
-              :title="`配置 uTools 全局快捷键，执行 Environment Action 槽 ${slot}（EyPc 等价执行，非 Codex 原生 Action）。`"
-              :data-operation-tooltip="`配置 Action 槽 ${slot} 快捷键`"
-              :data-operation-description="`打开 uTools 全局功能，为“Codex Action 槽 ${slot}”绑定系统级快捷键。目标优先 Action 默认项目，否则置顶/项目 Tab。`"
-              @click="$emit('dispatch', `codex.action.run.${slot}.hotkey.configure`)"
+              data-operation-tooltip="去绑定"
+              :data-operation-description="row.bindLabel"
+              @click="$emit('dispatch', row.configureAction)"
             >去设置</button>
+            <button
+              v-if="row.runAction && row.runLabel"
+              type="button"
+              class="secondary codex-hotkey-cta"
+              :data-operation-tooltip="row.runLabel"
+              :data-operation-shortcut="row.runShortcutLabel"
+              @click="$emit('dispatch', row.runAction)"
+            >{{ row.runLabel }}</button>
           </div>
         </div>
       </article>

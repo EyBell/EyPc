@@ -8,7 +8,7 @@
 
 - 主窗口 **设置** Tab
 - 默认快捷键：`Ctrl+Alt+S`
-- uTools：`eypc-settings`
+- uTools：`EyPc设置`、`eypc settings`
 
 ## 两个顶栏分区
 

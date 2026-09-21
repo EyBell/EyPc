@@ -495,15 +495,9 @@ function commandTooltip(row: ShortcutCommandRow) {
 }
 
 function commandTooltipLines(row: ShortcutCommandRow) {
-  const description = row.bindings.find((binding) => binding.description)?.description
-  return [
-    row.title,
-    row.commandId,
-    `group: ${row.group}`,
-    description ? `description: ${description}` : '',
-    `when: ${row.when || 'always'}`,
-    `default: ${formatShortcutList(row.defaultShortcutIds) || 'none'}`
-  ].filter(Boolean)
+  const description = row.bindings.find((binding) => binding.description)?.description?.trim()
+  const extra = description && description !== row.title ? description : ''
+  return [row.title, extra].filter(Boolean)
 }
 
 function shortcutTooltip(row: ShortcutCommandRow) {
@@ -982,10 +976,10 @@ function isRecordableShortcutId(shortcutId: string) {
             </em>
           </span>
           <span class="row-actions">
-            <button type="button" aria-label="录制快捷键" title="录制快捷键" @click.stop="openRecord(row)"><Keyboard :size="14" aria-hidden="true" /></button>
-            <button type="button" aria-label="编辑 When" title="编辑 When" @click.stop="openWhenEditor(row)"><Braces :size="14" aria-hidden="true" /></button>
-            <button type="button" aria-label="恢复默认快捷键" title="恢复默认快捷键" @click.stop="resetDraftKeybinding(row.commandId)"><RotateCcw :size="14" aria-hidden="true" /></button>
-            <button type="button" class="danger" aria-label="禁用快捷键" title="禁用快捷键" @click.stop="disableRow(row)"><Ban :size="14" aria-hidden="true" /></button>
+            <button type="button" aria-label="录制" data-operation-tooltip="录制" @click.stop="openRecord(row)"><Keyboard :size="14" aria-hidden="true" /></button>
+            <button type="button" aria-label="When" data-operation-tooltip="When" @click.stop="openWhenEditor(row)"><Braces :size="14" aria-hidden="true" /></button>
+            <button type="button" aria-label="恢复默认" data-operation-tooltip="恢复默认" @click.stop="resetDraftKeybinding(row.commandId)"><RotateCcw :size="14" aria-hidden="true" /></button>
+            <button type="button" class="danger" aria-label="禁用" data-operation-tooltip="禁用" @click.stop="disableRow(row)"><Ban :size="14" aria-hidden="true" /></button>
           </span>
         </div>
       </div>
@@ -1081,8 +1075,8 @@ function isRecordableShortcutId(shortcutId: string) {
                   type="button"
                   class="feature-help-trigger"
                   :disabled="!hasFeatureHelp(row.id)"
-                  :aria-label="`查看${row.title}操作说明`"
-                  :title="hasFeatureHelp(row.id) ? '操作说明' : '暂无操作说明'"
+                  :aria-label="hasFeatureHelp(row.id) ? `${row.title}说明` : `${row.title}暂无说明`"
+                  :data-operation-tooltip="hasFeatureHelp(row.id) ? '说明' : '暂无说明'"
                   @click.stop="openFeatureHelp(row.id)"
                 >说明</button>
               </span>
@@ -1232,10 +1226,10 @@ function isRecordableShortcutId(shortcutId: string) {
                 </em>
               </span>
               <span class="row-actions">
-                <button type="button" aria-label="录制快捷键" title="录制快捷键" @click.stop="openRecord(row)"><Keyboard :size="14" aria-hidden="true" /></button>
-                <button type="button" aria-label="编辑 When" title="编辑 When" @click.stop="openWhenEditor(row)"><Braces :size="14" aria-hidden="true" /></button>
-                <button type="button" aria-label="恢复默认快捷键" title="恢复默认快捷键" @click.stop="resetDraftKeybinding(row.commandId)"><RotateCcw :size="14" aria-hidden="true" /></button>
-                <button type="button" class="danger" aria-label="禁用快捷键" title="禁用快捷键" @click.stop="disableRow(row)"><Ban :size="14" aria-hidden="true" /></button>
+                <button type="button" aria-label="录制" data-operation-tooltip="录制" @click.stop="openRecord(row)"><Keyboard :size="14" aria-hidden="true" /></button>
+                <button type="button" aria-label="When" data-operation-tooltip="When" @click.stop="openWhenEditor(row)"><Braces :size="14" aria-hidden="true" /></button>
+                <button type="button" aria-label="恢复默认" data-operation-tooltip="恢复默认" @click.stop="resetDraftKeybinding(row.commandId)"><RotateCcw :size="14" aria-hidden="true" /></button>
+                <button type="button" class="danger" aria-label="禁用" data-operation-tooltip="禁用" @click.stop="disableRow(row)"><Ban :size="14" aria-hidden="true" /></button>
               </span>
             </div>
           </div>

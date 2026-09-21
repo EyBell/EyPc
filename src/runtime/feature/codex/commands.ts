@@ -1,11 +1,11 @@
 import type { ShortcutCommandProfileConfig } from '../../keybinding/commandProfile'
 
 export const CODEX_COMMAND_PROFILES = {
-  'codex.float.toggle': { title: '显示/隐藏 Codex 悬浮球', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Q'], when: 'true', weight: 1000, risk: 'data-write', description: '插件窗口激活时立即切换；系统级快捷键请在 uTools 全局功能中绑定。', profileId: 'codex' },
-  'codex.float.activate': { title: '进入 Codex 卡片', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Enter'], when: 'true', weight: 1001, description: '显示并展开悬浮卡片，直接进入会话选择和完整操作。', profileId: 'codex' },
+  'codex.float.toggle': { title: '显示/隐藏 Codex 悬浮球', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Q'], when: 'true', weight: 1000, risk: 'data-write', description: '插件窗口内切换悬浮球', profileId: 'codex' },
+  'codex.float.activate': { title: '进入 Codex 卡片', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Enter'], when: 'true', weight: 1001, description: '展开卡片并聚焦会话列表', profileId: 'codex' },
   'codex.tab.prev': { title: '上一个 Codex 页签', group: 'Codex', layer: 'codex', shortcutIds: ['ArrowLeft'], when: "tab == 'codex' && !textInputFocused", weight: 140, risk: 'data-write', profileId: 'codex' },
   'codex.tab.next': { title: '下一个 Codex 页签', group: 'Codex', layer: 'codex', shortcutIds: ['ArrowRight'], when: "tab == 'codex' && !textInputFocused", weight: 140, risk: 'data-write', profileId: 'codex' },
-  'codex.thread.createFocused': { title: '在当前项目新建会话', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+T'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 160, profileId: 'codex', description: '打开新会话编辑器；优先归属当前高亮会话或项目。' },
+  'codex.thread.createFocused': { title: '在当前项目新建会话', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+T'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 160, profileId: 'codex', description: '在当前高亮会话或项目中新建' },
   'codex.list.up': { title: '会话焦点上移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowUp'], when: "tab == 'codex' && (!textInputFocused || activeInputRole == 'codex-search')", weight: 130, profileId: 'codex' },
   'codex.list.down': { title: '会话焦点下移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowDown'], when: "tab == 'codex' && (!textInputFocused || activeInputRole == 'codex-search')", weight: 130, profileId: 'codex' },
   'codex.selection.toggle': { title: '切换当前项选择', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Space'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
@@ -22,7 +22,7 @@ export const CODEX_COMMAND_PROFILES = {
   // Quick Jump keeps `F` / `Shift+F`, which is the only form its original requirement declared.
   'codex.quickJump.openForward': { title: '快捷跳转', group: 'Codex 会话', layer: 'codex', shortcutIds: ['F'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 160, profileId: 'codex' },
   // Alt 在 Codex 域统一表示「直接打开」：`Alt+数字` 开第 N 条，`Alt+F` 用标记开任意一条。
-  'codex.quickJump.openTasks': { title: '快捷跳转并打开会话', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Alt+F'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 161, profileId: 'codex', description: '标记只落在展示出来的会话行上，按下标记直接打开该会话，而不是只转移高亮。' },
+  'codex.quickJump.openTasks': { title: '快捷跳转并打开会话', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Alt+F'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 161, profileId: 'codex', description: '标记会话行并直接打开' },
   'codex.search.focus': { title: '聚焦会话搜索', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+F', 'Ctrl+Shift+F'], when: "tab == 'codex' && !confirmOpen", weight: 150, profileId: 'codex' },
   'codex.layer.cancel': { title: '取消当前交互层', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Escape'], when: "tab == 'codex'", weight: 150, profileId: 'codex' },
   ...Object.fromEntries(Array.from({ length: 5 }, (_, index) => {
@@ -36,10 +36,10 @@ export const CODEX_COMMAND_PROFILES = {
       weight: 125,
       risk: 'data-write' as const,
       profileId: 'codex' as const,
-      description: 'EyPc 等价执行项目 Environment Action（非 Codex 顶栏原生 Action）。'
+      description: 'EyPc 等价执行 Environment Action'
     }]
   })),
-  'codex.quick.activate': { title: '快速任务查看', group: 'Codex 会话', layer: 'app', shortcutIds: ['Ctrl+Alt+K'], when: 'true', weight: 1002, description: '展开悬浮卡片的动态列表并进入筛选模式：直接打字筛选，`Ctrl+1…0` 打开对应编号任务。', profileId: 'codex' },
+  'codex.quick.activate': { title: '快速任务查看', group: 'Codex 会话', layer: 'app', shortcutIds: ['Ctrl+Alt+K'], when: 'true', weight: 1002, description: '展开动态列表并编号筛选', profileId: 'codex' },
   // `Ctrl+数字` 在 Codex 域有两种释义，靠 when 分流而不是靠不同 chord：
   // 筛选模式下是「打开第 N 条可见任务」，其余情况下是「执行抽屉第 N 项」。
   // 抽屉打开时抽屉恒胜，两条守卫互斥，因此设置页里同一 chord 的多行语义是诚实的。

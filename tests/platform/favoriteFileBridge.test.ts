@@ -426,7 +426,7 @@ describe('favorite file bridge source', () => {
       command: feature.cmds?.[0]
     }))).toEqual(Array.from({ length: 10 }, (_, index) => ({
       code: `eypc-favorite-slot-${index + 1}`,
-      explain: `EyPc 文件槽 ${index + 1}`,
+      explain: `打开文件槽 ${index + 1} 的绑定目标`,
       mainHide: true,
       command: `EyPc 文件槽 ${index + 1}`
     })))

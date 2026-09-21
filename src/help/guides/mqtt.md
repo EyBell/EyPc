@@ -7,7 +7,7 @@
 ## 入口
 
 - 主窗口顶栏 **MQTT** Tab
-- uTools 关键词：`MQTT`、`mqtt websocket`、`mqtt ws`、`消息调试`
+- uTools 关键词：`MQTT`、`消息调试`
 
 ## 主界面分区
 

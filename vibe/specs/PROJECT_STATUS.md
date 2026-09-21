@@ -1,5 +1,7 @@
 # EyPc Project Status Hub
 
+- 2026-09-21 快捷说明压缩：每个 uTools 功能只留独立 `explain` 加最多两个触发词；Codex「快捷方式」去设置共用「去绑定」+ 功能名，立即触发只留按钮名和组合键。设置页命令悬停最多两行。覆盖测试与生产/uTools 校验通过。产物 `host-e8856c1b98f7b3ad3d0d` / `renderer-2eb1ba483dadf86e2d17`，北京时间 `2026/09/21 11:19:47`。`artifact-ready / host-reload-pending`。
+
 - 2026-09-17 Orca Claude Agents `done` 后残留 OSC `✳` 不得钉进行中：现场 Agents 已是 `done`，窗格 OSC 仍以 `✳` 开头，库存抬回 working，已完成未读进不来。Grok `⠋ Waiting for response` 仍可在 Agents `done` 时标进行中。`orcaInventory` 33/33、`orcaUnreadBridge` 14/14，类型检查、生产构建和 uTools 校验通过。产物 `host-2f5fe28e747c664d8f1b` / `renderer-81460a26a4391da4e01a`，北京时间 `2026/09/17 20:49:52`。`artifact-ready / host-reload-pending`。未提交、未推送、未重载宿主。[Spec](260913/orca-companion/spec.md#L32) · [错忆](../knowledge/error-memory/orca-claude-done-asterisk-must-not-stay-working.md#L1)。
 
 - 2026-09-16 Orca Claude 活状态不得因 monitoring 折成已完成已读：现场已加载 17:05 包仍振荡 completed↔running（工具间隙无 toolName 就收成 done，快捷打开变已读）。Agents 仍 `working/waiting/blocked` 时 `monitoring` / `turnCompletedAt` 一律不 lead-complete；已完成未读只在 Agents `done` 时记账。`orcaInventory` 31/31、`orcaUnreadBridge` 13/13，类型检查、生产构建和 uTools 校验通过。产物 `host-71b779413369b732aa21` / `renderer-80c5fe6e0442179b5c1e`，北京时间 `2026/09/16 19:52:12`。已本地提交，未推送；宿主已加载该产物。[错忆](../knowledge/error-memory/orca-claude-monitoring-is-lead-complete.md#L1) · [Orca Spec](260913/orca-companion/spec.md#L32)。
@@ -68,6 +70,7 @@ This hub routes current implementation, verification gates and durable authoriti
 
 ## Current Snapshot
 
+- 2026-09-21 快捷说明压缩：uTools 功能 `explain` 独立、触发词最多两个；Codex「快捷方式」去设置不再复读绑定长句。产物 `host-e8856c1b98f7b3ad3d0d` / `renderer-2eb1ba483dadf86e2d17`，builtAt `2026-09-21T03:19:47.212Z`（北京时间 `2026/09/21 11:19:47`）。`artifact-ready / host-reload-pending`。
 - 2026-09-14 Claude 关对话窗立刻收进行中：解析 `LocalSessions.stopShellPty`，不再等退出或 15 分钟空闲。不把 PTY 回收行当成关窗。聚焦 `claudeAppStateBridge` + `claudeBridge` 110/110。产物 `host-b034f59bce4dea101132 / renderer-1f63be5b616dfc5bc9f5`，builtAt `2026-09-14T13:13:19.318Z`（北京时间 `2026/09/14 21:13:19`）。`artifact-ready / host-reload-pending`。
 - 2026-09-14 打开即选定（历史回归，按显示组循环已由 [09-15 修复](260915/companion-cycle-authority/task-card.md#L1) 撤销；高亮行为保留）：快捷键/卡片/角标打开后记住当前任务，「上一个/下一个」从所在动态组继续，浮窗高亮跟到这一条。聚焦 `companionNavigationBridge` 21/21 + Kernel 107/107。产物 `host-fdd4db7152835a3481be / renderer-ffe5b25be773f9456de9`，builtAt `2026-09-14T11:51:55.939Z`（北京时间 `2026/09/14 19:51:55`）。`artifact-ready / host-reload-pending`。
 - 2026-09-14 Orca 标签栏已完成未读：正式 CLI 不导出 `unreadAgentCompletionPanes`。需求 RAW-220 登记到 EyPc。临时中转：曾观测到进行中的会话变成 `done` 后进已完成未读，插件跳转/点击后才已读。用户已核验插件内可用。聚焦 `orcaUnreadBridge` 6/6。Current authority: [spec](260913/orca-companion/spec.md#L1)。

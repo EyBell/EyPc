@@ -3,15 +3,20 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const root = process.cwd()
-const runtimeSource = readFileSync(resolve(root, 'src/runtime/appRuntime.ts'), 'utf8')
+const runtimeSource = [
+  readFileSync(resolve(root, 'src/runtime/appRuntime.ts'), 'utf8'),
+  readFileSync(resolve(root, 'src/runtime/feature/codex/actions.ts'), 'utf8'),
+  readFileSync(resolve(root, 'src/runtime/feature/windows/actions.ts'), 'utf8'),
+  readFileSync(resolve(root, 'src/runtime/feature/favorites/actions.ts'), 'utf8')
+].join('\n')
 const codexPageSource = readFileSync(resolve(root, 'src/pages/CodexPage.vue'), 'utf8')
 const pluginJson = JSON.parse(readFileSync(resolve(root, 'public/plugin.json'), 'utf8')) as {
-  features: Array<{ code: string; cmds: string[] }>
+  features: Array<{ code: string; explain?: string; cmds: string[] }>
 }
 
 /** `codex.actionRunner.hotkey.configure` 这类 action id。 */
 function registeredConfigureActionIds(): string[] {
-  return [...runtimeSource.matchAll(/actions\.register\(\{\s*id:\s*'([A-Za-z0-9.-]*hotkey\.configure)'/g)]
+  return [...runtimeSource.matchAll(/register\(\{\s*id:\s*'([A-Za-z0-9.-]*hotkey\.configure)'/g)]
     .map((match) => match[1])
     .sort()
 }
@@ -67,5 +72,23 @@ describe('global hotkey configure coverage', () => {
     expect(configureHotkeyLabels()).toContain('快速任务查看')
     expect(codexPageSource).toContain("'codex.quick.hotkey.configure'")
     expect(codexPageSource).toContain("'codex.quick.activate'")
+  })
+
+  it('keeps each feature to at most two trigger words and a distinct explain', () => {
+    const oversized = pluginJson.features.filter((feature) => feature.cmds.length > 2).map((feature) => feature.code)
+    expect(oversized).toEqual([])
+    const duplicatedExplain = pluginJson.features
+      .filter((feature) => feature.cmds.length > 1 && feature.explain && feature.cmds.includes(feature.explain))
+      .map((feature) => feature.code)
+    expect(duplicatedExplain).toEqual([])
+  })
+
+  it('does not repeat the same uTools-binding paragraph on every 去设置 button', () => {
+    expect(codexPageSource).not.toContain('配置 uTools 全局快捷键')
+    expect(codexPageSource).not.toContain('打开 uTools 全局功能，为')
+    expect(codexPageSource).toContain('data-operation-tooltip="去绑定"')
+    expect(codexPageSource).toContain('<small>{{ row.summary }}</small>')
+    expect(codexPageSource).toContain(':data-operation-description="row.bindLabel"')
+    expect(codexPageSource).toContain(':data-operation-shortcut="row.runShortcutLabel"')
   })
 })

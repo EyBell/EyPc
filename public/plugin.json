@@ -15,242 +15,242 @@
   "features": [
     {
       "code": "eypc-main",
-      "explain": "打开 EyPc",
-      "cmds": ["EyPc", "PC工具", "电脑工具"]
+      "explain": "打开 EyPc 工作台",
+      "cmds": ["EyPc", "PC工具"]
     },
     {
       "code": "eypc-ports",
-      "explain": "端口进程管理",
-      "cmds": ["端口进程", "端口清理", "kill port", "ports"]
+      "explain": "扫描并终止端口进程",
+      "cmds": ["端口进程", "端口清理"]
     },
     {
       "code": "eypc-mqtt",
       "explain": "MQTT WebSocket 快连",
-      "cmds": ["MQTT", "mqtt websocket", "mqtt ws", "消息调试"]
+      "cmds": ["MQTT", "消息调试"]
     },
     {
       "code": "eypc-favorites",
-      "explain": "文件夹和文件收藏",
-      "cmds": ["文件收藏", "文件夹收藏", "favorites"]
+      "explain": "收藏文件和文件夹",
+      "cmds": ["文件收藏", "文件夹收藏"]
     },
     {
       "code": "eypc-favorites-quick",
-      "explain": "快速打开文件收藏",
-      "cmds": ["文件快开", "快速文件", "quick favorites"]
+      "explain": "快速打开已收藏文件",
+      "cmds": ["文件快开", "快速文件"]
     },
     {
       "code": "eypc-favorite-slot-1",
-      "explain": "EyPc 文件槽 1",
+      "explain": "打开文件槽 1 的绑定目标",
       "mainHide": true,
       "cmds": ["EyPc 文件槽 1"]
     },
     {
       "code": "eypc-favorite-slot-2",
-      "explain": "EyPc 文件槽 2",
+      "explain": "打开文件槽 2 的绑定目标",
       "mainHide": true,
       "cmds": ["EyPc 文件槽 2"]
     },
     {
       "code": "eypc-favorite-slot-3",
-      "explain": "EyPc 文件槽 3",
+      "explain": "打开文件槽 3 的绑定目标",
       "mainHide": true,
       "cmds": ["EyPc 文件槽 3"]
     },
     {
       "code": "eypc-favorite-slot-4",
-      "explain": "EyPc 文件槽 4",
+      "explain": "打开文件槽 4 的绑定目标",
       "mainHide": true,
       "cmds": ["EyPc 文件槽 4"]
     },
     {
       "code": "eypc-favorite-slot-5",
-      "explain": "EyPc 文件槽 5",
+      "explain": "打开文件槽 5 的绑定目标",
       "mainHide": true,
       "cmds": ["EyPc 文件槽 5"]
     },
     {
       "code": "eypc-favorite-slot-6",
-      "explain": "EyPc 文件槽 6",
+      "explain": "打开文件槽 6 的绑定目标",
       "mainHide": true,
       "cmds": ["EyPc 文件槽 6"]
     },
     {
       "code": "eypc-favorite-slot-7",
-      "explain": "EyPc 文件槽 7",
+      "explain": "打开文件槽 7 的绑定目标",
       "mainHide": true,
       "cmds": ["EyPc 文件槽 7"]
     },
     {
       "code": "eypc-favorite-slot-8",
-      "explain": "EyPc 文件槽 8",
+      "explain": "打开文件槽 8 的绑定目标",
       "mainHide": true,
       "cmds": ["EyPc 文件槽 8"]
     },
     {
       "code": "eypc-favorite-slot-9",
-      "explain": "EyPc 文件槽 9",
+      "explain": "打开文件槽 9 的绑定目标",
       "mainHide": true,
       "cmds": ["EyPc 文件槽 9"]
     },
     {
       "code": "eypc-favorite-slot-10",
-      "explain": "EyPc 文件槽 10",
+      "explain": "打开文件槽 10 的绑定目标",
       "mainHide": true,
       "cmds": ["EyPc 文件槽 10"]
     },
     {
       "code": "eypc-windows",
-      "explain": "窗口跳转与收藏",
-      "cmds": ["窗口跳转", "窗口收藏", "window jump"]
+      "explain": "收藏窗口并跳转",
+      "cmds": ["窗口跳转", "窗口收藏"]
     },
     {
       "code": "eypc-window-slot-1",
-      "explain": "EyPc 窗口槽 1",
+      "explain": "跳转到窗口槽 1",
       "mainHide": true,
       "cmds": ["EyPc 窗口槽 1"]
     },
     {
       "code": "eypc-window-slot-2",
-      "explain": "EyPc 窗口槽 2",
+      "explain": "跳转到窗口槽 2",
       "mainHide": true,
       "cmds": ["EyPc 窗口槽 2"]
     },
     {
       "code": "eypc-window-slot-3",
-      "explain": "EyPc 窗口槽 3",
+      "explain": "跳转到窗口槽 3",
       "mainHide": true,
       "cmds": ["EyPc 窗口槽 3"]
     },
     {
       "code": "eypc-window-slot-4",
-      "explain": "EyPc 窗口槽 4",
+      "explain": "跳转到窗口槽 4",
       "mainHide": true,
       "cmds": ["EyPc 窗口槽 4"]
     },
     {
       "code": "eypc-window-slot-5",
-      "explain": "EyPc 窗口槽 5",
+      "explain": "跳转到窗口槽 5",
       "mainHide": true,
       "cmds": ["EyPc 窗口槽 5"]
     },
     {
       "code": "eypc-window-slot-6",
-      "explain": "EyPc 窗口槽 6",
+      "explain": "跳转到窗口槽 6",
       "mainHide": true,
       "cmds": ["EyPc 窗口槽 6"]
     },
     {
       "code": "eypc-window-slot-7",
-      "explain": "EyPc 窗口槽 7",
+      "explain": "跳转到窗口槽 7",
       "mainHide": true,
       "cmds": ["EyPc 窗口槽 7"]
     },
     {
       "code": "eypc-window-slot-8",
-      "explain": "EyPc 窗口槽 8",
+      "explain": "跳转到窗口槽 8",
       "mainHide": true,
       "cmds": ["EyPc 窗口槽 8"]
     },
     {
       "code": "eypc-window-slot-9",
-      "explain": "EyPc 窗口槽 9",
+      "explain": "跳转到窗口槽 9",
       "mainHide": true,
       "cmds": ["EyPc 窗口槽 9"]
     },
     {
       "code": "eypc-window-slot-10",
-      "explain": "EyPc 窗口槽 10",
+      "explain": "跳转到窗口槽 10",
       "mainHide": true,
       "cmds": ["EyPc 窗口槽 10"]
     },
     {
       "code": "eypc-codex",
       "explain": "额度任务悬浮球设置",
-      "cmds": ["Codex额度", "Codex悬浮球", "Codex quota"]
+      "cmds": ["Codex额度", "Codex悬浮球"]
     },
     {
       "code": "eypc-codex-toggle",
-      "explain": "显示/隐藏 Codex 悬浮球",
+      "explain": "显示或隐藏悬浮球",
       "mainHide": true,
       "cmds": ["切换 Codex 悬浮球"]
     },
     {
       "code": "eypc-codex-activate",
-      "explain": "进入 Codex 卡片",
+      "explain": "展开卡片并聚焦会话",
       "mainHide": true,
-      "cmds": ["进入 Codex 卡片", "直接展开 Codex 卡片", "Codex 多选", "Codex 会话操作"]
+      "cmds": ["直接展开 Codex 卡片", "进入 Codex 卡片"]
     },
     {
       "code": "eypc-companion-quick",
-      "explain": "快速任务查看",
+      "explain": "展开动态列表并编号筛选",
       "mainHide": true,
-      "cmds": ["快速任务查看", "任务快开", "Companion 快速任务", "quick tasks"]
+      "cmds": ["快速任务查看", "任务快开"]
     },
     {
       "code": "eypc-codex-input",
-      "explain": "打开 Codex 待输入任务",
+      "explain": "最新优先，连续打开待输入",
       "mainHide": true,
-      "cmds": ["Codex待输入", "打开 Codex 待输入任务", "Codex 待回复"]
+      "cmds": ["打开 Codex 待输入任务", "Codex待输入"]
     },
     {
       "code": "eypc-codex-completed-unread",
-      "explain": "依次打开 Codex 已完成未读任务",
+      "explain": "最新优先，连续打开已完成未读",
       "mainHide": true,
-      "cmds": ["Codex已完成未读", "依次打开 Codex 已完成未读任务", "打开第一个 Codex 已完成未读", "Codex 未读完成"]
+      "cmds": ["依次打开 Codex 已完成未读任务", "Codex已完成未读"]
     },
     {
       "code": "eypc-codex-task-previous",
-      "explain": "上一个 Codex 任务",
+      "explain": "循环到上一个可切换任务",
       "mainHide": true,
-      "cmds": ["上一个 Codex 任务", "Codex 上一个任务", "Codex previous task"]
+      "cmds": ["上一个 Codex 任务"]
     },
     {
       "code": "eypc-codex-task-next",
-      "explain": "下一个 Codex 任务",
+      "explain": "循环到下一个可切换任务",
       "mainHide": true,
-      "cmds": ["下一个 Codex 任务", "Codex 下一个任务", "Codex next task"]
+      "cmds": ["下一个 Codex 任务"]
     },
     {
       "code": "eypc-companion-archive",
-      "explain": "归档当前 Companion 任务",
+      "explain": "对当前任务走归档确认",
       "mainHide": true,
-      "cmds": ["归档当前 Companion 任务", "归档当前 Codex 或 Claude 任务", "Companion archive"]
+      "cmds": ["归档当前 Companion 任务"]
     },
     {
       "code": "eypc-codex-action-runner",
-      "explain": "打开 Codex Action 执行工作台",
+      "explain": "打开独立 Action 工作台",
       "mainHide": true,
-      "cmds": ["打开 Action 执行工作台", "Codex Action Runner", "Action 执行记录"]
+      "cmds": ["打开 Action 执行工作台"]
     },
     {
       "code": "eypc-codex-action-1",
-      "explain": "执行 Codex Environment Action 槽 1",
+      "explain": "执行 Environment Action 槽 1",
       "mainHide": true,
-      "cmds": ["Codex Action 槽 1", "执行 Codex Action 1", "Codex environment action 1"]
+      "cmds": ["Codex Action 槽 1"]
     },
     {
       "code": "eypc-codex-action-2",
-      "explain": "执行 Codex Environment Action 槽 2",
+      "explain": "执行 Environment Action 槽 2",
       "mainHide": true,
-      "cmds": ["Codex Action 槽 2", "执行 Codex Action 2", "Codex environment action 2"]
+      "cmds": ["Codex Action 槽 2"]
     },
     {
       "code": "eypc-codex-action-3",
-      "explain": "执行 Codex Environment Action 槽 3",
+      "explain": "执行 Environment Action 槽 3",
       "mainHide": true,
-      "cmds": ["Codex Action 槽 3", "执行 Codex Action 3", "Codex environment action 3"]
+      "cmds": ["Codex Action 槽 3"]
     },
     {
       "code": "eypc-codex-action-4",
-      "explain": "执行 Codex Environment Action 槽 4",
+      "explain": "执行 Environment Action 槽 4",
       "mainHide": true,
-      "cmds": ["Codex Action 槽 4", "执行 Codex Action 4", "Codex environment action 4"]
+      "cmds": ["Codex Action 槽 4"]
     },
     {
       "code": "eypc-codex-action-5",
-      "explain": "执行 Codex Environment Action 槽 5",
+      "explain": "执行 Environment Action 槽 5",
       "mainHide": true,
-      "cmds": ["Codex Action 槽 5", "执行 Codex Action 5", "Codex environment action 5"]
+      "cmds": ["Codex Action 槽 5"]
     },
     {
       "code": "eypc-settings",

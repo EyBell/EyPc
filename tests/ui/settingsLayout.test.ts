@@ -34,6 +34,8 @@ describe('settings layout', () => {
     expect(settingsPage).toContain('shortcutModifierHinting')
     expect(settingsPage).toContain('@mousemove="updateCommandTooltipPosition"')
     expect(settingsPage).toContain('commandTooltipLines(row).slice(1)')
+    expect(settingsPage).not.toContain('`group: ${row.group}`')
+    expect(settingsPage).not.toContain("title=\"录制快捷键\"")
     expect(settingsPage).not.toContain('<small>{{ row.title }}</small>')
     expect(settingsPage).toContain('data-role="settings-shortcut-search"')
     expect(settingsPage).toContain('handleSettingsKeydown')

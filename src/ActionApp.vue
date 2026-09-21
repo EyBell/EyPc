@@ -312,7 +312,7 @@ onUnmounted(() => {
       </div>
       <div class="header-actions">
         <button type="button" :aria-pressed="snapshot?.pinned" :aria-label="snapshot?.pinned ? '取消窗口置顶' : '窗口置顶'" data-quick-jump-target @click="togglePinned"><Pin :size="15" aria-hidden="true" /></button>
-        <button type="button" aria-label="配置 uTools 全局快捷键" data-quick-jump-target @click="send('codex.actionRunner.hotkey.configure')"><Settings :size="15" aria-hidden="true" /></button>
+        <button type="button" aria-label="绑定全局快捷键" data-operation-tooltip="去绑定" data-quick-jump-target @click="send('codex.actionRunner.hotkey.configure')"><Settings :size="15" aria-hidden="true" /></button>
         <button type="button" aria-label="隐藏 Action Runner" data-quick-jump-target @click="hideRunner"><X :size="16" aria-hidden="true" /></button>
       </div>
     </header>
