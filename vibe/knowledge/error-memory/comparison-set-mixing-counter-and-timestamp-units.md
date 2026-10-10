@@ -4,8 +4,8 @@ status: verified
 scope: project
 fingerprint: source-lane-generations__wall-clock-seeded-into-monotonic-counter-lane__single-unit-rule-per-comparison-set
 first_seen: 2026-08-13
-last_verified: 2026-08-13
-review_after: 2026-11-13
+last_verified: 2026-10-10
+review_after: 2027-01-10
 evidence:
   - preload/index.js
   - preload/companion/task-kernel.cjs
@@ -57,3 +57,19 @@ tags:
 ## Occurrence History
 
 - 2026-08-13：用户报告 Codex 任务状态不跟随。由真实宿主诊断日志定位，非复现推测。修复后 12 文件 476 项定向矩阵通过，新增 `source lane units` 两条回归锁定「聚合不得灌入 membership」与「未声明 membership 意为不变」。真机确认待用户重载。
+
+## 2026-10-10 Codex 等待解除同类复发
+
+- 触发：接受 canonical 问题回答后，请求已移除，但 Kernel 底层仍 completed。
+- 失败路径：初次 canonical 等待没有活动计数，候选使用 observedAt 时间戳作序号；回答后的单调计数不能超过它。旧等待解除还可能复用前一次活动序号。
+- 修复：初次可见 canonical 问题使用该实例的单调 observedSequence；接受回答关闭时发布新的同域活动序号。没有修改 Kernel 因果合同。
+- 证据：[完整链路核验](../../specs/261010/0937-gpt-input-compat/verify.md#L1)、[桥接回归](../../../tests/platform/codexAppServerBridge.test.ts#L6512)。新增断言必须检查 waiting→running，而非只检查请求消失。
+
+## Alternative Route
+
+- Status: `verified`（当前受测 Codex canonical 等待生命周期）。
+- Preconditions: 精确匿名问题实例与稳定单调序号来源。
+- Ordered steps: 先比较同一因果集合的量纲；沿回退与聚合定位污染；初次等待与回答关闭均使用单调计数；时间戳仅表达时间；保持真实终态仲裁。
+- Verification: 接受回答恢复运行、旧快照不复活、新问题仍等待的桥接回归通过；同轮 completed 防误恢复通过。
+- Applicability boundary: 不把源到达顺序认作新 Turn，不覆盖其他未答问题或真实 completed。
+- Fallback: 缺少精确证据时保持未决/恢复来源，不制造巨大序号强行压过内核。

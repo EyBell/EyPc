@@ -20,6 +20,8 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 
 ## Primary Error Records
 
+- [Canonical async questions and running lifecycle](../codex-canonical-async-question-lifecycle.md#L1)
+
 
 - [App Server state survives exit](../codex-app-server-session-state-survives-exit.md#L1)
 - [Completed-unread acknowledgement (superseded)](../codex-completed-unread-explicit-acknowledgement.md#L1)

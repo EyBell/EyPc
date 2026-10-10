@@ -81,3 +81,10 @@ Keep the Desktop projection finite, but do not use projection membership as prot
 | 2026-07-27 | RAW-094 private-patch continuity | A completed task remained ongoing and the active set flapped without completed-count change | Rejected every unobserved private patch and rebuilt the stream shadow | Ignore well-formed unobserved roots while advancing revision; retain strict observed-root validation | current-source canary stable; real uTools completion transition pending |
 
 | 2026-08-28 | 逾期 candidate 复核 | validate:error-memory 报告复核窗口过期 | 无——本轮为复核而非再尝试 | 未改动实现 | candidate；2026-08-28 复核：读取真机运行诊断日志（2026-08-27T13:42Z→2026-08-28T03:25Z，21387 事件，运行构建 host-8a1420a1a591c710f6fa 即当前 HEAD，零 error 零 warn）。**不能据此结案**：该窗口内 Codex Provider 几乎未被使用（带 provider 字段的事件 claude 42 / cursor 18 / codex 1，末次 cold-preflight 显示 codex 源未启用），且本记录关注的失败路径没有专门日志埋点，事件缺失属无效证据而非无复发证明。状态维持 candidate。待验收项：私有 patch churn 下零重订阅、活跃集合稳定。 |
+## 2026-10-10 canonical 增量复发补充
+
+可还原 canonical 工具/正文 status 增量被当成失败，同样进入重订阅并回退 connector 的路径。本次增加有限匿名 canonical 投影；普通进度、耗时与工具输出仍不保存正文，也不产生新的等待。旧“四个 observed roots”描述只适用于原轮次，当前 observed surface 还包含有限 turns/canonical 生命周期。
+
+- 证据：[连续进度与 lifecycle 核验](../../specs/261010/0937-gpt-input-compat/verify.md#L1)。20 轮普通增量不增加重订阅，running 集合与 active 计数稳定；真实问题即时等待。
+- 防复发：协议连续性、字段可还原性、相位语义变化分开判断。普通进度不应被误判为损坏；未知排序和非法索引仍需恢复。
+- Outcome：当前修复自动化通过，用户反馈现在应该正常。历史记录仍为 candidate；此次反馈未补齐原记录独立要求的完整真实完成切换矩阵。

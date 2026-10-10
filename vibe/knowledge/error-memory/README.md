@@ -28,6 +28,7 @@
 | [Window Jump And Native Host](modules/window-jump-and-native-host.md#L1) | 原生窗口身份、Space、root/member、槽位与激活 |
 | [Interaction And Favorites](modules/interaction-and-favorites.md#L1) | command target、focus、keyboard、tooltip 与 favorites |
 | [Runtime And Packaging](modules/runtime-and-packaging.md#L1) | GUI 环境、preload、runtime identity、打包、native addon 与宿主生命周期 |
+| [Test Fixtures](modules/test-fixtures.md#L1) | 测试夹具隔离、实际宿主侧漏、断言有效性与验证范围 |
 | [Engineering Contracts](modules/engineering-contracts.md#L1) | 数据合同、测试、类型、文档权威、审计与安全写入 |
 
 每个叶子必须恰好出现在一个模块的 `Primary Error Records`，最多在两个模块作为 Related；模块不复制事实正文。

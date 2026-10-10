@@ -8,12 +8,14 @@ Link-only route for general data contracts、testing、type narrowing、document
 
 ## Current Authorities And Routes
 
+- [Test fixture and verification boundaries](test-fixtures.md#L1)
 - [Project rules](../../../rules/README.md#L1)
 - [Documentation rules](../../../rules/documentation.md#L1)
 - [Architecture](../../ARCHITECTURE.md#L1)
 - [Project status](../../../specs/PROJECT_STATUS.md#L1)
 
 ## Primary Error Records
+
 
 - [Audit warning attributed without reading its source](../audit-warning-attributed-without-reading-its-source.md#L1)
 - [Concat breaks a merge-sorted precondition](../concat-breaks-downstream-merge-sorted-precondition.md#L1)
@@ -25,22 +27,16 @@ Link-only route for general data contracts、testing、type narrowing、document
 - [Fixed-field projection drops declared data](../fixed-field-projection-drops-declared-data.md#L1)
 - [Guard field no producer ever sets](../guard-field-no-producer-ever-sets.md#L1)
 - [Hook injection mistaken for repository discovery](../hook-injection-mistaken-for-repo-discovery.md#L1)
-- [Host environment leaks into test fixture](../host-environment-leak-into-test-fixture.md#L1)
 - [MQTT focus recovery case times out](../mqtt-focus-recovery-case-times-out.md#L1)
-- [Impact matrix misses source-text assertions](../impact-matrix-misses-source-text-assertions.md#L1)
-- [Test slice anchor collapses instead of failing](../test-slice-anchor-collapses-instead-of-failing.md#L1)
 - [One mechanism silently covering another's job](../one-mechanism-silently-covering-anothers-job.md#L1)
 - [Prefix-based domain analysis undercounts](../prefix-based-domain-analysis-undercounts.md#L1)
 - [Domain name is not a dependency unit](../domain-name-is-not-a-dependency-unit.md#L1)
-- [Behavior check cannot prove a derived value unchanged](../behavior-check-cannot-prove-derived-value-unchanged.md#L1)
 - [Prose range overreaches the clauses it names](../prose-range-overreaches-the-clauses-it-names.md#L1)
 - [Parallel session batch commit splits in-flight work](../parallel-session-batch-commit-splits-in-flight-work.md#L1)
 - [Producer built before checking the consumer](../producer-built-before-checking-the-consumer-can-express-it.md#L1)
 - [Shallow extraction of nested payload](../shallow-pattern-extraction-of-nested-payload.md#L1)
 - [Stale-base force write clobbers concurrent edits](../stale-base-force-write-clobbers-concurrent-edit.md#L1)
 - [Superseded rule cited as authority](../superseded-rule-cited-as-authority.md#L1)
-- [Test double froze an invented contract](../test-double-froze-an-invented-cross-module-contract.md#L1)
-- [Tests that cannot fail](../tests-that-cannot-fail.md#L1)
 - [Tri-state collapsed to boolean](../tri-state-collapsed-to-boolean-hides-remedy.md#L1)
 - [Async closure release narrows to never](../typescript-async-closure-release-narrows-to-never.md#L1)
 - [`Number.isFinite` does not narrow optional numbers](../typescript-number-isfinite-optional-narrowing.md#L1)

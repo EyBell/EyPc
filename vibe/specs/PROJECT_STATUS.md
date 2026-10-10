@@ -1,5 +1,12 @@
 # EyPc Project Status Hub
 
+- 2026-10-10 ChatGPT Projects 只读索引已实现并分批提交：近期 catalog 绑定必须有真实 Turn，Workspace 优先，项目删除边界保留；5/5，真实宿主与项目卡片验收待完成。[核验](261010/chatgpt-project-index/verify.md#L1)。
+
+- 2026-10-10 GPT 状态兼容修复：新版异步问题、普通进度稳定、旧暂停恢复及回答后等待解除已实现。定向 19/19，扩展 317/320（3 个已确认既有失败）；用户反馈当前应该正常，状态为 `focused-automated-verified / user-reported-normal`。当前产物身份及历史见 [任务](261010/0937-gpt-input-compat/task-card.md#L1)，独立宿主版本与逐项验收边界见 [核验](261010/0937-gpt-input-compat/verify.md#L1)。
+
+
+- 2026-09-30 悬浮窗拖动不再贴边，也不再自动变成贴边线。配置页选中贴边线时变成竖条，并贴到离当前位置最近的屏幕拐角。几何、悬浮窗桥接、设置归一与位置保存动作 104/104 通过。2026-10-10 完整构建通过，当前浮窗回归 56/56；未重载或独立验收宿主。[当前要求](requirements/codex-raw-223.md#L1)。
+
 - 2026-09-21 快捷说明压缩：每个 uTools 功能只留独立 `explain` 加最多两个触发词；Codex「快捷方式」去设置共用「去绑定」+ 功能名，立即触发只留按钮名和组合键。设置页命令悬停最多两行。覆盖测试与生产/uTools 校验通过。产物 `host-e8856c1b98f7b3ad3d0d` / `renderer-2eb1ba483dadf86e2d17`，北京时间 `2026/09/21 11:19:47`。`artifact-ready / host-reload-pending`。
 
 - 2026-09-17 Orca Claude Agents `done` 后残留 OSC `✳` 不得钉进行中：现场 Agents 已是 `done`，窗格 OSC 仍以 `✳` 开头，库存抬回 working，已完成未读进不来。Grok `⠋ Waiting for response` 仍可在 Agents `done` 时标进行中。`orcaInventory` 33/33、`orcaUnreadBridge` 14/14，类型检查、生产构建和 uTools 校验通过。产物 `host-2f5fe28e747c664d8f1b` / `renderer-81460a26a4391da4e01a`，北京时间 `2026/09/17 20:49:52`。`artifact-ready / host-reload-pending`。未提交、未推送、未重载宿主。[Spec](260913/orca-companion/spec.md#L32) · [错忆](../knowledge/error-memory/orca-claude-done-asterisk-must-not-stay-working.md#L1)。
