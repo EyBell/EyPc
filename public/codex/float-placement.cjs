@@ -69,6 +69,21 @@ function edgeOffset(anchor, display, edge) {
 
 function restoreAnchor(position, display, style = 'edge') {
   const edge = EDGES.includes(position?.edge) ? position.edge : 'right'
+  // A free drop stores the paint point itself. Edge offset would pull it back
+  // onto a screen edge the next time the window is created.
+  if (position?.placed === 'free' && position?.version === 2 && Number.isFinite(position.x) && Number.isFinite(position.y)) {
+    const size = anchorSize(style, edge, display)
+    const area = areaOf(display)
+    return {
+      edge,
+      anchor: rect(
+        clamp(position.x, area.x, area.x + area.width - size.width),
+        clamp(position.y, area.y, area.y + area.height - size.height),
+        size.width,
+        size.height
+      )
+    }
+  }
   let offset = position?.edgeOffset
   if (!Number.isFinite(offset) && Number.isFinite(position?.x) && Number.isFinite(position?.y)) {
     const oldDisplay = position.displayHint?.bounds ? { bounds: position.displayHint.bounds } : display
@@ -78,6 +93,22 @@ function restoreAnchor(position, display, style = 'edge') {
     offset = edgeOffset({ x: position.x + padding, y: position.y + padding, ...size }, oldDisplay, edge)
   }
   return { edge, anchor: anchorAt(display, edge, offset, style) }
+}
+
+function snapCorner(anchor, display, style = 'edge', intent = {}) {
+  const area = areaOf(display)
+  const cx = finite(anchor?.x, area.x) + finite(anchor?.width, 0) / 2
+  const cy = finite(anchor?.y, area.y) + finite(anchor?.height, 0) / 2
+  const top = Number.isFinite(intent.topBoundary) ? intent.topBoundary : area.y
+  const bottom = area.y + area.height
+  const edge = Math.abs(cx - area.x) <= Math.abs(area.x + area.width - cx) ? 'left' : 'right'
+  const offset = Math.abs(cy - top) <= Math.abs(bottom - cy) ? 0 : 1
+  let placed = anchorAt(display, edge, offset, style)
+  if (offset === 0 && Number.isFinite(intent.topBoundary)) {
+    const limit = area.y + area.height - placed.height
+    placed = rect(placed.x, clamp(Math.max(placed.y, intent.topBoundary), area.y, limit), placed.width, placed.height)
+  }
+  return { edge, anchor: placed }
 }
 
 function snapAnchor(anchor, display, previousEdge, style = 'edge', intent = {}) {
@@ -98,8 +129,17 @@ function snapAnchor(anchor, display, previousEdge, style = 'edge', intent = {}) 
   return { edge, anchor: anchorAt(display, edge, edgeOffset(centered, display, edge), style) }
 }
 
-function savePosition(anchor, display, edge) {
-  return { version: 2, displayId: String(display.id), x: anchor.x, y: anchor.y, edge, edgeOffset: edgeOffset(anchor, display, edge), displayHint: displayHint(display) }
+function savePosition(anchor, display, edge, placed = 'edge') {
+  return {
+    version: 2,
+    displayId: String(display.id),
+    x: anchor.x,
+    y: anchor.y,
+    edge,
+    edgeOffset: edgeOffset(anchor, display, edge),
+    ...(placed === 'free' ? { placed: 'free' } : {}),
+    displayHint: displayHint(display)
+  }
 }
 
 function railLayout(anchor, display, edge, panelSize = null) {
@@ -126,4 +166,4 @@ function railLayout(anchor, display, edge, panelSize = null) {
   return { bounds, edge, rail: local(anchor), slot: local(slot), panel: local(panel) }
 }
 
-module.exports = { RAIL_LENGTH, RAIL_THICKNESS, areaOf, horizontal, anchorSize, anchorAt, edgeOffset, restoreAnchor, snapAnchor, savePosition, railLayout, preferredDisplay, resolveDisplay }
+module.exports = { RAIL_LENGTH, RAIL_THICKNESS, areaOf, horizontal, anchorSize, anchorAt, edgeOffset, restoreAnchor, snapAnchor, snapCorner, savePosition, railLayout, preferredDisplay, resolveDisplay }

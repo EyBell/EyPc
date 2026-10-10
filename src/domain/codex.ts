@@ -597,6 +597,8 @@ export interface CodexFloatPosition {
   y: number | null
   edge: CodexFloatEdge
   edgeOffset?: number
+  /** Dropped by a drag. Absent when the anchor is an edge or corner dock. */
+  placed?: 'free'
   displayHint?: { bounds: { x: number; y: number; width: number; height: number }; label?: string; internal?: boolean }
 }
 
@@ -604,6 +606,7 @@ function normalizeFloatAnchorFields(position: Record<string, unknown>): Partial<
   if (position.version !== 2) return {}
   const result: Partial<CodexFloatPosition> = { version: 2 }
   if (typeof position.edgeOffset === 'number' && Number.isFinite(position.edgeOffset)) result.edgeOffset = Math.max(0, Math.min(1, position.edgeOffset))
+  if (position.placed === 'free') result.placed = 'free'
   const hint = record(position.displayHint)
   const bounds = record(hint.bounds)
   if (['x', 'y', 'width', 'height'].every((key) => typeof bounds[key] === 'number' && Number.isFinite(bounds[key])) && Number(bounds.width) > 0 && Number(bounds.height) > 0) {

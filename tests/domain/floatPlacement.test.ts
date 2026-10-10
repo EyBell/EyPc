@@ -56,3 +56,20 @@ it('uses outward intent near a corner but retains nearest-edge snapping away fro
   expect(geometry.snapAnchor({ ...ball, y: 200 }, screen, 'right', 'edge', { dx: 0, dy: -200, topBoundary: 32 }).edge).toBe('right')
   expect(geometry.snapAnchor({ ...ball, y: 806 }, screen, 'right', 'edge', { dx: 0, dy: 200 }).edge).toBe('bottom')
 })
+
+it('parks a vertical rail on the nearest screen corner and restores a free drop in place', () => {
+  const screen = { bounds: { x: 0, y: 0, width: 1440, height: 900 }, workArea: { x: 0, y: 32, width: 1440, height: 868 } }
+  const ball = { x: 1346, y: 37, width: 94, height: 94 }
+  expect(geometry.snapCorner(ball, screen, 'edge', { topBoundary: 32 })).toEqual({
+    edge: 'right',
+    anchor: { x: 1432, y: 32, width: 8, height: 120 }
+  })
+  expect(geometry.snapCorner({ x: 20, y: 700, width: 94, height: 94 }, screen).edge).toBe('left')
+  expect(geometry.snapCorner({ x: 20, y: 700, width: 94, height: 94 }, screen).anchor.y).toBe(780)
+  const dropped = geometry.savePosition({ x: 400, y: 220, width: 94, height: 94 }, screen, 'right', 'free')
+  expect(dropped.placed).toBe('free')
+  expect(geometry.restoreAnchor(dropped, screen, 'water').anchor).toEqual({ x: 400, y: 220, width: 94, height: 94 })
+  const normalized = normalizeCodexSettings({ ...defaultCodexSettings(), position: dropped })
+  expect(normalized.position.placed).toBe('free')
+  expect(normalized.position.x).toBe(400)
+})

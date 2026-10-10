@@ -344,7 +344,11 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
       if (name === 'node:child_process') return { execFile, spawn }
       if (name === 'node:crypto') return crypto
       if (name === 'node:net') return { connect: vi.fn() }
-      if (name === 'node:fs') return fs
+      // Native geometry fixtures must not watch the user's real Provider files.
+      if (name === 'node:fs') return { ...fs,
+        watch: () => ({ close() {}, on() { return this }, unref() { return this } }),
+        watchFile: () => ({ unref() { return this } }), unwatchFile() {}
+      }
       if (name === 'node:os') return os
       if (name === 'node:path') return path
       if (name === 'electron') return {
@@ -967,7 +971,7 @@ describe('edge rail native interaction contract', () => {
     expect(actions).toEqual([])
     h.bridge.close()
   })
-  it('snaps a cross-screen drag, reads back actual coordinates, and retains them on stale sync', () => {
+  it('keeps a cross-screen drag at the released point and retains it on stale sync', () => {
     const h = loadPreloadHarness()
     const actions: any[] = []
     h.bridge.onAction((action) => actions.push(action))
@@ -976,10 +980,11 @@ describe('edge rail native interaction contract', () => {
     h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: -600, screenY: 5 })
     h.ipcHandlers.get('eypc-float:drag-end')!({}, {})
     expect(actions).toHaveLength(1)
-    expect(actions[0].args.position).toMatchObject({ version: 2, displayId: 'left', edge: 'top', y: 0 })
+    expect(actions[0].args.displayStyle).toBeUndefined()
+    expect(actions[0].args.position).toMatchObject({ version: 2, displayId: 'left', edge: 'right', placed: 'free', x: -605, y: -5 })
     const placed = state(h.sent).placement
     expect(actions[0].args.position.x).toBe(h.bounds().x + placed.rail.x)
-    expect(placed.rail).toMatchObject({ width: 120, height: 8 })
+    expect(placed.rail).toMatchObject({ width: 8, height: 120 })
     const dropped = { ...h.bounds() }
     h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position })
     expect(h.bounds()).toEqual(dropped)
@@ -1060,10 +1065,10 @@ describe('edge rail native interaction contract', () => {
 })
 
 
-describe('automatic strip docking', () => {
+describe('float movement and corner parking', () => {
   const position = { version: 2, displayId: 'right', edge: 'right', edgeOffset: .5 }
   const state = (h: ReturnType<typeof loadPreloadHarness>) => h.sent.filter((item) => item.channel === 'eypc-float:state').at(-1)!.payload as any
-  it.each(['water', 'card'] as const)('turns %s into a top strip at the reachable macOS boundary and persists both settings', (style) => {
+  it.each(['water', 'card'] as const)('moves %s without docking or changing style', (style) => {
     const h = loadPreloadHarness()
     h.displays[1]!.workArea = { ...h.displays[1]!.bounds, y: -68, height: 868 }
     const nativeSet = h.floatWindow.setBounds.getMockImplementation()!
@@ -1071,29 +1076,46 @@ describe('automatic strip docking', () => {
     const actions: any[] = []
     h.bridge.onAction((action) => actions.push(action))
     h.bridge.sync({ visible: true, snapshot: snapshot({ style, baseRevision: 10 }), position })
-    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: 3300, screenY: 300 })
-    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: 3300, screenY: -100 })
+    const before = h.bounds()
+    h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: before.x + 20, screenY: before.y + 20 })
+    h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: before.x + 20, screenY: -100 })
     h.ipcHandlers.get('eypc-float:drag-end')!({}, {})
     expect(actions).toHaveLength(1)
-    expect(actions[0].args).toMatchObject({ displayStyle: 'edge', position: { edge: 'top', y: -68, displayId: 'right' } })
-    expect(state(h)).toMatchObject({ style: 'edge', edge: 'top', expanded: false, placement: { rail: { width: 120, height: 8 } } })
+    expect(actions[0].args.displayStyle).toBeUndefined()
+    expect(actions[0].args.position).toMatchObject({ placed: 'free', edge: 'right', displayId: 'right' })
+    expect(state(h).style).toBe(style)
+    expect(state(h).edge).toBe('right')
     const dropped = h.bounds()
     h.bridge.sync({ visible: true, snapshot: snapshot({ style, baseRevision: 11 }), position })
-    expect(state(h).style).toBe('edge')
+    expect(state(h).style).toBe(style)
     expect(h.bounds()).toEqual(dropped)
+    h.bridge.close()
+  })
+  it.each(['water', 'card'] as const)('parks %s on the nearest vertical corner when settings select the edge rail', (style) => {
+    const h = loadPreloadHarness()
+    h.displays[1]!.workArea = { ...h.displays[1]!.bounds, y: -68, height: 868 }
+    const nativeSet = h.floatWindow.setBounds.getMockImplementation()!
+    h.floatWindow.setBounds.mockImplementation((bounds) => nativeSet({ ...bounds, y: Math.max(-68, bounds.y) }))
+    const actions: any[] = []
+    h.bridge.onAction((action) => actions.push(action))
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style, baseRevision: 10 }), position })
+    h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge', baseRevision: 11 }), position })
+    expect(actions).toHaveLength(1)
+    expect(actions[0].args.displayStyle).toBeUndefined()
+    expect(actions[0].args.position).toMatchObject({ edge: 'right', x: 3352, y: -68, displayId: 'right' })
+    expect(actions[0].args.position.placed).toBeUndefined()
+    expect(state(h)).toMatchObject({ style: 'edge', edge: 'right', expanded: false, placement: { rail: { width: 8, height: 120 } } })
+    const parked = h.bounds()
+    expect(parked.y + state(h).placement.rail.y).toBe(-68)
     const saved = actions[0].args.position
     h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge', baseRevision: 12 }), position: saved })
-    setExpansion(h.ipcHandlers, true, false)
-    expect(h.bounds().y + state(h).placement.rail.y).toBe(-68)
-    setExpansion(h.ipcHandlers, false, false)
-    expect(h.bounds()).toEqual(dropped)
+    expect(h.bounds()).toEqual(parked)
     const fresh = loadPreloadHarness({ minimumY: -68 })
     fresh.displays[1]!.workArea = h.displays[1]!.workArea
     const freshSet = fresh.floatWindow.setBounds.getMockImplementation()!
     fresh.floatWindow.setBounds.mockImplementation((bounds) => freshSet({ ...bounds, y: Math.max(-68, bounds.y) }))
     fresh.bridge.sync({ visible: true, snapshot: snapshot({ style: 'edge' }), position: saved })
-    expect(fresh.bounds()).toEqual(dropped)
-    // An explicit style selection still takes effect after persistence acknowledges the drop.
+    expect(fresh.bounds()).toEqual(parked)
     h.bridge.sync({ visible: true, snapshot: snapshot({ style, baseRevision: 13 }), position: saved })
     expect(state(h).style).toBe(style)
     h.bridge.close(); fresh.bridge.close()

@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest'
 import { registerCodexActions } from '../../src/runtime/feature/codex/actions'
 
-it('persists auto-docked style and position together while legacy position writes preserve style', () => {
+it('saves an explicit edge style together with position and leaves style unchanged on a position-only write', () => {
   const actions = new Map<string, any>()
   const updateSettings = vi.fn(() => true)
   registerCodexActions({ register: (action: any) => actions.set(action.id, action), registerHandler: vi.fn(), codexController: { updateSettings } } as unknown as Parameters<typeof registerCodexActions>[0])

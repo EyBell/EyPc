@@ -187,7 +187,7 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 - [RAW-209](../codex-raw-209.md#L1) — `active`
 - [RAW-212](../codex-raw-212.md#L1) — `active` · 插窗口失效/工作台再进自动重建
 
-- [RAW-223](../codex-raw-223.md#L1) — `active` · 双色贴边线、独立锚点与借屏恢复
+- [RAW-223](../codex-raw-223.md#L1) — `active` · 双色贴边线、独立锚点与借屏恢复；拖动不再自动贴边，配置页切竖条时贴最近拐角
 
 ## Related Requirements
 
