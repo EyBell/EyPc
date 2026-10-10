@@ -185,7 +185,9 @@ const BUDGET = Object.freeze({
   // 2026-09-13 (RAW-219): +211 -- Orca fourth provider: guarded bridge load,
   // evidence node, preflight/reconcile lanes, Host Registry/open-readiness
   // and platform.orca. Inventory/open/archive live in preload/orca/.
-  lines: 14679,
+  // 2026-10-10: recorded budget lagged HEAD (14761); async request resolution
+  // moves to its owner and the verified state-only entry drops to 14760.
+  lines: 14760,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

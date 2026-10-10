@@ -122,6 +122,230 @@ function createCodexDesktopShadow(dependencies = {}) {
     return [...bySequence.values()]
   }
 
+  // Keep only salted identities and lifecycle bits, never question/answer text.
+  function asyncItem(value) {
+    const item = record(value)
+    const itemRef = typeof item.id === 'string'
+      ? projectedRequest({ id: item.id }).correlation : ''
+    const count = item.type === 'agentMessage' && Array.isArray(item.questions)
+      ? Math.min(item.questions.length, 100) : 0
+    const answered = []
+    if (item.type === 'userMessage' || item.type === 'steeringUserMessage') {
+      const content = item.type === 'userMessage' ? item.content : item.input
+      const text = Array.isArray(content) && content.length === 1 && content[0]?.type === 'text'
+        ? content[0].text : null
+      if (typeof text === 'string' && text.length <= 262144) {
+        const match = text.trim().match(/^<send_user_message_question_reply>([\s\S]*)<\/send_user_message_question_reply>$/)
+        if (match) try {
+          const parsed = JSON.parse(match[1])
+          for (const reply of (Array.isArray(parsed) ? parsed : [parsed]).slice(0, 100)) {
+            if (typeof reply?.question !== 'string' || typeof reply?.answer !== 'string') continue
+            const key = JSON.parse(reply.questionItemId)
+            if (Array.isArray(key) && key.length === 3 && key[0] === 'request_user_input_async'
+              && typeof key[1] === 'string' && Number.isInteger(key[2]) && key[2] >= 0) {
+              answered.push(`${projectedRequest({ id: key[1] }).correlation}:${key[2]}`)
+            }
+          }
+        } catch {}
+      }
+    }
+    return {
+      itemRef, count, answered,
+      activityItem: ['reasoning', 'commandExecution', 'mcpToolCall', 'fileChange', 'agentMessage'].includes(item.type),
+      type: ['agentMessage', 'userMessage', 'steeringUserMessage'].includes(item.type) ? item.type : 'other',
+      replyAccepted: item.type === 'userMessage' || item.type === 'steeringUserMessage' && item.status === 'accepted'
+    }
+  }
+
+  function asyncTurn(value) {
+    const turn = record(value)
+    return {
+      turnRef: typeof turn.turnId === 'string' && turn.turnId.length > 0 ? projectedRequest({ id: turn.turnId }).correlation : '',
+      status: ['inProgress', 'completed', 'failed', 'interrupted'].includes(turn.status) ? turn.status : '',
+      startedAt: timestampMs(turn.turnStartedAtMs),
+      items: Array.isArray(turn.items) ? turn.items.map(asyncItem) : []
+    }
+  }
+
+  function historyRef(value) {
+    return typeof value === 'string' ? projectedRequest({ id: value }).correlation || '' : ''
+  }
+
+  function historyOrder(islands) {
+    return (Array.isArray(islands) ? islands : []).flatMap((island) => Array.isArray(island?.entries)
+      ? island.entries.map((entry) => historyRef(entry?.value)).filter(Boolean) : [])
+  }
+
+  function historyEntities(value) {
+    const entities = {}
+    for (const [key, turn] of Object.entries(record(value))) {
+      const ref = historyRef(key)
+      if (ref) entities[ref] = asyncTurn(turn)
+    }
+    return entities
+  }
+
+  function asyncHistory(value) {
+    if (value?.kind !== 'canonical') return null
+    const history = record(value.history)
+    return { order: historyOrder(history.islands), entities: historyEntities(history.entitiesByKey) }
+  }
+
+  function refreshAsyncRequests(shadow, previous = shadow.requests) {
+    const overlays = shadow.asyncTurns || []
+    // Only the current live overlay can supply activity; canonical history
+    // may contain old inProgress turns and is not a running proof.
+    const latestLiveTurn = overlays[overlays.length - 1]
+    const liveTurnRunning = Boolean(latestLiveTurn?.turnRef && latestLiveTurn.status === 'inProgress')
+    shadow.liveTurnActivityChanged = shadow.liveTurnRunning !== liveTurnRunning
+    shadow.liveTurnRunning = liveTurnRunning
+    const history = (shadow.asyncCanonical?.order || []).map((ref) => shadow.asyncCanonical.entities[ref]).filter(Boolean)
+    const historyRefs = new Set(history.map((turn) => turn.turnRef))
+    const turns = history.map((turn) => {
+      const overlay = overlays.find((value) => value.turnRef && value.turnRef === turn.turnRef)
+      if (!overlay) return turn
+      // The native view prefers the longer loaded item list while the live
+      // overlay supplies status. No message bodies are needed for this lane.
+      return { ...overlay, items: overlay.items.length >= turn.items.length ? overlay.items : turn.items }
+    }).concat(overlays.filter((turn) => !turn.turnRef || !historyRefs.has(turn.turnRef)))
+    const latest = turns[turns.length - 1]
+    const turn = latest?.turnRef && latest.status === 'inProgress' ? latest : null
+    const canonical = shadow.asyncCanonical?.entities[shadow.asyncCanonical?.order.at(-1)]
+    shadow.currentCanonicalTurn = canonical?.turnRef
+      ? { turnRef: canonical.turnRef, status: canonical.status, startedAt: canonical.startedAt } : null
+    const answered = new Set((turn?.items || []).flatMap((item) => item.replyAccepted ? item.answered : []))
+    const values = (turn?.items || []).flatMap((item) => item.itemRef
+      ? Array.from({ length: item.count }, (_, index) => `${item.itemRef}:${index}`)
+        .filter((key) => !answered.has(key))
+        .map((key) => ({ type: 'userInput', method: 'requestUserInput', id: `async:${key}` })) : [])
+    const prior = (previous || []).filter((request) => request.asyncQuestion === true)
+    const requests = projectedRequests(values, prior).map((request) => ({ ...request, asyncQuestion: true }))
+    shadow.asyncRequestSetChanged = prior.map((request) => request.observedSequence).join(',') !== requests.map((request) => request.observedSequence).join(',')
+    shadow.requests = [...(shadow.requests || []).filter((request) => !request.asyncQuestion), ...requests]
+  }
+
+  function patchAsyncTurns(shadow, source) {
+    const p = source.path
+    const op = source.op
+    const turns = shadow.asyncTurns || []
+    if (p.length === 1) {
+      if (op !== 'remove' && !Array.isArray(source.value)) return false
+      shadow.asyncTurns = op === 'remove' ? [] : source.value.map(asyncTurn)
+      return true
+    }
+    const ti = codexDesktopPatchIndex(p[1], turns.length, op === 'add' && p.length === 2)
+    if (ti < 0) return false
+    if (p.length === 2) {
+      if (op === 'remove') turns.splice(ti, 1)
+      else if (op === 'add') turns.splice(ti, 0, asyncTurn(source.value))
+      else turns[ti] = asyncTurn(source.value)
+      shadow.asyncTurns = turns
+      return true
+    }
+    if (p[2] === 'status' && p.length === 3) {
+      if (op !== 'remove' && !['inProgress', 'completed', 'failed', 'interrupted'].includes(source.value)) return false
+      turns[ti].status = op === 'remove' ? '' : source.value
+      return true
+    }
+    if (p[2] === 'turnId' && p.length === 3) {
+      turns[ti].turnRef = op === 'remove' ? '' : historyRef(source.value)
+      return true
+    }
+    if (p[2] !== 'items') return 'ignored'
+    if (p.length === 3) {
+      if (op !== 'remove' && !Array.isArray(source.value)) return false
+      turns[ti].items = op === 'remove' ? [] : source.value.map(asyncItem)
+      return true
+    }
+    const items = turns[ti].items
+    const ii = codexDesktopPatchIndex(p[3], items.length, op === 'add' && p.length === 4)
+    if (ii < 0) return false
+    if (p.length === 4) {
+      if (op === 'remove') items.splice(ii, 1)
+      else if (op === 'add') items.splice(ii, 0, asyncItem(source.value))
+      else items[ii] = asyncItem(source.value)
+      return true
+    }
+    const item = items[ii]
+    const field = p[4]
+    if (field === 'id' && p.length === 5) {
+      item.itemRef = op === 'remove' ? '' : historyRef(source.value)
+      return true
+    }
+    if (field === 'type') return false
+    if (field === 'questions' && item.type === 'agentMessage') {
+      if (p.length === 5) {
+        if (op !== 'remove' && !Array.isArray(source.value)) return false
+        item.count = op === 'remove' ? 0 : Math.min(source.value.length, 100)
+      } else if (p.length === 6) {
+        if (codexDesktopPatchIndex(p[5], item.count, op === 'add') < 0) return false
+        const count = item.count + (op === 'add' ? 1 : op === 'remove' ? -1 : 0)
+        if (count > 100) return false
+        item.count = count
+      } else return 'ignored' // Question wording/options do not change its identity.
+      return true
+    }
+    if (item.type !== 'userMessage' && item.type !== 'steeringUserMessage') return 'ignored'
+    if (field === 'status' && p.length === 5 && item.type === 'steeringUserMessage') {
+      item.replyAccepted = op !== 'remove' && source.value === 'accepted'
+      return true
+    }
+    if (field !== (item.type === 'userMessage' ? 'content' : 'input')) return 'ignored'
+    // Retain only parsed reply correlations, including pending steering replies;
+    // later acceptance can then clear the question without a snapshot round trip.
+    let content
+    if (op === 'remove' && (p.length === 5 || p[5] === 0 || p[5] === '0')) content = []
+    else if (p.length === 5 && Array.isArray(source.value)) content = source.value
+    else if (p.length === 6 && (p[5] === 0 || p[5] === '0')) content = [source.value]
+    else if (p.length === 7 && (p[5] === 0 || p[5] === '0') && p[6] === 'text' && typeof source.value === 'string') {
+      content = [{ type: 'text', text: source.value }]
+    } else return false
+    item.answered = asyncItem({ type: item.type, [field]: content }).answered
+    return true
+  }
+
+  function patchAsyncHistory(shadow, source) {
+    const p = source.path
+    if (p.length === 1) {
+      shadow.asyncCanonical = source.op === 'remove' ? null : asyncHistory(source.value)
+      return true
+    }
+    if (p[1] === 'kind') return false
+    if (p[1] !== 'history') return 'ignored'
+    if (p.length === 2) {
+      shadow.asyncCanonical = source.op === 'remove' ? null : asyncHistory({ kind: 'canonical', history: source.value })
+      return true
+    }
+    if (!['entitiesByKey', 'islands'].includes(p[2])) return 'ignored'
+    // Old snapshots may not carry canonical history at all. Ordinary body/tool
+    // deltas still cannot introduce a question and must not reset live authority.
+    if (!shadow.asyncCanonical) {
+      return p.length > 4 && !['items', 'questions', 'turnId'].includes(p.at(-1)) ? 'ignored' : false
+    }
+    if (p[2] === 'islands') {
+      if (p.length !== 3) return false
+      shadow.asyncCanonical.order = source.op === 'remove' ? [] : historyOrder(source.value)
+      return true
+    }
+    if (p.length === 3) {
+      shadow.asyncCanonical.entities = source.op === 'remove' ? {} : historyEntities(source.value)
+      return true
+    }
+    const ref = historyRef(p[3])
+    if (!ref) return false
+    if (p.length === 4) {
+      if (source.op === 'remove') delete shadow.asyncCanonical.entities[ref]
+      else shadow.asyncCanonical.entities[ref] = asyncTurn(source.value)
+      return true
+    }
+    const turn = shadow.asyncCanonical.entities[ref]
+    if (!turn) return false
+    const projection = { asyncTurns: [turn] }
+    const result = patchAsyncTurns(projection, { ...source, path: ['turns', 0, ...p.slice(4)] })
+    shadow.asyncCanonical.entities[ref] = projection.asyncTurns[0]
+    return result
+  }
+
   function codexDesktopShadowFromSnapshot(change, previousShadow = null, waitingState = null) {
     const state = record(change.conversationState)
     const revision = Number.isInteger(change.revision) && change.revision >= 0 ? change.revision : -1
@@ -161,12 +385,15 @@ function createCodexDesktopShadow(dependencies = {}) {
       hasUnreadTurn: typeof state.hasUnreadTurn === 'boolean' ? state.hasUnreadTurn : undefined,
       unreadEvidence: typeof state.hasUnreadTurn === 'boolean' ? 'snapshot' : '',
       requests,
+      asyncTurns: Array.isArray(state.turns) ? state.turns.map(asyncTurn) : [],
+      asyncCanonical: asyncHistory(state.turnHistory),
       requestSetRevision: nextLiveEvidenceSequence(),
       requestSetComplete: true,
       requestSetAuthority: 'provider-snapshot',
       runtimeWaitingSequences,
       waitingState
     }
+    refreshAsyncRequests(shadow, codexDesktopRequestObservationCandidates(previousShadow, waitingState))
     if (waitingState) {
       waitingState.runtimeWaitingSequences = {
         ...(waitingState.runtimeWaitingSequences || {}),
@@ -190,6 +417,38 @@ function createCodexDesktopShadow(dependencies = {}) {
   }
 
   function codexApplyDesktopShadowPatch(shadow, patch) {
+    shadow.asyncRequestSetChanged = false
+    shadow.liveTurnActivityChanged = false
+    shadow.canonicalRunningProgress = false
+    const source = record(patch)
+    if (!['add', 'replace', 'remove'].includes(source.op) || !Array.isArray(source.path)
+      || !source.path.length || source.path.length > 64) return false
+    if (source.path[0] === 'turnHistory' || source.path[0] === 'turns') {
+      const result = source.path[0] === 'turnHistory' ? patchAsyncHistory(shadow, source) : patchAsyncTurns(shadow, source)
+      if (result === false) return false
+      if (result !== 'ignored') refreshAsyncRequests(shadow)
+      const p = source.path
+      const canonical = shadow.asyncCanonical
+      const entityRef = historyRef(p[3])
+      const current = canonical?.entities[entityRef]
+      if (p[0] === 'turnHistory' && p[2] === 'entitiesByKey'
+        && entityRef === canonical?.order.at(-1)
+        && current?.turnRef && current.status === 'inProgress'
+        && source.op !== 'remove' && p[4] === 'items' && p.length >= 6
+        && p[6] !== 'questions'
+        && current.items[codexDesktopPatchIndex(p[5], current.items.length)]?.activityItem === true) {
+        shadow.canonicalRunningProgress = true
+      }
+      return true
+    }
+    const asyncRequests = (shadow.requests || []).filter((request) => request.asyncQuestion)
+    shadow.requests = (shadow.requests || []).filter((request) => !request.asyncQuestion)
+    const applied = applyNativePatch(shadow, patch)
+    shadow.requests.push(...asyncRequests)
+    return applied
+  }
+
+  function applyNativePatch(shadow, patch) {
     const source = record(patch)
     const operation = source.op
     const patchPath = Array.isArray(source.path) ? source.path : null

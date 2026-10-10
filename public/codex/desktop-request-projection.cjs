@@ -201,7 +201,8 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       || codexDesktopRuntimeBecamePlainActive(previousState.runtime, shadow.runtime)) return false
     const retained = codexDesktopRemovedWaitingRequests(previousState.requests, shadow.requests)
       .filter((request) => {
-        if (['resolved', 'cancelled', 'execution-started'].includes(request?.interactionState)
+        if (request?.asyncQuestion === true
+          || ['resolved', 'cancelled', 'execution-started'].includes(request?.interactionState)
           || !codexDesktopRequestFlag(request)) return false
         const kind = codexDesktopRequestKind(request)
         return kind === 'plan-choice' || kind === 'plan-implementation'
@@ -213,6 +214,42 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     shadow.requestSetComplete = previousState.requestSetComplete
     shadow.requestSetAuthority = previousState.requestSetAuthority
     return true
+  }
+
+  function codexDesktopResolveWaitingRequestObservations(bridge, threadId, requests, sequence, shadow, resolvedLimit, visible) {
+    const observations = (Array.isArray(requests) ? requests : [])
+      .filter((request) => codexDesktopRequestFlag(request) && Number.isInteger(request?.observedSequence))
+    if (!observations.length) return 0
+    const state = bridge.waitingStateFor(threadId)
+    const resolvedSequence = Number.isInteger(sequence) && sequence > 0
+      ? sequence
+      : nextLiveEvidenceSequence()
+    for (const request of observations) {
+      state.resolvedRequestSequences.delete(request.observedSequence)
+      state.resolvedRequestSequences.set(request.observedSequence, resolvedSequence)
+      bridge.recordInteractionTerminalOnShadow(shadow, request, 'resolved', resolvedSequence)
+    }
+    while (state.resolvedRequestSequences.size > resolvedLimit) {
+      const oldest = state.resolvedRequestSequences.keys().next().value
+      if (!Number.isInteger(oldest)) break
+      state.resolvedRequestSequences.delete(oldest)
+    }
+    const clearedAsyncFlags = codexDesktopAsyncResolvedRuntimeFlags(
+      observations, shadow?.requests, state, visible) || []
+    if (clearedAsyncFlags.length) bridge.clearWaitingEvidence(threadId, clearedAsyncFlags, { sequence: resolvedSequence })
+    bridge.recordWaitingResolutionOnShadow(shadow, resolvedSequence)
+    return resolvedSequence
+  }
+
+  function codexDesktopAsyncResolvedRuntimeFlags(observations, requests, state, visible) {
+    // Only exact async-question closure can retire that input epoch's older
+    // runtime flag; other current input instances remain independently live.
+    return [...new Set(observations
+      .filter((request) => request.asyncQuestion === true && request.identityExact === true)
+      .map(codexDesktopRequestFlag))]
+      .filter((flag) => !(requests || []).some((request) => (
+        codexDesktopRequestFlag(request) === flag && visible(state, flag, request.observedSequence)
+      )))
   }
 
   function codexDesktopResumedWaitingFlags(previousRuntime, currentRuntime, currentRequests, previousRequests) {
@@ -242,6 +279,8 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     codexDesktopRuntimeBecamePlainActive,
     codexDesktopRemovedWaitingRequests,
     codexDesktopRetainCausallyOpenRequests,
+    codexDesktopAsyncResolvedRuntimeFlags,
+    codexDesktopResolveWaitingRequestObservations,
     codexDesktopResumedWaitingFlags
   }
 }

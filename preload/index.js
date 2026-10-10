@@ -5022,25 +5022,8 @@ class CodexDesktopCompanionBridge {
   }
 
   resolveWaitingRequestObservations(threadId, requests, sequence = 0, shadow = null) {
-    const observations = (Array.isArray(requests) ? requests : [])
-      .filter((request) => codexDesktopRequestFlag(request) && Number.isInteger(request?.observedSequence))
-    if (!observations.length) return 0
-    const state = this.waitingStateFor(threadId)
-    const resolvedSequence = Number.isInteger(sequence) && sequence > 0
-      ? sequence
-      : codexNextLiveEvidenceSequence()
-    for (const request of observations) {
-      state.resolvedRequestSequences.delete(request.observedSequence)
-      state.resolvedRequestSequences.set(request.observedSequence, resolvedSequence)
-      this.recordInteractionTerminalOnShadow(shadow, request, 'resolved', resolvedSequence)
-    }
-    while (state.resolvedRequestSequences.size > CODEX_DESKTOP_RESOLVED_REQUEST_LIMIT) {
-      const oldest = state.resolvedRequestSequences.keys().next().value
-      if (!Number.isInteger(oldest)) break
-      state.resolvedRequestSequences.delete(oldest)
-    }
-    this.recordWaitingResolutionOnShadow(shadow, resolvedSequence)
-    return resolvedSequence
+    return codexDesktopRequestProjection?.codexDesktopResolveWaitingRequestObservations(
+      this, threadId, requests, sequence, shadow, CODEX_DESKTOP_RESOLVED_REQUEST_LIMIT, codexWaitingEvidenceVisible) || 0
   }
 
   recordRemovedWaitingRequests(threadId, previousRequests, currentRequests, shadow = null, sequence = 0) {
@@ -6152,6 +6135,9 @@ class CodexDesktopCompanionBridge {
       }
       const previousActivity = codexDesktopShadowActivity(previousShadow)
       const snapshotActivity = codexDesktopShadowActivity(shadow)
+      if (snapshotActivity?.activeFlags.includes('waitingOnUserInput') && shadow.currentCanonicalTurn?.status === 'inProgress') {
+        this.recordWaitingResolutionOnShadow(shadow, Math.max(0, ...shadow.requests.filter((request) => request.asyncQuestion).map((request) => request.observedSequence)))
+      }
       const sameLiveSemantics = previousActivity?.status === 'active'
         && snapshotActivity?.status === 'active'
         && JSON.stringify(previousActivity.activeFlags || []) === JSON.stringify(snapshotActivity.activeFlags || [])
@@ -6239,13 +6225,12 @@ class CodexDesktopCompanionBridge {
     let containsReadStatePatch = false
     let containsActivityPatch = false
     let containsRequestSetPatch = false
+    let containsCanonicalRunningProgress = false
     let refreshRuntimeWaitingSequences = false
     for (const patch of change.patches) {
       const patchSource = codexRecord(patch)
       const patchPath = Array.isArray(patchSource.path) ? patchSource.path : []
       if (patchPath[0] === 'hasUnreadTurn') containsReadStatePatch = true
-      if (patchPath[0] === 'threadRuntimeStatus' || patchPath[0] === 'requests') containsActivityPatch = true
-      if (patchPath[0] === 'requests') containsRequestSetPatch = true
       if (patchPath[0] === 'threadRuntimeStatus'
         && (patchPath.length === 1 || patchPath[1] === 'activeFlags')) {
         refreshRuntimeWaitingSequences = true
@@ -6254,6 +6239,17 @@ class CodexDesktopCompanionBridge {
         this.scheduleWaitingEdgeRefresh(params.conversationId)
         return
       }
+      if (patchPath[0] === 'threadRuntimeStatus' || patchPath[0] === 'requests' || shadow.asyncRequestSetChanged || shadow.liveTurnActivityChanged) containsActivityPatch = true
+      if (patchPath[0] === 'requests' || shadow.asyncRequestSetChanged) containsRequestSetPatch = true
+      containsCanonicalRunningProgress ||= shadow.canonicalRunningProgress === true
+    }
+    const parentThreadId = shadow.sideConversation ? shadow.parentThreadId : params.conversationId
+    const currentKnown = codexActivityInventory.get(parentThreadId)
+    const canonicalRunningWitness = codexDesktopActivityResolution?.codexDesktopCanonicalRunningWitness(
+      shadow, currentKnown, containsCanonicalRunningProgress, codexDesktopRequestCorrelation({ id: currentKnown?.lastTurnId })) === true
+    if (canonicalRunningWitness) {
+      delete shadow.suppressUncorroboratedActive
+      containsActivityPatch = true
     }
     const retainedOpenRequest = this.retainCausallyOpenWaitingRequests(params.conversationId, previousRequestState, shadow)
     this.cancelWaitingEdgeRefresh(params.conversationId)
@@ -6268,10 +6264,10 @@ class CodexDesktopCompanionBridge {
     const semanticActivityChanged = previousActivity?.status !== nextActivity?.status
       || JSON.stringify(previousActivity?.activeFlags || []) !== JSON.stringify(nextActivity?.activeFlags || [])
       || previousActivity?.planImplementationOnly !== nextActivity?.planImplementationOnly
-    const activityObservedAt = containsActivityPatch && semanticActivityChanged ? Date.now() : 0
+    const activityObservedAt = containsActivityPatch && (semanticActivityChanged || canonicalRunningWitness) ? Date.now() : 0
     if (containsActivityPatch) {
       shadow.activityRevision = revision
-      if (semanticActivityChanged) {
+      if (semanticActivityChanged || canonicalRunningWitness) {
         shadow.activityEvidence = 'activity-event'
         shadow.activityEventSequence = codexNextLiveEvidenceSequence()
         delete shadow.suppressUncorroboratedActive
@@ -6282,7 +6278,7 @@ class CodexDesktopCompanionBridge {
       previousRequestState.requests,
       shadow.requests,
       shadow,
-      shadow.activityEventSequence
+      activityObservedAt ? shadow.activityEventSequence : 0
     )
     this.recordRemovedRuntimeWaitingFlags(
       params.conversationId,
@@ -6320,7 +6316,8 @@ class CodexDesktopCompanionBridge {
     const isActive = currentActivity?.status === 'active'
     const exactLiveActivityPatch = containsActivityPatch
       && isActive
-      && semanticActivityChanged
+      && (semanticActivityChanged || canonicalRunningWitness
+        || codexDesktopActivityResolution?.codexDesktopHasResolvedCanonicalRun(shadow, requestClearSequence, currentActivity, currentKnown, codexDesktopRequestCorrelation({ id: currentKnown?.lastTurnId })))
       && shadow.activityEvidence === 'activity-event'
       && Number(shadow.activityEventSequence) > 0
     if (exactLiveActivityPatch) {
@@ -6335,7 +6332,7 @@ class CodexDesktopCompanionBridge {
       }
     }
     if (exactLiveActivityPatch) {
-      shadow.desktopActiveSince = activityObservedAt
+      shadow.desktopActiveSince = activityObservedAt || Date.now()
     } else if (!isActive) {
       delete shadow.desktopActiveSince
     }
@@ -8484,12 +8481,14 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
     known,
     codexDesktopShadowActivity(ownShadow)
   )
+  const appServerBranchThreadId = validCodexThreadId(known.appServerLiveBranchThreadId)
+    ? known.appServerLiveBranchThreadId : parentThreadId
+  const appServerShadow = appServerBranchThreadId === parentThreadId ? ownShadow
+    : bridge?.sideShadows?.get(appServerBranchThreadId) || bridge?.shadows?.get(appServerBranchThreadId)
   const appServerLive = known.appServerLiveActive === true
     && Number(known.appServerLiveSequence) > 0
     && known.activityEvidence === 'activity-event'
-  const appServerBranchThreadId = appServerLive && validCodexThreadId(known.appServerLiveBranchThreadId)
-    ? known.appServerLiveBranchThreadId
-    : parentThreadId
+    && codexAppServerActiveDominates(known, [appServerShadow])
   const appServerOwn = appServerLive && appServerBranchThreadId === parentThreadId
   const ownActivity = appServerOwn
     ? {

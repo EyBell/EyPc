@@ -103,9 +103,9 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     })
     const status = waitingEdge.waiting
       ? 'active'
-      : shadow.suppressUncorroboratedActive === true && shadow.runtime.type === 'active'
+      : shadow.suppressUncorroboratedActive === true && (shadow.runtime.type === 'active' || shadow.liveTurnRunning === true)
         ? 'notLoaded'
-        : shadow.runtime.type
+        : shadow.liveTurnRunning === true ? 'active' : shadow.runtime.type
     const desktopActiveSince = status === 'active' ? timestampMs(shadow.desktopActiveSince) : 0
     const waitingSince = status === 'active' && waitingEdge.waiting
       ? waitingEdge.waitingSince || desktopActiveSince
@@ -121,6 +121,29 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
       ...(waitingSince ? { waitingSince } : {}),
       ...(desktopActiveSince ? { desktopActiveSince } : {})
     }
+  }
+
+  function canonicalTurnAlreadyCompleted(shadow, known, knownTurnRef) {
+    const turn = shadow?.currentCanonicalTurn
+    return known?.lastTurnStatus === 'completed'
+      && (turn?.turnRef === knownTurnRef
+        || turn?.startedAt > 0 && turn.startedAt <= timestampMs(known.lastTurnStartedAt))
+  }
+
+  function codexDesktopCanonicalRunningWitness(shadow, known, progressObserved, knownTurnRef) {
+    const turn = shadow?.currentCanonicalTurn
+    const completedSameTurn = canonicalTurnAlreadyCompleted(shadow, known, knownTurnRef)
+    return progressObserved === true && turn?.status === 'inProgress'
+      && shadow.runtime?.type === 'active' && !completedSameTurn
+      && (shadow.suppressUncorroboratedActive === true
+        || shadow.activityEvidence !== 'activity-event'
+        || known?.lastTurnStatus !== 'inProgress')
+  }
+
+  function codexDesktopHasResolvedCanonicalRun(shadow, sequence, activity, known, knownTurnRef) {
+    return sequence > 0 && !canonicalTurnAlreadyCompleted(shadow, known, knownTurnRef)
+      && shadow?.currentCanonicalTurn?.status === 'inProgress'
+      && activity?.status === 'active' && !activity.activeFlags.length
   }
 
   function codexDesktopHasStickyPendingRequest(shadow) {
@@ -170,6 +193,8 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     revision: CODEX_DESKTOP_ACTIVITY_RESOLUTION_REVISION,
     codexReduceWaitingEdge,
     codexDesktopShadowActivity,
+    codexDesktopCanonicalRunningWitness,
+    codexDesktopHasResolvedCanonicalRun,
     codexDesktopHasStickyPendingRequest,
     codexHasConfirmedTerminalEvidence,
     codexShouldDeferHydrationActive,
