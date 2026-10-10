@@ -1324,6 +1324,45 @@ try {
   }
 } catch { codexSubagentDiscovery = null }
 
+// ChatGPT Projects are not local-project assignments. A failed load leaves
+// that lane out; Workspace ownership is unchanged.
+let codexChatgptProjectIndex = null
+try {
+  let chatgptProjectIndexModule = null
+  try {
+    chatgptProjectIndexModule = require('./codex/chatgpt-project-index.cjs')
+  } catch {}
+  if (!chatgptProjectIndexModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        chatgptProjectIndexModule = require(path.join(base, 'codex', 'chatgpt-project-index.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof chatgptProjectIndexModule?.createChatgptProjectIndex === 'function') {
+    codexChatgptProjectIndex = chatgptProjectIndexModule.createChatgptProjectIndex({
+      crypto,
+      fs,
+      path,
+      os,
+      process,
+      validThreadId: validCodexThreadId,
+      readTurns: (threadId) => requestCodexRpc('thread/turns/list', {
+        threadId,
+        limit: 1,
+        sortDirection: 'desc',
+        itemsView: 'notLoaded'
+      }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS),
+      record: (entry) => recordCompanionDiagnosticEvent(entry)
+    })
+  }
+} catch { codexChatgptProjectIndex = null }
+
 // A failed load silently disables the CodexHost lane: the scan then sees
 // exactly the official inventory, which is the pre-lane baseline.
 let codexhostDiscovery = null
@@ -7970,7 +8009,10 @@ function handleCodexServerMessage(message) {
         }
       }
     }
-    if (method === 'thread/started' && validCodexThreadId(threadId)) {
+    const chatgptLiveProject = method === 'turn/started' && validCodexThreadId(threadId) && !codexActivityInventory.get(threadId)
+      ? codexChatgptProjectIndex?.projectForThread?.(threadId) || null
+      : null
+    if ((method === 'thread/started' || chatgptLiveProject) && validCodexThreadId(threadId)) {
       let registry = null
       let native = null
       let metadataErrorCode = ''
@@ -7980,8 +8022,9 @@ function handleCodexServerMessage(message) {
       } catch {
         metadataErrorCode = 'native-project-unavailable'
       }
+      if (!native && chatgptLiveProject) native = { project: chatgptLiveProject, reason: 'chatgpt-project' }
       const observedAt = Date.now()
-      const project = native?.project || { key: 'chats', name: 'Chats', kind: 'chats' }
+      const project = native?.project || chatgptLiveProject || { key: 'chats', name: 'Chats', kind: 'chats' }
       const sourceFingerprint = registry?.fingerprint || codexActivitySourceFingerprint || ''
       const action = codexThreadAlias(threadId, observedAt, {
         projectKey: project.key,
@@ -9975,6 +10018,7 @@ async function scanVerifiedCodexInventory() {
     }
     let unreadIds = null
     try { unreadIds = readCodexDesktopUnreadIds() } catch {}
+    if (codexChatgptProjectIndex) await codexChatgptProjectIndex.admitIntoScan({ rows, assignments, publicRows, turns })
     codexSyncInventorySideTopology(
       sideRelations,
       eligibleDepths,
@@ -10169,7 +10213,7 @@ async function scanVerifiedCodexInventory() {
     }
     return {
       threads,
-      projects: sanitizeCodexProjects(registry),
+      projects: codexChatgptProjectIndex?.appendProjectCards?.(sanitizeCodexProjects(registry), (project) => codexProjectActionAlias(project, registry.fingerprint, Date.now())) || sanitizeCodexProjects(registry),
       activityGeneration: codexActivityGeneration,
       sourceFingerprint: registry.fingerprint,
       rawSourceCount: rows.length,

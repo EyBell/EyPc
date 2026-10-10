@@ -185,9 +185,9 @@ const BUDGET = Object.freeze({
   // 2026-09-13 (RAW-219): +211 -- Orca fourth provider: guarded bridge load,
   // evidence node, preflight/reconcile lanes, Host Registry/open-readiness
   // and platform.orca. Inventory/open/archive live in preload/orca/.
-  // 2026-10-10: recorded budget lagged HEAD (14761); async request resolution
-  // moves to its owner and the verified state-only entry drops to 14760.
-  lines: 14760,
+  // 2026-10-10: state-only entry is 14760 after request-resolution extraction;
+  // ChatGPT Projects read-only loader and admission wiring add 44 lines.
+  lines: 14804,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
@@ -203,7 +203,8 @@ const BUDGET = Object.freeze({
   // 2026-09-03 (RAW-205): +2 guarded module slots, codexPinBridgeModule and codexPinBridge.
   // 2026-09-13 (RAW-219): +5 -- orcaBridge, loadError, observation helper,
   // provider order, inventory disposer.
-  mutableBindings: 162
+  // 2026-10-02: +1 for codexChatgptProjectIndex.
+  mutableBindings: 163
 })
 
 const root = resolve(import.meta.dirname, '..')
