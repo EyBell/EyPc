@@ -209,7 +209,8 @@ function createCodexDesktopShadow(dependencies = {}) {
       return { ...overlay, items: overlay.items.length >= turn.items.length ? overlay.items : turn.items }
     }).concat(overlays.filter((turn) => !turn.turnRef || !historyRefs.has(turn.turnRef)))
     const latest = turns[turns.length - 1]
-    const turn = latest?.turnRef && latest.status === 'inProgress' ? latest : null
+    // Generation completion does not answer an asynchronously presented question.
+    const turn = latest?.turnRef && ['inProgress', 'completed'].includes(latest.status) ? latest : null
     const canonical = shadow.asyncCanonical?.entities[shadow.asyncCanonical?.order.at(-1)]
     shadow.currentCanonicalTurn = canonical?.turnRef
       ? { turnRef: canonical.turnRef, status: canonical.status, startedAt: canonical.startedAt } : null

@@ -44,13 +44,15 @@ describe('GPT async question evidence', () => {
     expect(snapshot([question, reply]).requests).toHaveLength(0)
   })
 
-  it('ignores terminal and unidentified turns', () => {
+  it('ignores cancelled and unidentified turns', () => {
     const { question, snapshot } = harness()
-    expect(snapshot([question], undefined, 'completed').requests).toHaveLength(0)
+    expect(snapshot([question], undefined, 'completed').requests).toHaveLength(1)
+    expect(snapshot([question], undefined, 'interrupted').requests).toHaveLength(0)
+    expect(snapshot([question], undefined, 'failed').requests).toHaveLength(0)
     expect(snapshot([question], undefined, 'inProgress', null).requests).toHaveLength(0)
   })
 
-  it('recovers canonical history and lets the matching live terminal clear it', () => {
+  it('retains a canonical unanswered question when the matching live turn completes', () => {
     const { question, shadow } = harness()
     const state = shadow.codexDesktopShadowFromSnapshot({ revision: 1, conversationState: {
       threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [],
@@ -62,7 +64,7 @@ describe('GPT async question evidence', () => {
     expect(state.requests).toHaveLength(1)
     expect(JSON.stringify(state)).not.toContain('secret')
     expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'add', path: ['turns', 0], value: { turnId: 'turn', status: 'completed', items: [] } })).toBe(true)
-    expect(state.requests).toHaveLength(0)
+    expect(state.requests).toHaveLength(1)
     expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'replace', path: ['turnHistory', 'history', 'entitiesByKey', 'entity', 'status'], value: 'completed' })).toBe(true)
   })
 

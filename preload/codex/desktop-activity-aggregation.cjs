@@ -27,8 +27,23 @@ function createCodexDesktopActivityAggregation(dependencies = {}) {
     throw new TypeError('codex desktop activity aggregation requires timestampMs and unreadObservation')
   }
 
+  function codexDesktopAsyncQuestionOverridesRunning(known, shadows) {
+    // A repeated running observation cannot answer a current async question.
+    return (shadows || []).some((shadow) => ['inProgress', 'completed'].includes(shadow?.currentCanonicalTurn?.status)
+      && timestampMs(shadow.currentCanonicalTurn.startedAt) >= timestampMs(known.lastTurnStartedAt)
+      && shadow.requests?.some((request) => request.asyncQuestion === true
+        && dependencies.waitingEvidenceVisible?.(shadow.waitingState, 'waitingOnUserInput', request.observedSequence)))
+  }
+
+  function codexDesktopRepeatedStartPreservesQuestion(known, turn, shadows, turnRef) {
+    return known?.lastTurnStatus === 'inProgress'
+      && turn.startedAt === timestampMs(known.lastTurnStartedAt)
+      && (!turnRef || shadows.some((shadow) => shadow?.currentCanonicalTurn?.turnRef === turnRef))
+      && codexDesktopAsyncQuestionOverridesRunning(known, shadows)
+  }
+
   function codexAppServerActiveDominates(known, shadows) {
-    if (known?.appServerLiveActive !== true) return false
+    if (known?.appServerLiveActive !== true || codexDesktopAsyncQuestionOverridesRunning(known, shadows)) return false
     const appServerSequence = Number(known.appServerLiveSequence) || 0
     const desktopSequence = Math.max(0, ...(Array.isArray(shadows) ? shadows : [])
       .filter((shadow) => shadow?.activityEvidence === 'activity-event')
@@ -114,6 +129,8 @@ function createCodexDesktopActivityAggregation(dependencies = {}) {
   return {
     revision: CODEX_DESKTOP_ACTIVITY_AGGREGATION_REVISION,
     codexAppServerActiveDominates,
+    codexDesktopAsyncQuestionOverridesRunning,
+    codexDesktopRepeatedStartPreservesQuestion,
     codexResolveParentActivity,
     codexDesktopAggregateUnread
   }

@@ -1070,15 +1070,12 @@ try {
   if (typeof activityAggregationModule?.createCodexDesktopActivityAggregation === 'function') {
     codexDesktopActivityAggregation = activityAggregationModule.createCodexDesktopActivityAggregation({
       timestampMs: codexTimestampMs,
-      unreadObservation: codexDesktopUnreadObservation
+      unreadObservation: codexDesktopUnreadObservation, waitingEvidenceVisible: codexWaitingEvidenceVisible
     })
   }
 } catch { codexDesktopActivityAggregation = null }
 
-// A failed load degrades to the same "unavailable" shape the function itself
-// already produces when no NVM or system Node is found -- the launch path
-// caller already reads `public.state === 'unavailable'` as "cannot resolve
-// a Node runtime", not a new case.
+// Failed runtime projection uses the existing unavailable launch result.
 let codexActionRuntimeProjectionModule = null
 try {
   let runtimeProjectionModule = null
@@ -4648,9 +4645,7 @@ function codexDesktopPatchIndex(value, length, allowEnd = false) {
   return codexDesktopShadow ? codexDesktopShadow.codexDesktopPatchIndex(value, length, allowEnd) : -1
 }
 
-// A failed load rejects the patch (`false`) rather than guessing at how to
-// apply it: the caller already treats a rejected patch as a resubscribe
-// signal, the same outcome a genuinely malformed patch produces.
+// Failed projection requests the existing malformed-patch recovery.
 function codexApplyDesktopShadowPatch(shadow, patch) {
   return codexDesktopShadow ? codexDesktopShadow.codexApplyDesktopShadowPatch(shadow, patch) : false
 }
@@ -4786,6 +4781,11 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value, waiti
   if (!bridge || !known || !validCodexThreadId(threadId)) return false
   const turn = sanitizeCodexTurnStatus(value)
   if (turn?.status !== 'inProgress' || !turn.startedAt) return false
+  const waitingShadow = bridge.sideShadows.get(waitingThreadId) || bridge.shadows.get(waitingThreadId)
+  if (codexDesktopActivityAggregation?.codexDesktopRepeatedStartPreservesQuestion(known, turn, [waitingShadow], codexDesktopRequestCorrelation({ id: turn.id }))) {
+    bridge.publishShadow(waitingThreadId, waitingShadow)
+    return true
+  }
   const goal = codexThreadGoalCache.get(waitingThreadId)
   const refreshGoal = codexThreadGoalRpcAvailable !== false && (
     !goal
@@ -5298,7 +5298,7 @@ class CodexDesktopCompanionBridge {
     })
     codexRecordCompletedPlanArtifact(known)
     this.applyFreshCompletionUnread(known, threadId, { clearStaleLiveFalse: true })
-    emitCodexActivityDelta([known], false)
+    emitCodexActivityDelta([known], false, 'normal', [], { interactionEvidence: this.companionInteractionEvidenceForParent(threadId) })
     if (known.hasUnreadTurn !== true && !codexDesktopOpenedReadCoversCompletion(threadId, known)) {
       this.scheduleCompletionUnreadRefresh(threadId)
     }
@@ -6174,7 +6174,7 @@ class CodexDesktopCompanionBridge {
       }
       const previousActivity = codexDesktopShadowActivity(previousShadow)
       const snapshotActivity = codexDesktopShadowActivity(shadow)
-      if (snapshotActivity?.activeFlags.includes('waitingOnUserInput') && shadow.currentCanonicalTurn?.status === 'inProgress') {
+      if (snapshotActivity?.activeFlags.includes('waitingOnUserInput') && ['inProgress', 'completed'].includes(shadow.currentCanonicalTurn?.status)) {
         this.recordWaitingResolutionOnShadow(shadow, Math.max(0, ...shadow.requests.filter((request) => request.asyncQuestion).map((request) => request.observedSequence)))
       }
       const sameLiveSemantics = previousActivity?.status === 'active'
@@ -7799,7 +7799,7 @@ function emitCodexActivityDelta(entries, inventoryChanged, inventoryRefreshPrior
     Date.now(),
     inventoryRefreshPriority,
     normalizedArchivedKeys,
-    { interactionEvidence: interactionChanged ? interactionEvidence : null }
+    { interactionEvidence: interactionChanged || semanticInteractions.some((interaction) => interaction.state === 'opened') ? interactionEvidence : null }
   )
   for (const listener of codexActivityListeners) {
     try { listener(delta) } catch {}

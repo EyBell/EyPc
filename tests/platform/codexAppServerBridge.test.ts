@@ -6475,6 +6475,105 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
+  it('keeps an unanswered async question across a repeated same-turn started notification', async () => {
+    const child = new FakeCodexProcess()
+    child.inProgressTurnIds.add(FIXED_THREAD_IDS[1])
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const { bridge, platform } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const task = baseline.value.threads[1]
+    const kernel = platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+    const push = (change: Record<string, unknown>) => desktopSocket.push({
+      type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[1], change }
+    })
+    push({ type: 'snapshot', revision: 100, conversationState: {
+      threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [],
+      turnHistory: { kind: 'canonical', history: {
+        islands: [{ entries: [{ value: 'current' }] }],
+        entitiesByKey: { current: { turnId: 'current-live', status: 'inProgress', turnStartedAtMs: 1_900_000_000_000, items: [
+          { type: 'agentMessage', id: 'current-q', questions: [{ title: 'private question' }] }
+        ] } }
+      } }
+    } })
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).toBe('waiting-input'))
+    child.stdout.emit('data', `${JSON.stringify({ method: 'turn/started', params: {
+      threadId: FIXED_THREAD_IDS[1], turn: { id: 'current-live', status: 'inProgress', startedAt: 1_900_000_000 }
+    } })}\n`)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot({ phaseOnly: true })).value.entries.find((row: Record<string, any>) => row.key === task.key)?.activeFlags).toContain('waitingOnUserInput')
+    expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).toBe('waiting-input')
+    push({ type: 'patches', baseRevision: 100, revision: 101, patches: [
+      { op: 'add', path: ['turnHistory', 'history', 'entitiesByKey', 'current', 'items', 1], value: {
+        type: 'steeringUserMessage', status: 'accepted', input: [{ type: 'text', text:
+          '<send_user_message_question_reply>' + JSON.stringify({ questionItemId: JSON.stringify(['request_user_input_async', 'current-q', 0]), question: 'private question', answer: 'private answer' }) + '</send_user_message_question_reply>' }]
+      } }
+    ] })
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).not.toBe('waiting-input'))
+    expect(JSON.stringify(kernel.getLatest())).not.toContain('private question')
+    bridge.close()
+  })
+
+  it('maintains an unanswered canonical question after completion until a next-turn accepted answer', async () => {
+    const child = new FakeCodexProcess()
+    child.inProgressTurnIds.add(FIXED_THREAD_IDS[1])
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const { bridge, platform } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const task = baseline.value.threads[1]
+    const kernel = platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+    const push = (change: Record<string, unknown>) => desktopSocket.push({
+      type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[1], change }
+    })
+    push({ type: 'snapshot', revision: 100, conversationState: {
+      threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [],
+      turnHistory: { kind: 'canonical', history: {
+        islands: [{ entries: [{ value: 'current' }] }],
+        entitiesByKey: { current: { turnId: 'current-live', status: 'inProgress', turnStartedAtMs: 1_900_000_000_000, items: [
+          { type: 'agentMessage', id: 'current-q', questions: [{ title: 'private question' }] }
+        ] } }
+      } }
+    } })
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).toBe('waiting-input'))
+    push({ type: 'patches', baseRevision: 100, revision: 101, patches: [
+      { op: 'replace', path: ['turnHistory', 'history', 'entitiesByKey', 'current', 'status'], value: 'completed' },
+      { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'idle', activeFlags: [] } }
+    ] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).toBe('waiting-input')
+    child.stdout.emit('data', `${JSON.stringify({ method: 'turn/completed', params: {
+      threadId: FIXED_THREAD_IDS[1], turn: { id: 'current-live', status: 'completed', startedAt: 1_900_000_000, completedAt: 1_900_000_002 }
+    } })}\n`)
+    for (let index = 0; index < 3; index += 1) {
+      await bridge.readActivitySnapshot({ phaseOnly: true })
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).toBe('waiting-input')
+    }
+    push({ type: 'snapshot', revision: 102, conversationState: {
+      threadRuntimeStatus: { type: 'idle', activeFlags: [] }, requests: [], turns: [],
+      turnHistory: { kind: 'canonical', history: { islands: [{ entries: [{ value: 'current' }] }],
+        entitiesByKey: { current: { turnId: 'current-live', status: 'completed', turnStartedAtMs: 1_900_000_000_000,
+          items: [{ type: 'agentMessage', id: 'current-q', questions: [{ title: 'private question' }] }] } } } }
+    } })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).toBe('waiting-input')
+    push({ type: 'patches', baseRevision: 102, revision: 103, patches: [
+      { op: 'add', path: ['turnHistory', 'history', 'entitiesByKey', 'answer'], value: {
+        turnId: 'answer-turn', status: 'completed', turnStartedAtMs: 1_900_000_001_000,
+        items: [{ type: 'userMessage', content: [{ type: 'text', text:
+          '<send_user_message_question_reply>' + JSON.stringify({ questionItemId: JSON.stringify(['request_user_input_async', 'current-q', 0]), question: 'private question', answer: 'private answer' }) + '</send_user_message_question_reply>' }] }]
+      } },
+      { op: 'replace', path: ['turnHistory', 'history', 'islands'], value: [{ entries: [{ value: 'current' }, { value: 'answer' }] }] }
+    ] })
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).not.toBe('waiting-input'))
+    expect(JSON.stringify(kernel.getLatest())).not.toContain('private question')
+    bridge.close()
+  })
+
   it('recovers canonical live progress after an older interrupted inventory suppressed an active snapshot', async () => {
     const child = new FakeCodexProcess()
     child.interruptedTurnIds.add(FIXED_THREAD_IDS[1])
@@ -6665,6 +6764,8 @@ draft: v7EvidenceDraft({
     push({ type: 'patches', baseRevision: 3, revision: 4, patches: [{ op: 'add', path: ['turns', 0, 'items', 3], value: { type: 'agentMessage', id: 'new-question', questions: [{ title: 'new private question' }] } }] })
     expect(await activity()).toMatchObject({ activeFlags: ['waitingOnUserInput'] })
     push({ type: 'patches', baseRevision: 4, revision: 5, patches: [{ op: 'replace', path: ['turns', 0, 'status'], value: 'completed' }] })
+    expect((await activity()).activeFlags).toContain('waitingOnUserInput')
+    push({ type: 'patches', baseRevision: 5, revision: 6, patches: [{ op: 'replace', path: ['turns', 0, 'status'], value: 'interrupted' }] })
     expect((await activity()).activeFlags).not.toContain('waitingOnUserInput')
     bridge.close()
   })
