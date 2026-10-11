@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: codex-v11-running-and-question-state__canonical-async-lifecycle-not-projected__latest-turn-anonymous-progress-and-exact-accepted-reply
 first_seen: 2026-10-10
-last_verified: 2026-10-10
+last_verified: 2026-10-11
 review_after: 2027-01-10
 evidence:
   - preload/codex/desktop-shadow.cjs
@@ -36,6 +36,10 @@ tags:
 
 回答清除还必须进入 Kernel：旧 runtime waiting flag 可迟到，精确回答只关闭对应等待 epoch；有其他当前问题时不可整体清空。活动序域问题另由 [序号量纲记录](comparison-set-mixing-counter-and-timestamp-units.md#L1) 主责。
 
+2026-10-10 同轮重复启动修复保留；当时将 inProgress 辅助函数误作问题关闭合同的判断，已由下面的宿主证据取代。
+
+2026-10-11 宿主实证更正：15:24:18 已加载。等待打开后 2.057 秒被 completed 清除，而精确回答在约 114 秒后下一轮才进入。原生 inProgress 辅助投影不能作为未决交互关闭合同；latest completed 的未答问题须保留，答案/撤回/新轮/failed/interrupted 仍单独决定解除。同时修复完成 publisher 不携带交互，以及活动帧因语义未变化而省略 opened 证据：Kernel 收到较新终态却无 opened 实例会关闭并写墓碑。当前随变化活动帧重发仍 opened 的有限交互，身份/首次序号不变。新增持续读取、App Server 完成、refollow 与下一轮回答的完整 Kernel 回归。
+
 ## Detection Order
 
 1. 核对已加载宿主与实际协议，区分 requests、live turns、canonical 最新轮次和 runtime flags。
@@ -46,7 +50,7 @@ tags:
 
 ## Prevention Rule
 
-最新 Turn 才能供应当前问题；稳定匿名实例只能被匹配接受回复、终态或明确撤回关闭。旧快照不得复活已答实例，新实例仍可等待。运行恢复必须有实际当前进度或 live Turn 生命周期，不能直接把所有 active snapshot 认作新运行。普通正文和工具增量不得回退状态或重新订阅，无法还原的排序/非法索引/协议损坏仍允许恢复。
+最新 inProgress/completed Turn 的未答问题可供应当前等待；生成 completed 不等于问题已答，不能单独关闭。稳定匿名实例由匹配接受回复、明确撤回、新轮次或 failed/interrupted 关闭。同轮重复启动通知不是回答或新轮次，不可清除未答请求。旧快照不得复活已答实例，新实例仍可等待。运行恢复必须有实际当前进度或 live Turn 生命周期，不能直接把所有 active snapshot 认作新运行。普通正文和工具增量不得回退状态或重新订阅，无法还原的排序/非法索引/协议损坏仍允许恢复。
 
 ## Latest Applicable Implementation
 
@@ -60,7 +64,7 @@ tags:
 - Status: `verified`，适用于本机 v11 协议与受测匿名生命周期；宿主像素和版本证明单独记录。
 - Preconditions: 有兼容 stream owner、有效 revision 和可还原的当前 Turn 结构。
 - Ordered steps: 解析有限匿名字段；投影最新问题；接受匹配回复后写墓碑；关闭对应旧 flag；用同域活动序号发布；由 Kernel 仲裁。
-- Verification: 定向 19/19，含旧暂停恢复、旧快照不复活、新问题重新等待、部分回答与 completed 防误恢复；用户反馈当前应该正常。
+- Verification: 定向 21/21；扩展 319/322（3 项已确认既有失败）。真实旧宿主日志确认两秒误清，16:17:11 修复产物现场验收仍待完成。
 - Applicability boundary: 未知回复、其他未答问题、真实终态和 Host 额外进程独立合同不被覆盖。
 - Fallback: 非法结构或 revision/owner 断裂恢复快照；不靠超时、冻结计数或 CSS 隐藏掩盖状态。
 

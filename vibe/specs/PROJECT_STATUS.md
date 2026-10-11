@@ -1,8 +1,10 @@
 # EyPc Project Status Hub
 
+- 2026-10-11 待输入续修：已从 15:24:18 宿主日志确认 SSH 任务 waiting-input 保持 2.057 秒即被完成事件误清，回答晚于清除约 114 秒。已修复 completed 未答问题投影与活动帧携带 opened 交互，定向 21/21，扩展 319/322（3 项既有失败）；16:17:11 新产物已构建，现场验收待完成。[任务](261010/0937-gpt-input-compat/task-card.md#L3) · [核验](261010/0937-gpt-input-compat/verify.md#L5)。
+
 - 2026-10-10 ChatGPT Projects 只读索引已实现并分批提交：近期 catalog 绑定必须有真实 Turn，Workspace 优先，项目删除边界保留；5/5，真实宿主与项目卡片验收待完成。[核验](261010/chatgpt-project-index/verify.md#L1)。
 
-- 2026-10-10 GPT 状态兼容修复：新版异步问题、普通进度稳定、旧暂停恢复及回答后等待解除已实现。定向 19/19，扩展 317/320（3 个已确认既有失败）；用户反馈当前应该正常，状态为 `focused-automated-verified / user-reported-normal`。当前产物身份及历史见 [任务](261010/0937-gpt-input-compat/task-card.md#L1)，独立宿主版本与逐项验收边界见 [核验](261010/0937-gpt-input-compat/verify.md#L1)。
+- 2026-10-10 GPT 状态兼容续修：用户截图确认 15:09:53 产物已加载但仍漏识别。已复现重复同轮启动通知误清未答问题并修复；撤回 completed 保留等待尝试。扩展 318/321，3 项既有失败不变；现场等待态验收仍打开。[任务](261010/0937-gpt-input-compat/task-card.md#L1) · [核验](261010/0937-gpt-input-compat/verify.md#L1)。
 
 
 - 2026-09-30 悬浮窗拖动不再贴边，也不再自动变成贴边线。配置页选中贴边线时变成竖条，并贴到离当前位置最近的屏幕拐角。几何、悬浮窗桥接、设置归一与位置保存动作 104/104 通过。2026-10-10 完整构建通过，当前浮窗回归 56/56；未重载或独立验收宿主。[当前要求](requirements/codex-raw-223.md#L1)。
