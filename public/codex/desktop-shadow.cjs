@@ -130,8 +130,12 @@ function createCodexDesktopShadow(dependencies = {}) {
     const count = item.type === 'agentMessage' && Array.isArray(item.questions)
       ? Math.min(item.questions.length, 100) : 0
     const answered = []
+    let continuesConversation = false
     if (item.type === 'userMessage' || item.type === 'steeringUserMessage') {
       const content = item.type === 'userMessage' ? item.content : item.input
+      continuesConversation = item.type === 'steeringUserMessage' && Array.isArray(content)
+        && content.some((part) => part?.type === 'text' && typeof part.text === 'string' && part.text.trim().length > 0)
+        && !content.some((part) => typeof part?.text === 'string' && part.text.includes('<send_user_message_question_reply>'))
       const text = Array.isArray(content) && content.length === 1 && content[0]?.type === 'text'
         ? content[0].text : null
       if (typeof text === 'string' && text.length <= 262144) {
@@ -150,7 +154,7 @@ function createCodexDesktopShadow(dependencies = {}) {
       }
     }
     return {
-      itemRef, count, answered,
+      itemRef, count, answered, continuesConversation,
       activityItem: ['reasoning', 'commandExecution', 'mcpToolCall', 'fileChange', 'agentMessage'].includes(item.type),
       type: ['agentMessage', 'userMessage', 'steeringUserMessage'].includes(item.type) ? item.type : 'other',
       replyAccepted: item.type === 'userMessage' || item.type === 'steeringUserMessage' && item.status === 'accepted'
@@ -215,7 +219,11 @@ function createCodexDesktopShadow(dependencies = {}) {
     shadow.currentCanonicalTurn = canonical?.turnRef
       ? { turnRef: canonical.turnRef, status: canonical.status, startedAt: canonical.startedAt } : null
     const answered = new Set((turn?.items || []).flatMap((item) => item.replyAccepted ? item.answered : []))
-    const values = (turn?.items || []).flatMap((item) => item.itemRef
+    const items = turn?.items || []
+    // Accepted force-inserted conversation input supersedes questions before
+    // that item. Pending/rejected input and partial question replies do not.
+    const continuationIndex = items.findLastIndex((item) => item.replyAccepted && item.continuesConversation)
+    const values = items.flatMap((item, index) => index > continuationIndex && item.itemRef
       ? Array.from({ length: item.count }, (_, index) => `${item.itemRef}:${index}`)
         .filter((key) => !answered.has(key))
         .map((key) => ({ type: 'userInput', method: 'requestUserInput', id: `async:${key}` })) : [])
@@ -301,7 +309,9 @@ function createCodexDesktopShadow(dependencies = {}) {
     else if (p.length === 7 && (p[5] === 0 || p[5] === '0') && p[6] === 'text' && typeof source.value === 'string') {
       content = [{ type: 'text', text: source.value }]
     } else return false
-    item.answered = asyncItem({ type: item.type, [field]: content }).answered
+    const projected = asyncItem({ type: item.type, [field]: content })
+    item.answered = projected.answered
+    item.continuesConversation = projected.continuesConversation
     return true
   }
 

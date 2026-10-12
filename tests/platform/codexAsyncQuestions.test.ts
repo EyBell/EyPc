@@ -44,6 +44,42 @@ describe('GPT async question evidence', () => {
     expect(snapshot([question, reply]).requests).toHaveLength(0)
   })
 
+  it.each(['turns', 'canonical'])('closes only older questions after an accepted normal insertion in %s', (mode) => {
+    const { question, snapshot, shadow } = harness()
+    const insertion = { type: 'steeringUserMessage', status: 'pending', input: [{ type: 'text', text: 'secret continuation' }] }
+    const newer = { ...question, id: 'new-secret-id' }
+    let state = snapshot([question, insertion, newer])
+    let prefix: any[] = ['turns', 0]
+    if (mode === 'canonical') {
+      state = shadow.codexDesktopShadowFromSnapshot({ revision: 1, conversationState: {
+        threadRuntimeStatus: { type: 'idle' }, requests: [], turns: [], turnHistory: { kind: 'canonical', history: {
+          islands: [{ entries: [{ value: 'entity' }] }], entitiesByKey: {
+            entity: { turnId: 'turn', status: 'completed', items: [question, insertion, newer] }
+          }
+        } }
+      } })
+      prefix = ['turnHistory', 'history', 'entitiesByKey', 'entity']
+    }
+    expect(state.requests).toHaveLength(2)
+    const newerRef = state.requests[1].interactionRef
+    expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'replace', path: [...prefix, 'items', 1, 'status'], value: 'rejected' })).toBe(true)
+    expect(state.requests).toHaveLength(2)
+    expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'replace', path: [...prefix, 'items', 1, 'status'], value: 'accepted' })).toBe(true)
+    expect(state.requests).toHaveLength(1)
+    expect(state.requests[0].interactionRef).toBe(newerRef)
+    expect(JSON.stringify(state)).not.toContain('secret')
+    expect(snapshot([question, { ...insertion, status: 'accepted' }], undefined, 'completed').requests).toHaveLength(0)
+  })
+
+  it('keeps other questions on exact partial replies, empty input and malformed reply envelopes', () => {
+    const { question, reply, snapshot } = harness()
+    const questions = { ...question, questions: [{}, {}] }
+    expect(snapshot([questions, reply]).requests).toHaveLength(1)
+    for (const text of ['', '  ', '<send_user_message_question_reply>invalid</send_user_message_question_reply>']) {
+      expect(snapshot([questions, { type: 'steeringUserMessage', status: 'accepted', input: [{ type: 'text', text }] }]).requests).toHaveLength(2)
+    }
+  })
+
   it('ignores cancelled and unidentified turns', () => {
     const { question, snapshot } = harness()
     expect(snapshot([question], undefined, 'completed').requests).toHaveLength(1)

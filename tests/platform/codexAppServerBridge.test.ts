@@ -6475,7 +6475,7 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
-  it('keeps an unanswered async question across a repeated same-turn started notification', async () => {
+  it.each(['exact reply', 'normal insertion'])('keeps a question across repeated same-turn start until accepted %s', async (replyKind) => {
     const child = new FakeCodexProcess()
     child.inProgressTurnIds.add(FIXED_THREAD_IDS[1])
     const desktopSocket = new FakeCodexDesktopSocket()
@@ -6508,7 +6508,7 @@ draft: v7EvidenceDraft({
     push({ type: 'patches', baseRevision: 100, revision: 101, patches: [
       { op: 'add', path: ['turnHistory', 'history', 'entitiesByKey', 'current', 'items', 1], value: {
         type: 'steeringUserMessage', status: 'accepted', input: [{ type: 'text', text:
-          '<send_user_message_question_reply>' + JSON.stringify({ questionItemId: JSON.stringify(['request_user_input_async', 'current-q', 0]), question: 'private question', answer: 'private answer' }) + '</send_user_message_question_reply>' }]
+          replyKind === 'normal insertion' ? 'private continuation' : '<send_user_message_question_reply>' + JSON.stringify({ questionItemId: JSON.stringify(['request_user_input_async', 'current-q', 0]), question: 'private question', answer: 'private answer' }) + '</send_user_message_question_reply>' }]
       } }
     ] })
     await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).not.toBe('waiting-input'))
