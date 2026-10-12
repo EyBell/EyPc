@@ -1,6 +1,15 @@
 # GPT 状态兼容验收记录
 
-更新日期：2026-10-11。当前状态：`completion-wait-fix-automated-verified / host-acceptance-pending`。此前正常反馈后，用户再次报告漏识别，重新打开现场验收。
+更新日期：2026-10-12。当前状态：`accepted-insertion-fix-automated-verified / host-acceptance-pending`。关闭问题卡片后强制插入普通消息的残留等待已补充处理。
+
+## 2026-10-12 关闭卡片后强制插入继续对话
+
+- 用户指出任务「261012-SRM-直发作废联动修复」。只读当前 IPC 快照确认 runtime idle，最新 canonical Turn completed；同轮先有一个 agentMessage 问题，随后有 accepted steeringUserMessage 普通文本，未含正式问题回复封装。没有输出或归档问题、输入正文。
+- 根因：旧投影仅将匹配结构化回复作为回答；已接受普通插入不能结束同轮旧问题，因此已完成任务仍被合成为待输入。关闭卡片本身未取得单独协议撤回证据，不据此清除。
+- 修复：已接受且非空的普通 steering 输入形成同轮顺序边界，只结束它之前的异步问题；后续新问题仍打开。pending/rejected、空输入、正式部分回答和损坏问题回复封装均不作为整体清除。
+- 回归先失败后通过，匿名投影 19/19；桥接到 Kernel 的接受插入、正式回答和完成后保留等待 3/3。扩展检查 322/325，失败仍为下节已确认的三个既有失败（随后补充的普通插入 Kernel 场景单独通过）。
+- 修复代码直接处理此任务当前真实快照：currentTurn completed / runtime idle / syntheticPendingQuestions 0。此为源码现场数据核验；原生 Codex 蓝色标签和 EyPc 新宿主像素未宣称修复验收。
+- 产物：2026/10/12 10:05:38，host-7b61e2f0f4eba5f33798 / renderer-4ef59bdea35152a6bcbf。类型、合同、构建及 uTools 校验通过；宿主加载与现场显示仍待确认。Git 交付以提交记录及远端回读为准。
 
 ## 2026-10-11 宿主日志确认：完成时误清待输入
 
@@ -20,13 +29,13 @@
 
 新增回归先失败再通过；扩展 318/321，3 项已确认既有失败不变。截图中的两条任务在只读核对时已回答，因此未声称捕获它们真实等待期间的重复启动通知；此为可复现遗漏路径，真实新产物等待态仍待验收。
 
-当前最终产物：2026-10-11 16:17:11；host-ffe4c0057ae65264f1f5 / renderer-5a403e7a7c3fea27a09b。类型、合同、构建和 uTools 产物检查通过。
+上一轮产物：2026-10-11 16:17:11；host-ffe4c0057ae65264f1f5 / renderer-5a403e7a7c3fea27a09b。类型、合同、构建和 uTools 产物检查通过。
 
 ## 行为与原因
 
 | 症状 | 已验证原因 | 当前修复 |
 | --- | --- | --- |
-| 新版问题没有待输入 | 问题位于最新 Turn 的 agentMessage.questions，requests 与 runtime flags 不保证包含它 | 匿名问题投影，匹配结构化回复才关闭，未知回复不清除 |
+| 新版问题没有待输入 | 问题位于最新 Turn 的 agentMessage.questions，requests 与 runtime flags 不保证包含它 | 匿名问题投影；匹配结构化回复关闭对应问题，已接受普通插入只结束此前问题 |
 | 运行角标与数量反复变化 | 可还原的 canonical 正文/工具增量被当成协议损坏，触发重订阅和旧状态回退 | 有限增量投影，普通进度保持订阅和语义包稳定 |
 | 运行中误归待继续 | live Turn 已 inProgress 但 runtime 仍 idle，或旧 interrupted 抑制 active snapshot | live Turn 生命周期兼容；最新 canonical 新进度撤回旧暂停，同轮/旧轮 completed 不恢复 |
 | 接受回答后仍卡住 | 旧 runtime waiting 残留；初次等待与恢复使用不同序域，内核底层完成态拒绝恢复 | 精确请求墓碑、无其他输入才关闭旧 flag、等待与解除使用单调序号 |

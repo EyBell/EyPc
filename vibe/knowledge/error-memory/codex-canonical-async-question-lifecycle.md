@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: codex-v11-running-and-question-state__canonical-async-lifecycle-not-projected__latest-turn-anonymous-progress-and-exact-accepted-reply
 first_seen: 2026-10-10
-last_verified: 2026-10-11
+last_verified: 2026-10-12
 review_after: 2027-01-10
 evidence:
   - preload/codex/desktop-shadow.cjs
@@ -40,6 +40,8 @@ tags:
 
 2026-10-11 宿主实证更正：15:24:18 已加载。等待打开后 2.057 秒被 completed 清除，而精确回答在约 114 秒后下一轮才进入。原生 inProgress 辅助投影不能作为未决交互关闭合同；latest completed 的未答问题须保留，答案/撤回/新轮/failed/interrupted 仍单独决定解除。同时修复完成 publisher 不携带交互，以及活动帧因语义未变化而省略 opened 证据：Kernel 收到较新终态却无 opened 实例会关闭并写墓碑。当前随变化活动帧重发仍 opened 的有限交互，身份/首次序号不变。新增持续读取、App Server 完成、refollow 与下一轮回答的完整 Kernel 回归。
 
+2026-10-12 现场补充：已完成 SRM 任务的最新 canonical Turn 仍含问题，随后同轮 accepted 普通 steering 输入继续对话。仅匹配正式回复会留下旧问题；现按已接受普通输入的顺序关闭之前的问题，保留之后的新问题。关闭卡片本身没有单独协议撤回证据，不能凭 UI 关闭推断问题结束。真实快照修复投影为零个合成待答请求，原生蓝色标签与新 EyPc 宿主显示独立验收。
+
 ## Detection Order
 
 1. 核对已加载宿主与实际协议，区分 requests、live turns、canonical 最新轮次和 runtime flags。
@@ -50,7 +52,7 @@ tags:
 
 ## Prevention Rule
 
-最新 inProgress/completed Turn 的未答问题可供应当前等待；生成 completed 不等于问题已答，不能单独关闭。稳定匿名实例由匹配接受回复、明确撤回、新轮次或 failed/interrupted 关闭。同轮重复启动通知不是回答或新轮次，不可清除未答请求。旧快照不得复活已答实例，新实例仍可等待。运行恢复必须有实际当前进度或 live Turn 生命周期，不能直接把所有 active snapshot 认作新运行。普通正文和工具增量不得回退状态或重新订阅，无法还原的排序/非法索引/协议损坏仍允许恢复。
+最新 inProgress/completed Turn 的未答问题可供应当前等待；生成 completed 不等于问题已答，不能单独关闭。稳定匿名实例由匹配接受回复、明确撤回、新轮次或 failed/interrupted 关闭；同轮已接受的非空普通 steering 输入只关闭此前问题，待接受/被拒绝输入、空输入及正式部分回答不整体清除。同轮重复启动通知不是回答或新轮次，不可清除未答请求。旧快照不得复活已答实例，新实例仍可等待。运行恢复必须有实际当前进度或 live Turn 生命周期，不能直接把所有 active snapshot 认作新运行。普通正文和工具增量不得回退状态或重新订阅，无法还原的排序/非法索引/协议损坏仍允许恢复。
 
 ## Latest Applicable Implementation
 
