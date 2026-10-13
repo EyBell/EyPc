@@ -20,6 +20,10 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 
 ## Primary Error Records
 
+- [Native unread schema and protocol drift](../codex-native-unread-schema-protocol-drift.md#L1)
+
+- [Admitted Side relations and generation retirement](../companion-admitted-side-relations-generation-retirement.md#L1)
+
 - [Canonical async questions and running lifecycle](../codex-canonical-async-question-lifecycle.md#L1)
 
 

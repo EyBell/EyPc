@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: codex-v11-running-and-question-state__canonical-async-lifecycle-not-projected__latest-turn-anonymous-progress-and-exact-accepted-reply
 first_seen: 2026-10-10
-last_verified: 2026-10-12
+last_verified: 2026-10-13
 review_after: 2027-01-10
 evidence:
   - preload/codex/desktop-shadow.cjs
@@ -42,6 +42,10 @@ tags:
 
 2026-10-12 现场补充：已完成 SRM 任务的最新 canonical Turn 仍含问题，随后同轮 accepted 普通 steering 输入继续对话。仅匹配正式回复会留下旧问题；现按已接受普通输入的顺序关闭之前的问题，保留之后的新问题。关闭卡片本身没有单独协议撤回证据，不能凭 UI 关闭推断问题结束。真实快照修复投影为零个合成待答请求，原生蓝色标签与新 EyPc 宿主显示独立验收。
 
+2026-10-13 Side 续核：Desktop-only 的已验证父子关系原来没有被记为 topology exact；接纳关系后，Side 请求仍使用主 taskKey/turnEpoch，且普通活动重放省略 unchanged opened 实例，Kernel 将其误清。完整 Bridge 回归先失败，修复为成员私有 key、成员轮次与成员完整请求集，并让现有 activity batch 携带该成员仍 opened 的证据后，通过完成、连续读取、refollow 和匹配答复。Side 完成查询还会被主缓存提前收口；现仅主查询用主缓存，Side 精确查询以 Side 当前轮次确认并记录成员终态，不改原定向查询通路、不覆盖较新主轮次。
+
+2026-10-13 晚间更正：Side 问题轮次仍 inProgress，后续另一个生成已完成或被 auto-review 终止，原生仍显示待答 Question；18:32:26 日志却将根 waiting-input 清成 unknown。原生 question selector 与最新运行 Turn 是两条读取，不能把后续 aborted 生成当作此前问题已答。Side 仅在较晚 completed/failed/interrupted 轮次时保留此前未结束的提问轮次，匹配接受答复及普通 accepted steering 仍解除；原生 selector 在较晚 completed 轮次也查此前 pending inProgress；只覆盖 failed/interrupted 的初版现场未通过，新增 completed 组合修正后已取得真实 waiting-input。该回退不供应 running，不复活已 completed 的旧提问，不改主任务原有取消守卫。完整 Bridge 组合先失败后通过；独立 source/packaged 门禁与坏实现 canary补齐。
+
 ## Detection Order
 
 1. 核对已加载宿主与实际协议，区分 requests、live turns、canonical 最新轮次和 runtime flags。
@@ -52,14 +56,14 @@ tags:
 
 ## Prevention Rule
 
-最新 inProgress/completed Turn 的未答问题可供应当前等待；生成 completed 不等于问题已答，不能单独关闭。稳定匿名实例由匹配接受回复、明确撤回、新轮次或 failed/interrupted 关闭；同轮已接受的非空普通 steering 输入只关闭此前问题，待接受/被拒绝输入、空输入及正式部分回答不整体清除。同轮重复启动通知不是回答或新轮次，不可清除未答请求。旧快照不得复活已答实例，新实例仍可等待。运行恢复必须有实际当前进度或 live Turn 生命周期，不能直接把所有 active snapshot 认作新运行。普通正文和工具增量不得回退状态或重新订阅，无法还原的排序/非法索引/协议损坏仍允许恢复。
+已验证 Desktop-only 关系与 inventory 关系均可供应精确成员；每个成员的提问/轮次/完整请求集必须独立，其他成员的 activity/terminal 不得关闭它。最新 inProgress/completed Turn 的未答问题可供应当前等待；生成 completed 不等于问题已答，不能单独关闭。稳定匿名实例由匹配接受回复、明确撤回、实际新的对话轮次或其自身 failed/interrupted 关闭；Side 后续另一个 aborted 生成不等于当前原生待答 Question 已结束，必须独立核验该提问轮次；同轮已接受的非空普通 steering 输入只关闭此前问题，待接受/被拒绝输入、空输入及正式部分回答不整体清除。同轮重复启动通知不是回答或新轮次，不可清除未答请求。旧快照不得复活已答实例，新实例仍可等待。运行恢复必须有实际当前进度或 live Turn 生命周期，不能直接把所有 active snapshot 认作新运行。普通正文和工具增量不得回退状态或重新订阅，无法还原的排序/非法索引/协议损坏仍允许恢复。
 
 ## Latest Applicable Implementation
 
 - [匿名投影](../../../preload/codex/desktop-shadow.cjs#L126) 只保存有限问题身份、回答关联、turn 状态与活动标记。
 - [请求解除](../../../preload/codex/desktop-request-projection.cjs#L219) 保留精确墓碑，并在无其他可见输入时关闭旧等待。
 - [运行边界](../../../preload/codex/desktop-activity-resolution.cjs#L130) 不允许同轮/旧轮 completed 被进度或回答重新打开。
-- [桥接回归](../../../tests/platform/codexAppServerBridge.test.ts#L6478) 必须断言 Kernel 相位，不能只断言请求已删除。
+- [成员交互归属](../../../preload/codex/desktop-request-projection.cjs#L269)、[组合桥接回归](../../../tests/platform/codexAppServerBridge.test.ts#L6549) 必须断言 Kernel 相位，不能只断言请求已删除。
 
 ## Alternative Route
 
@@ -75,3 +79,7 @@ tags:
 | Date | Task | Trigger | Failed Route | Evidence | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-10-10 | GPT 状态兼容 | 新版问题、进度与接受回复 | 只看旧字段或 shadow 请求删除 | [核验](../../specs/261010/0937-gpt-input-compat/verify.md#L1) | 最新 Turn 匿名投影与完整 Kernel 生命周期回归 | automated verified；user-reported-normal；实际加载四元组未独立取得 |
+
+| 2026-10-13 | Side 生命周期续核 | 子对话仍有未答问题却不维持 waiting；Side completed-unread 漏相位 | Desktop-only 关系未精确；成员请求误归主；活动重放漏交互；主缓存提前结束子查询 | [续核](../../specs/261013/1425-codex-side-phase/lifecycle-verify.md#L1) | 成员证据归属、同批 opened 重放与现有子查询成员终态确认 | 组合回归先红后绿，source/packaged gate 拒绝对应坏实现；18:45:08 宿主精确握手与目标 Side waiting-input 维持约 58.3 秒、用户回答后 resolved→running 已取得，全部真实生命周期未声明通过 |
+
+| 2026-10-13 | 原生 Side 问题维持 | 最新生成结束，但原生 Question 仍待答 | 只看最新生成 / 较窄 aborted 回退 | [续核](../../specs/261013/1425-codex-side-phase/lifecycle-verify.md#L1) | Side 采用原生 pending 提问轮次；不供应历史运行；接受回复独立解除 | 215/218（同样 3 旧失败）、async 22/22、source/packaged 17 新检查；18:45:08 真实 waiting-input 已取得 |

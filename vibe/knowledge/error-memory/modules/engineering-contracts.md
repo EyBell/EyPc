@@ -16,6 +16,8 @@ Link-only route for general data contracts、testing、type narrowing、document
 
 ## Primary Error Records
 
+- [Lifecycle diagnostics use the anonymous owner and shared Provider namespace](../companion-recovery-events-anonymous-owner.md#L1)
+
 
 - [Audit warning attributed without reading its source](../audit-warning-attributed-without-reading-its-source.md#L1)
 - [Concat breaks a merge-sorted precondition](../concat-breaks-downstream-merge-sorted-precondition.md#L1)

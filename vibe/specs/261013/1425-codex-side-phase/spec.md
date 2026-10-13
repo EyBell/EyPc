@@ -1,6 +1,6 @@
 # Codex side chat 状态聚合修复
 
-状态：implemented / automated-verified / artifact-ready / host-reload-pending。
+状态：implemented / automated-verified / host-identity-verified / live-sampled；完整逐成员验收未声明通过。[当前续核证据](lifecycle-verify.md#L1)。
 
 ## BusinessChangeReview
 

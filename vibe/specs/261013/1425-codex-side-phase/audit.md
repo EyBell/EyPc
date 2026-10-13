@@ -32,3 +32,21 @@
 ## BusinessChangeReview / VerificationImpactTrace
 
 Allowed delta：新增自动核心保护和唯一 owner 的约束，保留应用业务实现及已有执行通路。核心门禁消费者为标准构建/产物验证；文档改动不扩大应用测试范围。选定证据：两项门禁 canary、source/dist 10 场景、原 Kernel/Topology/TaskPackage/Presentation/Adapter 254 项、缓存/异步问题 24 项、生产构建和需求/错误记录校验。全库与 MQTT 不在影响面，未选。规则改动使用唯一 owner，保留 CodeNote 其他并发修改；不安装 Git Hooks 或监控服务。实机总体验收与 CPU仍独立保留。
+
+## 未读与 Side 生命周期续核
+
+新增 L-1 旧关系撤回、L-2 已接纳关系被全局 floor 误清、L-3 归档遗漏 Side、L-4 恢复事件匿名边界均已有复现/记录/独立自动门禁。原有未读回执与清退执行通路保留。[完整矩阵与实机待验边界](lifecycle-verify.md#L1)。
+
+此次续核发现的是额外覆盖缺口：原 10 场景核心门禁保护相位/分组合同，但未覆盖“新 transport 携带旧 source lane 撤回”以及“另一部分批次前进后，已经接纳的边在展示和归档中仍须保留”的时序。不能用仅设置 sourceGenerations 的夹具代替实际 sourceLaneGenerations 排序；新 17 点检查显式携带各 lane 的 generation。原匿名 owner 本身已有防护，但这两类恢复调用绕过 owner，原检查未覆盖调用边界。现已接入原产物校验入口，并分别用旧撤回、展示 floor、归档 floor 和两类匿名 owner 绕过的坏实现验证门禁会拒绝。
+
+续核最终相关回归 267/267，source/dist 各 10+17 检查通过；镜像、入口预算、需求与错误记录校验通过。新进程实测获得 Side 发现/合并、任务包应用、恢复事件匿名化及 9 个明确 unread 一致样本；1 个 unknown 样本不计通过。启动握手日志缺失和真实全生命周期未出现的场景仍如实留待证，不升级为整体验收。
+
+## 当前原生兼容与成员归属的覆盖缺口
+
+用户后续截图和日志不能由“缺旧 unread 字段后降级”结案。本机原生来源已迁移至 identity/host v1 与 IPC v3，而旧 fixture 只给旧 atom/v2，因此单测没有执行真实来源结构。Desktop-only Side 也没有进入原 inventory-only exact 关系；后续完整 Bridge→Kernel 复现又暴露 Side 请求误归主、普通活动帧遗漏 unchanged opened，以及主完成缓存提前代替子定向查询。原 10+17 核心/生命周期门禁用规范化证据供 Kernel，不能证明生产 Bridge 已产生正确成员证据。
+
+现在在原标准产物入口增加 17 个实际 native parser/协议策略/成员请求 projector/活动 batch/子完成确认检查，source 和 packaged 都执行；8 项 gate 测试含七个已知坏实现 canary。三个生产 Bridge 组合回归直接断言 Kernel 相位、根未读与不泄漏子卡，未删改原业务断言。扩展 462/465，3 项已确认基线失败维持；匿名问题 19/19。预算门禁也实际阻断 entry 增长，已等价抽取到现有专用 owner，收紧预算，而非放宽或删除检查。最新现场计数 6 与用户截图一致，全部真实生命周期仍不作虚假全通过；[当前事实和边界](lifecycle-verify.md#L1)。
+
+18:32 现场再发现 L-11：不能将最新 aborted 生成等同当前 pending question 的轮次结束。原生 question selector 与运行 selector 不同，原较宽“只看最新轮次”假设覆盖了正常生成结束和新对话，却漏了 Side 后续失败生成。现仅补该边界，两个实际 Bridge 回归先红后绿，独立门禁执行真实 shadow，旧错误实现被拒绝。主旧问题/运行不复活断言保留。[最新核验](lifecycle-verify.md#L1)。
+
+L-11 初版只覆盖后续 failed/interrupted；18:37:43 已加载但目标家族仍没有 request-set，现场未通过。核对原生 selector 后补较晚 completed 的 Side pending 提问边界，保留主任务旧历史和 running 不复活守卫；当前相关 215/218（同样 3 旧失败）、async 22/22，source/packaged 新 17 项。18:45:08 宿主握手通过，目标家族已进入 waiting-input，后续仍 opened。现有真实日志能证范围与自动覆盖范围分别留存，未制造 Side 或执行安装。

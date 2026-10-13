@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 66 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-4df894349dd7a868879e / renderer-b89cd53a03559e5ba4d5` · `artifact-ready` |
-| 当前构建时间 | `2026/10/13 15:12:59`（`2026-10-13T07:12:59.696Z`） |
+| 当前构建产物 | `host-3ba5e7af0dfabdb2081f / renderer-819145f74a7bd9ebf06e` · `artifact-ready` |
+| 当前构建时间 | `2026/10/13 18:45:08`（`2026-10-13T10:45:08.769Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,11 +62,11 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-4df894349dd7a868879e",
-    "renderer_asset": "renderer-b89cd53a03559e5ba4d5",
+    "host_asset": "host-3ba5e7af0dfabdb2081f",
+    "renderer_asset": "renderer-819145f74a7bd9ebf06e",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-10-13T07:12:59.696Z",
-    "built_at_local": "2026/10/13 15:12:59",
+    "built_at": "2026-10-13T10:45:08.769Z",
+    "built_at_local": "2026/10/13 18:45:08",
     "package_version": "0.1.0"
   },
   "content_digests": {
@@ -75,7 +75,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "source_anchor_catalog": "3b86024db8538f1e93e52de718ffab2681bdef7f129ab4449f01daf5b0330f13",
     "product_body": "993f51665d3b46f979f06ac5cdc9b8a571e7df92901a478d5d2641446d1015cf",
     "architecture": "59fe25c8f2b4f1cdc684d4a2e54a3ab1bddb0da4c8df8264fe5b82f57c9d9175",
-    "runtime_contract": "185b99b30765f37f18af6bf703c3a6a00c3e50c0c6bf5b83e97c3e3750d0ee4d"
+    "runtime_contract": "c5e94f069508907fc54285f96ba403cb33664e745c88735b0255fe50dbf225ae"
   }
 }
 ```

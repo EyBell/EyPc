@@ -1,6 +1,6 @@
 # 验证与交付
 
-状态：automated-verified / artifact-ready / host-reload-pending。
+状态：automated-verified / host-identity-verified / live-sampled。当前产物与未读/Side 续核见 [lifecycle-verify.md](lifecycle-verify.md#L1)；下方原产物和验收段保留历史时点，不能代替完整逐成员验收。
 
 1. 四个影响选定测试文件（Kernel、Topology、TaskPackage、Presentation）241/241 通过，原生 group-active Adapter 回归另 13/13 通过；包含 36 个父/子相位组合、Plan artifact 与未读、活动成员禁止归档及原有跨来源回归。
 2. 续修的保留回归在错误产物上 5 项失败，修复后通过：主任务 running 不被历史 side stopped 覆盖，terminal/unknown 不凭子成员存在替换主状态，Plan fallback 保留。测试使用独立 Kernel 避免同时间戳事件的因果保留干扰。
