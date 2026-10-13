@@ -6,6 +6,9 @@ import { resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import vm from 'node:vm'
 import { checkCompanionCoreInvariants } from './check-companion-core-invariants.mjs'
+import { checkCompanionLifecycles } from './check-companion-lifecycles.mjs'
+import { checkCompanionDiagnosticPrivacy } from './check-companion-diagnostic-privacy.mjs'
+import { checkCompanionNativeUnread } from './check-companion-native-unread.mjs'
 import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS, UTOOLS_PRELOAD_MODULE_GROUPS } from './utools-preload-assets.mjs'
 import {
   buildUtoolsRuntimeIdentity,
@@ -345,6 +348,7 @@ assert(actionRunnerFeature?.mainHide === true, 'Action Runner feature must run w
 assert(actionRunnerFeature?.cmds?.includes('打开 Action 执行工作台'), 'Action Runner must expose the stable global-hotkey command label')
 
 const preloadSource = preloadSources.main
+checkCompanionDiagnosticPrivacy(preloadSource)
 const floatPreloadSource = preloadSources.float
 const actionPreloadSource = preloadSources.action
 const ipcListeners = new Map()
@@ -586,6 +590,9 @@ assert(typeof actionSandbox.window.eypcActionRunner?.action === 'function', 'act
 for (const assetRoot of [resolve(root, 'preload'), distDir]) {
   const checked = checkCompanionCoreInvariants(assetRoot)
   console.log(`Companion core preservation passed: ${checked} scenarios · ${assetRoot === distDir ? 'packaged' : 'source'}`)
+  const lifecycleChecks = await checkCompanionLifecycles(assetRoot)
+  console.log(`Companion lifecycle preservation passed: ${lifecycleChecks} checkpoints · ${assetRoot === distDir ? 'packaged' : 'source'}`)
+  console.log(`Companion native unread preservation passed: ${checkCompanionNativeUnread(assetRoot)} checkpoints · ${assetRoot === distDir ? 'packaged' : 'source'}`)
 }
 
 console.log(`EyPc uTools validation passed · core ${actualRuntimeIdentity.coreVersionLabel} (${actualRuntimeIdentity.coreVersion}) · package ${actualRuntimeIdentity.packageVersion} · builtAt ${actualRuntimeIdentity.builtAtLocal} (${actualRuntimeIdentity.builtAt}) · ${actualRuntimeIdentity.hostAssetId} · ${actualRuntimeIdentity.rendererAssetId}`)
