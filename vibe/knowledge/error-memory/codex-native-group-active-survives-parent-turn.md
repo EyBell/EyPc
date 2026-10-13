@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: native-connector-still-active__parent-turn-completed-closes-live__codex-plus-split-child__keep-group-running
 first_seen: 2026-09-16
-last_verified: 2026-09-16
+last_verified: 2026-10-13
 review_after: 2027-09-16
 evidence:
   - preload/companion/evidence-adapter-v7.cjs
@@ -32,6 +32,16 @@ Codex++ / Cloud GPT 分屏里主窗已经 Worked 完一轮，子窗仍在 Workin
 ## Verified Root Cause
 
 官方 `thread/list` 在子窗还跑时仍把父行标 `active`。父 Turn 完成后 `terminalSequence` 大于 `activeSequence`，`codexBranchObservationV7` 用 `terminalNewer` 关掉 live；Goal `complete` 权威又高于 `live-turn`。Kernel 归约本身会让 live 子成员压过父终态，但这条路径上子窗还没成为成员，父节点单独被收成 completed。
+
+## Kernel 聚合回归补充（2026-10-13）
+
+已验证的错误变体：为了让根卡跟随活动 side chat，Kernel 仅凭成员存在就排除主节点。历史 stopped/completed/unknown 子节点于是可以把当前 running/Goal 主任务送入终态；此前已有 active-main/stopped-side 守卫却被改成相反预期，掩盖了回归。恢复该守卫后错误产物 5 项失败，修正后四文件 241 项通过。
+
+当前只给 Codex 主任务 input/approval 保留优先；其他情况继续聚合全部成员。活动子节点仍优先于主终态，历史子终态不能清除主 running/Goal。无活动成员保留原有 Plan fallback、未读三态和归档保护。原生侧栏截图仅作对照，不是 EyPc 显示证据；匿名日志未提供成员分别相位时，不得绑定具体标题或宣称唯一现场原因。
+
+自动预防补充：原有构建校验调用独立 core-preservation gate，规范 source 与 packaged Kernel 各 10 场景；不依赖本轮可编辑的 Vitest 预期。门禁 canary 对复制的 child-only 错误实现实际抛错，对正确源码通过。[规则与门禁审计](../../specs/261013/1425-codex-side-phase/audit.md#L1)。
+
+实现与续修证据：[本轮 Spec](../../specs/261013/1425-codex-side-phase/spec.md#L23) · [验证](../../specs/261013/1425-codex-side-phase/verify.md#L1)。
 
 ## Detection Order
 

@@ -1,5 +1,9 @@
 # EyPc Project Status Hub
 
+- 2026-10-13 Codex side chat 与门禁优化：历史子终态覆盖主运行回归已修复；原业务 254 项、新 gate/缓存/异步 26 项通过，标准构建自动验证 source/dist 各 10 核心场景。用户已加载身份与当前身份一致，部分状态计数现场吻合，完整未读/side 生命周期仍未整体验收。[需求与实现](261013/1425-codex-side-phase/spec.md#L1) · [核验](261013/1425-codex-side-phase/verify.md#L1) · [规则失守与问题台账](261013/1425-codex-side-phase/audit.md#L1)。
+
+- 2026-10-12 重复计算修复：源码与构建已完成，真实 CPU/响应待用户重新安装后验收；[任务与产物](261012/duplicate-computation/task-card.md)。
+
 - 2026-10-12 待输入残留续修：真实 SRM 快照确认同轮问题之后已接受普通插入、Turn completed/runtime idle。已补顺序结束边界，19/19 匿名回归与 3/3 Kernel 定向回归通过；10:05:38 新产物已构建，宿主显示待验收；Git 交付以提交记录及远端回读为准。[核验](261010/0937-gpt-input-compat/verify.md#L5)。
 
 - 2026-10-11 待输入续修：已从 15:24:18 宿主日志确认 SSH 任务 waiting-input 保持 2.057 秒即被完成事件误清，回答晚于清除约 114 秒。已修复 completed 未答问题投影与活动帧携带 opened 交互，定向 21/21，扩展 319/322（3 项既有失败）；16:17:11 新产物已构建，现场验收待完成。[任务](261010/0937-gpt-input-compat/task-card.md#L3) · [核验](261010/0937-gpt-input-compat/verify.md#L5)。

@@ -5,6 +5,7 @@ import * as pathModule from 'node:path'
 import { resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import vm from 'node:vm'
+import { checkCompanionCoreInvariants } from './check-companion-core-invariants.mjs'
 import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS, UTOOLS_PRELOAD_MODULE_GROUPS } from './utools-preload-assets.mjs'
 import {
   buildUtoolsRuntimeIdentity,
@@ -581,5 +582,10 @@ vm.runInNewContext(actionPreloadSource, actionSandbox, { filename: 'action-prelo
 assert(typeof actionSandbox.window.eypcActionRunner?.onSnapshot === 'function', 'action preload must expose snapshot subscription')
 assert(typeof actionSandbox.window.eypcActionRunner?.onLog === 'function', 'action preload must expose ordered log deltas')
 assert(typeof actionSandbox.window.eypcActionRunner?.action === 'function', 'action preload must expose runtime actions')
+
+for (const assetRoot of [resolve(root, 'preload'), distDir]) {
+  const checked = checkCompanionCoreInvariants(assetRoot)
+  console.log(`Companion core preservation passed: ${checked} scenarios · ${assetRoot === distDir ? 'packaged' : 'source'}`)
+}
 
 console.log(`EyPc uTools validation passed · core ${actualRuntimeIdentity.coreVersionLabel} (${actualRuntimeIdentity.coreVersion}) · package ${actualRuntimeIdentity.packageVersion} · builtAt ${actualRuntimeIdentity.builtAtLocal} (${actualRuntimeIdentity.builtAt}) · ${actualRuntimeIdentity.hostAssetId} · ${actualRuntimeIdentity.rendererAssetId}`)
