@@ -25,6 +25,7 @@
 | 完整逐任务未读 / 所有 side 生命周期 | 未整体验收；截图与某时刻日志吻合不等于全通过 | verify.md；不把 native 全局 unread 与窗口化根卡直接等同 |
 | 14:50 单成员 running→stopped→running 短暂变化 | 仅日志观察，未证明唯一原因；保留待核实 | verify.md，本轮不改无关因果通路 |
 | 先前缓存优化的 3 个 Bridge 既有失败 | 原 HEAD 已复现，未删改断言 | ../../261012/duplicate-computation/task-card.md |
+| GitHub 推送提示 6 项 moderate 依赖告警 | 远端提示，尚未逐项核实；不等于本轮引入 | [已有 Dependabot 入口](https://github.com/EyBell/EyPc/security/dependabot) |
 
 ## BusinessChangeReview / VerificationImpactTrace
 
