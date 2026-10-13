@@ -5898,6 +5898,33 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
+  it('keeps exact live unread when the persisted unread set is absent', async () => {
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const threadId = FIXED_THREAD_IDS[3]
+    desktopSocket.unreadSnapshotThreadIds.add(threadId)
+    const context = loadCodexBridge(new FakeCodexProcess(), () => nativeRegistryText(), desktopSocket)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await new Promise(resolve => setTimeout(resolve, 0))
+      const task = baseline.value.threads[3]
+      expect(context.diagnosticEvents).toContainEqual(expect.objectContaining({
+        event: 'desktop-unread-read', outcome: 'failed', details: { size: -1 }
+      }))
+      const activity = async () => (await context.bridge.readActivitySnapshot()).value.entries
+        .find((entry: Record<string, any>) => entry.key === task.key)
+      expect(await activity()).toMatchObject({ hasUnreadTurn: true, unreadAuthority: 'desktop-live' })
+      context.triggerNativeStateChange('rename')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(await activity()).toMatchObject({ hasUnreadTurn: true, unreadAuthority: 'desktop-live' })
+      desktopSocket.push({
+        type: 'broadcast', method: 'thread-read-state-changed', sourceClientId: 'codex-desktop-owner', version: 2,
+        params: { hostId: 'local', conversationId: threadId, hasUnreadTurn: false }
+      })
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(await activity()).toMatchObject({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
+    } finally { context.bridge.close() }
+  })
+
   it('applies the same unread authority order when aggregating a Side Chat', async () => {
     const child = new FakeCodexProcess()
     const desktopSocket = new FakeCodexDesktopSocket()
@@ -6514,6 +6541,69 @@ draft: v7EvidenceDraft({
     await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).not.toBe('waiting-input'))
     expect(JSON.stringify(kernel.getLatest())).not.toContain('private question')
     bridge.close()
+  })
+
+  it.each(['completed', 'later-completed', 'interrupted', 'failed'])('keeps a Desktop-only Side question attached across %s and refollow', async (outcome) => {
+    const parentThreadId = FIXED_THREAD_IDS[2]
+    const sideThreadId = 'a2345678-1234-4234-8234-123456789abc'
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), desktopSocket)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      const parent = baseline.value.threads[2]
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      const snapshot = (revision: number, status: string) => ({ type: 'snapshot', revision, conversationState: {
+        sideConversation: true, forkedFromId: parentThreadId,
+        threadRuntimeStatus: { type: status === 'completed' ? 'idle' : 'active', activeFlags: [] },
+        requests: [], turns: [], hasUnreadTurn: false,
+        turnHistory: { kind: 'canonical', history: {
+          islands: [{ entries: [{ value: 'current' }] }],
+          entitiesByKey: { current: { turnId: 'side-question-turn', status, turnStartedAtMs: 1_900_000_000_000,
+            items: [{ type: 'agentMessage', id: 'side-question', questions: [{ title: 'synthetic question' }] }] } }
+        } }
+      } })
+      const push = (change: Record<string, unknown>) => desktopSocket.push({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: sideThreadId, change }
+      })
+      push(snapshot(100, 'inProgress'))
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key))
+        .toMatchObject({ phase: 'waiting-input', topology: { memberCount: 2 } }))
+      push(snapshot(101, 'completed'))
+      for (let index = 0; index < 3; index++) {
+        await context.bridge.readActivitySnapshot({ phaseOnly: true })
+        expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.phase).toBe('waiting-input')
+      }
+      push(snapshot(102, 'completed'))
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.phase).toBe('waiting-input')
+      if (outcome !== 'completed') {
+        const change: Record<string, any> = snapshot(103, 'inProgress')
+        change.conversationState.threadRuntimeStatus = { type: 'idle', activeFlags: [] }
+        change.conversationState.turnHistory.history.entitiesByKey.aborted = {
+          turnId: 'aborted-generation', status: outcome === 'later-completed' ? 'completed' : outcome, turnStartedAtMs: 1_900_000_000_500, items: []
+        }
+        change.conversationState.turnHistory.history.islands = [{ entries: [{ value: 'current' }, { value: 'aborted' }] }]
+        push(change)
+        await new Promise(resolve => setTimeout(resolve, 0))
+        expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.phase).toBe('waiting-input')
+        await context.bridge.readActivitySnapshot({ phaseOnly: true })
+        expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.phase).toBe('waiting-input')
+      }
+      push({ type: 'patches', baseRevision: outcome === 'completed' ? 102 : 103, revision: 104, patches: [
+        { op: 'add', path: ['turnHistory', 'history', 'entitiesByKey', 'answer'], value: {
+          turnId: 'side-answer-turn', status: 'completed', turnStartedAtMs: 1_900_000_001_000,
+          items: [{ type: 'userMessage', content: [{ type: 'text', text: '<send_user_message_question_reply>'
+            + JSON.stringify({ questionItemId: JSON.stringify(['request_user_input_async', 'side-question', 0]), question: 'synthetic question', answer: 'synthetic answer' })
+            + '</send_user_message_question_reply>' }] }]
+        } },
+        { op: 'replace', path: ['turnHistory', 'history', 'islands'], value: [{ entries: [{ value: 'current' }, { value: 'answer' }] }] }
+      ] })
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.phase).not.toBe('waiting-input'))
+      expect(kernel.getLatest().tasks.filter((row: Record<string, any>) => row.key === parent.key)).toHaveLength(1)
+      expect(kernel.getLatest().tasks.some((row: Record<string, any>) => row.key.startsWith('codex-child:'))).toBe(false)
+    } finally { context.bridge.close() }
   })
 
   it('maintains an unanswered canonical question after completion until a next-turn accepted answer', async () => {
@@ -9433,6 +9523,66 @@ draft: v7EvidenceDraft({
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('reads the current identity-scoped native unread state without mixing remote buckets', async () => {
+    const child = new FakeCodexProcess()
+    const identityKey = crypto.createHash('sha256').update(JSON.stringify(['chatgpt', 'synthetic-account', 'synthetic-user'])).digest('hex')
+    const registry = JSON.parse(nativeRegistryText())
+    registry['electron-thread-read-state-v1'] = {
+      version: 1,
+      unreadByIdentity: { [identityKey]: { 'synthetic-local-host': [FIXED_THREAD_IDS[2]], 'synthetic-remote-host': [FIXED_THREAD_IDS[3]] } },
+      legacyMigration: { identityKey, adoptedHostIds: { local: 'synthetic-local-host' } }
+    }
+    const { bridge } = loadCodexBridge(child, () => JSON.stringify(registry))
+    try {
+      const snapshot = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      expect(snapshot.value.threads[2]).toMatchObject({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
+      expect(snapshot.value.threads[3]).toMatchObject({ hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' })
+    } finally { bridge.close() }
+  })
+
+  it('projects a completed Desktop-only Side unread v3 result onto its root', async () => {
+    const parentThreadId = FIXED_THREAD_IDS[2]
+    const sideThreadId = 'a2345678-1234-4234-8234-123456789abc'
+    const child = new FakeCodexProcess()
+    child.turnOverrides.set(parentThreadId, { id: 'synthetic-parent-newer', status: 'completed', startedAt: 1_950_000_000, completedAt: 2_000_000_071 })
+    const socket = new FakeCodexDesktopSocket()
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), socket)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      const parent = baseline.value.threads[2]
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: sideThreadId, change: { type: 'snapshot', revision: 100, conversationState: {
+          sideConversation: true, forkedFromId: parentThreadId, threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+          requests: [], hasUnreadTurn: false, turns: [], turnHistory: { kind: 'canonical', history: {
+            islands: [{ entries: [{ value: 'current' }] }], entitiesByKey: { current: {
+              turnId: 'synthetic-side-completed', status: 'completed', turnStartedAtMs: 1_900_000_000_000, items: []
+            } }
+          } }
+        } } } })
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.topology.memberCount).toBe(2))
+      const send = (hasUnreadTurn: boolean, version = 3, hostId = 'local') => socket.push({ type: 'broadcast',
+        method: 'thread-read-state-changed', sourceClientId: 'codex-desktop-owner', version,
+        params: { hostId, conversationId: sideThreadId, hasUnreadTurn,
+          context: { identity: { kind: 'chatgpt', accountId: 'synthetic-account', userId: 'synthetic-user' }, executionHostKey: 'synthetic-local-host' } }
+      })
+      for (const threadId of [parentThreadId, sideThreadId]) child.stdout.emit('data', `${JSON.stringify({ method: 'turn/completed', params: {
+        threadId, turn: { id: 'synthetic-side-completed', status: 'completed', startedAt: threadId === parentThreadId ? 1_950_000_000 : 1_900_000_000, completedAt: 2_000_000_072 }
+      } })}\n`)
+      send(true)
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key))
+        .toMatchObject({ phase: 'completed', unreadKnown: true, unread: true }))
+      expect(child.writes.some(frame => frame.method === 'thread/turns/list' && frame.params?.threadId === sideThreadId)).toBe(true)
+      expect(context.native.privateBranchEvidence(parentThreadId)?.branches.find((branch: Record<string, any>) => branch.branchKind === 'main')?.turnStartedAt).toBe(1_950_000_000_000)
+      send(false, 3, 'remote')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.unread).toBe(true)
+      send(false)
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.unread).toBe(false))
+      expect(kernel.getLatest().tasks.some((row: Record<string, any>) => row.key.startsWith('codex-child:'))).toBe(false)
+    } finally { context.bridge.close() }
   })
 
   it('keeps a live desktop unread event authoritative without a stream shadow and drops it when its owner stops following', async () => {

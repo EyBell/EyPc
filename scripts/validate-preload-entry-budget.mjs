@@ -187,7 +187,7 @@ const BUDGET = Object.freeze({
   // and platform.orca. Inventory/open/archive live in preload/orca/.
   // 2026-10-10: state-only entry is 14760 after request-resolution extraction;
   // ChatGPT Projects read-only loader and admission wiring add 44 lines.
-  lines: 14804,
+  lines: 14731,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

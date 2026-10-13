@@ -1670,14 +1670,13 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function materializePrivateTopology(previousPublicByKey = new Map(currentPackage.tasks.map((task) => [task.key, task]))) {
-    const currentLanes = normalizeSourceLaneGenerations(
-      currentPackage.sourceLaneGenerations,
-      currentPackage.sourceGenerations
-    )
+    // relationStore already applies generation admission on insert/removal.
+    // A newer partial topology lane does not revoke older admitted relations
+    // in other families. Only explicit current removal or complete replacement
+    // may retire those edges.
     const topology = buildCompanionTaskTopology({
       nodes: [...nodeStore.values()],
-      relations: [...relationStore.values()],
-      generationFloor: Object.fromEntries(PROVIDERS.map((provider) => [provider, currentLanes[provider].topology]))
+      relations: [...relationStore.values()]
     })
     const nextShortcutInputs = new Map()
     const tasks = topology.rootGroups.map(({ root, members }) => {
@@ -2155,9 +2154,11 @@ function createCompanionTaskKernel(dependencies = {}) {
           if (relation.provider === provider) nextRelationStore.delete(key)
         }
       }
-      for (const childKey of batch.removedRelationChildKeys) {
-        for (const [key, relation] of nextRelationStore) {
-          if (relation.provider === provider && relation.childKey === childKey) nextRelationStore.delete(key)
+      if (enabledProviders.has(provider) && topologyGeneration >= topologyCurrent) {
+        for (const childKey of batch.removedRelationChildKeys) {
+          for (const [key, relation] of nextRelationStore) {
+            if (relation.provider === provider && relation.childKey === childKey) nextRelationStore.delete(key)
+          }
         }
       }
     }
@@ -2289,6 +2290,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         scope: 'task-kernel',
         event: 'phase-transition',
         outcome: task.phase,
+        provider: task.provider,
         taskRef: task.key,
         packageRevision: currentPackage.packageRevision,
         details: {
@@ -2497,11 +2499,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     const topology = buildCompanionTaskTopology({
       nodes: [...nodeStore.values()],
-      relations: [...relationStore.values()],
-      generationFloor: Object.fromEntries(PROVIDERS.map((candidate) => [
-        candidate,
-        finiteInteger(currentPackage.sourceLaneGenerations?.[candidate]?.topology)
-      ]))
+      relations: [...relationStore.values()]
     })
     const privateRemovalKeys = new Set()
     for (const [key, task] of nodeStore) {

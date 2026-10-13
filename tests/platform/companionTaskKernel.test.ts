@@ -3926,6 +3926,35 @@ describe('source lane units', () => {
     })
   })
 
+  it.each(['codex', 'claude', 'cursor', 'orca'])('rejects stale %s side removal but accepts a current removal', provider => {
+    const providers = { codex: provider === 'codex', claude: provider === 'claude', cursor: provider === 'cursor', orca: provider === 'orca' }
+    const kind = provider === 'codex' ? 'codex-thread' : provider === 'claude' ? 'claude-session' : `${provider}-session`
+    const sourceGenerations = (generation: number) => Object.fromEntries(Object.keys(providers).map(key => [key, key === provider ? generation : 0]))
+    const kernel = createCompanionTaskKernel({ coalesceMs: 0,
+      initialConfiguration: { enabled: true, providers } })
+    const lease = kernel.attach({ enabled: true, providers }).lease
+    const family = `${provider}:side-removal-generation`
+    kernel.syncPackage({ lease, draft: draft([
+      task({ provider, kind, key: 'main', family, role: 'root', phase: 'completed', unreadKnown: true }),
+      task({ provider, key: 'side', family, role: 'child', kind: 'topology-child', phase: 'running', actionAlias: '', standaloneEligible: false })
+    ], 2, { providers, sourceGenerations: sourceGenerations(2), relations: [{
+      childKey: 'side', parentKey: 'main', provider, family, relation: 'side-thread',
+      authority: 'test-exact-identity', exact: true, generation: 2
+    }] }) })
+    try {
+      for (const generation of [1, 3]) {
+        const removal: Record<string, any> = draft([], generation === 1 ? 3 : 4, { providers, sourceGenerations: sourceGenerations(generation) })
+        removal.evidenceBatches[provider].removedRelationChildKeys = ['side']
+        removal.evidenceBatches[provider].channels.membership.removedKeys = ['side']
+        const result = kernel.syncPackage({ lease, draft: removal })
+        expect(result.tasks).toHaveLength(1)
+        expect(result.tasks.find((entry: any) => entry.key === 'main')).toMatchObject({ key: 'main', phase: generation === 1 ? 'running' : 'completed',
+          topology: { memberCount: generation === 1 ? 2 : 1 } })
+        expect(result.views.counts.active).toBe(generation === 1 ? 1 : 0)
+      }
+    } finally { kernel.close() }
+  })
+
   it('materializes all-bead Side Chat phase and unread decisions into mutually exclusive canonical views', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }

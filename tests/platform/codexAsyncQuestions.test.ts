@@ -177,6 +177,24 @@ describe('GPT async question evidence', () => {
     expect(state.requests).toHaveLength(0)
   })
 
+  it.each(['completed', 'interrupted', 'failed'])('keeps native Side input separate from a later %s generation', (status) => {
+    const { question, shadow } = harness()
+    const build = (items: any[] = []) => shadow.codexDesktopShadowFromSnapshot({ revision: 1, conversationState: {
+      sideConversation: true, threadRuntimeStatus: { type: 'idle', activeFlags: [] }, requests: [], turns: [],
+      turnHistory: { kind: 'canonical', history: {
+        islands: [{ entries: [{ value: 'question' }, { value: 'aborted' }] }], entitiesByKey: {
+          question: { turnId: 'question', status: 'inProgress', items: [question] },
+          aborted: { turnId: 'aborted', status, items }
+        }
+      } }
+    } })
+    const current = build()
+    expect(current.requests).toHaveLength(1)
+    expect(current.liveTurnRunning).toBe(false)
+    const continuation = build([{ type: 'steeringUserMessage', status: 'accepted', input: [{ type: 'text', text: 'synthetic accepted continuation' }] }])
+    expect(continuation.requests).toHaveLength(0)
+  })
+
   it('does not retain answered async questions under the completed Plan exception', () => {
     const { question, snapshot, projection } = harness()
     const previous = snapshot([question])

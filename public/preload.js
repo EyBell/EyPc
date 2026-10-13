@@ -130,7 +130,7 @@ const CODEX_DESKTOP_IPC_VERSIONS = {
   'thread-stream-state-changed': 11,
   'thread-stream-following-changed': 1,
   'thread-stream-following-status-requested': 1,
-  'thread-read-state-changed': 2,
+  'thread-read-state-changed': 3,
   'thread-archived': 2,
   'thread-unarchived': 1
 }
@@ -139,10 +139,11 @@ function codexDesktopIpcVersionAccepted(method, version) {
   const expectedVersion = CODEX_DESKTOP_IPC_VERSIONS[method]
   if (!Number.isInteger(expectedVersion)) return true
   // Older installed Codex editor extensions publish unrevisioned stream-state
-  // v6 and read-state v1; the current Desktop/editor protocol uses v11/v2.
+  // v6 and read-state v1/v2; the current Desktop/editor protocol uses v11/v3.
   return version === expectedVersion
     || method === 'thread-stream-state-changed' && version === 6
     || method === 'thread-read-state-changed' && version === 1
+    || method === 'thread-read-state-changed' && version === 2
 }
 const WINDOW_BRIDGE_TIMEOUT_MS = 5_000
 const WINDOW_BRIDGE_OUTPUT_LIMIT = 1024 * 1024
@@ -5638,7 +5639,8 @@ class CodexDesktopCompanionBridge {
           return
         }
       }
-      if (!refresh.verifyStaleActive
+      if (queryThreadId === threadId
+        && !refresh.verifyStaleActive
         && !refresh.forceQuery
         && codexApplyCachedCompletedTurnEvidence(known, threadId)) {
         finish(false)
@@ -5713,6 +5715,24 @@ class CodexDesktopCompanionBridge {
             || finalAttempt)
           && this.settleTerminalActiveSnapshot(threadId, refresh, known, turn)) {
           finish(false)
+          return
+        }
+        // Confirm a Side completion against that member's current Turn. A
+        // cached parent completion or a newer parent epoch cannot substitute
+        // for, or invalidate, the result of this exact child query.
+        const branchShadow = queryThreadId !== threadId ? this.sideShadows.get(queryThreadId) : null
+        const branchStartedAt = Number(branchShadow?.currentCanonicalTurn?.startedAt)
+          || Number(codexInventorySideBranchEvidence.get(queryThreadId)?.turnStartedAt) || 0
+        if (refresh.confirmCompletionEvent && queryThreadId !== threadId
+          && branchShadow?.parentThreadId === threadId
+          && turn?.status === 'completed' && branchStartedAt > 0 && turn.startedAt >= branchStartedAt) {
+          codexRememberPrivateBranchTerminal(threadId, queryThreadId, turn, 'turn-completed', {
+            terminalEvidenceSequence: codexNextLiveEvidenceSequence(),
+            activeEvidenceSequence: branchShadow.activityEventSequence,
+            idleConfirmed: codexPrivateBranchIdleConfirmed(threadId, queryThreadId, known)
+          })
+          finish(false)
+          this.emitParentActivity(threadId)
           return
         }
         const resumedTerminalRevision = turn?.startedAt === refresh.baselineTurnStartedAt
@@ -6014,7 +6034,7 @@ class CodexDesktopCompanionBridge {
         // the same live owner. A real owner disconnect is handled separately
         // by client-status-changed and still drops all of its live authority.
         if (ownsShadow && stillInventoried && this.followAny(threadId, true, [ownerClientId])) {
-          runtimeDiagnostics.record({
+          recordCompanionDiagnosticEvent({
             level: 'info',
             scope: 'task-recovery',
             event: 'desktop-replacement-snapshot',
@@ -6080,7 +6100,7 @@ class CodexDesktopCompanionBridge {
       return
     }
     if (message.method === 'thread-read-state-changed') {
-      this.handleReadState(params, message.sourceClientId)
+      this.handleReadState(params, message.sourceClientId, message.version)
       return
     }
     if (message.method === 'thread-archived' || message.method === 'thread-unarchived') {
@@ -6386,122 +6406,9 @@ class CodexDesktopCompanionBridge {
   }
 
   companionInteractionEvidenceForParent(parentThreadId) {
-    const known = codexActivityInventory.get(parentThreadId)
-    if (!known?.key) return null
-    const shadowEntries = []
-    const own = this.shadows.get(parentThreadId)
-    if (own) shadowEntries.push([parentThreadId, own])
-    const relatedChildIds = new Set()
-    for (const [childThreadId, relatedParentThreadId] of codexAllSideRelations()) {
-      if (relatedParentThreadId === parentThreadId) relatedChildIds.add(childThreadId)
-    }
-    for (const [childThreadId, shadow] of this.sideShadows) {
-      if (shadow.parentThreadId !== parentThreadId) continue
-      relatedChildIds.add(childThreadId)
-      shadowEntries.push([childThreadId, shadow])
-    }
-    const complete = Boolean(own?.requestSetComplete === true)
-      && [...relatedChildIds].every((childThreadId) => this.sideShadows.get(childThreadId)?.requestSetComplete === true)
-    const requestSetRevision = Math.max(
-      0,
-      ...shadowEntries.flatMap(([, shadow]) => [
-        Number(shadow.requestSetRevision) || 0,
-        Number(shadow.activityEventSequence) || 0,
-        ...Object.values(codexRecord(shadow.runtimeWaitingSequences)).map((value) => Number(value) || 0)
-      ])
-    )
-    if (!requestSetRevision) return null
-    const byInstance = new Map()
-    for (const [threadId, shadow] of shadowEntries) {
-      const branchRef = threadId === parentThreadId
-        ? 'root'
-        : codexPrivateBranchRef(parentThreadId, threadId)
-      const candidates = [
-        ...(Array.isArray(shadow.requests) ? shadow.requests : []),
-        ...(Array.isArray(shadow.interactionTerminals) ? shadow.interactionTerminals : [])
-      ]
-      const visibleRequestFlags = new Set()
-      for (const request of candidates) {
-        const kind = codexDesktopRequestKind(request)
-        const interactionRef = typeof request?.interactionRef === 'string' && /^[a-f0-9]{16,64}$/i.test(request.interactionRef)
-          ? request.interactionRef.toLowerCase()
-          : ''
-        if (!kind || !interactionRef) continue
-        const terminal = ['resolved', 'cancelled', 'execution-started'].includes(request.interactionState)
-        if (!terminal) {
-          const flag = codexDesktopRequestFlag(request)
-          if (!flag || !codexWaitingEvidenceVisible(shadow.waitingState, flag, request.observedSequence)) continue
-          visibleRequestFlags.add(flag)
-        }
-        const sequence = terminal
-          ? Number(request.resolutionSequence) || Number(request.observedSequence) || 0
-          : Number(request.observedSequence) || 0
-        if (!Number.isSafeInteger(sequence) || sequence <= 0) continue
-        const evidence = {
-          revision: companionV7Revisions.interaction,
-          provider: 'codex',
-          taskKey: known.key,
-          branchRef,
-          interactionRef,
-          kind,
-          state: terminal ? request.interactionState : 'opened',
-          sequence,
-          turnEpoch: Number(known.lastTurnStartedAt) || 0,
-          requestSetRevision,
-          authority: terminal
-            ? 'provider-live'
-            : shadow.requestSetAuthority === 'provider-live' ? 'provider-live' : 'provider-snapshot',
-          exact: request.identityExact === true
-        }
-        const instanceKey = `${branchRef}\0${interactionRef}`
-        const previous = byInstance.get(instanceKey)
-        if (!previous || evidence.sequence > previous.sequence
-          || evidence.sequence === previous.sequence && terminal && previous.state === 'opened') {
-          byInstance.set(instanceKey, evidence)
-        }
-      }
-      for (const flag of Array.isArray(shadow.runtime?.activeFlags) ? shadow.runtime.activeFlags : []) {
-        if (visibleRequestFlags.has(flag)) continue
-        const sequence = Number(shadow.runtimeWaitingSequences?.[flag]) || 0
-        if (!sequence || !codexWaitingEvidenceVisible(shadow.waitingState, flag, sequence)) continue
-        const interactionRef = crypto.createHash('sha256')
-          .update('codex-runtime-interaction-v1')
-          .update('\0')
-          .update(branchRef)
-          .update('\0')
-          .update(flag)
-          .update('\0')
-          .update(String(sequence))
-          .digest('hex')
-          .slice(0, 32)
-        byInstance.set(`${branchRef}\0${interactionRef}`, {
-          revision: companionV7Revisions.interaction,
-          provider: 'codex',
-          taskKey: known.key,
-          branchRef,
-          interactionRef,
-          kind: flag === 'waitingOnApproval' ? 'approval' : 'user-input',
-          state: 'opened',
-          sequence,
-          turnEpoch: Number(known.lastTurnStartedAt) || 0,
-          requestSetRevision,
-          authority: shadow.activityEvidence === 'activity-event' ? 'provider-live' : 'provider-snapshot',
-          exact: true
-        })
-      }
-    }
-    return {
-      taskKey: known.key,
-      requestSetRevision,
-      interactions: [...byInstance.values()],
-      interactionSets: complete ? [{
-        revision: companionV7Revisions.interaction,
-        provider: 'codex',
-        taskKey: known.key,
-        requestSetRevision,
-        complete: true
-      }] : []
-    }
+    return codexDesktopRequestProjection?.codexDesktopCompanionInteractionsForParent(
+      this, parentThreadId, codexActivityInventory.get(parentThreadId),
+      codexPrivateBranchRef, codexWaitingEvidenceVisible) || null
   }
 
   publishShadow(threadId, shadow, readStateOnly = false) {
@@ -6663,12 +6570,17 @@ class CodexDesktopCompanionBridge {
     this.emitParentActivity(shadow.parentThreadId, undefined, readStateOnly, exitedActive ? threadId : '')
   }
 
-  handleReadState(params, ownerClientId) {
+  handleReadState(params, ownerClientId, version) {
     // v1 Codex editor-extension broadcasts are local-only and omit hostId;
     // v2 Desktop broadcasts may include it. Reject only an explicit non-local
     // host so both real producers reach the same exact read-state path.
     if (params.hostId !== undefined && params.hostId !== 'local') return
     if (!validCodexThreadId(params.conversationId) || typeof params.hasUnreadTurn !== 'boolean') return
+    if (version === 3) {
+      const binding = codexDesktopShadow?.codexReadStateContextBinding(params.context)
+      if (!binding || params.hostId !== 'local') return
+      this.readStateBinding = binding
+    }
     const known = codexActivityInventory.get(params.conversationId)
     const ownShadow = this.shadows.get(params.conversationId)
     const sideShadow = this.sideShadows.get(params.conversationId)
@@ -6800,7 +6712,7 @@ class CodexDesktopCompanionBridge {
     // Instrumented because the error memory guarding this path counts
     // resubscribe activity to tell stream-continuity failure apart from real
     // task deletion — and an unlogged path makes "no events" prove nothing.
-    runtimeDiagnostics.record({
+    recordCompanionDiagnosticEvent({
       level: 'info',
       scope: 'task-recovery',
       event: 'desktop-resubscribe',
@@ -8656,7 +8568,10 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       ref: codexPrivateBranchRef(parentThreadId, row.threadId),
       branchKind: row.threadId === parentThreadId ? 'main' : 'side',
       topologyExact: row.threadId === parentThreadId
-        || codexInventorySideRelations.get(row.threadId) === parentThreadId,
+        || codexInventorySideRelations.get(row.threadId) === parentThreadId
+        || codexDesktopSideRelations.get(row.threadId) === parentThreadId,
+      topologyAuthority: codexInventorySideRelations.get(row.threadId) === parentThreadId
+        ? 'codex-app-server-inventory' : 'codex-desktop-side',
       unreadKnown: unread.unreadAuthority !== 'unavailable',
       hasUnreadTurn: unread.hasUnreadTurn === true,
       status: row.activity?.status || 'notLoaded',
@@ -8846,17 +8761,10 @@ function readCodexDesktopUnreadIdsInner() {
   try { parsed = JSON.parse(fs.readFileSync(primary, 'utf8')) } catch {
     throw codexError('protocol-error', 'Codex desktop unread state is invalid')
   }
-  const atomsValue = codexRecord(parsed)['electron-persisted-atom-state']
-  let atoms
-  try { atoms = typeof atomsValue === 'string' ? codexRecord(JSON.parse(atomsValue)) : codexRecord(atomsValue) } catch {
+  let local
+  try { local = codexDesktopShadow?.parseCodexDesktopUnreadState(parsed, codexDesktopBridge?.readStateBinding) } catch {
     throw codexError('protocol-error', 'Codex desktop unread state is invalid')
   }
-  const byHostValue = atoms['unread-thread-ids-by-host-v1']
-  let byHost
-  try { byHost = typeof byHostValue === 'string' ? codexRecord(JSON.parse(byHostValue)) : codexRecord(byHostValue) } catch {
-    throw codexError('protocol-error', 'Codex desktop unread state is invalid')
-  }
-  const local = byHost.local
   if (!Array.isArray(local) || local.length > 100_000 || local.some((threadId) => !validCodexThreadId(threadId))) {
     throw codexError('protocol-error', 'Codex desktop unread state is invalid')
   }
@@ -11552,6 +11460,18 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       observationUnread: observation.unread === true,
       observationKnown: observation.unreadKnown === true,
       branchSource: privateEvidence ? 'private' : 'fallback',
+      branchCount: branches.length,
+      branchUnreadKnown: branch.unreadKnown === true,
+      branchUnread: branch.hasUnreadTurn === true,
+      sideKnownCount: branches.filter(value => value.branchKind === 'side' && value.unreadKnown === true).length,
+      sideUnreadCount: branches.filter(value => value.branchKind === 'side' && value.unreadKnown === true && value.hasUnreadTurn === true).length,
+      readBridgeState: codexDesktopBridge?.state || 'not-checked',
+      ownLiveReadKnown: typeof codexDesktopBridge?.liveUnread?.get(match?.threadId)?.hasUnreadTurn === 'boolean',
+      ownLiveUnread: codexDesktopBridge?.liveUnread?.get(match?.threadId)?.hasUnreadTurn === true,
+      ownLiveReadEvidence: codexDesktopBridge?.liveUnread?.get(match?.threadId)?.unreadEvidence || 'none',
+      ownShadowReadKnown: typeof codexDesktopBridge?.shadows?.get(match?.threadId)?.hasUnreadTurn === 'boolean',
+      ownShadowUnread: codexDesktopBridge?.shadows?.get(match?.threadId)?.hasUnreadTurn === true,
+      ownShadowReadEvidence: codexDesktopBridge?.shadows?.get(match?.threadId)?.unreadEvidence || 'none',
       authority: typeof input.authority === 'string' ? input.authority : '',
       // A rebuilt node overwrites kernel-local pin state with this value, so
       // its transitions are the other half of any pin-flash forensics.
@@ -11669,7 +11589,7 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
         provider: 'codex',
         family,
         relation: 'side-thread',
-        authority: 'codex-app-server-inventory',
+        authority: branch.topologyAuthority || 'codex-app-server-inventory',
         exact: branch.topologyExact === true,
         generation: companionEvidenceSequenceV7(input.topologyGeneration, observation.sequence)
       })
@@ -11677,7 +11597,7 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
     if (observation.interactionKind) {
       const bundle = companionSyntheticInteractionBundleV7({
         provider: 'codex',
-        taskKey: key,
+        taskKey: nodeKey,
         branchRef,
         kind: observation.interactionKind,
         sequence: observation.interactionSequence,
@@ -12962,6 +12882,8 @@ function applyCodexActivityToCompanionKernel(delta) {
   const dynamicCutoff = Date.now() - companionTaskConfiguration().dynamicTaskWindowHours * 60 * 60 * 1_000
   const nodesByKey = new Map()
   const relationsByKey = new Map()
+  const memberInteractions = []
+  const memberInteractionSets = []
   let order = 0
   for (const entry of entries) {
     const evidence = companionCodexEvidenceV7(entry, {
@@ -12973,16 +12895,21 @@ function applyCodexActivityToCompanionKernel(delta) {
       unreadSequence: generation,
       authority: 'provider-live'
     })
+    memberInteractions.push(...evidence.interactions)
+    memberInteractionSets.push(...evidence.interactionSets)
     for (const node of evidence.nodes) nodesByKey.set(node.key, node)
     for (const relation of evidence.relations) {
       relationsByKey.set(`${relation.provider}\0${relation.childKey}\0${relation.authority}\0${relation.relation}`, relation)
     }
     order += evidence.nodes.length
   }
-  const explicitInteractions = (Array.isArray(source.interactions) ? source.interactions : [])
+  // A semantic activity delta may omit an unchanged open request. Keep the
+  // member's current request evidence in the same batch so activity replay
+  // cannot implicitly resolve that instance. No additional provider reads.
+  const explicitInteractions = [...memberInteractions, ...(Array.isArray(source.interactions) ? source.interactions : [])]
     .map((value) => createCompanionInteractionEvidenceV7(value))
     .filter(Boolean)
-  const explicitInteractionSets = (Array.isArray(source.interactionSets) ? source.interactionSets : [])
+  const explicitInteractionSets = [...memberInteractionSets, ...(Array.isArray(source.interactionSets) ? source.interactionSets : [])]
     .map((value) => createCompanionInteractionSetV7(value))
     .filter(Boolean)
   const currentLanes = codexRecord(current.sourceLaneGenerations?.codex)

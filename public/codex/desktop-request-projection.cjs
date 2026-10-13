@@ -266,8 +266,125 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       .filter((flag) => previouslyWaiting.has(flag))
   }
 
+  function codexDesktopCompanionInteractionsForParent(bridge, parentThreadId, known, privateBranchRef, waitingEvidenceVisible) {
+    if (!known?.key) return null
+    const shadowEntries = []
+    const own = bridge.shadows.get(parentThreadId)
+    if (own) shadowEntries.push([parentThreadId, own])
+    for (const [childThreadId, shadow] of bridge.sideShadows) {
+      if (shadow.parentThreadId === parentThreadId) shadowEntries.push([childThreadId, shadow])
+    }
+    const requestSetRevision = Math.max(
+      0,
+      ...shadowEntries.flatMap(([, shadow]) => [
+        Number(shadow.requestSetRevision) || 0,
+        Number(shadow.activityEventSequence) || 0,
+        ...Object.values(record(shadow.runtimeWaitingSequences)).map((value) => Number(value) || 0)
+      ])
+    )
+    if (!requestSetRevision) return null
+    const byInstance = new Map()
+    const interactionSets = []
+    for (const [threadId, shadow] of shadowEntries) {
+      const branchRef = threadId === parentThreadId
+        ? 'root'
+        : privateBranchRef(parentThreadId, threadId)
+      // Requests belong to the member that presents them. Parent activity and
+      // complete request sets cannot resolve an unanswered Side instance.
+      const taskKey = threadId === parentThreadId ? known.key : `codex-child:${branchRef}`
+      const turnEpoch = threadId === parentThreadId
+        ? Number(known.lastTurnStartedAt) || 0
+        : Number(shadow.currentCanonicalTurn?.startedAt) || 0
+      if (shadow.requestSetComplete === true) interactionSets.push({
+        revision: COMPANION_V7_REVISIONS.interaction, provider: 'codex',
+        taskKey, requestSetRevision, complete: true
+      })
+      const candidates = [
+        ...(Array.isArray(shadow.requests) ? shadow.requests : []),
+        ...(Array.isArray(shadow.interactionTerminals) ? shadow.interactionTerminals : [])
+      ]
+      const visibleRequestFlags = new Set()
+      for (const request of candidates) {
+        const kind = codexDesktopRequestKind(request)
+        const interactionRef = typeof request?.interactionRef === 'string' && /^[a-f0-9]{16,64}$/i.test(request.interactionRef)
+          ? request.interactionRef.toLowerCase()
+          : ''
+        if (!kind || !interactionRef) continue
+        const terminal = ['resolved', 'cancelled', 'execution-started'].includes(request.interactionState)
+        if (!terminal) {
+          const flag = codexDesktopRequestFlag(request)
+          if (!flag || !waitingEvidenceVisible(shadow.waitingState, flag, request.observedSequence)) continue
+          visibleRequestFlags.add(flag)
+        }
+        const sequence = terminal
+          ? Number(request.resolutionSequence) || Number(request.observedSequence) || 0
+          : Number(request.observedSequence) || 0
+        if (!Number.isSafeInteger(sequence) || sequence <= 0) continue
+        const evidence = {
+          revision: COMPANION_V7_REVISIONS.interaction,
+          provider: 'codex',
+          taskKey,
+          branchRef,
+          interactionRef,
+          kind,
+          state: terminal ? request.interactionState : 'opened',
+          sequence,
+          turnEpoch,
+          requestSetRevision,
+          authority: terminal
+            ? 'provider-live'
+            : shadow.requestSetAuthority === 'provider-live' ? 'provider-live' : 'provider-snapshot',
+          exact: request.identityExact === true
+        }
+        const instanceKey = `${branchRef}\0${interactionRef}`
+        const previous = byInstance.get(instanceKey)
+        if (!previous || evidence.sequence > previous.sequence
+          || evidence.sequence === previous.sequence && terminal && previous.state === 'opened') {
+          byInstance.set(instanceKey, evidence)
+        }
+      }
+      for (const flag of Array.isArray(shadow.runtime?.activeFlags) ? shadow.runtime.activeFlags : []) {
+        if (visibleRequestFlags.has(flag)) continue
+        const sequence = Number(shadow.runtimeWaitingSequences?.[flag]) || 0
+        if (!sequence || !waitingEvidenceVisible(shadow.waitingState, flag, sequence)) continue
+        const interactionRef = crypto.createHash('sha256')
+          .update('codex-runtime-interaction-v1')
+          .update('\0')
+          .update(branchRef)
+          .update('\0')
+          .update(flag)
+          .update('\0')
+          .update(String(sequence))
+          .digest('hex')
+          .slice(0, 32)
+        byInstance.set(`${branchRef}\0${interactionRef}`, {
+          revision: COMPANION_V7_REVISIONS.interaction,
+          provider: 'codex',
+          taskKey,
+          branchRef,
+          interactionRef,
+          kind: flag === 'waitingOnApproval' ? 'approval' : 'user-input',
+          state: 'opened',
+          sequence,
+          turnEpoch,
+          requestSetRevision,
+          authority: shadow.activityEvidence === 'activity-event' ? 'provider-live' : 'provider-snapshot',
+          exact: true
+        })
+      }
+    }
+    return {
+      taskKey: known.key,
+      requestSetRevision,
+      interactions: [...byInstance.values()],
+      interactionSets
+    }
+  }
+
+
   return {
     revision: CODEX_DESKTOP_REQUEST_PROJECTION_REVISION,
+    codexDesktopCompanionInteractionsForParent,
     codexDesktopRequestTimestamp,
     codexDesktopRequestCorrelation,
     codexDesktopProjectedRequest,

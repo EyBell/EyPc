@@ -25,7 +25,7 @@ const { COMPANION_V7_REVISIONS } = require('../companion/contracts-v7.cjs')
  * entry's own delegation.
  */
 
-const { desktopReadEvidence, persistedConnectorUnread } = require('./desktop-unread-evidence.cjs')
+const { desktopReadEvidence, persistedConnectorUnread, parseCodexDesktopUnreadState, codexReadStateContextBinding } = require('./desktop-unread-evidence.cjs')
 
 const CODEX_DESKTOP_SHADOW_REVISION = COMPANION_V7_REVISIONS.desktopShadow
 /** How many resolved request observations a waiting state remembers. */
@@ -214,16 +214,25 @@ function createCodexDesktopShadow(dependencies = {}) {
     }).concat(overlays.filter((turn) => !turn.turnRef || !historyRefs.has(turn.turnRef)))
     const latest = turns[turns.length - 1]
     // Generation completion does not answer an asynchronously presented question.
-    const turn = latest?.turnRef && ['inProgress', 'completed'].includes(latest.status) ? latest : null
+    // A Side can end a later generation (for example by auto-review) while
+    // native Desktop still presents a question on its earlier inProgress Turn.
+    // This is question evidence only, never a historical running witness.
+    const pendingSideTurn = shadow.sideConversation === true
+      && ['completed', 'interrupted', 'failed'].includes(latest?.status)
+      ? turns.findLast(value => value.turnRef && value.status === 'inProgress') : null
+    const turn = pendingSideTurn || (latest?.turnRef && ['inProgress', 'completed'].includes(latest.status) ? latest : null)
     const canonical = shadow.asyncCanonical?.entities[shadow.asyncCanonical?.order.at(-1)]
     shadow.currentCanonicalTurn = canonical?.turnRef
       ? { turnRef: canonical.turnRef, status: canonical.status, startedAt: canonical.startedAt } : null
-    const answered = new Set((turn?.items || []).flatMap((item) => item.replyAccepted ? item.answered : []))
+    const followingItems = pendingSideTurn
+      ? turns.slice(turns.indexOf(pendingSideTurn) + 1).flatMap(value => value.items) : []
+    const answered = new Set([...(turn?.items || []), ...followingItems].flatMap((item) => item.replyAccepted ? item.answered : []))
     const items = turn?.items || []
     // Accepted force-inserted conversation input supersedes questions before
     // that item. Pending/rejected input and partial question replies do not.
     const continuationIndex = items.findLastIndex((item) => item.replyAccepted && item.continuesConversation)
-    const values = items.flatMap((item, index) => index > continuationIndex && item.itemRef
+    const laterContinuation = followingItems.some(item => item.replyAccepted && item.continuesConversation)
+    const values = (laterContinuation ? [] : items).flatMap((item, index) => index > continuationIndex && item.itemRef
       ? Array.from({ length: item.count }, (_, index) => `${item.itemRef}:${index}`)
         .filter((key) => !answered.has(key))
         .map((key) => ({ type: 'userInput', method: 'requestUserInput', id: `async:${key}` })) : [])
@@ -578,7 +587,9 @@ function createCodexDesktopShadow(dependencies = {}) {
     // shadow binding it already holds (entry budget), while the CodexHost
     // lane requires the evidence module directly.
     desktopReadEvidence,
-    persistedConnectorUnread
+    persistedConnectorUnread,
+    parseCodexDesktopUnreadState,
+    codexReadStateContextBinding
   }
 }
 
