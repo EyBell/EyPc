@@ -9228,7 +9228,7 @@ function codexApplyRolloutDecisionState(tracker, state, emit = true, options = {
 function codexRefreshRolloutDecisionTracker(threadId, options = {}) {
   const tracker = codexRolloutDecisionTrackers.get(threadId)
   if (!tracker) return false
-  let rollout
+  let rollout // Cached parsing never suppresses live evidence application.
   let appended = false
   try {
     const stat = fs.statSync(tracker.candidate)
@@ -9236,17 +9236,17 @@ function codexRefreshRolloutDecisionTracker(threadId, options = {}) {
     const signature = `${stat.size}:${codexTimestampMs(stat.mtimeMs)}`
     if (signature === tracker.signature && options.force !== true) return false
     appended = Number.isFinite(tracker.size) && stat.size > tracker.size
+    rollout = { stat, state: signature === tracker.signature && tracker.decisionState
+      ? tracker.decisionState : codexRolloutDecisionState(tracker.candidate, stat, tracker.inputCorrelations) }
     tracker.signature = signature
     tracker.size = stat.size
-    rollout = { stat, state: codexRolloutDecisionState(tracker.candidate, stat, tracker.inputCorrelations) }
+    tracker.decisionState = rollout.state
   } catch {
     return false
   }
   tracker.inputCorrelations = rollout.state.input.correlations
   return codexApplyRolloutDecisionState(
-    tracker,
-    rollout.state,
-    options.emit !== false,
+    tracker, rollout.state, options.emit !== false,
     { observeRuntime: options.observeRuntime === true || appended }
   )
 }
