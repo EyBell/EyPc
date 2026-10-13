@@ -70,7 +70,7 @@ tags:
 - Status: `verified`，适用于本机 v11 协议与受测匿名生命周期；宿主像素和版本证明单独记录。
 - Preconditions: 有兼容 stream owner、有效 revision 和可还原的当前 Turn 结构。
 - Ordered steps: 解析有限匿名字段；投影最新问题；接受匹配回复后写墓碑；关闭对应旧 flag；用同域活动序号发布；由 Kernel 仲裁。
-- Verification: 定向 21/21；扩展 319/322（3 项已确认既有失败）。真实旧宿主日志确认两秒误清，16:17:11 修复产物现场验收仍待完成。
+- Verification: 当前受影响三文件 215/218（同样 3 项既有 Bridge 失败），async 22/22、独立 gate 8/8、source/packaged 新 17 检查通过。18:45:08 精确握手、真实 Side 待输入维持约 58.3 秒及用户回答后 resolved→running 已核验；未发生的全生命周期仍待证。
 - Applicability boundary: 未知回复、其他未答问题、真实终态和 Host 额外进程独立合同不被覆盖。
 - Fallback: 非法结构或 revision/owner 断裂恢复快照；不靠超时、冻结计数或 CSS 隐藏掩盖状态。
 
