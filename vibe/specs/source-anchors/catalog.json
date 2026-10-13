@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 65,
+    "source_documents": 66,
     "ordered_anchors": 356,
     "raw_parent_ordered": 230,
     "unparented_ordered": 126,
@@ -658,6 +658,16 @@
       "source_path": "vibe/specs/260915/shortcut-immediate-read/raw-requirement.md",
       "spec_id": "SPEC-260915-SHORTCUT-IMMEDIATE-READ",
       "content_sha256": "f65905b09eef7caf9edbdb5f4efa3ac638789d3fb6d5c73ff883049660241290",
+      "raw_identity_count": 1,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "261013/1425-codex-side-phase",
+      "source_path": "vibe/specs/261013/1425-codex-side-phase/raw-requirement.md",
+      "spec_id": "SPEC-261013-CODEX-SIDE-PHASE",
+      "content_sha256": "d09191c135fc590ca44ea732e358a5751a41c04bc873e1c9337199cf5dfea026",
       "raw_identity_count": 1,
       "ordered_anchor_count": 0,
       "raw_parent_ordered_count": 0,

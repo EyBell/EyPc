@@ -994,6 +994,57 @@ describe('CompanionTaskKernel', () => {
     })
   })
 
+  it.each(['running', 'completed', 'stopped', 'unknown', 'waiting-input', 'waiting-approval'])('preserves Codex root input and active side priority without losing main activity from %s', (rootPhase) => {
+    const family = 'codex:side-phase-contract'
+    const rootWaiting = rootPhase === 'waiting-input' || rootPhase === 'waiting-approval'
+    for (const [index, childPhase] of ['running', 'waiting-input', 'waiting-approval', 'stopped', 'completed', 'unknown'].entries()) {
+      const kernel = createCompanionTaskKernel({
+        coalesceMs: 0,
+        initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: false } }
+      })
+      const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+      const current = kernel.syncPackage({
+        lease: receipt.lease,
+        draft: draft([
+          task({ key: 'root', family, role: 'root', phase: rootPhase, unreadKnown: true, unread: false }),
+          task({ key: 'side', family, role: 'child', kind: 'topology-child', phase: childPhase,
+            unreadKnown: true, unread: false, actionAlias: '',
+            capabilities: { open: false, archive: false, pause: false, resume: false, executePlan: false } })
+        ], index + 1, {
+          providers: { codex: true, claude: false, cursor: false },
+          relations: [{ childKey: 'side', parentKey: 'root', provider: 'codex', family,
+            relation: 'subagent', authority: 'test-exact-identity', exact: true, generation: index + 1 }]
+        })
+      })
+      const childLive = childPhase === 'running' || childPhase.startsWith('waiting-')
+      const expected = rootWaiting ? rootPhase : childLive ? childPhase
+        : rootPhase === 'running' ? 'running'
+        : rootPhase === 'completed' && childPhase === 'completed' ? 'completed'
+        : ['completed', 'stopped'].includes(rootPhase) && ['completed', 'stopped'].includes(childPhase) ? 'stopped'
+        : 'unknown'
+      expect(current.tasks).toHaveLength(1)
+      expect(current.tasks[0].phase, `${rootPhase} + ${childPhase}`).toBe(expected)
+      expect(current.views.counts.active).toBe(expected === 'running' ? 1 : 0)
+      expect(current.views.counts.input).toBe(expected.startsWith('waiting-') ? 1 : 0)
+      expect(current.views.cycleKeys).not.toContain('side')
+    }
+  })
+
+
+  it.each(['running', 'completed'])('keeps main Plan fallback unless a %s Codex side is live', (phase) => {
+    const kernel = createCompanionTaskKernel({ initialConfiguration: { enabled: true, providers: { codex: true } } })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true } })
+    const family = 'codex:side-plan-contract'
+    const current = kernel.syncPackage({ lease: receipt.lease, draft: draft([
+      task({ key: 'root', family, role: 'root', phase: 'stopped', planReady: true, unreadKnown: true }),
+      task({ key: 'side', family, role: 'child', kind: 'topology-child', phase,
+        actionAlias: '', unreadKnown: true, unread: true })
+    ], 1, { providers: { codex: true }, relations: [{ childKey: 'side', parentKey: 'root', provider: 'codex',
+      family, relation: 'subagent', authority: 'test-exact-identity', exact: true, generation: 1 }] }) })
+    expect(current.tasks[0]).toMatchObject({ phase: phase === 'running' ? 'running' : 'stopped', unread: true, planReady: true })
+    expect(current.views.counts).toMatchObject({ active: phase === 'running' ? 1 : 0, unread: 0 })
+  })
+
   it('projects a completed-read task with an exact current Plan implementation request as waiting-input', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
@@ -3698,7 +3749,7 @@ describe('source lane units', () => {
     stop()
   })
 
-  it('stores V7 topology nodes and clears stale idle when a newer child is active', () => {
+  it('keeps a current Codex main active despite a historical stopped side', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })

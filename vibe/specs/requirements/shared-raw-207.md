@@ -6,6 +6,9 @@ domain: companion-shared
 authority: user-stated
 source_annotations: "implementation-landed / focused-automated-verified / artifact-ready / host-verified-codex-questions / same-turn-running-interaction-waiting"
 scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-codex-side-phase-raw-001
+    scope: "仅 Codex 精确子成员的根卡相位：主任务待输入保留，其他继续按全部成员聚合并保留主任务运行与 Goal；成员当前 interaction 与其他 Provider 合同不变"
   - kind: refines
     target: eypc-req-shared-raw-189
     scope: "精确当前 interaction 的公开待输入/待确认从仅 terminal 扩展到同一 Turn 仍 running"

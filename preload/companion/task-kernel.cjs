@@ -113,6 +113,7 @@ const PROVIDER_TRAITS = Object.freeze(Object.fromEntries(PROVIDERS.map((id) => {
     return [id, Object.freeze({
       taskKind,
       planLifecycle: true,
+      rootInputPriority: true,
       archiveNeedsVerifiedInventory: true,
       // Codex read state is Provider-owned (preload acknowledgement map, Desktop
       // read events, CodexHost thread memory); the Kernel only projects it.
@@ -123,6 +124,7 @@ const PROVIDER_TRAITS = Object.freeze(Object.fromEntries(PROVIDERS.map((id) => {
   return [id, Object.freeze({
     taskKind,
     planLifecycle: false,
+    rootInputPriority: false,
     archiveNeedsVerifiedInventory: false,
     readAcknowledgements: id === 'claude',
     keyPrefixActionAlias: true
@@ -1615,14 +1617,20 @@ function createCompanionTaskKernel(dependencies = {}) {
    * The Kernel is the sole owner of root state aggregation. Topology supplies
    * membership only; it never interprets phase, unread, Plan or capabilities. */
   function aggregateKernelRoot(root, members) {
-    const activityPhase = aggregateMemberPhase(members)
+    // Current input on the Codex main remains actionable even while a side
+    // works. Otherwise aggregate all members: a historical side terminal must
+    // never erase the main's newer running/Goal evidence.
+    const preserveRootInput = providerTraits(root.provider).rootInputPriority
+      && members.length > 1 && isAttentionTaskPhase(root.phase)
+    const phaseMembers = preserveRootInput ? [root] : members
+    const activityPhase = aggregateMemberPhase(phaseMembers)
     const unread = aggregateMemberUnread(members)
     const liveCount = members.filter((node) => isLiveTaskPhase(node.phase)).length
     const attentionCount = members.filter((node) => isAttentionTaskPhase(node.phase)).length
     const errorCount = members.filter((node) => node.error === true).length
     const planReady = root.planReady === true
-    const currentInteractionWaiting = members.some((node) => taskOpenInteractions(node).length > 0)
-    const planInteractionWaiting = members.some((node) => (
+    const currentInteractionWaiting = phaseMembers.some((node) => taskOpenInteractions(node).length > 0)
+    const planInteractionWaiting = phaseMembers.some((node) => (
       isAttentionTaskPhase(node.phase) && node.planImplementation === true
     ))
     // Plan availability is an artifact lane, not an interaction. A completed
@@ -1637,7 +1645,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         : activityPhase
     const statusEnteredAt = phase === 'stopped' && phase !== activityPhase
       ? Math.max(finiteInteger(root.planLifecycleRevision), finiteInteger(root.statusEnteredAt), finiteInteger(root.terminalAt))
-      : Math.max(...members.filter((node) => node.phase === activityPhase).map((node) => finiteInteger(node.statusEnteredAt)), 0)
+      : Math.max(...phaseMembers.filter((node) => node.phase === activityPhase).map((node) => finiteInteger(node.statusEnteredAt)), 0)
     const capabilities = { ...(root.capabilities || {}) }
     if (liveCount > 0 || isLiveTaskPhase(phase)) capabilities.archive = false
     return {

@@ -189,6 +189,8 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 
 - [RAW-223](../codex-raw-223.md#L1) — `active` · 双色贴边线、独立锚点与借屏恢复；拖动不再自动贴边，配置页切竖条时贴最近拐角
 
+- [Side phase RAW-001](../codex-side-phase-raw-001.md#L1) — `active`
+
 ## Related Requirements
 
 - 无。跨域引用在叶子的 `relations` 字段登记。
