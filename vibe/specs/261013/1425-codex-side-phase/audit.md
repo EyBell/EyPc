@@ -26,6 +26,8 @@
 | 14:50 单成员 running→stopped→running 短暂变化 | 仅日志观察，未证明唯一原因；保留待核实 | verify.md，本轮不改无关因果通路 |
 | 先前缓存优化的 3 个 Bridge 既有失败 | 原 HEAD 已复现，未删改断言 | ../../261012/duplicate-computation/task-card.md |
 | GitHub 推送提示 6 项 moderate 依赖告警 | 远端提示，尚未逐项核实；不等于本轮引入 | [已有 Dependabot 入口](https://github.com/EyBell/EyPc/security/dependabot) |
+| CodeNote 推送规则测试 / 文档检查阻断 | 实际门禁发现索引 84 行超限及失效 requirements-hub 锚点；209b3888 修复，原完整门禁通过且推送成功 | 保留全部索引内容、活动状态、投影标记与其他未暂存条目；没有跳过 Hook |
+| CodeNote master audit advisory | 首轮 64 个、修复后 63 个 P0/P1 建议，未逐项归因 | 原 pre-push 完整审计保留；本轮只修两个实际阻断，不宣称全局建议已收口 |
 
 ## BusinessChangeReview / VerificationImpactTrace
 

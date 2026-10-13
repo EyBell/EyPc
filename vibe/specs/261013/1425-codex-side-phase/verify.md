@@ -57,3 +57,10 @@
 - 推送及最终范围以同轮 Git 远端精确 OID 回读为准，Git 交付不替代台账中的待验收项。
 
 远端推送输出另提示 6 项 moderate 依赖告警，已加入 audit 问题台账，尚未进行逐项安全验证；与本轮既有状态测试失守分开留存。
+
+## 最终门禁与交付收尾
+
+- CodeNote 原 pre-push 首次实际拦截索引 84 行和失效 owner 锚点。209b3888 仅压缩排版并修复稳定入口；全部状态/链接/投影标记保持，其他并发索引新增行仍未暂存。最终工作索引 80 行、已提交索引 77 行。
+- 未绕过 Hook，原完整 rule script suite、document integrity、rule-state 和 agent-security replay 复跑全部通过。master advisory 仍有 63 项，不宣称已逐条处置。
+- CodeNote 本轮规则提交 8a05dd9a 与门禁文档修复 209b3888 已推送至 origin/master；原已有两个本地提交按事先说明随已提交范围推送，其他未提交内容保留。
+- EyPc 4462e6d / f92c7a7 / 1f5bb14 / 055d420 已推送；随后仅补充此次全局门禁结果与台账。源代码和运行身份没有再次变化。
