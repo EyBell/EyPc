@@ -1,5 +1,7 @@
 # EyPc Project Status Hub
 
+- 2026-10-14 核心回归与上游演进：统一verify按Git差异映射8组核心；剥离旧1425后独立快照24个检查/308项测试通过，源码核心40/生命周期55/未读23；MQTT保持显式排除。静态artifact/schema/baseline探测及Orca结构失配防护已落地；修复系统元文件污染产物身份，重建通过。当前新包 EyPc V7 / host-d10e931a3ebc96931fd7 / renderer-b444fcf98569a9f24e93 / 2026/10/14 13:39:34，尚未加载。提交范围已收口，远端CI结果以交付记录为准；静态metadata不证明真实能力，前序1425补测保留未提交。[统一设计、实测与交付记录](261014/core-regression-capability/spec.md#提交范围与远端-ci-验证)。
+
 - 2026-10-14 Side 状态修复与固定结束窗口已收口：成员自身终态/Goal/原子清退、精确 guardian_review 排除及535 ms来源仲裁已交付。当前包 host-310f2ab85e7cbb9723c2 / renderer-7b0d8a6011b186a733f3 于11:23精确加载，11:30:30 running直接completed，未读包57获applied ACK；20次样本在90.929秒内保持completed/idle/unread、主+两成员不变，无stopped过渡或完成后反弹。结论限该固定轮次的原生/日志/ACK；匿名相位为时间/发布链关联，未取得结束后截图，不代表长期保证。探针11:32退出、一次自动化11:33停用。自动回归历史为477/480（原3失败）；提交范围剥离前序1425补测，独立快照源码/镜像两侧生命周期55/55与原生未读23/23、脚本26/26及筛选Bridge51/51通过，入口预算通过。[当前结果、修复链与历史交付](261013/1946-side-terminal-reconcile/task-card.md#2026-10-14-1133-新包固定结束窗口验收结果) · [诊断因果](261013/1946-side-terminal-reconcile/diagnosis.md)。
 
 - 2026-10-13 未读/Side 生命周期续核：已补原生 identity/host unread 格式与 v3、Desktop-only 精确关系、成员提问与 Side 终态证据归属；旧 generation/floor/匿名缺口一并记录。462/465（3 项既有 Bridge 失败）、async 19/19、source/packaged 各 10+17+17 门禁通过。18:24:53 修复版实际握手与 active=6/applied 对应用户截图；预算等价抽取后 18:29:36 精确握手通过；18:32 再发现 Side 后续 aborted 生成误清待答问题，两个回归先红后绿，较窄回退现场未通过，补齐较晚 completed 后 215/218（同样 3 旧失败）与 async 22/22；18:45:08 精确握手通过；目标 Side 待输入真实维持约 58.3 秒，用户回答后 resolved→running，现场保持/解除已核验。用户限现有日志，未出现的归档/嵌套/完整清退待证；Git 交付以提交和远端回读为准。[核验与问题台账](261013/1425-codex-side-phase/lifecycle-verify.md#L1)。

@@ -13,11 +13,14 @@ EyPc is a uTools plugin for cross-platform PC capability calls. The initial MVP 
 
 ```bash
 pnpm install
-pnpm run test
-pnpm run typecheck
+pnpm run verify:plan      # preview affected guards
+pnpm run verify           # run the same changed-core entry used by CI
+pnpm run verify:core      # explicitly run the registered core inventory
 pnpm run build
 pnpm run serve
 ```
+
+普通开发和 PR/push 使用同一[核心验证入口](vibe/knowledge/verification-map.md#变更触发与执行入口)。`test` 与 `verify:full` 保留为显式扩大验证范围时的入口；不自动用于未知变更兜底。
 
 ## Runtime
 

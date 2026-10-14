@@ -2,7 +2,7 @@
 
 单一开发入口。产品当前语义仍由 [PRODUCT_REQUIREMENTS](../specs/PRODUCT_REQUIREMENTS.md#L1) 决定；本文件只回答「加一个来源时代码和验收必须齐哪些口」。
 
-Manifest `[preload/companion/provider-manifest.json](../../preload/companion/provider-manifest.json#L1)` 是唯一 Provider id / order / taskKind / capability / pin 声明。Kernel、Registry、TypeScript `CompanionProviderId` 都从这里读。禁止再发明一份平行名单。
+Manifest [preload/companion/provider-manifest.json](../../preload/companion/provider-manifest.json#L1) 是唯一 Provider id / order / taskKind / capability / pin 声明。Kernel、Registry、TypeScript `CompanionProviderId` 都从这里读。禁止再发明一份平行名单。
 
 ## 失败模式（必须挡住）
 
@@ -24,6 +24,10 @@ Manifest `[preload/companion/provider-manifest.json](../../preload/companion/pro
 | 6. 呈现 | Provider 标记走 `COMPANION_PROVIDER_ABBREVS`（`OR`/`XH`）；**任务抬头 harness 缩写**走全局表 [harness-title-abbreviations.md](harness-title-abbreviations.md#L1)（`gr`/`cc`/`cs`），CodexHost / Orca / Paseo 共用，禁止另起表；Orca 主题取标签标题而不是 OSC spinner；设置页开关；Float 筛选；帮助 | 抬头写成完整 Grok；工作中 spinner 退化成仓库名；或只给 CodexHost 抄一份缩写 |
 | 7. 隐私 | 观察对象不得含正文、Prompt、工具参数、终端 preview、绝对路径 | 诊断 JSONL 泄漏 |
 | 8. 验收 | 聚焦测试含「该 id 的 running 根进入 active」；诊断 `taskCount` 对 Snapshot 计数；重载 uTools 后看浮窗 | 只测 CLI 库存、不测 Kernel 准入 |
+
+## 上游版本与契约变化
+
+采用统一[核心映射与静态探测流程](verification-map.md#变更触发与执行入口)。Provider身份继续取manifest；安装程序版本、结构声明与实际运行证据分别记录。缺包、未知布局和未识别schema不等于能力移除，版本号不作准入白名单。新增/变更来源必须同步映射中的相关检查、结构fixture及拒绝已知坏行为的canary；baseline只在审核后更新。Orca成功信封缺少库存数组或可选布局字段类型错误时报告schema-mismatch，合法空库存仍有效。
 
 ## 不要做
 
