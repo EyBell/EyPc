@@ -427,10 +427,22 @@ function createInventoryReader(dependencies = {}) {
         readAt
       }
     }
-    const worktrees = Array.isArray(ps.result && ps.result.worktrees) ? ps.result.worktrees : []
-    const terminals = list.ok === true && Array.isArray(list.result && list.result.terminals)
-      ? list.result.terminals
-      : []
+    // A successful CLI envelope does not prove the inventory schema is understood.
+    // Unknown structure must not retract every existing task as a confirmed empty list.
+    if (!Array.isArray(ps.result && ps.result.worktrees)
+      || !Array.isArray(list.result && list.result.terminals)
+      || (list.result.visualLayouts !== undefined && !Array.isArray(list.result.visualLayouts))) {
+      return {
+        revision: ORCA_INVENTORY_REVISION,
+        available: false,
+        reason: 'schema-mismatch',
+        sessions: [],
+        truncated: false,
+        readAt
+      }
+    }
+    const worktrees = ps.result.worktrees
+    const terminals = list.result.terminals
     const visualLayouts = list.ok === true && Array.isArray(list.result && list.result.visualLayouts)
       ? list.result.visualLayouts
       : []

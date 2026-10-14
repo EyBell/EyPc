@@ -30,6 +30,30 @@ const NEW_TAB = '59c6d4f8-543c-4634-b15a-bd00ccde5581'
 const NEW_LEAF = 'f0f3e4c5-aaaa-4bbb-8ccc-dddddddddddd'
 
 describe('Orca agent inventory', () => {
+  it.each([
+    [{}, { terminals: [] }],
+    [{ worktrees: [] }, {}],
+    [{ worktrees: {} }, { terminals: [] }],
+    [{ worktrees: [] }, { terminals: null }],
+    [{ worktrees: [] }, { terminals: [], visualLayouts: {} }]
+  ])('rejects a successful envelope with changed inventory structure %#', async (worktrees, terminals) => {
+    let nativeReads = 0
+    const reader = inventory.createInventoryReader({
+      nativeState: { pinnedTabIds: () => { nativeReads += 1; return new Set() } },
+      cli: { json: async args => ({ ok: true, result: args[0] === 'worktree' ? worktrees : terminals }) }
+    })
+    expect(await reader.readInventory()).toMatchObject({ available: false, reason: 'schema-mismatch', sessions: [] })
+    expect(nativeReads).toBe(0)
+  })
+
+  it('accepts explicitly empty inventory and absent optional visual layouts', async () => {
+    const reader = inventory.createInventoryReader({
+      nativeState: { pinnedTabIds: () => new Set() },
+      cli: { json: async args => ({ ok: true, result: args[0] === 'worktree' ? { worktrees: [] } : { terminals: [] } }) }
+    })
+    expect(await reader.readInventory()).toMatchObject({ available: true, reason: 'ready', sessions: [] })
+  })
+
   it('joins live agents with terminal handles and drops conversation bodies', () => {
     const { sessions } = inventory.collectSessions([{
       repo: 'EyPc',
