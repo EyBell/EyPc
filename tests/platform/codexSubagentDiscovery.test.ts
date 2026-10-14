@@ -8,8 +8,15 @@ const require = createRequire(import.meta.url)
 const discoveryModule = require('../../preload/codex/subagent-discovery.cjs') as {
   CODEX_SUBAGENT_DISCOVERY_MAX_AGE_MS: number
   CODEX_SUBAGENT_DISCOVERY_LIMIT: number
+  isInternalReviewThreadSource(value: unknown): boolean
+  codexThreadSourceKind(value: unknown): 'guardian_review' | 'other' | 'unknown'
   createCodexSubagentDiscovery(dependencies?: Record<string, unknown>): {
     codexRecentRolloutThreadCandidates(input?: Record<string, unknown>): Array<{ threadId: string; mtimeMs: number }>
+    codexDiscoverSubagentThreadRows(input?: Record<string, unknown>): Promise<Array<Record<string, unknown>>>
+    codexObserveThreadRows(rows: unknown): string[]
+    codexObserveThreadSourceKind(threadId: string, kind: unknown): boolean
+    codexIsInternalReviewThread(threadId: string): boolean
+    codexResetSubagentDiscovery(): void
   }
 }
 
@@ -130,5 +137,84 @@ describe('codex subagent rollout discovery', () => {
     expect(discovery().codexRecentRolloutThreadCandidates({ root: '/nonexistent/eypc-test', nowMs: Date.now() }))
       .toEqual([])
     expect(discovery().codexRecentRolloutThreadCandidates({ nowMs: Date.now() })).toEqual([])
+  })
+
+  it('excludes only the exact native internal review source', () => {
+    expect(discoveryModule.isInternalReviewThreadSource('guardian_review')).toBe(true)
+    expect(discoveryModule.codexThreadSourceKind('guardian_review')).toBe('guardian_review')
+    for (const value of ['subagent', 'vscode', 'cli', 'exec', 'appServer',
+      { subAgent: { other: 'guardian' } }, { subAgent: 'review' },
+      { subAgent: { spawn: { parentThreadId: 'a4345678-1234-4234-8234-123456789abc', depth: 1 } } }]) {
+      expect(discoveryModule.isInternalReviewThreadSource(value)).toBe(false)
+      expect(discoveryModule.codexThreadSourceKind(value)).toBe('other')
+    }
+    for (const value of [undefined, null, {}, [], true, 'unknown', 'other', 'GUARDIAN_REVIEW',
+      ' guardian_review', { subAgent: {} }, { subAgent: { spawn: {} } },
+      { subAgent: { other: 'guardian', spawn: {} } }]) {
+      expect(discoveryModule.isInternalReviewThreadSource(value)).toBe(false)
+      expect(discoveryModule.codexThreadSourceKind(value)).toBe('unknown')
+    }
+  })
+
+  it('keeps exact source memory through unknown observations and clears it on a known ordinary source or reset', () => {
+    const factory = discovery()
+    const threadId = 'b4345678-1234-4234-8234-123456789abc'
+    expect(factory.codexObserveThreadRows([{ id: threadId, threadSource: 'guardian_review' },
+      { id: threadId, threadSource: 'guardian_review' }, { id: 'invalid', threadSource: 'guardian_review' }])).toEqual([threadId])
+    expect(factory.codexIsInternalReviewThread(threadId.toUpperCase())).toBe(true)
+    for (const threadSource of [undefined, null, {}, { subAgent: {} }, 'future-source']) {
+      expect(factory.codexObserveThreadRows([{ id: threadId, threadSource }])).toEqual([])
+      expect(factory.codexIsInternalReviewThread(threadId)).toBe(true)
+    }
+    factory.codexObserveThreadRows([{ id: threadId }])
+    expect(factory.codexIsInternalReviewThread(threadId)).toBe(true)
+    expect(factory.codexObserveThreadSourceKind(threadId, 'unknown')).toBe(true)
+    expect(factory.codexObserveThreadSourceKind(threadId, 'not-a-kind')).toBe(true)
+    factory.codexObserveThreadRows([{ id: threadId, threadSource: 'vscode' }])
+    expect(factory.codexIsInternalReviewThread(threadId)).toBe(false)
+    expect(factory.codexObserveThreadSourceKind(threadId, 'guardian_review')).toBe(true)
+    expect(factory.codexObserveThreadSourceKind(threadId, 'other')).toBe(false)
+    factory.codexObserveThreadSourceKind(threadId, 'guardian_review')
+    factory.codexObserveThreadRows([{ id: threadId, threadSource: { subAgent: { other: 'guardian' } } }])
+    expect(factory.codexIsInternalReviewThread(threadId)).toBe(false)
+    factory.codexObserveThreadSourceKind(threadId, 'guardian_review')
+    factory.codexResetSubagentDiscovery()
+    expect(factory.codexIsInternalReviewThread(threadId)).toBe(false)
+  })
+
+  it('remembers exact read sources independently of parent admission and retains discovery cache behavior', async () => {
+    const root = sessionsRoot()
+    const now = 1_788_180_000_000
+    const parentId = 'a5345678-1234-4234-8234-123456789abc'
+    const linkedId = 'b5345678-1234-4234-8234-123456789abc'
+    const unlinkedId = 'c5345678-1234-4234-8234-123456789abc'
+    const mismatchedId = 'd5345678-1234-4234-8234-123456789abc'
+    const wrongId = 'e5345678-1234-4234-8234-123456789abc'
+    for (const threadId of [linkedId, unlinkedId, mismatchedId]) {
+      writeRollout(root, '2026/08/31', `rollout-2026-08-31T15-38-40-${threadId}.jsonl`, now - 60_000)
+    }
+    let reads = 0
+    const factory = discoveryModule.createCodexSubagentDiscovery({
+      fs: require('node:fs'), path: require('node:path'),
+      validThreadId: (value: unknown) => typeof value === 'string' && VALID_THREAD_ID.test(value),
+      readThread: async (threadId: string) => {
+        reads += 1
+        return { thread: { id: threadId === mismatchedId ? wrongId : threadId,
+          parentThreadId: threadId === linkedId ? parentId : '', threadSource: 'guardian_review' } }
+      }
+    })
+    const input = { root, rows: [{ id: parentId }], nowMs: now }
+    expect((await factory.codexDiscoverSubagentThreadRows(input)).map((row) => row.id)).toEqual([linkedId])
+    expect(factory.codexIsInternalReviewThread(linkedId)).toBe(true)
+    expect(factory.codexIsInternalReviewThread(unlinkedId)).toBe(true)
+    expect(factory.codexIsInternalReviewThread(mismatchedId)).toBe(false)
+    expect(factory.codexIsInternalReviewThread(wrongId)).toBe(false)
+    expect((await factory.codexDiscoverSubagentThreadRows(input)).map((row) => row.id)).toEqual([linkedId])
+    expect(reads).toBe(3)
+    factory.codexResetSubagentDiscovery()
+    expect(factory.codexIsInternalReviewThread(linkedId)).toBe(false)
+    await factory.codexDiscoverSubagentThreadRows(input)
+    expect(reads).toBe(6)
+    expect(factory.codexIsInternalReviewThread(linkedId)).toBe(true)
   })
 })

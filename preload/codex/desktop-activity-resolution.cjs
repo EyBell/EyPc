@@ -13,7 +13,7 @@
  * candidate flag through waiting-evidence visibility so a flag the caller
  * has already resolved does not resurrect a stale "active" verdict.
  *
- * All six functions are pure over their arguments; no module state. The
+ * The resolution functions are pure over their arguments; no module state. The
  * collaborators are injected as function references: `timestampMs` and
  * `validThreadId` are shared by dozens of call sites elsewhere in the
  * entry, and `waitingEvidenceVisible`/`desktopRequestFlag`/
@@ -158,6 +158,24 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
       && isConfirmedTurnEvidence(known.lastTurnEvidence)
   }
 
+  function codexLiveEvidenceSequence(known, shadows, inventorySequence, branchThreadId = '', parentThreadId = '') {
+    return Math.max(
+      known?.appServerLiveActive === true && Number.isInteger(known.appServerLiveSequence)
+        && (!branchThreadId || (known.appServerLiveBranchThreadId || parentThreadId) === branchThreadId)
+        ? known.appServerLiveSequence : 0,
+      Number(inventorySequence) || 0,
+      ...shadows.map((shadow) => codexDesktopShadowActivity(shadow)?.status === 'active'
+        && shadow.activityEvidence === 'activity-event' && Number.isInteger(shadow.activityEventSequence)
+        ? shadow.activityEventSequence : 0)
+    )
+  }
+
+  function codexSnapshotTerminalReady(turn, baselineStartedAt, baselineStatus, finalAttempt, settledSide) {
+    return turn.startedAt >= baselineStartedAt && (baselineStartedAt === 0
+      ? settledSide || finalAttempt
+      : turn.startedAt > baselineStartedAt || baselineStatus === 'inProgress' || settledSide || finalAttempt)
+  }
+
   function codexShouldDeferHydrationActive(bridge, known, parentThreadId, branchThreadId, activity) {
     if (!codexHasConfirmedTerminalEvidence(known) || activity?.status !== 'active' || activity.activeFlags?.length) return false
     if (known.appServerLiveActive === true
@@ -189,6 +207,212 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
       : 0
   }
 
+  function codexDesktopOrphanedPendingSuperseded(shadow, known) {
+    if (!shadow?.ownerDisconnectedAt || !known) return false
+    const baselineTurnStartedAt = timestampMs(shadow.inventoryBaselineTurnStartedAt)
+    const currentTurnStartedAt = timestampMs(known.connectorLastTurnStartedAt)
+    if (baselineTurnStartedAt && currentTurnStartedAt > baselineTurnStartedAt) return true
+    if (baselineTurnStartedAt
+      && currentTurnStartedAt === baselineTurnStartedAt
+      && shadow.inventoryBaselineTurnStatus
+      && known.connectorLastTurnStatus
+      && shadow.inventoryBaselineTurnStatus !== known.connectorLastTurnStatus) return true
+    const baselineUpdatedAt = timestampMs(shadow.inventoryBaselineUpdatedAt)
+    const currentUpdatedAt = timestampMs(known.connectorUpdatedAt)
+    return Boolean(baselineUpdatedAt && currentUpdatedAt > baselineUpdatedAt)
+  }
+
+  function codexDesktopActivitySupersedesAppServer(known, shadows) {
+    if (known?.appServerLiveActive !== true || !Number.isInteger(known.appServerLiveSequence)) return false
+    const latestDesktopSequence = Math.max(0, ...shadows
+      .filter(Boolean)
+      .map((shadow) => Number.isInteger(shadow.activityEventSequence) ? shadow.activityEventSequence : 0))
+    return latestDesktopSequence > known.appServerLiveSequence
+  }
+
+  function codexHasOtherActiveBranch(parentThreadId, branchThreadId, known, shadows, sideShadows) {
+    if (!validThreadId(parentThreadId) || !validThreadId(branchThreadId)) return false
+    const appServerBranchThreadId = validThreadId(known?.appServerLiveBranchThreadId)
+      ? known.appServerLiveBranchThreadId : parentThreadId
+    if (known?.appServerLiveActive === true && appServerBranchThreadId !== branchThreadId) return true
+    return [
+      [parentThreadId, shadows.get(parentThreadId)],
+      ...[...sideShadows.entries()].filter(([, shadow]) => shadow.parentThreadId === parentThreadId)
+    ].some(([threadId, shadow]) => threadId !== branchThreadId && shadow
+      && codexDesktopShadowActivity(shadow)?.status === 'active')
+  }
+
+  function codexCanRetireMissingDesktopSide(parentThreadId, refresh, input = {}) {
+    const threadId = refresh?.queryThreadId
+    const { known, shadow, parentTerminal } = input
+    if (!validThreadId(parentThreadId) || !validThreadId(threadId) || threadId === parentThreadId
+      || input.desktopRelation !== parentThreadId || input.inventoryRelation
+      || input.completeInventoryKnown !== true || input.completeInventoryContains === true) return false
+    if (!shadow || shadow.parentThreadId !== parentThreadId
+      || shadow.activityRevision !== refresh.snapshotActivityRevision) return false
+    const activity = codexDesktopShadowActivity(shadow)
+    if (activity?.status !== 'active' || activity.activeFlags.length > 0
+      || activity.planImplementationOnly === true || !parentTerminal) return false
+    return !(known?.appServerLiveActive === true && known.appServerLiveBranchThreadId === threadId)
+  }
+
+  function codexDesktopCanonicalTerminalDecision(shadow, options = {}) {
+    const turn = shadow?.currentCanonicalTurn
+    const startedAt = timestampMs(turn?.startedAt)
+    if (typeof shadow.ownerClientId !== 'string' || !shadow.ownerClientId || shadow.ownerDisconnectedAt
+      || !Number.isInteger(shadow.revision) || shadow.revision < 0) return { reason: 'owner-unavailable' }
+    if (shadow.runtime?.type !== 'idle' || shadow.runtime.activeFlags?.length
+      || shadow.liveTurnRunning === true) return { reason: 'runtime-not-idle' }
+    if (shadow.canonicalLatestComplete !== true || !turn?.turnRef || !Number.isFinite(startedAt) || startedAt <= 0
+      || !['completed', 'interrupted', 'failed'].includes(turn.status)) return { reason: 'canonical-not-terminal' }
+    if (shadow.requests?.length || shadow.nativeTurnSubmissions?.some((terminal) => terminal !== true)) return { reason: 'pending-work' }
+    const overlays = shadow.asyncTurns || []
+    if (overlays.some((overlay) => overlay.status === 'inProgress'
+      || timestampMs(overlay.startedAt) > startedAt
+      || overlay.turnRef !== turn.turnRef && timestampMs(overlay.startedAt) >= startedAt
+      || !timestampMs(overlay.startedAt) && overlay.turnRef !== turn.turnRef)) return { reason: 'unsettled-overlay' }
+    const previous = options.previousShadow
+    const previousTurn = previous?.currentCanonicalTurn
+    const previousStartedAt = timestampMs(previousTurn?.startedAt)
+    if (previousStartedAt > startedAt
+      || previousStartedAt === startedAt && previousTurn?.turnRef && previousTurn.turnRef !== turn.turnRef
+      || (previous?.asyncTurns || []).some((overlay) => timestampMs(overlay.startedAt) > startedAt)) return { reason: 'newer-previous-turn' }
+    const sameOwner = previous?.ownerClientId === shadow.ownerClientId
+    if (sameOwner && (shadow.revision < previous.revision
+      || shadow.revision === previous.revision && previousTurn?.turnRef === turn.turnRef && previousTurn.status !== turn.status)) return { reason: 'stale-revision' }
+    const previousLive = previous?.liveTurnRunning === true || previous?.runtime?.type === 'active'
+    const previousLiveStartedAt = Math.max(previousStartedAt,
+      ...(previous?.asyncTurns || []).filter((overlay) => overlay.status === 'inProgress').map((overlay) => timestampMs(overlay.startedAt)))
+    if (previous?.ownerClientId && !sameOwner && previousLive
+      && (!previousLiveStartedAt || previousLiveStartedAt >= startedAt)) return { reason: 'previous-owner-live' }
+    const terminal = options.terminal
+    const terminalStartedAt = timestampMs(terminal?.turnStartedAt)
+    const branchStartedAt = timestampMs(options.branchTurnStartedAt)
+    if (terminalStartedAt > startedAt || branchStartedAt > startedAt) return { reason: 'newer-branch-turn' }
+    if (options.branchLiveExact === true && (!branchStartedAt || branchStartedAt >= startedAt)) return { reason: 'exact-branch-live' }
+    const duplicate = terminal?.lastTurnStatus === turn.status && terminalStartedAt === startedAt
+    const liveSequence = Math.max(Number(options.branchLiveSequence) || 0,
+      shadow.activityEvidence === 'activity-event' ? Number(shadow.activityEventSequence) || 0 : 0)
+    if (duplicate && liveSequence > (Number(terminal.terminalEvidenceSequence) || 0)) return { reason: 'newer-active-evidence' }
+    return { turn: { status: turn.status, startedAt }, duplicate, reason: duplicate ? 'existing-terminal' : 'owner-canonical-terminal' }
+  }
+
+  function codexDesktopSideTerminalDecision(shadow, options = {}) {
+    if (shadow?.sideConversation !== true || shadow.ephemeral !== true) return { reason: 'not-ephemeral-side' }
+    return codexDesktopCanonicalTerminalDecision(shadow, options)
+  }
+
+  // A separate App Server reconstructs an unfinished persisted Turn as
+  // interrupted even while its Desktop owner is running it. Its inventory or
+  // targeted read is not a new stop event for that same owner Turn.
+  function codexDesktopTerminalConflictsWithOwner(turn, shadow, turnRef = '') {
+    const owner = shadow?.currentCanonicalTurn
+    if (!shadow?.ownerClientId || shadow.ownerDisconnectedAt || !owner?.turnRef
+      || shadow.canonicalLatestComplete !== true || !timestampMs(owner.startedAt)
+      || !['completed', 'interrupted', 'failed'].includes(turn?.status)) return false
+    const startedAt = timestampMs(turn.startedAt)
+    if (turnRef && turnRef === owner.turnRef) return turn.status !== owner.status
+    if (timestampMs(owner.startedAt) > startedAt) return true
+    return timestampMs(owner.startedAt) === startedAt
+      && (Boolean(turnRef && turnRef !== owner.turnRef) || turn.status !== owner.status)
+  }
+
+  function codexDesktopBranchInventoryTurn(shadow, inventory, known, main, turnRef = '') {
+    const candidate = inventory?.lastTurnStatus
+      ? { status: inventory.lastTurnStatus, startedAt: inventory.turnStartedAt }
+      : main && known?.connectorLastTurnStatus
+        ? { status: known.connectorLastTurnStatus, startedAt: known.connectorLastTurnStartedAt }
+        : main ? { status: known?.lastTurnStatus, startedAt: known?.lastTurnStartedAt } : null
+    if (!candidate?.status || codexDesktopTerminalConflictsWithOwner(candidate, shadow, turnRef)) return {}
+    // Status and epoch always travel together. Never relabel an old connector
+    // interruption with the current canonical/overlay Turn's start time.
+    return { lastTurnStatus: candidate.status, lastTurnEvidence: 'inventory',
+      turnStartedAt: timestampMs(candidate.startedAt), terminalEvidenceSequence: 0, idleConfirmed: false }
+  }
+
+  function codexDesktopInventoryTurnCandidate(turn, shadow, known, turnRef = '') {
+    if (!codexDesktopTerminalConflictsWithOwner(turn, shadow, turnRef)) return turn
+    const previous = { id: known?.lastTurnId, status: known?.lastTurnStatus,
+      startedAt: timestampMs(known?.lastTurnStartedAt), completedAt: timestampMs(known?.lastTurnCompletedAt) }
+    // An actual completion notification remains authoritative even while its
+    // Desktop projection catches up. A rejected read cannot erase it.
+    if (previous.status && previous.startedAt && (known.lastTurnEvidence === 'turn-completed'
+      || !codexDesktopTerminalConflictsWithOwner(previous, shadow))) {
+      return { ...previous, evidence: known.lastTurnEvidence || 'inventory' }
+    }
+    return {}
+  }
+
+  function codexDesktopMainTerminalFallback(known, activeSequence) {
+    return {
+      lastTurnStatus: known.lastTurnStatus,
+      lastTurnEvidence: known.lastTurnEvidence,
+      terminalEvidenceSequence: Number(known.terminalEvidenceSequence) || 0,
+      activeEvidenceSequence: activeSequence,
+      idleConfirmed: known.idleConfirmed === true,
+      turnStartedAt: Number(known.lastTurnStartedAt) || 0,
+      terminalAt: Number(known.lastTurnCompletedAt) || Number(known.lastTurnStartedAt) || 0,
+      observedAt: Number(known.terminalEvidenceSequence) || 0
+    }
+  }
+
+  function codexDesktopBranchTurnFields(row, known, options = {}) {
+    const { live, terminalStrictlyNewer, activeSequence, idleConfirmed, main, turnRef } = options
+    let terminal = options.terminal
+    if (terminal?.lastTurnEvidence === 'targeted-after-exit' && codexDesktopTerminalConflictsWithOwner({
+      status: terminal.lastTurnStatus, startedAt: terminal.turnStartedAt
+    }, row.shadow)) terminal = null
+    const baseline = codexDesktopBranchInventoryTurn(row.shadow, row.inventoryEvidence, known, main, turnRef)
+    const fields = live && (!terminal || !terminalStrictlyNewer)
+      ? { lastTurnStatus: 'inProgress', lastTurnEvidence: 'turn-started',
+          activeEvidenceSequence: activeSequence || Number(known.activeEvidenceSequence) || 0, idleConfirmed: false }
+      : terminal
+        ? { lastTurnStatus: terminal.lastTurnStatus, lastTurnEvidence: terminal.lastTurnEvidence,
+            terminalEvidenceSequence: Number(terminal.terminalEvidenceSequence) || 0,
+            activeEvidenceSequence: Number(terminal.activeEvidenceSequence) || activeSequence, idleConfirmed }
+        : { ...baseline, activeEvidenceSequence: activeSequence }
+    const shadowStart = timestampMs(row.shadow?.asyncTurns?.at(-1)?.startedAt)
+      || timestampMs(row.shadow?.currentCanonicalTurn?.startedAt)
+    return { ...fields,
+      turnStartedAt: timestampMs(terminal?.turnStartedAt)
+        || (!live ? timestampMs(baseline.turnStartedAt) : 0)
+        || shadowStart || timestampMs(row.inventoryEvidence?.turnStartedAt)
+        || (main ? timestampMs(known.lastTurnStartedAt) : 0),
+      terminalAt: timestampMs(terminal?.terminalAt)
+        || (terminal?.lastTurnStatus === 'completed' ? timestampMs(known.lastTurnCompletedAt) : timestampMs(terminal?.turnStartedAt))
+    }
+  }
+
+  function codexDesktopSnapshotRefreshOptions(threadId, shadow, input = {}) {
+    if (!validThreadId(threadId) || !shadow) return null
+    const { known, parentThreadId } = input
+    const activity = codexDesktopShadowActivity(shadow)
+    const knownTurn = ['inProgress', 'completed', 'failed', 'interrupted'].includes(known?.lastTurnStatus)
+    if (!known || !validThreadId(parentThreadId) || !knownTurn || !known.lastTurnStartedAt) return null
+    if (known.connectorPlanImplementationOnly === true && threadId === parentThreadId) return null
+    const detachedDesktopSide = shadow.sideConversation === true
+      && threadId !== parentThreadId
+      && input.desktopRelation === parentThreadId
+      && !input.inventoryRelation
+      && input.completeInventoryKnown === true
+      && input.completeInventoryContains !== true
+      && Boolean(input.parentTerminal)
+      && !(known.appServerLiveActive === true && known.appServerLiveBranchThreadId === threadId)
+    const settledSide = shadow.sideConversation === true && ['idle', 'notLoaded'].includes(activity?.status)
+      && !input.branchTerminal
+    if (shadow.activityEvidence !== 'initial-snapshot' && !detachedDesktopSide && !settledSide) return null
+    if (!detachedDesktopSide && !settledSide && input.parentLiveSequence > 0) return null
+    if ((!settledSide && activity?.status !== 'active') || activity?.activeFlags.length > 0) return null
+    return {
+      verifyStaleActive: true,
+      settleSnapshotTerminal: true,
+      queryThreadId: threadId,
+      snapshotThreadId: threadId,
+      snapshotActivityRevision: shadow.activityRevision,
+      forceQuery: detachedDesktopSide || settledSide
+    }
+  }
+
   return {
     revision: CODEX_DESKTOP_ACTIVITY_RESOLUTION_REVISION,
     codexReduceWaitingEdge,
@@ -197,8 +421,22 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     codexDesktopHasResolvedCanonicalRun,
     codexDesktopHasStickyPendingRequest,
     codexHasConfirmedTerminalEvidence,
+    codexLiveEvidenceSequence,
+    codexSnapshotTerminalReady,
     codexShouldDeferHydrationActive,
-    codexInventorySnapshotLiveSequence
+    codexInventorySnapshotLiveSequence,
+    codexDesktopOrphanedPendingSuperseded,
+    codexDesktopActivitySupersedesAppServer,
+    codexHasOtherActiveBranch,
+    codexCanRetireMissingDesktopSide,
+    codexDesktopCanonicalTerminalDecision,
+    codexDesktopSideTerminalDecision,
+    codexDesktopTerminalConflictsWithOwner,
+    codexDesktopBranchInventoryTurn,
+    codexDesktopInventoryTurnCandidate,
+    codexDesktopMainTerminalFallback,
+    codexDesktopBranchTurnFields,
+    codexDesktopSnapshotRefreshOptions
   }
 }
 

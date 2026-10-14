@@ -90,6 +90,8 @@ class FakeCodexProcess extends EventEmitter {
   statusOverrides = new Map<string, string>()
   forkedFromIds = new Map<string, string>()
   sessionIds = new Map<string, string>()
+  threadSources = new Map<string, unknown>()
+  parentThreadIds = new Map<string, string>()
   createdThreadReadMisses = 0
   holdNextLatestTurnRead = false
   heldLatestTurnReads: RpcFrame[] = []
@@ -110,6 +112,8 @@ class FakeCodexProcess extends EventEmitter {
 
   private lineageFor(threadId: string) {
     return {
+      ...(this.threadSources.has(threadId) ? { threadSource: this.threadSources.get(threadId) } : {}),
+      ...(this.parentThreadIds.has(threadId) ? { parentThreadId: this.parentThreadIds.get(threadId) } : {}),
       ...(this.sessionIds.has(threadId) ? { sessionId: this.sessionIds.get(threadId) } : {}),
       ...(this.forkedFromIds.has(threadId) ? { forkedFromId: this.forkedFromIds.get(threadId) } : {})
     }
@@ -1050,7 +1054,7 @@ function loadCodexBridge(
   }
   if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, codexObservationForThread: (thread) => codexBranchObservationV7(companionCodexFallbackBranchV7(thread)), applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology: codexInventoryThreadTopologyModule.codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, codexObservationForThread: (thread) => codexBranchObservationV7(companionCodexFallbackBranchV7(thread)), applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
   const exposedPlatform = (sandbox.window as { eypcPlatform: Record<string, any> }).eypcPlatform
   if (!dbStorageHarness?.failWrites) handshakeTestRuntime(exposedPlatform)
   const internalKernel = vm.runInNewContext('companionTaskKernel', sandbox) as Record<string, any>
@@ -7838,9 +7842,12 @@ draft: v7EvidenceDraft({
     expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === reopened.value.threads[3].key)).toMatchObject({
       status: 'idle',
       activeFlags: [],
-      lastTurnStatus: 'completed',
+      lastTurnStatus: 'interrupted',
       hasUnreadTurn: false
     })
+    const recoveredBranches = native.privateBranchEvidence(FIXED_THREAD_IDS[3])?.branches || []
+    expect(recoveredBranches.find((branch: Record<string, any>) => branch.branchKind === 'main')).toMatchObject({ lastTurnStatus: 'interrupted' })
+    expect(recoveredBranches.find((branch: Record<string, any>) => branch.branchKind === 'side')).toMatchObject({ lastTurnStatus: 'completed' })
     bridge.close()
   })
 
@@ -7849,11 +7856,15 @@ draft: v7EvidenceDraft({
     try {
       const child = new FakeCodexProcess()
       const desktopSocket = new FakeCodexDesktopSocket()
-      const { bridge, native } = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), desktopSocket)
+      const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), desktopSocket)
+      const { bridge, native } = context
       const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
       await vi.advanceTimersByTimeAsync(0)
       const parentThreadId = FIXED_THREAD_IDS[3]
       const parent = baseline.value.threads[3]
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      const publicDeltas: Array<Array<Record<string, any>>> = []
+      const stopPublicDeltas = bridge.onActivityChanged((...args: Array<Record<string, any>>) => publicDeltas.push(args))
       const sideThreadId = 'a2345678-1234-4234-8234-123456789abc'
 
       desktopSocket.push({
@@ -7918,6 +7929,10 @@ draft: v7EvidenceDraft({
       expect((await bridge.readActivitySnapshot()).value.entries
         .find((entry: Record<string, any>) => entry.key === parent.key)).toMatchObject({ status: 'active' })
       expect(native.privateBranchEvidence(parentThreadId)?.branches).toHaveLength(2)
+      const sideNodeKey = `codex-child:${native.privateBranchEvidence(parentThreadId)?.branches
+        .find((branch: Record<string, any>) => branch.branchKind === 'side')?.ref}`
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key))
+        .toMatchObject({ phase: 'running', topology: { memberCount: 2 } })
 
       desktopSocket.push({
         type: 'broadcast',
@@ -7960,6 +7975,13 @@ draft: v7EvidenceDraft({
           }
         }
       })
+      const retiredPackages: Array<Record<string, any>> = []
+      const rootKeysBeforeRetirement = kernel.getLatest().tasks.map((task: Record<string, any>) => task.key).sort()
+      const stopKernel = kernel.subscribe(kernel.getLatest().packageRevision, (snapshot: Record<string, any>) => {
+        if (snapshot.tasks.find((task: Record<string, any>) => task.key === parent.key)?.topology.memberCount === 1) {
+          retiredPackages.push(snapshot)
+        }
+      })
       await vi.advanceTimersByTimeAsync(3_100)
 
       expect(child.writes.filter((frame) => frame.method === 'thread/turns/list'
@@ -7971,10 +7993,158 @@ draft: v7EvidenceDraft({
           lastTurnStatus: 'completed'
         })
       expect(native.privateBranchEvidence(parentThreadId)?.branches).toHaveLength(1)
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key))
+        .toMatchObject({ phase: 'completed', topology: { memberCount: 1 } })
+      expect(kernel.getLatest().tasks.some((task: Record<string, any>) => task.key === sideNodeKey)).toBe(false)
+      expect(kernel.getLatest().tasks.map((task: Record<string, any>) => task.key).sort()).toEqual(rootKeysBeforeRetirement)
+      expect(native.companionHostReconciliationPending()).toBe(false)
+      expect(retiredPackages).toHaveLength(1)
+      expect(retiredPackages[0].tasks.find((task: Record<string, any>) => task.key === parent.key)?.phase).toBe('completed')
+      expect(publicDeltas.length).toBeGreaterThan(0)
+      expect(publicDeltas.every((args) => args.length === 1 && !('removedMemberKeys' in args[0]))).toBe(true)
+      stopKernel()
+      stopPublicDeltas()
       bridge.close()
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it.each([[4, false], [2, true]] as const)('confirms cold idle Side terminals and preserves root unread (%s members, unread=%s)', async (memberCount, unread) => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeCodexProcess()
+      const parentThreadId = FIXED_THREAD_IDS[3]
+      const sideThreadIds = ['a', 'b', 'c', 'd'].slice(0, memberCount).map((prefix) => `${prefix}2345678-1234-4234-8234-123456789abc`)
+      child.turnOverrides.set(parentThreadId, { id: 'synthetic-parent', status: 'completed', startedAt: 2_000_000_500, completedAt: 2_000_000_520 })
+      for (const sideThreadId of sideThreadIds) child.turnOverrides.set(sideThreadId, { id: 'synthetic-side', status: 'completed', startedAt: 2_000_000_100, completedAt: 2_000_000_120 })
+      const desktopSocket = new FakeCodexDesktopSocket()
+      if (!unread) desktopSocket.unreadSnapshotThreadIds.clear()
+      const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread(unread ? [parentThreadId] : []), desktopSocket)
+      const { bridge, native } = context
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(0)
+      const parent = baseline.value.threads.find((entry: Record<string, any>) => entry.key === crypto.createHash('sha256').update(parentThreadId).digest('hex').slice(0, 32))
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      for (const sideThreadId of sideThreadIds) {
+        desktopSocket.sideConversationParents.set(sideThreadId, parentThreadId)
+        desktopSocket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+          params: { hostId: 'local', conversationId: sideThreadId, change: { type: 'snapshot', revision: 1, conversationState: {
+            sideConversation: true, forkedFromId: parentThreadId, threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+            hasUnreadTurn: false, resumeState: '', requests: []
+          } } }
+        })
+      }
+      await vi.advanceTimersByTimeAsync(3_100)
+      for (const sideThreadId of sideThreadIds) expect(child.writes.some(frame => frame.method === 'thread/turns/list' && frame.params?.threadId === sideThreadId && frame.params?.itemsView === 'notLoaded')).toBe(true)
+      expect(native.privateBranchEvidence(parentThreadId)?.branches.filter((branch: Record<string, any>) => branch.branchKind === 'side').every((branch: Record<string, any>) => branch.lastTurnStatus === 'completed')).toBe(true)
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key)).toMatchObject({ phase: 'completed', unreadKnown: true, unread, dynamicGroup: unread ? 'unread' : 'completed' })
+      desktopSocket.push({ type: 'broadcast', method: 'ipc-connection-reset', sourceClientId: 'codex-desktop-owner', version: 1, params: {} })
+      await vi.advanceTimersByTimeAsync(3_100)
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key)).toMatchObject({ phase: 'completed', unreadKnown: true, unread })
+      bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it.each(['new-running', 'waiting-input', 'read-failed', 'no-turns'])('keeps cold Side verification conservative for %s', async (mode) => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeCodexProcess()
+      const parentThreadId = FIXED_THREAD_IDS[3]
+      const sideThreadId = 'a2345678-1234-4234-8234-123456789abc'
+      child.turnOverrides.set(parentThreadId, { id: 'synthetic-parent', status: 'completed', startedAt: 2_000_000_500, completedAt: 2_000_000_520 })
+      child.turnOverrides.set(sideThreadId, { id: 'synthetic-old', status: 'completed', startedAt: 2_000_000_100, completedAt: 2_000_000_120 })
+      const desktopSocket = new FakeCodexDesktopSocket()
+      const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), desktopSocket)
+      const { bridge, native } = context
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(0)
+      const parent = baseline.value.threads.find((entry: Record<string, any>) => entry.key === crypto.createHash('sha256').update(parentThreadId).digest('hex').slice(0, 32))
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      if (mode === 'read-failed') child.transientTurnsFailures = 100
+      else if (mode === 'no-turns') child.emptyTurnIds.add(sideThreadId)
+      else child.holdNextLatestTurnRead = true
+      desktopSocket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: sideThreadId, change: { type: 'snapshot', revision: 1, conversationState: {
+          sideConversation: true, forkedFromId: parentThreadId, threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+          hasUnreadTurn: false, resumeState: '', requests: []
+        } } }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      if (mode === 'new-running' || mode === 'waiting-input') {
+        expect(child.heldLatestTurnReads).toHaveLength(1)
+        desktopSocket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+          params: { hostId: 'local', conversationId: sideThreadId, change: { type: 'patches', baseRevision: 1, revision: 2, patches: [
+            { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active', activeFlags: mode === 'waiting-input' ? ['waitingOnUserInput'] : [] } },
+            { op: 'replace', path: ['turns'], value: [{ turnId: 'synthetic-new', turnStartedAtMs: 2_000_000_200_000, status: 'inProgress', items: [] }] }
+          ] } }
+        })
+        await vi.advanceTimersByTimeAsync(0)
+        child.releaseHeldLatestTurnReads()
+        child.turnOverrides.set(sideThreadId, { id: 'synthetic-new', status: 'inProgress', startedAt: 2_000_000_200 })
+      }
+      await vi.advanceTimersByTimeAsync(3_100)
+      const root = kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key)
+      expect(root).toMatchObject({ phase: mode === 'new-running' ? 'running' : mode === 'waiting-input' ? 'waiting-input' : 'unknown', capabilities: { archive: false } })
+      expect(native.privateBranchEvidence(parentThreadId)?.branches.find((branch: Record<string, any>) => branch.branchKind === 'side')?.lastTurnStatus).not.toBe('completed')
+      bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it.each(['snapshot', 'activity-event'])('settles older Side terminals independently of a newer completed parent Turn (%s)', async (evidence) => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeCodexProcess()
+      const parentThreadId = FIXED_THREAD_IDS[3]
+      const sideThreadIds = ['a', 'b', 'c', 'd'].map((prefix) => `${prefix}2345678-1234-4234-8234-123456789abc`)
+      child.turnOverrides.set(parentThreadId, { id: 'synthetic-parent-newer', status: 'completed', startedAt: 2_000_000_500, completedAt: 2_000_000_520 })
+      for (const sideThreadId of sideThreadIds) child.turnOverrides.set(sideThreadId, { id: 'synthetic-side-older', status: 'completed', startedAt: 2_000_000_100, completedAt: 2_000_000_120 })
+      const desktopSocket = new FakeCodexDesktopSocket()
+      const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), desktopSocket)
+      const { bridge, native } = context
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(0)
+      const parent = baseline.value.threads.find((entry: Record<string, any>) => entry.key === crypto.createHash('sha256').update(parentThreadId).digest('hex').slice(0, 32))
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      child.stdout.emit('data', `${JSON.stringify({ method: 'turn/completed', params: {
+        threadId: parentThreadId, turn: { id: 'synthetic-parent-newer', status: 'completed', startedAt: 2_000_000_500, completedAt: 2_000_000_521 }
+      } })}\n`)
+      await vi.advanceTimersByTimeAsync(0)
+      for (const sideThreadId of sideThreadIds) desktopSocket.push({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: sideThreadId, change: {
+          type: 'snapshot', revision: 1, conversationState: {
+            sideConversation: true, forkedFromId: parentThreadId,
+            threadRuntimeStatus: { type: evidence === 'snapshot' ? 'active' : 'idle', activeFlags: [] },
+            resumeState: '', hasUnreadTurn: false, requests: []
+          }
+        } }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      if (evidence === 'activity-event') {
+        for (const sideThreadId of sideThreadIds) desktopSocket.push({
+          type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+          params: { hostId: 'local', conversationId: sideThreadId, change: { type: 'patches', baseRevision: 1, revision: 2,
+            patches: [{ op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active', activeFlags: [] } }]
+          } }
+        })
+        await vi.advanceTimersByTimeAsync(0)
+        expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key)).toMatchObject({ phase: 'running' })
+      }
+      await vi.advanceTimersByTimeAsync(3_100)
+      for (const sideThreadId of sideThreadIds) expect(child.writes.some((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === sideThreadId && frame.params?.itemsView === 'notLoaded')).toBe(true)
+      const branches = native.privateBranchEvidence(parentThreadId)?.branches || []
+      expect(branches).toHaveLength(5)
+      for (const branch of branches.filter((branch: Record<string, any>) => branch.branchKind === 'side')) expect(branch).toMatchObject({
+        lastTurnStatus: 'completed', lastTurnEvidence: 'snapshot-corroborated', turnStartedAt: 2_000_000_100_000
+      })
+      expect(branches.find((branch: Record<string, any>) => branch.branchKind === 'main')).toMatchObject({
+        lastTurnStatus: 'completed', turnStartedAt: 2_000_000_500_000
+      })
+      const root = kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key)
+      expect(root).toMatchObject({ phase: 'completed' })
+      bridge.close()
+    } finally { vi.useRealTimers() }
   })
 
   it('defers one Side Chat terminal while another branch remains active', async () => {
@@ -10694,5 +10864,671 @@ draft: v7EvidenceDraft({
     await expect(bridge.inspectEnvironment()).resolves.toMatchObject({ platform: 'windows', runtimeState: 'unusable', runtimeSource: 'npm-global', processState: 'not-running', errorCode: 'runtime-unavailable' })
     await expect(bridge.readSnapshot({ includeQuota: false, includeConfig: true, includeThreads: false })).resolves.toMatchObject({ ok: false, error: { code: 'runtime-unavailable' } })
     expect(spawn).not.toHaveBeenCalled()
+  })
+})
+
+describe('Desktop main end-event ordering', () => {
+  const parentId = FIXED_THREAD_IDS[3]
+  const turnId = 'owner-current-turn'
+  const startedAt = 2_000_000_100_526
+
+  async function setup(options: { rootOnly?: boolean; missingSideTurnId?: boolean } = {}) {
+    const child = new FakeCodexProcess()
+    const socket = new FakeCodexDesktopSocket()
+    socket.waitingInputSnapshotThreadIds.clear()
+    socket.unreadSnapshotThreadIds.clear()
+    // The independent App Server can call the still-running owner Turn
+    // interrupted. Keep the same id and second-rounded start as the real API.
+    child.turnOverrides.set(parentId, { id: turnId, status: 'interrupted', startedAt: Math.floor(startedAt / 1000) })
+    for (const id of options.rootOnly ? [] : FIXED_THREAD_IDS.slice(1, 3)) {
+      child.parentThreadIds.set(id, parentId)
+      child.threadSources.set(id, { subAgent: { thread_spawn: { parent_thread_id: parentId, depth: 1 } } })
+      child.statusOverrides.set(id, 'idle')
+      child.turnOverrides.set(id, { id: `ordinary-${id}`, status: 'completed', startedAt: 1_900_000_000, completedAt: 1_900_000_010 })
+    }
+    if (options.missingSideTurnId) child.turnOverrides.set(FIXED_THREAD_IDS[1], { id: '', status: 'interrupted', startedAt: startedAt / 1000 })
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), socket, true)
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await vi.advanceTimersByTimeAsync(0)
+    const parent = baseline.value.threads.find((row: any) => row.key === crypto.createHash('sha256').update(parentId).digest('hex').slice(0, 32))
+    const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+    let revision = 10
+    const snapshot = (state: Record<string, any> = {}, owner = 'codex-desktop-owner') => socket.push({
+      type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: owner, version: 11,
+      params: { hostId: 'local', conversationId: parentId, change: { type: 'snapshot', revision, conversationState: {
+        threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [], hasUnreadTurn: false,
+        turnHistory: { kind: 'canonical', history: {
+          islands: [{ newerBoundary: { status: 'exhausted' }, entries: [{ value: 'current' }] }],
+          entitiesByKey: { current: { turnId, status: 'inProgress', turnStartedAtMs: startedAt, items: [] } }
+        } }, ...state
+      } } }
+    })
+    const patch = async (patches: Record<string, any>[]) => {
+      socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: parentId, change: { type: 'patches', baseRevision: revision, revision: ++revision, patches } } })
+      await vi.advanceTimersByTimeAsync(0)
+    }
+    child.stdout.emit('data', JSON.stringify({ method: 'turn/started', params: { threadId: parentId, turn: { id: turnId, status: 'inProgress', startedAt: startedAt / 1000 } } }) + '\n')
+    snapshot()
+    await vi.advanceTimersByTimeAsync(0)
+    const task = () => kernel.getLatest().tasks.find((row: any) => row.key === parent.key)
+    expect(task()).toMatchObject({ phase: 'running', topology: { memberCount: options.rootOnly ? 1 : 3 } })
+    const trace: Array<Record<string, any>> = []
+    const stop = kernel.subscribe(kernel.getLatest().packageRevision, (pkg: any) => {
+      const row = pkg.tasks.find((value: any) => value.key === parent.key)
+      if (row) trace.push({ revision: pkg.packageRevision, phase: row.phase, unread: row.unread, memberCount: row.topology.memberCount })
+    })
+    child.holdNextLatestTurnRead = true
+    return { child, socket, context, kernel, parent, patch, snapshot, task, trace,
+      evidence: () => context.native.privateBranchEvidence(parentId)?.branches.find((row: any) => row.branchKind === 'main'),
+      close: () => { stop(); context.bridge.close() }
+    }
+  }
+
+  const idle = { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'idle', activeFlags: [] } }
+  const canonical = (status: string) => ({ op: 'replace', path: ['turnHistory', 'history', 'entitiesByKey', 'current', 'status'], value: status })
+  const unread = { op: 'replace', path: ['hasUnreadTurn'], value: true }
+
+  it('keeps an ordinary App Server member running when only the main owner becomes idle and completes', async () => {
+    vi.useFakeTimers()
+    const state = await setup()
+    try {
+      state.child.stdout.emit('data', JSON.stringify({ method: 'turn/started', params: {
+        threadId: FIXED_THREAD_IDS[1], turn: { id: 'side-app-server-only', status: 'inProgress', startedAt: (startedAt + 1000) / 1000 }
+      } }) + '\n')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.task().phase).toBe('running')
+      await state.patch([idle, canonical('completed'), unread])
+      expect(state.task()).toMatchObject({ phase: 'running', topology: { memberCount: 3 } })
+      expect(state.context.native.privateBranchEvidence(parentId)?.branches.filter((row: any) => row.branchKind === 'side'))
+        .toEqual(expect.arrayContaining([expect.objectContaining({ lastTurnStatus: 'inProgress', statusAuthority: 'app-server-live' })]))
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it('rejects an inventory reread that labels the idle owner current Turn interrupted at the exact same start', async () => {
+    vi.useFakeTimers()
+    const state = await setup({ rootOnly: true })
+    try {
+      await state.patch([idle])
+      state.child.turnOverrides.set(parentId, { id: turnId, status: 'interrupted', startedAt: startedAt / 1000 })
+      state.context.native.markCodexThreadTurnStatusDirty(parentId)
+      const scan = await state.context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(scan.value.threads.find((row: any) => row.key === state.parent.key)?.lastTurnStatus).not.toBe('interrupted')
+      expect(state.evidence()?.lastTurnStatus).not.toBe('interrupted')
+      expect(state.trace.map(row => row.phase)).not.toContain('stopped')
+      await state.patch([canonical('completed'), unread])
+      expect(state.task()).toMatchObject({ phase: 'completed', unread: true })
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it('does not borrow the main Turn id when a Side inventory terminal has no id', async () => {
+    vi.useFakeTimers()
+    const state = await setup({ missingSideTurnId: true })
+    try {
+      state.socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'side-owner', version: 11,
+        params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[1], change: { type: 'snapshot', revision: 20, conversationState: {
+          sideConversation: true, forkedFromId: parentId, threadRuntimeStatus: { type: 'idle', activeFlags: [] }, requests: [], turns: [],
+          turnHistory: { kind: 'canonical', history: {
+            islands: [{ newerBoundary: { status: 'exhausted' }, entries: [{ value: 'side-current' }] }],
+            entitiesByKey: { 'side-current': { turnId: 'side-unknown-inventory-id', status: 'interrupted', turnStartedAtMs: startedAt, items: [] } }
+          } }
+        } } } })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.context.native.privateBranchEvidence(parentId)?.branches.filter((row: any) => row.branchKind === 'side'))
+        .toEqual(expect.arrayContaining([expect.objectContaining({ lastTurnStatus: 'interrupted', lastTurnEvidence: 'inventory', turnStartedAt: startedAt })]))
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it.each(['idle-first', 'canonical-first', 'same-batch'] as const)('never publishes stopped while a normal owner completion arrives %s', async (order) => {
+    vi.useFakeTimers()
+    const state = await setup()
+    try {
+      if (order === 'idle-first') {
+        await state.patch([idle])
+        expect(state.trace.map(row => row.phase)).not.toContain('stopped')
+        await state.patch([unread])
+        expect(state.trace.map(row => row.phase)).not.toContain('stopped')
+        await state.patch([canonical('completed')])
+      } else if (order === 'canonical-first') {
+        await state.patch([canonical('completed')])
+        expect(state.task().phase).toBe('running')
+        await state.patch([idle, unread])
+      } else await state.patch([idle, canonical('completed'), unread])
+      // No clock advancement or RPC completion: the full owner terminal is
+      // sufficient, and a pending independent reader must not set stopped.
+      expect(state.task()).toMatchObject({ phase: 'completed', unread: true, topology: { memberCount: 3 } })
+      state.child.releaseHeldLatestTurnReads()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.trace.length).toBeGreaterThan(0)
+      expect(state.trace.every(row => row.phase !== 'stopped' && row.memberCount === 3)).toBe(true)
+      expect(state.task()).toMatchObject({ phase: 'completed', unread: true })
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it.each(['interrupted', 'failed'] as const)('still publishes a real owner %s terminal immediately', async (status) => {
+    vi.useFakeTimers()
+    const state = await setup()
+    try {
+      await state.patch([idle, canonical(status), unread])
+      expect(state.evidence()).toMatchObject({ lastTurnStatus: status, lastTurnEvidence: 'snapshot-corroborated' })
+      expect(state.task()).toMatchObject({ phase: 'stopped', unread: true })
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it('rejects a same-Turn independent interrupted read before canonical completion arrives', async () => {
+    vi.useFakeTimers()
+    const state = await setup()
+    try {
+      await state.patch([idle])
+      expect(state.child.heldLatestTurnReads).toHaveLength(1)
+      state.child.releaseHeldLatestTurnReads()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.trace.map(row => row.phase)).not.toContain('stopped')
+      expect(state.evidence()?.lastTurnStatus).not.toBe('interrupted')
+      await state.patch([canonical('completed'), unread])
+      expect(state.task()).toMatchObject({ phase: 'completed', unread: true })
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it.each(['userInput', 'approval'] as const)('keeps a real %s request above owner completion until it is resolved', async (type) => {
+    vi.useFakeTimers()
+    const state = await setup()
+    try {
+      await state.patch([idle, canonical('completed'), unread,
+        { op: 'replace', path: ['requests'], value: [{ id: 'still-open', type, method: type === 'userInput' ? 'requestUserInput' : 'requestApproval' }] }])
+      expect(state.task().phase).toBe(type === 'userInput' ? 'waiting-input' : 'waiting-approval')
+      expect(state.evidence()?.lastTurnEvidence).not.toBe('snapshot-corroborated')
+      await state.patch([{ op: 'replace', path: ['requests'], value: [] }])
+      expect(state.task()).toMatchObject({ phase: 'completed', unread: true })
+      expect(state.trace.map(row => row.phase)).not.toContain('stopped')
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it('does not let an old completion or held reader close a newer owner Turn', async () => {
+    vi.useFakeTimers()
+    const state = await setup()
+    try {
+      await state.patch([idle])
+      const nextStart = startedAt + 10_000
+      state.child.stdout.emit('data', JSON.stringify({ method: 'turn/started', params: {
+        threadId: parentId, turn: { id: 'next-owner-turn', status: 'inProgress', startedAt: nextStart / 1000 }
+      } }) + '\n')
+      await state.patch([{ op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active', activeFlags: [] } },
+        { op: 'replace', path: ['turns'], value: [{ turnId: 'next-owner-turn', status: 'inProgress', turnStartedAtMs: nextStart, items: [] }] },
+        canonical('completed')])
+      state.child.releaseHeldLatestTurnReads()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.task().phase).toBe('running')
+      expect(state.trace.map(row => row.phase)).not.toContain('stopped')
+      expect(state.evidence()?.lastTurnStatus).toBe('inProgress')
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it.each(['running', 'waiting-input', 'stopped'] as const)('preserves an ordinary member that is %s when the main owner completes', async (phase) => {
+    vi.useFakeTimers()
+    const state = await setup()
+    try {
+      const sideId = FIXED_THREAD_IDS[1]
+      const active = phase !== 'stopped'
+      state.socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'side-owner', version: 11,
+        params: { hostId: 'local', conversationId: sideId, change: { type: 'snapshot', revision: 20, conversationState: {
+          ephemeral: true, sideConversation: true, forkedFromId: parentId,
+          threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+          requests: phase === 'waiting-input' ? [{ id: 'side-question', type: 'userInput', method: 'requestUserInput' }] : [],
+          turns: [],
+          turnHistory: { kind: 'canonical', history: {
+            islands: [{ newerBoundary: { status: 'exhausted' }, entries: [{ value: 'side-current' }] }],
+            entitiesByKey: { 'side-current': { turnId: 'side-now', status: active ? 'inProgress' : 'failed', turnStartedAtMs: startedAt + 1000, items: [] } }
+          } }
+        } } } })
+      await vi.advanceTimersByTimeAsync(0)
+      if (phase === 'running') {
+        state.socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'side-owner', version: 11,
+          params: { hostId: 'local', conversationId: sideId, change: { type: 'patches', baseRevision: 20, revision: 21, patches: [
+            { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active', activeFlags: [] } },
+            { op: 'replace', path: ['turns'], value: [{ turnId: 'side-now', status: 'inProgress', turnStartedAtMs: startedAt + 1000, items: [] }] }
+          ] } } })
+        await vi.advanceTimersByTimeAsync(0)
+      }
+      await state.patch([idle, canonical('completed'), unread])
+      expect(state.task()).toMatchObject({ phase, topology: { memberCount: 3 } })
+      expect(state.evidence()).toMatchObject({ lastTurnStatus: 'completed', turnStartedAt: startedAt })
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it('keeps a current active Goal and refreshes it after the main canonical terminal', async () => {
+    vi.useFakeTimers()
+    const state = await setup()
+    try {
+      state.child.goalStates.set(parentId, { status: 'active', updatedAt: startedAt / 1000 + 1 })
+      state.child.stdout.emit('data', JSON.stringify({ method: 'thread/goal/updated', params: {
+        threadId: parentId, goal: { status: 'active', updatedAt: startedAt / 1000 + 1 }
+      } }) + '\n')
+      await vi.advanceTimersByTimeAsync(0)
+      const before = state.child.writes.filter(frame => frame.method === 'thread/goal/get' && frame.params?.threadId === parentId).length
+      await state.patch([idle, canonical('completed'), unread])
+      expect(state.child.writes.filter(frame => frame.method === 'thread/goal/get' && frame.params?.threadId === parentId).length).toBeGreaterThan(before)
+      expect(state.task().phase).toBe('running')
+      expect(state.evidence()).toMatchObject({ lastTurnStatus: 'completed', goalStatus: 'active' })
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it('does not accept an incomplete owner history as a terminal and accepts it when the boundary arrives', async () => {
+    vi.useFakeTimers()
+    const state = await setup()
+    try {
+      await state.patch([idle, canonical('completed'), unread,
+        { op: 'replace', path: ['turnHistory', 'history', 'islands', 0, 'newerBoundary', 'status'], value: 'loading' }])
+      expect(state.evidence()?.lastTurnEvidence).not.toBe('snapshot-corroborated')
+      expect(state.task().phase).not.toBe('completed')
+      await state.patch([{ op: 'replace', path: ['turnHistory', 'history', 'islands', 0, 'newerBoundary', 'status'], value: 'exhausted' }])
+      expect(state.task()).toMatchObject({ phase: 'completed', unread: true })
+    } finally { state.close(); vi.useRealTimers() }
+  })
+})
+
+describe('Desktop Side terminal sources', () => {
+  const sideId = 'a2345678-1234-4234-8234-123456789abc'
+  const parentId = FIXED_THREAD_IDS[3]
+  const sideStartedAt = 2_000_000_100_000
+
+  async function setup(ephemeral = true, unread = false) {
+    const child = new FakeCodexProcess()
+    const socket = new FakeCodexDesktopSocket()
+    child.turnOverrides.set(parentId, { id: 'parent-newer-turn', status: 'completed', startedAt: 2_000_000_500, completedAt: 2_000_000_520 })
+    child.turnOverrides.set(sideId, { id: 'side-own-turn', status: 'completed', startedAt: sideStartedAt / 1000, completedAt: sideStartedAt / 1000 + 10 })
+    if (ephemeral) {
+      const write = child.stdin.write
+      child.stdin.write = (line: string) => {
+        const frame = JSON.parse(line)
+        if (frame.params?.threadId === sideId && ['thread/read', 'thread/turns/list', 'thread/goal/get'].includes(frame.method)) {
+          child.writes.push(frame)
+          queueMicrotask(() => child.stdout.emit('data', JSON.stringify({ id: frame.id, error: { code: -32600, message: 'ephemeral thread unavailable through this process' } }) + '\n'))
+          return true
+        }
+        return write(line)
+      }
+    }
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread(unread ? [sideId] : []), socket, true)
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await vi.advanceTimersByTimeAsync(0)
+    const parent = baseline.value.threads.find((thread: any) => thread.key === crypto.createHash('sha256').update(parentId).digest('hex').slice(0, 32))
+    const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+    const snapshot = (revision: number, overrides: Record<string, any> = {}, owner = 'side-owner') => socket.push({
+      type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: owner, version: 11,
+      params: { hostId: 'local', conversationId: sideId, change: { type: 'snapshot', revision, conversationState: {
+        ephemeral, sideConversation: true, forkedFromId: parentId, threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+        requests: [], turns: [], hasUnreadTurn: unread,
+        turnHistory: { kind: 'canonical', history: {
+          islands: [{ newerBoundary: { status: 'exhausted' }, entries: [{ value: 'side-entity' }] }],
+          entitiesByKey: { 'side-entity': { turnId: 'side-own-turn', status: 'completed', turnStartedAtMs: sideStartedAt, items: [] } }
+        } }, ...overrides
+      } } }
+    })
+    const patch = (baseRevision: number, revision: number, patches: Record<string, any>[], owner = 'side-owner') => socket.push({
+      type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: owner, version: 11,
+      params: { hostId: 'local', conversationId: sideId, change: { type: 'patches', baseRevision, revision, patches } }
+    })
+    return { child, context, kernel, parent, socket, snapshot, patch,
+      task: () => kernel.getLatest().tasks.find((task: any) => task.key === parent.key),
+      evidence: () => context.native.privateBranchEvidence(parentId)?.branches.find((branch: any) => branch.branchKind === 'side'),
+      reads: (method: string) => child.writes.filter((frame) => frame.method === method && frame.params?.threadId === sideId)
+    }
+  }
+
+  it.each([false, true])('accepts exact ephemeral canonical completion and preserves unread=%s without unsupported RPCs', async (unread) => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup(true, unread)
+      state.snapshot(10)
+      await vi.advanceTimersByTimeAsync(3_100)
+      expect(state.evidence()).toMatchObject({ lastTurnStatus: 'completed', goalStatus: 'none', goalFreshness: 'fresh', turnStartedAt: sideStartedAt })
+      expect(state.task()).toMatchObject({ phase: 'completed', unread, topology: { memberCount: 2 } })
+      expect(state.reads('thread/turns/list')).toHaveLength(0)
+      expect(state.reads('thread/goal/get')).toHaveLength(0)
+      const sequence = state.evidence()?.terminalEvidenceSequence
+      state.snapshot(10)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.evidence()?.terminalEvidenceSequence).toBe(sequence)
+      expect(state.task()).toMatchObject({ phase: 'completed', unread })
+      state.context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('waits for the newest canonical island to be complete before accepting an ephemeral terminal', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup()
+      state.snapshot(1, { turnHistory: { kind: 'canonical', history: {
+        islands: [{ newerBoundary: { status: 'loading' }, entries: [{ value: 'side-entity' }] }],
+        entitiesByKey: { 'side-entity': { turnId: 'side-own-turn', status: 'completed', turnStartedAtMs: sideStartedAt, items: [] } }
+      } } })
+      await vi.advanceTimersByTimeAsync(3_100)
+      expect(state.task().phase).toBe('unknown')
+      expect(state.reads('thread/turns/list')).toHaveLength(0)
+      state.patch(1, 2, [
+        { op: 'replace', path: ['turnHistory', 'history', 'islands', 0, 'newerBoundary', 'status'], value: 'exhausted' },
+        { op: 'replace', path: ['hasUnreadTurn'], value: true }
+      ])
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.task().phase).toBe('completed')
+      state.context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('keeps unresolved input above ephemeral completion and settles after the current request is removed', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup()
+      state.snapshot(1, { requests: [{ id: 'side-question', type: 'userInput', method: 'requestUserInput' }] })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.task().phase).toBe('waiting-input')
+      expect(state.evidence()?.lastTurnStatus).not.toBe('completed')
+      state.patch(1, 2, [{ op: 'replace', path: ['requests'], value: [] }])
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.task().phase).toBe('completed')
+      state.context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('rejects old owner patches and older snapshots after the ephemeral member starts a newer turn', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup()
+      state.snapshot(10)
+      await vi.advanceTimersByTimeAsync(0)
+      state.patch(10, 11, [
+        { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active', activeFlags: [] } },
+        { op: 'replace', path: ['turns'], value: [{ turnId: 'side-new-turn', status: 'inProgress', turnStartedAtMs: sideStartedAt + 1_000_000, items: [] }] }
+      ])
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.task().phase).toBe('running')
+      state.snapshot(9)
+      state.patch(11, 12, [{ op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'idle' } }], 'old-owner')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.task().phase).toBe('running')
+      expect(state.task().capabilities.archive).toBe(false)
+      state.context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it.each([
+    { goal: { status: 'active', updatedAt: sideStartedAt }, phase: 'running' },
+    { goal: { status: 'unrecognized', updatedAt: sideStartedAt }, phase: 'unknown' }
+  ])('does not replace an explicit $phase Goal observation with ephemeral capability none', async ({ goal, phase }) => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup()
+      state.snapshot(1, { threadGoal: goal })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.task().phase).toBe(phase)
+      expect(state.reads('thread/goal/get')).toHaveLength(0)
+      state.context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('recovers an ephemeral completion after IPC reset using the new owner snapshot', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup(true, true)
+      state.snapshot(10)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.task()).toMatchObject({ phase: 'completed', unread: true })
+      state.socket.push({ type: 'broadcast', method: 'ipc-connection-reset', sourceClientId: 'side-owner', version: 1, params: {} })
+      await vi.advanceTimersByTimeAsync(0)
+      state.snapshot(1, {}, 'new-side-owner')
+      await vi.advanceTimersByTimeAsync(3_100)
+      expect(state.task()).toMatchObject({ phase: 'completed', unread: true, topology: { memberCount: 2 } })
+      expect(state.evidence()).toMatchObject({ goalStatus: 'none', goalFreshness: 'fresh' })
+      state.context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('refreshes a persistent Side active Goal when its own exact terminal arrives', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup(false)
+      state.child.goalStates.set(sideId, { status: 'active', updatedAt: sideStartedAt / 1000 })
+      state.child.holdNextLatestTurnRead = true
+      state.snapshot(1)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.task().phase).toBe('running')
+      expect(state.child.heldLatestTurnReads).toHaveLength(1)
+      state.child.goalStates.delete(sideId)
+      state.child.releaseHeldLatestTurnReads()
+      await vi.advanceTimersByTimeAsync(3_100)
+      expect(state.reads('thread/goal/get')).toHaveLength(2)
+      expect(state.task().phase).toBe('completed')
+      state.context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('retries a failed persistent Side Goal on a later snapshot using the existing reader cooldown', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup(false)
+      state.child.transientGoalFailures = 1
+      state.snapshot(1)
+      await vi.advanceTimersByTimeAsync(3_100)
+      expect(state.reads('thread/goal/get')).toHaveLength(1)
+      expect(state.task().phase).toBe('unknown')
+      state.snapshot(2)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.reads('thread/goal/get')).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(30_100)
+      state.snapshot(3)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.reads('thread/goal/get')).toHaveLength(2)
+      expect(state.task().phase).toBe('completed')
+      state.snapshot(4)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(state.reads('thread/goal/get')).toHaveLength(2)
+      state.context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+})
+
+
+describe('Codex internal review member admission', () => {
+  it.each(['interrupted', 'failed'] as const)('keeps ordinary agents but excludes a historical %s guardian from root completion', async (status) => {
+    const child = new FakeCodexProcess()
+    const parentId = FIXED_THREAD_IDS[3]
+    const ordinaryIds = FIXED_THREAD_IDS.slice(0, 2)
+    const guardianIds = [FIXED_THREAD_IDS[2], FIXED_THREAD_IDS[4], child.createdThreadId]
+    child.includeCreatedThreadInInventory = true
+    for (const id of [...ordinaryIds, ...guardianIds]) {
+      child.parentThreadIds.set(id, parentId)
+      child.threadSources.set(id, ordinaryIds.includes(id) ? { subAgent: { thread_spawn: { parent_thread_id: parentId, depth: 1 } } } : 'guardian_review')
+      child.statusOverrides.set(id, 'idle')
+      child.turnOverrides.set(id, { id: `historical-${id}`, status: id === child.createdThreadId ? status : 'completed', startedAt: 1_791_897_327, completedAt: 1_791_897_350 })
+    }
+    child.statusOverrides.set(parentId, 'idle')
+    child.turnOverrides.set(parentId, { id: 'root-latest', status: 'completed', startedAt: 1_791_937_853, completedAt: 1_791_938_463 })
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([parentId]))
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const parent = baseline.value.threads.find((row: Record<string, any>) => row.name === '跨端未知')
+    const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+    const activity = await context.bridge.readActivitySnapshot()
+    context.native.applyCodexActivityToCompanionKernel(activity.value)
+    expect(context.native.privateBranchEvidence(parentId)?.branches).toHaveLength(3)
+    expect(kernel.getPackage().tasks.find((row: Record<string, any>) => row.key === parent.key)).toMatchObject({ phase: 'completed', unread: true })
+    expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && guardianIds.includes(String(frame.params?.threadId)))).toHaveLength(0)
+    context.bridge.close()
+  })
+
+  it('does not create minimal membership or a root epoch from known guardian notifications', async () => {
+    const child = new FakeCodexProcess()
+    const context = loadCodexBridge(child, () => nativeRegistryText())
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const parent = baseline.value.threads.find((row: Record<string, any>) => row.name === '跨端未知')
+    const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+    const notifications = [
+      { method: 'thread/started', params: { thread: { id: child.createdThreadId, parentThreadId: FIXED_THREAD_IDS[3], threadSource: 'guardian_review', cwd: '/tmp/chats' } } },
+      { method: 'turn/started', params: { threadId: child.createdThreadId, turn: { id: 'review-only-turn', status: 'inProgress', startedAt: 2_000_000_200 } } },
+      { method: 'thread/status/changed', params: { threadId: child.createdThreadId, status: { type: 'active', activeFlags: [] } } }
+    ]
+    for (const notification of notifications) child.stdout.emit('data', `${JSON.stringify(notification)}\n`)
+    await Promise.resolve()
+    expect(kernel.getPackage().tasks).toHaveLength(1)
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ key: parent.key, phase: 'completed' })
+    const activity = await context.bridge.readActivitySnapshot()
+    expect(activity.value.entries).toHaveLength(baseline.value.threads.length)
+    context.bridge.close()
+  })
+
+  it.each([
+    ['subagent', 'inProgress', 'running'], ['subagent', 'interrupted', 'stopped'], ['subagent', 'failed', 'stopped'],
+    ['vscode', 'inProgress', 'running'], ['vscode', 'interrupted', 'stopped'], ['vscode', 'failed', 'stopped']
+  ] as const)('preserves %s member %s evidence as %s', async (source, status, phase) => {
+    const child = new FakeCodexProcess()
+    child.includeCreatedThreadInInventory = true
+    child.parentThreadIds.set(child.createdThreadId, FIXED_THREAD_IDS[3])
+    child.threadSources.set(child.createdThreadId, source)
+    child.statusOverrides.set(child.createdThreadId, status === 'inProgress' ? 'active' : 'idle')
+    child.turnOverrides.set(child.createdThreadId, { id: 'ordinary-child', status, startedAt: 2_000_000_200 })
+    const context = loadCodexBridge(child, () => nativeRegistryText())
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const parent = baseline.value.threads.find((row: Record<string, any>) => row.name === '跨端未知')
+    const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+    context.native.applyCodexActivityToCompanionKernel((await context.bridge.readActivitySnapshot()).value)
+    expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)).toMatchObject({ phase, topology: { memberCount: 2 } })
+    context.bridge.close()
+  })
+
+  it('atomically withdraws a late guardian Side and ignores held Turn, Goal and replayed snapshot evidence', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeCodexProcess()
+      const socket = new FakeCodexDesktopSocket()
+      const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([FIXED_THREAD_IDS[3]]), socket, true)
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(0)
+      const parent = baseline.value.threads.find((row: Record<string, any>) => row.name === '跨端未知')
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      const snapshot = (revision: number, source?: unknown) => socket.push({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'review-owner', version: 11,
+        params: { hostId: 'local', conversationId: child.createdThreadId, change: { type: 'snapshot', revision, conversationState: {
+          sideConversation: true, forkedFromId: FIXED_THREAD_IDS[3], threadSource: source,
+          threadRuntimeStatus: { type: 'idle', activeFlags: [] }, requests: [], resumeState: '', hasUnreadTurn: false
+        } } }
+      })
+      child.holdNextLatestTurnRead = true
+      child.holdNextGoalRead = true
+      snapshot(1)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(child.heldLatestTurnReads).toHaveLength(1)
+      expect(child.heldGoalReads).toHaveLength(1)
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.topology.memberCount).toBe(2)
+      const rootKeys = kernel.getLatest().tasks.map((row: Record<string, any>) => row.key).sort()
+      const retired: Record<string, any>[] = []
+      const stop = kernel.subscribe(kernel.getLatest().packageRevision, (value: Record<string, any>) => retired.push(value))
+      socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'review-owner', version: 11,
+        params: { hostId: 'local', conversationId: child.createdThreadId, change: { type: 'patches', baseRevision: 1, revision: 2,
+          patches: [{ op: 'add', path: ['threadSource'], value: 'guardian_review' }]
+        } }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(retired).toHaveLength(1)
+      expect(retired[0].tasks.map((row: Record<string, any>) => row.key).sort()).toEqual(rootKeys)
+      expect(retired[0].tasks.find((row: Record<string, any>) => row.key === parent.key)).toMatchObject({ phase: 'completed', unread: true, topology: { memberCount: 1 } })
+      child.turnOverrides.set(child.createdThreadId, { id: 'stale-review-terminal', status: 'interrupted', startedAt: 2_000_000_250 })
+      child.goalStates.set(child.createdThreadId, { status: 'active', updatedAt: 2_000_000_250 })
+      child.releaseHeldLatestTurnReads()
+      child.releaseHeldGoalReads()
+      snapshot(3)
+      await vi.advanceTimersByTimeAsync(3_100)
+      expect(context.native.privateBranchEvidence(FIXED_THREAD_IDS[3])?.branches).toHaveLength(1)
+      expect(kernel.getLatest().tasks.map((row: Record<string, any>) => row.key).sort()).toEqual(rootKeys)
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)).toMatchObject({ phase: 'completed', unread: true, topology: { memberCount: 1 } })
+      for (const value of retired) {
+        expect(value.tasks.map((row: Record<string, any>) => row.key).sort()).toEqual(rootKeys)
+        expect(value.tasks.find((row: Record<string, any>) => row.key === parent.key)).toMatchObject({ phase: 'completed', topology: { memberCount: 1 } })
+      }
+      // An explicit, legal ordinary source is new authority; missing/invalid
+      // metadata above could not revive the retired review by itself.
+      snapshot(4, 'vscode')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(context.native.privateBranchEvidence(FIXED_THREAD_IDS[3])?.branches).toHaveLength(2)
+      stop()
+      context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('uses thread/read metadata to remove an earlier unknown minimal member', async () => {
+    const child = new FakeCodexProcess()
+    const context = loadCodexBridge(child, () => nativeRegistryText())
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const parent = baseline.value.threads.find((row: Record<string, any>) => row.name === '跨端未知')
+    const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+    child.stdout.emit('data', `${JSON.stringify({ method: 'thread/started', params: { thread: { id: child.createdThreadId, cwd: '/tmp/chats' } } })}\n`)
+    expect(kernel.getLatest().tasks).toHaveLength(2)
+    child.threadSources.set(child.createdThreadId, 'guardian_review')
+    await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(child.writes.some((frame) => frame.method === 'thread/read' && frame.params?.threadId === child.createdThreadId)).toBe(true)
+    const reviewKey = crypto.createHash('sha256').update(child.createdThreadId).digest('hex').slice(0, 32)
+    expect(kernel.getLatest().tasks.some((row: Record<string, any>) => row.key === reviewKey)).toBe(false)
+    expect((await context.bridge.readActivitySnapshot()).value.entries.some((row: Record<string, any>) => row.key === reviewKey)).toBe(false)
+    context.bridge.close()
+  })
+
+  it('does not resurrect a captured public row when source authority arrives during an inventory Turn read', async () => {
+    const child = new FakeCodexProcess()
+    const context = loadCodexBridge(child, () => nativeRegistryText())
+    child.holdNextLatestTurnRead = true
+    const pending = context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await vi.waitFor(() => expect(child.heldLatestTurnReads).toHaveLength(1))
+    const reviewId = String(child.heldLatestTurnReads[0].params?.threadId)
+    child.stdout.emit('data', `${JSON.stringify({ method: 'thread/started', params: { thread: { id: reviewId, threadSource: 'guardian_review' } } })}\n`)
+    child.releaseHeldLatestTurnReads()
+    const snapshot = await pending
+    const reviewKey = crypto.createHash('sha256').update(reviewId).digest('hex').slice(0, 32)
+    expect(snapshot.value.threads.some((row: Record<string, any>) => row.key === reviewKey)).toBe(false)
+    expect((await context.bridge.readActivitySnapshot()).value.entries.some((row: Record<string, any>) => row.key === reviewKey)).toBe(false)
+    context.bridge.close()
+  })
+
+  it.each([['none', 'completed', 1], ['main', 'running', 1], ['other-live', 'running', 2], ['other-wait', 'waiting-input', 2]] as const)('withdraws a previously live guardian while preserving %s evidence', async (remaining, phase, memberCount) => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeCodexProcess()
+      child.turnOverrides.set(child.createdThreadId, { id: 'live-unknown-child', status: 'inProgress', startedAt: 2_000_000_200 })
+      const socket = new FakeCodexDesktopSocket()
+      const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([FIXED_THREAD_IDS[3]]), socket, true)
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(0)
+      const parent = baseline.value.threads.find((row: Record<string, any>) => row.name === '跨端未知')
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      const snapshot = (revision: number, source?: string) => socket.push({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'review-owner', version: 11,
+        params: { hostId: 'local', conversationId: child.createdThreadId, change: { type: 'snapshot', revision, conversationState: {
+          sideConversation: true, forkedFromId: FIXED_THREAD_IDS[3], threadSource: source,
+          threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], resumeState: '', hasUnreadTurn: false
+        } } }
+      })
+      snapshot(1)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)).toMatchObject({ phase: 'running', topology: { memberCount: 2 } })
+      if (remaining === 'main') child.stdout.emit('data', `${JSON.stringify({ method: 'turn/started', params: { threadId: FIXED_THREAD_IDS[3], turn: { id: 'genuine-main-live', status: 'inProgress', startedAt: 2_000_000_300 } } })}\n`)
+      if (remaining.startsWith('other')) {
+        const otherId = 'a2345678-1234-4234-8234-123456789abc'
+        child.turnOverrides.set(otherId, { id: 'genuine-other-live', status: 'inProgress', startedAt: 2_000_000_300 })
+        socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'other-owner', version: 11,
+          params: { hostId: 'local', conversationId: otherId, change: { type: 'snapshot', revision: 1, conversationState: {
+            sideConversation: true, forkedFromId: FIXED_THREAD_IDS[3], threadSource: 'vscode',
+            threadRuntimeStatus: { type: 'active', activeFlags: remaining === 'other-wait' ? ['waitingOnUserInput'] : [] }, requests: [], resumeState: '', hasUnreadTurn: false
+          } } }
+        })
+        await vi.advanceTimersByTimeAsync(0)
+      }
+      snapshot(2, 'guardian_review')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)).toMatchObject({ phase, topology: { memberCount } })
+      const activity = (await context.bridge.readActivitySnapshot()).value.entries.find((row: Record<string, any>) => row.key === parent.key)
+      if (remaining === 'none') expect(['idle', 'notLoaded']).toContain(activity.status)
+      else expect(activity.status).toBe('active')
+      expect(activity.lastTurnStatus).toBe(remaining === 'none' ? 'completed' : 'inProgress')
+      context.bridge.close()
+    } finally { vi.useRealTimers() }
   })
 })

@@ -6,7 +6,7 @@ const { createCodexDesktopShadow } = require('../../preload/codex/desktop-shadow
 const { createCodexDesktopActivityResolution } = require('../../preload/codex/desktop-activity-resolution.cjs')
 const { createCodexDesktopRequestProjection } = require('../../preload/codex/desktop-request-projection.cjs')
 
-function harness() {
+function harness(shadowFactory = createCodexDesktopShadow) {
   let sequence = 0
   const deps = {
     record: (value: any) => value && typeof value === 'object' ? value : {},
@@ -14,7 +14,7 @@ function harness() {
     nextLiveEvidenceSequence: () => ++sequence
   }
   const projection = createCodexDesktopRequestProjection(deps)
-  const shadow = createCodexDesktopShadow({ ...deps,
+  const shadow = shadowFactory({ ...deps,
     validThreadId: () => false, reduceWaitingEdge: () => ({}),
     activityStatus: (value: any) => value ? { status: value.type, activeFlags: value.activeFlags } : null,
     projectedRequest: projection.codexDesktopProjectedRequest,
@@ -28,6 +28,120 @@ function harness() {
   } }, previous)
   return { shadow, projection, question, reply, snapshot }
 }
+
+describe('Desktop finite thread source evidence', () => {
+  function sourceSnapshot(shadow: any, threadSource?: unknown, previous?: any) {
+    return shadow.codexDesktopShadowFromSnapshot({ revision: 1, conversationState: {
+      sideConversation: true, threadSource,
+      threadRuntimeStatus: { type: 'idle', activeFlags: [] }, requests: [], turns: []
+    } }, previous)
+  }
+
+  it('classifies snapshots without retaining raw source data or a previous owner classification', () => {
+    const { shadow } = harness()
+    const review = sourceSnapshot(shadow, 'guardian_review')
+    review.ownerClientId = 'previous-owner'
+    expect(review.threadSourceKind).toBe('guardian_review')
+    expect(sourceSnapshot(shadow, 'vscode', review).threadSourceKind).toBe('other')
+    expect(sourceSnapshot(shadow, undefined, review).threadSourceKind).toBe('unknown')
+    expect(sourceSnapshot(shadow, {}, review).threadSourceKind).toBe('unknown')
+    const ordinary = sourceSnapshot(shadow, { subAgent: { other: 'private-fixture-source' } }, review)
+    expect(ordinary.threadSourceKind).toBe('other')
+    expect(ordinary).not.toHaveProperty('threadSource')
+    expect(JSON.stringify(ordinary)).not.toContain('private-fixture-source')
+  })
+
+  it('accepts late exact source patches and clears the shadow classification on replacement or removal', () => {
+    const { shadow } = harness()
+    const state = sourceSnapshot(shadow)
+    expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'add', path: ['threadSource'], value: 'guardian_review' })).toBe(true)
+    expect(state.threadSourceKind).toBe('guardian_review')
+    expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'replace', path: ['threadSource'], value: 'subagent' })).toBe(true)
+    expect(state.threadSourceKind).toBe('other')
+    expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'replace', path: ['threadSource'], value: 'guardian_review' })).toBe(true)
+    expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'remove', path: ['threadSource'] })).toBe(true)
+    expect(state.threadSourceKind).toBe('unknown')
+    expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'replace', path: ['threadSource'], value: { subAgent: {} } })).toBe(true)
+    expect(state.threadSourceKind).toBe('unknown')
+    expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'replace', path: ['threadSource', 'subAgent'], value: {} })).toBe(false)
+    expect(state.threadSourceKind).toBe('unknown')
+  })
+
+  it('keeps the shadow usable with an unknown source when the classifier module is unavailable', () => {
+    const filename = require.resolve('../../preload/codex/desktop-shadow.cjs')
+    const moduleRequire = createRequire(filename)
+    const context = { module: { exports: {} as any }, require: (name: string) => {
+      if (name === './subagent-discovery.cjs') throw new Error('classifier-unavailable')
+      return moduleRequire(name)
+    } }
+    require('node:vm').runInNewContext(require('node:fs').readFileSync(filename, 'utf8'), context)
+    const { shadow } = harness(context.module.exports.createCodexDesktopShadow)
+    expect(sourceSnapshot(shadow, 'guardian_review').threadSourceKind).toBe('unknown')
+  })
+})
+
+describe('Desktop terminal source precedence', () => {
+  const resolution = createCodexDesktopActivityResolution({
+    timestampMs: (value: any) => typeof value === 'number' ? value : 0,
+    validThreadId: () => true, isConfirmedTurnEvidence: () => true,
+    waitingEvidenceVisible: () => true, desktopRequestFlag: () => '', desktopIsPlanImplementationRequest: () => false
+  })
+  const owner = { ownerClientId: 'owner', revision: 2, canonicalLatestComplete: true,
+    currentCanonicalTurn: { turnRef: 'current-ref', startedAt: 100_526, status: 'inProgress' } }
+
+  it.each(['completed', 'interrupted', 'failed'])('rejects a lower-fidelity %s result that conflicts with the same running owner Turn', (status) => {
+    expect(resolution.codexDesktopTerminalConflictsWithOwner({ status, startedAt: 100_000 }, owner, 'current-ref')).toBe(true)
+  })
+
+  it('keeps source status and epoch paired, and never borrows a main epoch for a Side', () => {
+    const known = { connectorLastTurnStatus: 'interrupted', connectorLastTurnStartedAt: 90_000, lastTurnStartedAt: 999_000 }
+    expect(resolution.codexDesktopBranchInventoryTurn(owner, null, known, true, 'old-ref')).toEqual({})
+    expect(resolution.codexDesktopBranchInventoryTurn(null, null, known, true)).toMatchObject({ lastTurnStatus: 'interrupted', turnStartedAt: 90_000 })
+    expect(resolution.codexDesktopBranchInventoryTurn(null, { lastTurnStatus: 'completed', turnStartedAt: 80_000 }, known, false))
+      .toMatchObject({ lastTurnStatus: 'completed', turnStartedAt: 80_000 })
+  })
+
+  it('allows matching owner terminals and a strictly newer independent Turn without mixing ids or clock precision', () => {
+    const complete = { ...owner, currentCanonicalTurn: { ...owner.currentCanonicalTurn, status: 'completed' } }
+    expect(resolution.codexDesktopTerminalConflictsWithOwner({ status: 'completed', startedAt: 100_000 }, complete, 'current-ref')).toBe(false)
+    expect(resolution.codexDesktopTerminalConflictsWithOwner({ status: 'interrupted', startedAt: 110_000 }, owner, 'new-ref')).toBe(false)
+    expect(resolution.codexDesktopTerminalConflictsWithOwner({ status: 'completed', startedAt: 100_526 }, complete, 'different-ref')).toBe(true)
+    expect(resolution.codexDesktopTerminalConflictsWithOwner({ status: 'interrupted', startedAt: 90_000 }, { ...owner, ownerDisconnectedAt: 1 }, 'old-ref')).toBe(false)
+  })
+
+  it('uses the current own Turn epoch for live evidence instead of an old connector terminal epoch', () => {
+    expect(resolution.codexDesktopBranchTurnFields({ shadow: owner }, {
+      connectorLastTurnStatus: 'interrupted', connectorLastTurnStartedAt: 90_000
+    }, { main: true, live: true, activeSequence: 3 })).toMatchObject({
+      lastTurnStatus: 'inProgress', lastTurnEvidence: 'turn-started', turnStartedAt: 100_526, activeEvidenceSequence: 3
+    })
+  })
+
+  it('keeps inventory identity when rejecting an independent terminal, without minting a replacement outcome', () => {
+    const turn = { id: 'current', status: 'interrupted', startedAt: 100_000 }
+    expect(resolution.codexDesktopInventoryTurnCandidate(turn, owner, null, 'current-ref')).toEqual({})
+    expect(resolution.codexDesktopInventoryTurnCandidate(turn, owner, {
+      lastTurnStatus: 'inProgress', lastTurnStartedAt: 100_526, lastTurnEvidence: 'turn-started'
+    }, 'current-ref')).toMatchObject({ status: 'inProgress', startedAt: 100_526, evidence: 'turn-started' })
+  })
+
+  it('preserves a real turn-completed event when an inventory rejection races its Desktop projection', () => {
+    expect(resolution.codexDesktopInventoryTurnCandidate({ status: 'interrupted', startedAt: 100_000 }, owner, {
+      lastTurnId: 'current', lastTurnStatus: 'failed', lastTurnStartedAt: 100_526, lastTurnEvidence: 'turn-completed'
+    }, 'current-ref')).toMatchObject({ status: 'failed', startedAt: 100_526, evidence: 'turn-completed' })
+  })
+
+  it.each(['targeted-after-exit', 'turn-completed'])('checks an already recorded %s terminal with its proper authority', (evidence) => {
+    const terminal = { lastTurnStatus: 'interrupted', turnStartedAt: 100_526, lastTurnEvidence: evidence, terminalEvidenceSequence: 8 }
+    const fields = resolution.codexDesktopBranchTurnFields({ shadow: owner }, {}, { terminal, main: true, idleConfirmed: true })
+    if (evidence === 'targeted-after-exit') expect(fields.lastTurnStatus).toBeUndefined()
+    else expect(fields).toMatchObject({ lastTurnStatus: 'interrupted', lastTurnEvidence: 'turn-completed' })
+    const live = resolution.codexDesktopBranchTurnFields({ shadow: owner }, {}, {
+      terminal, main: true, live: true, terminalStrictlyNewer: true, activeSequence: 7
+    })
+    expect(live.lastTurnStatus).toBe(evidence === 'targeted-after-exit' ? 'inProgress' : 'interrupted')
+  })
+})
 
 describe('GPT async question evidence', () => {
   it('keeps anonymous identity and first-observation sequence stable across snapshots', () => {
@@ -261,5 +375,178 @@ describe('canonical activity causal boundary', () => {
     expect(resolver.codexDesktopCanonicalRunningWitness(shadow, known, true, 'same')).toBe(true)
     expect(resolver.codexDesktopHasResolvedCanonicalRun(shadow, 20, activity, known, 'same')).toBe(true)
     expect(resolver.codexDesktopCanonicalRunningWitness(shadow, known, false, 'same')).toBe(false)
+  })
+})
+
+describe('native ephemeral Side evidence', () => {
+  const resolver = createCodexDesktopActivityResolution({
+    timestampMs: (value: any) => typeof value === 'number' && Number.isFinite(value) ? value : 0,
+    validThreadId: (value: any) => typeof value === 'string' && value.length > 0,
+    isConfirmedTurnEvidence: () => true, waitingEvidenceVisible: () => true,
+    desktopRequestFlag: (request: any) => request.flag || '', desktopIsPlanImplementationRequest: () => false
+  })
+  const decision = resolver.codexDesktopSideTerminalDecision
+  const terminalShadow = (extra: any = {}) => ({
+    sideConversation: true, ephemeral: true, ownerClientId: 'owner', revision: 3,
+    runtime: { type: 'idle', activeFlags: [] }, canonicalLatestComplete: true,
+    currentCanonicalTurn: { turnRef: 'turn-ref', status: 'completed', startedAt: 100 },
+    requests: [], asyncTurns: [], nativeTurnSubmissions: [], ...extra
+  })
+
+  function ownerSnapshot(extra: any = {}, previous?: any) {
+    const { shadow } = harness()
+    const build = (fields: any = {}, prior: any = previous) => Object.assign(shadow.codexDesktopShadowFromSnapshot({
+      revision: 3, conversationState: {
+        sideConversation: true, ephemeral: true, threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+        requests: [], turns: [], turnHistory: { kind: 'canonical', history: {
+          islands: [{ entries: [{ value: 'secret-entity' }], newerBoundary: { status: 'exhausted' } }],
+          entitiesByKey: { 'secret-entity': { turnId: 'secret-turn', status: 'completed', turnStartedAtMs: 100, items: [] } }
+        } }, ...extra, ...fields
+      }
+    }, prior), { ownerClientId: 'owner' })
+    return { shadow, build, current: build() }
+  }
+
+  it('projects explicit capability and latest boundary without retaining native identifiers or Goal text', () => {
+    const { shadow, current } = ownerSnapshot({ threadGoal: { status: 'paused', updatedAt: 90, objective: 'secret goal' } })
+    expect(current.ephemeral).toBe(true)
+    expect(current.canonicalLatestComplete).toBe(true)
+    expect(current.currentCanonicalTurn).toMatchObject({ status: 'completed', startedAt: 100 })
+    expect(shadow.codexDesktopSideGoalEvidence(current)).toMatchObject({ goalStatus: 'paused', goalFreshness: 'fresh', goalUpdatedAt: 90 })
+    expect(JSON.stringify(current)).not.toContain('secret')
+  })
+
+  it('uses the member capability only with an explicit ephemeral flag and current owner', () => {
+    const { shadow, current, build } = ownerSnapshot()
+    expect(shadow.codexDesktopSideGoalEvidence(current)).toMatchObject({ goalStatus: 'none', goalFreshness: 'fresh' })
+    for (const extra of [{ ephemeral: undefined }, { ephemeral: false }, { sideConversation: false }]) {
+      expect(shadow.codexDesktopSideGoalEvidence(build(extra))).toBeNull()
+    }
+    expect(shadow.codexDesktopSideGoalEvidence({ ...current, ownerClientId: '' })).toBeNull()
+    expect(shadow.codexDesktopSideGoalEvidence({ ...current, ownerDisconnectedAt: 101 })).toBeNull()
+  })
+
+  it('preserves semantic Goal sequence across repeated snapshots and explicit none', () => {
+    const { shadow, current, build } = ownerSnapshot()
+    const first = shadow.codexDesktopSideGoalEvidence(current)
+    const next = build({}, current)
+    expect(shadow.codexDesktopSideGoalEvidence(next)).toEqual(first)
+    expect(shadow.codexApplyDesktopShadowPatch(next, { op: 'replace', path: ['threadGoal'], value: null })).toBe(true)
+    expect(shadow.codexDesktopSideGoalEvidence(next)).toEqual(first)
+    expect(shadow.codexApplyDesktopShadowPatch(next, { op: 'replace', path: ['threadGoal'], value: { status: 'active', updatedAt: 120, objective: 'secret goal' } })).toBe(true)
+    const active = shadow.codexDesktopSideGoalEvidence(next)
+    expect(active.goalEvidenceSequence).toBeGreaterThan(first.goalEvidenceSequence)
+    expect(active).toMatchObject({ goalStatus: 'active', goalUpdatedAt: 120 })
+    expect(shadow.codexApplyDesktopShadowPatch(next, { op: 'replace', path: ['threadGoal', 'objective'], value: 'secret changed' })).toBe(true)
+    expect(shadow.codexDesktopSideGoalEvidence(next)).toEqual(active)
+    expect(JSON.stringify(next)).not.toContain('secret')
+  })
+
+  it.each([undefined, 'bad', {}, { status: 'invented', updatedAt: 10 }, { status: 'active' }])('keeps malformed explicit Goal %j verifying', (threadGoal) => {
+    const { shadow, current } = ownerSnapshot({ threadGoal })
+    expect(shadow.codexDesktopSideGoalEvidence(current)).toMatchObject({ goalStatus: 'unknown', goalFreshness: 'verifying' })
+    expect(shadow.codexApplyDesktopShadowPatch(current, { op: 'remove', path: ['threadGoal'] })).toBe(true)
+    expect(shadow.codexDesktopSideGoalEvidence(current).goalStatus).toBe('none')
+  })
+
+  it('patches Goal lifecycle fields and preserves unknown ephemeral separately from false', () => {
+    const { shadow, current } = ownerSnapshot({ threadGoal: { status: 'active', updatedAt: 100 } })
+    for (const [path, value] of [[['threadGoal', 'status'], 'complete'], [['threadGoal', 'updatedAt'], 140]] as any[]) {
+      expect(shadow.codexApplyDesktopShadowPatch(current, { op: 'replace', path, value })).toBe(true)
+    }
+    expect(shadow.codexDesktopSideGoalEvidence(current)).toMatchObject({ goalStatus: 'complete', goalUpdatedAt: 140 })
+    expect(shadow.codexApplyDesktopShadowPatch(current, { op: 'remove', path: ['ephemeral'] })).toBe(true)
+    expect(current.ephemeral).toBeUndefined()
+    expect(shadow.codexDesktopSideGoalEvidence(current)).toBeNull()
+    expect(shadow.codexApplyDesktopShadowPatch(current, { op: 'add', path: ['ephemeral'], value: false })).toBe(true)
+    expect(current.ephemeral).toBe(false)
+    expect(shadow.codexApplyDesktopShadowPatch(current, { op: 'replace', path: ['ephemeral'], value: 'true' })).toBe(false)
+  })
+
+  it('tracks final-island boundaries and entries through native patches', () => {
+    const { shadow, current } = ownerSnapshot()
+    const patch = (path: any[], value: any, op = 'replace') => shadow.codexApplyDesktopShadowPatch(current, { op, path: ['turnHistory', 'history', ...path], value })
+    expect(patch(['islands', 0, 'newerBoundary', 'status'], 'available')).toBe(true)
+    expect(current.canonicalLatestComplete).toBe(false)
+    expect(decision(current).turn).toBeUndefined()
+    expect(patch(['islands', 0, 'newerBoundary'], { status: 'exhausted' })).toBe(true)
+    expect(decision(current).turn).toMatchObject({ status: 'completed', startedAt: 100 })
+    expect(patch(['islands', 1], { entries: [], newerBoundary: { status: 'exhausted' } }, 'add')).toBe(true)
+    expect(current.currentCanonicalTurn).toBeNull()
+    expect(decision(current).turn).toBeUndefined()
+    expect(patch(['entitiesByKey', 'new-secret'], { turnId: 'new-secret-turn', status: 'completed', turnStartedAtMs: 200, items: [] }, 'add')).toBe(true)
+    expect(patch(['islands', 1, 'entries', 0], { value: 'new-secret' }, 'add')).toBe(true)
+    expect(decision(current).turn.startedAt).toBe(200)
+    expect(patch(['entitiesByKey', 'new-secret', 'turnStartedAtMs'], 210)).toBe(true)
+    expect(decision(current).turn.startedAt).toBe(210)
+    expect(JSON.stringify(current)).not.toContain('secret')
+  })
+
+  it('blocks pending submissions until the native terminal patch arrives', () => {
+    const { shadow, current } = ownerSnapshot({ unconfirmedTurnSubmissions: [{ terminal: false, text: 'secret pending' }] })
+    expect(decision(current).reason).toBe('pending-work')
+    expect(shadow.codexApplyDesktopShadowPatch(current, { op: 'replace', path: ['unconfirmedTurnSubmissions', 0, 'terminal'], value: true })).toBe(true)
+    expect(decision(current).turn).toBeDefined()
+    expect(JSON.stringify(current)).not.toContain('secret')
+    const malformed = ownerSnapshot({ unconfirmedTurnSubmissions: null }).current
+    expect(decision(malformed).reason).toBe('pending-work')
+  })
+
+  it.each(['completed', 'interrupted', 'failed'])('admits owner canonical %s with a complete latest boundary', (status) => {
+    expect(decision(terminalShadow({ currentCanonicalTurn: { turnRef: 'turn-ref', status, startedAt: 100 } }))).toEqual({
+      turn: { status, startedAt: 100 }, duplicate: false, reason: 'owner-canonical-terminal'
+    })
+  })
+
+  it.each([
+    { ephemeral: undefined }, { ephemeral: false }, { sideConversation: false },
+    { ownerClientId: '' }, { ownerDisconnectedAt: 110 }, { revision: -1 },
+    { canonicalLatestComplete: false }, { currentCanonicalTurn: { turnRef: 'x', status: 'completed', startedAt: 0 } },
+    { runtime: { type: 'active', activeFlags: [] } }, { requests: [{ type: 'approval' }] },
+    { asyncTurns: [{ turnRef: 'turn-ref', status: 'inProgress', startedAt: 100 }] },
+    { asyncTurns: [{ turnRef: 'newer', status: 'completed', startedAt: 110 }] }
+  ])('does not settle incomplete or active evidence %j', (extra) => {
+    expect(decision(terminalShadow(extra)).turn).toBeUndefined()
+  })
+
+  it('rejects older canonical, branch and terminal epochs and exact same-turn activity', () => {
+    for (const options of [
+      { previousShadow: terminalShadow({ currentCanonicalTurn: { turnRef: 'newer', status: 'completed', startedAt: 120 } }) },
+      { terminal: { lastTurnStatus: 'completed', turnStartedAt: 120 } },
+      { branchTurnStartedAt: 120 }, { branchTurnStartedAt: 100, branchLiveExact: true },
+      { branchLiveExact: true }, { previousShadow: terminalShadow({ revision: 4 }) }
+    ]) expect(decision(terminalShadow(), options).turn).toBeUndefined()
+    expect(decision(terminalShadow(), { branchTurnStartedAt: 90, branchLiveExact: true }).turn).toBeDefined()
+  })
+
+  it('allows same-owner completion but refuses same/newer live work on an owner switch', () => {
+    const previous = terminalShadow({ revision: 2, runtime: { type: 'active', activeFlags: [] },
+      currentCanonicalTurn: { turnRef: 'turn-ref', status: 'inProgress', startedAt: 100 } })
+    expect(decision(terminalShadow(), { previousShadow: previous }).turn).toBeDefined()
+    expect(decision(terminalShadow({ ownerClientId: 'new-owner' }), { previousShadow: previous }).reason).toBe('previous-owner-live')
+    expect(decision(terminalShadow({ revision: 2 }), { previousShadow: previous }).reason).toBe('stale-revision')
+  })
+
+  it('marks repeated terminal snapshots duplicate and refuses newer active evidence', () => {
+    const terminal = { lastTurnStatus: 'completed', turnStartedAt: 100, terminalEvidenceSequence: 20 }
+    expect(decision(terminalShadow(), { terminal, branchLiveSequence: 10 }).duplicate).toBe(true)
+    expect(decision(terminalShadow(), { terminal, branchLiveSequence: 21 }).reason).toBe('newer-active-evidence')
+  })
+
+  it('extracts the original refresh choices for uncorroborated active and settled Side snapshots', () => {
+    const input = { known: { lastTurnStatus: 'completed', lastTurnStartedAt: 100 }, parentThreadId: 'parent',
+      desktopRelation: 'parent', inventoryRelation: '', completeInventoryKnown: true, completeInventoryContains: false,
+      parentTerminal: {}, branchTerminal: null, parentLiveSequence: 0 }
+    const side = terminalShadow({ activityRevision: 3, activityEvidence: 'activity-event' })
+    expect(resolver.codexDesktopSnapshotRefreshOptions('side', side, input)).toEqual({
+      verifyStaleActive: true, settleSnapshotTerminal: true, queryThreadId: 'side', snapshotThreadId: 'side',
+      snapshotActivityRevision: 3, forceQuery: true
+    })
+    expect(resolver.codexDesktopSnapshotRefreshOptions('side', side, { ...input, branchTerminal: {} })).toBeNull()
+    const active = terminalShadow({ sideConversation: false, activityEvidence: 'initial-snapshot', activityRevision: 4,
+      runtime: { type: 'active', activeFlags: [] } })
+    expect(resolver.codexDesktopSnapshotRefreshOptions('parent', active, input).forceQuery).toBe(false)
+    expect(resolver.codexDesktopSnapshotRefreshOptions('parent', active, { ...input, parentLiveSequence: 1 })).toBeNull()
+    expect(resolver.codexDesktopSnapshotRefreshOptions('parent', active, { ...input, known: { ...input.known, connectorPlanImplementationOnly: true } })).toBeNull()
   })
 })

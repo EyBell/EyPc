@@ -1,9 +1,10 @@
 'use strict'
 
 /**
- * Three independent aggregations that answer "what does this parent thread's
+ * Activity and unread aggregations that answer "what does this parent thread's
  * status look like given its own evidence and its Side Chats' evidence."
- * They never call each other and share no state -- grouped in one module
+ * They share no state; member withdrawal reuses the same activity reducer.
+ * Grouped in one module
  * because they are the same shape of problem (merge N observations into one
  * parent-level verdict), not because they cooperate.
  *
@@ -106,6 +107,36 @@ function createCodexDesktopActivityAggregation(dependencies = {}) {
     }
   }
 
+  /** Rebuild derived activity after membership withdrawal from remaining raw evidence. */
+  function codexParentActivityAfterMemberRemoval(branches, known = {}) {
+    const rows = Array.isArray(branches) ? branches : []
+    const own = rows.find((branch) => branch.branchKind === 'main')
+    const projected = codexResolveParentActivity(own || { status: 'notLoaded', activeFlags: [] },
+      rows.filter((branch) => branch !== own))
+    const activity = {
+      status: projected.status, activeFlags: projected.activeFlags,
+      waitingSince: projected.waitingSince, desktopActiveSince: projected.desktopActiveSince,
+      planImplementationOnly: projected.planImplementationOnly
+    }
+    if (projected.status === 'active') return activity
+    const exactTerminal = own && ['completed', 'interrupted', 'failed'].includes(own.lastTurnStatus)
+      && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(own.lastTurnEvidence)
+      && Number(own.terminalEvidenceSequence) > 0
+    // The public lastTurn fields may still describe the removed member. Only
+    // the exact private main terminal or untouched connector baseline survives.
+    const terminalStatus = exactTerminal ? own.lastTurnStatus
+      : ['completed', 'interrupted', 'failed', 'inProgress'].includes(known.connectorLastTurnStatus)
+        ? known.connectorLastTurnStatus : ''
+    return { ...activity, lastTurnStatus: terminalStatus,
+      lastTurnEvidence: exactTerminal ? own.lastTurnEvidence : terminalStatus ? 'inventory' : '',
+      lastTurnStartedAt: timestampMs(exactTerminal ? own.turnStartedAt : known.connectorLastTurnStartedAt),
+      lastTurnCompletedAt: terminalStatus === 'completed'
+        ? timestampMs(exactTerminal ? own.terminalAt : known.connectorLastTurnCompletedAt) : 0,
+      terminalEvidenceSequence: exactTerminal ? Number(own.terminalEvidenceSequence) : 0,
+      idleConfirmed: Boolean(exactTerminal) && own.idleConfirmed === true
+    }
+  }
+
   function codexDesktopAggregateUnread(bridge, known, parentThreadId, ownShadow, childEntries, persistedUnreadIds) {
     const observations = [
       unreadObservation(bridge, known, parentThreadId, ownShadow, persistedUnreadIds),
@@ -132,6 +163,7 @@ function createCodexDesktopActivityAggregation(dependencies = {}) {
     codexDesktopAsyncQuestionOverridesRunning,
     codexDesktopRepeatedStartPreservesQuestion,
     codexResolveParentActivity,
+    codexParentActivityAfterMemberRemoval,
     codexDesktopAggregateUnread
   }
 }

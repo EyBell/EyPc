@@ -7,14 +7,45 @@
  * and which are isolated because the claimed parent is missing,
  * self-referential, in a different session, or forms a cycle.
  *
- * Pure graph reconstruction over its `rows` argument — no host contact, no
- * module state. `record`, `validThreadId` and `nativeString` are injected
+ * Pure graph reconstruction over its `rows` argument — no host contact.
+ * The factory also deduplicates anonymous topology diagnostics within one session. `record`, `validThreadId` and `nativeString` are injected
  * rather than imported: `codexRecord`/`validCodexThreadId` are shared by
  * dozens of call sites elsewhere in the entry, so a load failure must not
  * reach them.
  */
 
 const CODEX_INVENTORY_THREAD_TOPOLOGY_REVISION = 'codex-inventory-thread-topology-v1'
+
+/** Pure anonymous diagnostic projection; the entry owns publication and deduplication. */
+function codexSideTopologyDiagnosticRecords(sourceCount, relations, depths, orphanCount, recoveredLiveByParent = new Map(), threadKey) {
+  const byParent = new Map()
+  for (const [threadId, parentThreadId] of relations) {
+    const current = byParent.get(parentThreadId) || { sideCount: 0, nestedSideCount: 0 }
+    current.sideCount += 1
+    if ((depths.get(threadId) || 0) > 1) current.nestedSideCount += 1
+    const recoveredLiveCount = recoveredLiveByParent.get(parentThreadId) || 0
+    if (recoveredLiveCount > 0) current.recoveredLiveCount = recoveredLiveCount
+    byParent.set(parentThreadId, current)
+  }
+  const recoveredLiveTotal = [...recoveredLiveByParent.values()].reduce((sum, count) => sum + count, 0)
+  const aggregateDetails = {
+    rootCount: Math.max(0, sourceCount - relations.size),
+    sideCount: relations.size,
+    orphanCount: Math.max(0, orphanCount),
+    nestedSideCount: [...depths.entries()].filter(([threadId, depth]) => relations.has(threadId) && depth > 1).length,
+    mergedParentCount: byParent.size,
+    ...(recoveredLiveTotal > 0 ? { recoveredLiveCount: recoveredLiveTotal } : {})
+  }
+  const base = { level: 'info', scope: 'task-topology', event: 'side-topology-decision', provider: 'codex' }
+  return [{ key: 'aggregate', signature: JSON.stringify(aggregateDetails), event: {
+    ...base, outcome: relations.size ? 'merged' : orphanCount ? 'standalone' : 'root-only', details: aggregateDetails
+  } }, ...[...byParent].map(([parentThreadId, details]) => ({
+    key: `parent:${threadKey(parentThreadId)}`, signature: JSON.stringify(details), event: {
+      ...base, outcome: 'merged-parent', taskRef: threadKey(parentThreadId),
+      details: { rootCount: 1, orphanCount: 0, ...details }
+    }
+  }))]
+}
 
 function createCodexInventoryThreadTopology(dependencies = {}) {
   const record = dependencies.record
@@ -23,6 +54,18 @@ function createCodexInventoryThreadTopology(dependencies = {}) {
   if (typeof record !== 'function' || typeof validThreadId !== 'function' || typeof nativeString !== 'function') {
     throw new TypeError('codex inventory thread topology requires record, validThreadId and nativeString')
   }
+
+  const diagnosticFingerprints = new Map()
+  function codexRecordSideTopologyDecision(sourceCount, relations, depths, orphanCount, recoveredLiveByParent = new Map()) {
+    if (typeof dependencies.threadKey !== 'function' || typeof dependencies.recordDiagnostic !== 'function') return
+    const records = codexSideTopologyDiagnosticRecords(sourceCount, relations, depths, orphanCount, recoveredLiveByParent, dependencies.threadKey)
+    for (const { key, signature, event } of records) {
+      if (diagnosticFingerprints.get(key) !== signature) dependencies.recordDiagnostic(event)
+    }
+    diagnosticFingerprints.clear()
+    for (const { key, signature } of records) diagnosticFingerprints.set(key, signature)
+  }
+  function codexResetSideTopologyDiagnostics() { diagnosticFingerprints.clear() }
 
   function codexInventoryThreadTopology(rows) {
     const rowById = new Map()
@@ -94,11 +137,15 @@ function createCodexInventoryThreadTopology(dependencies = {}) {
 
   return {
     revision: CODEX_INVENTORY_THREAD_TOPOLOGY_REVISION,
-    codexInventoryThreadTopology
+    codexInventoryThreadTopology,
+    codexRecordSideTopologyDecision,
+    codexResetSideTopologyDiagnostics,
+    codexSideTopologyDiagnosticRecords
   }
 }
 
 module.exports = {
   CODEX_INVENTORY_THREAD_TOPOLOGY_REVISION,
-  createCodexInventoryThreadTopology
+  createCodexInventoryThreadTopology,
+  codexSideTopologyDiagnosticRecords
 }

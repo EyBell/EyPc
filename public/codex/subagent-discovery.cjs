@@ -14,7 +14,9 @@
  * the injected `thread/read` whose `parentThreadId` names a thread already in
  * the scan's inventory, and the verified row then flows through the ordinary
  * pipeline (topology, side relations, targeted latest-Turn reads) so no
- * consumer gains a second phase judgment.
+ * consumer gains a second phase judgment. Exact guardian_review rows retain
+ * their source identity here so the entry can exclude internal reviews from
+ * user-task membership across inventory and live transports.
  *
  * `fs`/`path` are injected on the native-state-paths precedent; `readThread`
  * and `record` keep RPC transport and diagnostics with the entry. The only
@@ -50,6 +52,29 @@ function isSubAgentThreadSource(value) {
   return Boolean(value && typeof value === 'object' && value.subAgent !== undefined)
 }
 
+function isInternalReviewThreadSource(value) {
+  return value === 'guardian_review'
+}
+
+/** Only native finite source shapes may supersede a verified source identity. */
+function codexThreadSourceKind(value) {
+  if (isInternalReviewThreadSource(value)) return 'guardian_review'
+  if (['cli', 'exec', 'vscode', 'appServer', 'subagent'].includes(value)) return 'other'
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'unknown'
+  const subAgent = value.subAgent
+  if (subAgent === 'review' || subAgent === 'compact') return 'other'
+  if (!subAgent || typeof subAgent !== 'object' || Array.isArray(subAgent)) return 'unknown'
+  const keys = Object.keys(subAgent)
+  if (keys.length !== 1) return 'unknown'
+  if (keys[0] === 'other' && typeof subAgent.other === 'string' && subAgent.other.length > 0) return 'other'
+  const spawn = subAgent.spawn
+  if (keys[0] === 'spawn' && spawn && typeof spawn === 'object' && !Array.isArray(spawn)
+    && typeof spawn.parentThreadId === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(spawn.parentThreadId)
+    && Number.isInteger(spawn.depth) && spawn.depth >= 0) return 'other'
+  return 'unknown'
+}
+
 function createCodexSubagentDiscovery(dependencies = {}) {
   const fs = dependencies.fs
   const path = dependencies.path
@@ -62,6 +87,33 @@ function createCodexSubagentDiscovery(dependencies = {}) {
 
   /** threadId -> { mtimeMs, row|null }; `row: null` records a verified non-link. */
   let verifiedRows = new Map()
+  // Keep only a finite identity decision, never the source object or its data.
+  // A missing source on another transport cannot revive an internal review.
+  const internalReviewThreadIds = new Set()
+
+  function codexIsInternalReviewThread(threadId) {
+    return typeof threadId === 'string' && internalReviewThreadIds.has(threadId.toLowerCase())
+  }
+
+  function codexObserveThreadSourceKind(threadId, kind) {
+    if (typeof threadId !== 'string' || !validThreadId(threadId)) return false
+    const id = threadId.toLowerCase()
+    if (kind === 'guardian_review') internalReviewThreadIds.add(id)
+    else if (kind === 'other') internalReviewThreadIds.delete(id)
+    return internalReviewThreadIds.has(id)
+  }
+
+  function codexObserveThreadRows(rows) {
+    const internalIds = new Set()
+    for (const value of Array.isArray(rows) ? rows : []) {
+      const row = record(value)
+      if (typeof row.id !== 'string' || !validThreadId(row.id)) continue
+      const kind = codexThreadSourceKind(row.threadSource)
+      codexObserveThreadSourceKind(row.id, kind)
+      if (kind === 'guardian_review') internalIds.add(row.id.toLowerCase())
+    }
+    return [...internalIds]
+  }
 
   function numericNameDescending(entries) {
     return entries
@@ -146,6 +198,7 @@ function createCodexSubagentDiscovery(dependencies = {}) {
       try {
         readCount += 1
         const thread = record(record(await readThread(candidate.threadId)).thread)
+        if (thread.id === candidate.threadId) codexObserveThreadRows([thread])
         const parentThreadId = typeof thread.parentThreadId === 'string' ? thread.parentThreadId : ''
         const linkable = thread.id === candidate.threadId
           && validThreadId(parentThreadId)
@@ -175,6 +228,7 @@ function createCodexSubagentDiscovery(dependencies = {}) {
 
   function codexResetSubagentDiscovery() {
     verifiedRows = new Map()
+    internalReviewThreadIds.clear()
   }
 
   /**
@@ -192,6 +246,9 @@ function createCodexSubagentDiscovery(dependencies = {}) {
     codexRecentRolloutThreadCandidates,
     codexDiscoverSubagentThreadRows,
     codexResetSubagentDiscovery,
+    codexObserveThreadRows,
+    codexObserveThreadSourceKind,
+    codexIsInternalReviewThread,
     codexIsMachineRunThread,
     isSubAgentThreadSource
   }
@@ -202,5 +259,7 @@ module.exports = {
   CODEX_SUBAGENT_DISCOVERY_MAX_AGE_MS,
   CODEX_SUBAGENT_DISCOVERY_LIMIT,
   isSubAgentThreadSource,
+  isInternalReviewThreadSource,
+  codexThreadSourceKind,
   createCodexSubagentDiscovery
 }

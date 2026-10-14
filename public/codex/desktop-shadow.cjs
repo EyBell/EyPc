@@ -26,6 +26,11 @@ const { COMPANION_V7_REVISIONS } = require('../companion/contracts-v7.cjs')
  */
 
 const { desktopReadEvidence, persistedConnectorUnread, parseCodexDesktopUnreadState, codexReadStateContextBinding } = require('./desktop-unread-evidence.cjs')
+let threadSourceKind = () => 'unknown'
+try {
+  const classifier = require('./subagent-discovery.cjs').codexThreadSourceKind
+  if (typeof classifier === 'function') threadSourceKind = classifier
+} catch {}
 
 const CODEX_DESKTOP_SHADOW_REVISION = COMPANION_V7_REVISIONS.desktopShadow
 /** How many resolved request observations a waiting state remembers. */
@@ -175,9 +180,16 @@ function createCodexDesktopShadow(dependencies = {}) {
     return typeof value === 'string' ? projectedRequest({ id: value }).correlation || '' : ''
   }
 
-  function historyOrder(islands) {
-    return (Array.isArray(islands) ? islands : []).flatMap((island) => Array.isArray(island?.entries)
-      ? island.entries.map((entry) => historyRef(entry?.value)).filter(Boolean) : [])
+  function historyIslands(value) {
+    return (Array.isArray(value) ? value : []).map((island) => ({
+      entries: (Array.isArray(island?.entries) ? island.entries : []).map((entry) => historyRef(entry?.value)),
+      latestComplete: island?.newerBoundary?.status === 'exhausted'
+    }))
+  }
+
+  function refreshHistoryOrder(history) {
+    history.order = history.islands.flatMap((island) => island.entries).filter(Boolean)
+    history.latestComplete = history.islands.at(-1)?.latestComplete === true
   }
 
   function historyEntities(value) {
@@ -192,7 +204,35 @@ function createCodexDesktopShadow(dependencies = {}) {
   function asyncHistory(value) {
     if (value?.kind !== 'canonical') return null
     const history = record(value.history)
-    return { order: historyOrder(history.islands), entities: historyEntities(history.entitiesByKey) }
+    const projected = { islands: historyIslands(history.islands), entities: historyEntities(history.entitiesByKey) }
+    refreshHistoryOrder(projected)
+    return projected
+  }
+
+  const goalStatuses = ['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete']
+
+  function nativeGoal(value) {
+    if (value === null) return { kind: 'none' }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { kind: 'invalid' }
+    return { kind: 'goal', status: goalStatuses.includes(value.status) ? value.status : '', updatedAt: timestampMs(value.updatedAt) }
+  }
+
+  function codexDesktopSideGoalEvidence(shadow) {
+    if (shadow?.sideConversation !== true || shadow.ephemeral !== true
+      || typeof shadow.ownerClientId !== 'string' || !shadow.ownerClientId || shadow.ownerDisconnectedAt) return null
+    // Native ephemeral threads explicitly do not support Goals. An explicit
+    // field still wins, including malformed data, so schema drift fails closed.
+    const goal = shadow.nativeGoal
+    const evidence = !goal || goal.kind === 'none'
+      ? { goalStatus: 'none', goalFreshness: 'fresh', goalUpdatedAt: 0 }
+      : goal.kind === 'goal' && goalStatuses.includes(goal.status) && Number.isFinite(goal.updatedAt) && goal.updatedAt > 0
+        ? { goalStatus: goal.status, goalFreshness: 'fresh', goalUpdatedAt: goal.updatedAt }
+        : { goalStatus: 'unknown', goalFreshness: 'verifying', goalUpdatedAt: 0 }
+    const previous = shadow.sideGoalEvidence
+    if (previous?.goalStatus === evidence.goalStatus && previous.goalFreshness === evidence.goalFreshness
+      && previous.goalUpdatedAt === evidence.goalUpdatedAt) return previous
+    shadow.sideGoalEvidence = { ...evidence, goalEvidenceSequence: nextLiveEvidenceSequence() }
+    return shadow.sideGoalEvidence
   }
 
   function refreshAsyncRequests(shadow, previous = shadow.requests) {
@@ -221,7 +261,8 @@ function createCodexDesktopShadow(dependencies = {}) {
       && ['completed', 'interrupted', 'failed'].includes(latest?.status)
       ? turns.findLast(value => value.turnRef && value.status === 'inProgress') : null
     const turn = pendingSideTurn || (latest?.turnRef && ['inProgress', 'completed'].includes(latest.status) ? latest : null)
-    const canonical = shadow.asyncCanonical?.entities[shadow.asyncCanonical?.order.at(-1)]
+    const canonical = shadow.asyncCanonical?.entities[shadow.asyncCanonical?.islands.at(-1)?.entries.at(-1)]
+    shadow.canonicalLatestComplete = shadow.asyncCanonical?.latestComplete === true
     shadow.currentCanonicalTurn = canonical?.turnRef
       ? { turnRef: canonical.turnRef, status: canonical.status, startedAt: canonical.startedAt } : null
     const followingItems = pendingSideTurn
@@ -267,6 +308,10 @@ function createCodexDesktopShadow(dependencies = {}) {
     }
     if (p[2] === 'turnId' && p.length === 3) {
       turns[ti].turnRef = op === 'remove' ? '' : historyRef(source.value)
+      return true
+    }
+    if (p[2] === 'turnStartedAtMs' && p.length === 3) {
+      turns[ti].startedAt = op === 'remove' ? 0 : timestampMs(source.value)
       return true
     }
     if (p[2] !== 'items') return 'ignored'
@@ -343,8 +388,39 @@ function createCodexDesktopShadow(dependencies = {}) {
       return p.length > 4 && !['items', 'questions', 'turnId'].includes(p.at(-1)) ? 'ignored' : false
     }
     if (p[2] === 'islands') {
-      if (p.length !== 3) return false
-      shadow.asyncCanonical.order = source.op === 'remove' ? [] : historyOrder(source.value)
+      const history = shadow.asyncCanonical
+      if (p.length === 3) history.islands = source.op === 'remove' ? [] : historyIslands(source.value)
+      else {
+        const index = codexDesktopPatchIndex(p[3], history.islands.length, source.op === 'add' && p.length === 4)
+        if (index < 0) return false
+        if (p.length === 4) {
+          if (source.op === 'remove') history.islands.splice(index, 1)
+          else if (source.op === 'add') history.islands.splice(index, 0, historyIslands([source.value])[0])
+          else history.islands[index] = historyIslands([source.value])[0]
+        } else {
+          const island = history.islands[index]
+          if (p[4] === 'newerBoundary') {
+            if (p.length === 5) island.latestComplete = source.op !== 'remove' && source.value?.status === 'exhausted'
+            else if (p.length === 6 && p[5] === 'status') island.latestComplete = source.op !== 'remove' && source.value === 'exhausted'
+            else return 'ignored'
+          } else if (p[4] === 'entries') {
+            if (p.length === 5) {
+              if (source.op !== 'remove' && !Array.isArray(source.value)) return false
+              island.entries = source.op === 'remove' ? [] : source.value.map((entry) => historyRef(entry?.value))
+            } else {
+              const entryIndex = codexDesktopPatchIndex(p[5], island.entries.length, source.op === 'add' && p.length === 6)
+              if (entryIndex < 0) return false
+              if (p.length === 6) {
+                if (source.op === 'remove') island.entries.splice(entryIndex, 1)
+                else if (source.op === 'add') island.entries.splice(entryIndex, 0, historyRef(source.value?.value))
+                else island.entries[entryIndex] = historyRef(source.value?.value)
+              } else if (p.length === 7 && p[6] === 'value') island.entries[entryIndex] = source.op === 'remove' ? '' : historyRef(source.value)
+              else return 'ignored'
+            }
+          } else return 'ignored'
+        }
+      }
+      refreshHistoryOrder(history)
       return true
     }
     if (p.length === 3) {
@@ -396,6 +472,13 @@ function createCodexDesktopShadow(dependencies = {}) {
       activityEvidence: 'initial-snapshot',
       runtime,
       sideConversation: state.sideConversation === true,
+      threadSourceKind: threadSourceKind(state.threadSource),
+      ephemeral: typeof state.ephemeral === 'boolean' ? state.ephemeral : undefined,
+      nativeGoal: Object.prototype.hasOwnProperty.call(state, 'threadGoal') ? nativeGoal(state.threadGoal) : null,
+      sideGoalEvidence: previousShadow?.sideGoalEvidence ? { ...previousShadow.sideGoalEvidence } : null,
+      nativeTurnSubmissions: Array.isArray(state.unconfirmedTurnSubmissions)
+        ? state.unconfirmedTurnSubmissions.map((submission) => submission?.terminal === true)
+        : Object.prototype.hasOwnProperty.call(state, 'unconfirmedTurnSubmissions') ? [false] : [],
       parentThreadId: validThreadId(state.forkedFromId)
         ? state.forkedFromId
         : typeof state.sideConversationParentNavigationPath === 'string'
@@ -478,8 +561,45 @@ function createCodexDesktopShadow(dependencies = {}) {
     // only the finite runtime/request/read subset; unrelated well-formed patches
     // still advance the stream revision and must not tear down live authority.
     // A malformed patch inside the observed subset remains a resubscribe signal.
-    if (!['hasUnreadTurn', 'resumeState', 'threadRuntimeStatus', 'requests'].includes(root)) return true
+    if (!['hasUnreadTurn', 'resumeState', 'threadRuntimeStatus', 'requests', 'ephemeral', 'sideConversation', 'threadSource', 'threadGoal', 'unconfirmedTurnSubmissions'].includes(root)) return true
     if (patchPath.length > 8) return false
+    if (root === 'threadSource') {
+      if (patchPath.length !== 1) return false
+      shadow.threadSourceKind = operation === 'remove' ? 'unknown' : threadSourceKind(source.value)
+      return true
+    }
+    if (root === 'ephemeral' || root === 'sideConversation') {
+      if (patchPath.length !== 1 || operation !== 'remove' && typeof source.value !== 'boolean') return false
+      shadow[root] = operation === 'remove' ? root === 'ephemeral' ? undefined : false : source.value
+      return true
+    }
+    if (root === 'threadGoal') {
+      if (patchPath.length === 1) shadow.nativeGoal = operation === 'remove' ? null : nativeGoal(source.value)
+      else if (patchPath[1] === 'status' || patchPath[1] === 'updatedAt') {
+        if (patchPath.length !== 2 || shadow.nativeGoal?.kind !== 'goal') return false
+        if (patchPath[1] === 'status') shadow.nativeGoal.status = operation !== 'remove' && goalStatuses.includes(source.value) ? source.value : ''
+        else shadow.nativeGoal.updatedAt = operation === 'remove' ? 0 : timestampMs(source.value)
+      }
+      return true
+    }
+    if (root === 'unconfirmedTurnSubmissions') {
+      if (patchPath.length === 1) {
+        if (operation !== 'remove' && !Array.isArray(source.value)) return false
+        shadow.nativeTurnSubmissions = operation === 'remove' ? [] : source.value.map((submission) => submission?.terminal === true)
+        return true
+      }
+      const submissions = shadow.nativeTurnSubmissions || []
+      const index = codexDesktopPatchIndex(patchPath[1], submissions.length, operation === 'add' && patchPath.length === 2)
+      if (index < 0) return false
+      if (patchPath.length === 2) {
+        if (operation === 'remove') submissions.splice(index, 1)
+        else if (operation === 'add') submissions.splice(index, 0, source.value?.terminal === true)
+        else submissions[index] = source.value?.terminal === true
+      } else if (patchPath.length === 3 && patchPath[2] === 'terminal') submissions[index] = operation !== 'remove' && source.value === true
+      else return true
+      shadow.nativeTurnSubmissions = submissions
+      return true
+    }
     if (root === 'hasUnreadTurn') {
       if (patchPath.length !== 1) return false
       if (operation === 'remove') {
@@ -580,6 +700,7 @@ function createCodexDesktopShadow(dependencies = {}) {
     codexRememberDesktopRequestObservations,
     codexDesktopRequestObservationCandidates,
     codexDesktopShadowFromSnapshot,
+    codexDesktopSideGoalEvidence,
     codexDesktopPatchIndex,
     codexApplyDesktopShadowPatch,
     codexApplyNativeConnectorUnread,
