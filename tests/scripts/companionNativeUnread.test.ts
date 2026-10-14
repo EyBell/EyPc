@@ -6,7 +6,7 @@ import { checkCompanionNativeUnread } from '../../scripts/check-companion-native
 
 describe('Native Codex identity-scoped unread gate', () => {
   it('executes native/legacy source selection, identity isolation and live protocol acceptance', () => {
-    expect(checkCompanionNativeUnread(resolve('preload'))).toBe(17)
+    expect(checkCompanionNativeUnread(resolve('preload'))).toBe(23)
   })
   it('rejects the obsolete live unread protocol policy', () => {
     const temporary = mkdtempSync(join(tmpdir(), 'eypc-native-unread-'))
@@ -27,7 +27,7 @@ describe('Native Codex identity-scoped unread gate', () => {
       symlinkSync(resolve('preload/codex/desktop-request-projection.cjs'), join(temporary, 'codex/desktop-request-projection.cjs'))
       const source = readFileSync(resolve('preload/codex/desktop-unread-evidence.cjs'), 'utf8')
       const guard = 'keys.length !== 1'
-      expect(source).toContain(guard)
+      expect(source.includes(guard), 'migration identity guard must exist in its production owner').toBe(true)
       writeFileSync(join(temporary, 'codex/desktop-unread-evidence.cjs'), source.replace(guard, 'keys.length < 1'))
       writeFileSync(join(temporary, 'preload.js'), readFileSync(resolve('preload/index.js'), 'utf8'))
       expect(() => checkCompanionNativeUnread(temporary)).toThrow()
@@ -38,8 +38,11 @@ describe('Native Codex identity-scoped unread gate', () => {
     ['Desktop-only relation proof', '|| codexDesktopSideRelations.get(row.threadId) === parentThreadId', '|| false'],
     ['Side request ownership', 'const taskKey = threadId === parentThreadId ? known.key : `codex-child:${branchRef}`', 'const taskKey = known.key', 'codex/desktop-request-projection.cjs'],
     ['parent completion cache used for Side', 'if (queryThreadId === threadId\n        && !refresh.verifyStaleActive', 'if (!refresh.verifyStaleActive'],
-    ['activity-only request replay', 'memberInteractions.push(...evidence.interactions)', 'memberInteractions.push()']
-  ])('rejects losing %s', (_name, before, after, file = 'index.js') => {
+    ['activity-only request replay', 'memberInteractions.push(...evidence.interactions)', 'memberInteractions.push()'],
+    ['Side epoch borrowed from parent', '|| (main ? timestampMs(known.lastTurnStartedAt) : 0)', '|| timestampMs(known.lastTurnStartedAt)', 'codex/desktop-activity-resolution.cjs'],
+    ['cold idle Side verification', 'const settledSide = shadow.sideConversation === true', 'const settledSide = false', 'codex/desktop-activity-resolution.cjs'],
+    ['inactive member exact terminal readiness', 'settledSide || finalAttempt', 'finalAttempt', 'codex/desktop-activity-resolution.cjs']
+  ])('rejects losing %s', (name, before, after, file = 'index.js') => {
     const temporary = mkdtempSync(join(tmpdir(), 'eypc-native-side-'))
     try {
       mkdirSync(join(temporary, 'codex'))
@@ -48,10 +51,12 @@ describe('Native Codex identity-scoped unread gate', () => {
         if (`codex/${name}` !== file) symlinkSync(resolve('preload/codex', name), join(temporary, 'codex', name))
       }
       const source = readFileSync(resolve('preload', file), 'utf8')
-      expect(source).toContain(before)
+      expect(source.includes(before), `${name} mutation target must exist in ${file}`).toBe(true)
       if (file !== 'index.js') writeFileSync(join(temporary, 'preload.js'), readFileSync(resolve('preload/index.js'), 'utf8'))
       writeFileSync(join(temporary, file === 'index.js' ? 'preload.js' : file), source.replace(before, after))
-      expect(() => checkCompanionNativeUnread(temporary)).toThrow()
+      expect(() => checkCompanionNativeUnread(temporary)).toThrow(name === 'cold idle Side verification'
+        ? /cold idle Side requires its own bounded Turn verification/
+        : undefined)
     } finally { rmSync(temporary, { recursive: true, force: true }) }
   })
 

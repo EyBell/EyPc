@@ -3,6 +3,128 @@ import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+function checkDesktopSideTerminalCapability(require) {
+  const { createCodexDesktopShadow } = require('./codex/desktop-shadow.cjs')
+  const { createCodexDesktopActivityResolution } = require('./codex/desktop-activity-resolution.cjs')
+  const { createCodexDesktopRequestProjection } = require('./codex/desktop-request-projection.cjs')
+  let sequence = 0
+  const helpers = { record: value => value && typeof value === 'object' ? value : {},
+    timestampMs: value => Number(value) || 0, nextLiveEvidenceSequence: () => ++sequence }
+  const requests = createCodexDesktopRequestProjection(helpers)
+  const activity = createCodexDesktopActivityResolution({ ...helpers, validThreadId: () => true,
+    isConfirmedTurnEvidence: value => value === 'snapshot-corroborated', waitingEvidenceVisible: () => true,
+    desktopRequestFlag: requests.codexDesktopRequestFlag,
+    desktopIsPlanImplementationRequest: requests.codexDesktopIsPlanImplementationRequest })
+  const parser = createCodexDesktopShadow({ ...helpers, validThreadId: () => true,
+    reduceWaitingEdge: activity.codexReduceWaitingEdge,
+    activityStatus: value => ({ status: value.type, activeFlags: value.activeFlags }),
+    projectedRequest: requests.codexDesktopProjectedRequest, projectedRequests: requests.codexDesktopProjectedRequests })
+  assert.equal(typeof activity.codexDesktopSideTerminalDecision, 'function', 'native Side terminal capability is available')
+  assert.equal(typeof parser.codexDesktopSideGoalEvidence, 'function', 'native ephemeral Goal capability is available')
+  const startedAt = 2000
+  function snapshot(state = {}, revision = 10, boundary = 'exhausted') {
+    const shadow = parser.codexDesktopShadowFromSnapshot({ revision, conversationState: {
+      sideConversation: true, ephemeral: true, threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+      requests: [], turns: [], turnHistory: { kind: 'canonical', history: {
+        islands: [{ newerBoundary: { status: boundary }, entries: [{ value: 'current' }] }],
+        entitiesByKey: { current: { turnId: 'synthetic-current', status: 'completed', turnStartedAtMs: startedAt, items: [] } }
+      } }, ...state
+    } })
+    assert(shadow, 'a valid native Side snapshot is parsed')
+    return { ...shadow, ownerClientId: 'synthetic-owner' }
+  }
+  const current = snapshot()
+  assert.equal(current.canonicalLatestComplete, true, 'native exhausted boundary proves newest canonical coverage')
+  assert.deepEqual(activity.codexDesktopSideTerminalDecision(current).turn, { status: 'completed', startedAt },
+    'native ephemeral idle canonical completion is accepted without an App Server read')
+  let checked = 1
+  const refused = [
+    ['ordinary-side', snapshot({ ephemeral: false })],
+    ['incomplete-canonical', snapshot({}, 10, 'loading')],
+    ['disconnected-owner', { ...current, ownerDisconnectedAt: 1 }],
+    ['new-running', snapshot({ threadRuntimeStatus: { type: 'active', activeFlags: [] } })],
+    ['waiting-input', snapshot({ requests: [{ id: 'synthetic-question', type: 'userInput', method: 'requestUserInput' }] })],
+    ['pending-submission', snapshot({ unconfirmedTurnSubmissions: [{ terminal: false }] })],
+    ['new-live-overlay', snapshot({ turns: [{ turnId: 'synthetic-new', status: 'inProgress', turnStartedAtMs: startedAt + 1, items: [] }] })],
+    ['previous-owner-live', current, { previousShadow: { ...current, ownerClientId: 'synthetic-previous-owner', runtime: { type: 'active', activeFlags: [] } } }],
+    ['old-owner-revision', current, { previousShadow: { ...current, revision: 11 } }],
+    ['newer-branch-turn', current, { branchTurnStartedAt: startedAt + 1 }]
+  ]
+  for (const [name, shadow, options] of refused) {
+    assert.equal(activity.codexDesktopSideTerminalDecision(shadow, options).turn, undefined, `native Side ${name} must not complete`)
+    checked++
+  }
+  for (const [name, shadow, expected] of [
+    ['ephemeral-capability', snapshot(), { goalStatus: 'none', goalFreshness: 'fresh' }],
+    ['ordinary-side', snapshot({ ephemeral: false }), null],
+    ['unspecified-capability', snapshot({ ephemeral: undefined }), null],
+    ['explicit-active', snapshot({ threadGoal: { status: 'active', updatedAt: 3000 } }), { goalStatus: 'active', goalFreshness: 'fresh', goalUpdatedAt: 3000 }],
+    ['malformed-goal', snapshot({ threadGoal: {} }), { goalStatus: 'unknown', goalFreshness: 'verifying' }]
+  ]) {
+    const actual = parser.codexDesktopSideGoalEvidence(shadow)
+    if (expected === null) assert.equal(actual, null, `native Goal ${name} cannot imply unsupported`)
+    else for (const [key, value] of Object.entries(expected)) assert.equal(actual?.[key], value, `native Goal ${name} preserves ${key}`)
+    checked++
+  }
+  const main = { ...current, sideConversation: false, ephemeral: false }
+  assert.deepEqual(activity.codexDesktopCanonicalTerminalDecision(main).turn, { status: 'completed', startedAt },
+    'native main owner completion is accepted before independent reader completion')
+  for (const status of ['interrupted', 'failed']) {
+    assert.equal(activity.codexDesktopCanonicalTerminalDecision({ ...main,
+      currentCanonicalTurn: { ...main.currentCanonicalTurn, status } }).turn?.status, status,
+    `native main real ${status} remains terminal`)
+  }
+  assert.equal(activity.codexDesktopCanonicalTerminalDecision({ ...main, canonicalLatestComplete: false }).turn, undefined,
+    'native main incomplete canonical cannot complete')
+  const running = { ...main, currentCanonicalTurn: { ...main.currentCanonicalTurn, status: 'inProgress', startedAt: startedAt + 526 } }
+  assert.equal(activity.codexDesktopTerminalConflictsWithOwner({ status: 'interrupted', startedAt }, running, current.currentCanonicalTurn.turnRef), true,
+    'independent interrupted cannot override the same running owner Turn')
+  assert.deepEqual(activity.codexDesktopBranchInventoryTurn(running, null,
+    { connectorLastTurnStatus: 'interrupted', connectorLastTurnStartedAt: startedAt }, true, current.currentCanonicalTurn.turnRef), {},
+  'conflicting connector terminal cannot enter a current private branch')
+  assert.equal(activity.codexDesktopBranchInventoryTurn({ ...main, currentCanonicalTurn: { ...main.currentCanonicalTurn, startedAt: startedAt + 526 } }, null,
+    { connectorLastTurnStatus: 'completed', connectorLastTurnStartedAt: startedAt }, true, current.currentCanonicalTurn.turnRef).turnStartedAt, startedAt,
+  'inventory terminal status keeps its own epoch instead of a canonical epoch')
+  assert.equal(activity.codexDesktopBranchInventoryTurn(null, null,
+    { connectorLastTurnStatus: 'interrupted', connectorLastTurnStartedAt: startedAt }, true).lastTurnStatus, 'interrupted',
+  'cold interrupted inventory remains usable without conflicting owner evidence')
+  assert.deepEqual(activity.codexDesktopInventoryTurnCandidate({ status: 'interrupted', startedAt }, running, null,
+    current.currentCanonicalTurn.turnRef), {}, 'inventory owner conflict is rejected before projection')
+  assert.equal(activity.codexDesktopInventoryTurnCandidate({ status: 'interrupted', startedAt }, running,
+    { lastTurnStatus: 'failed', lastTurnStartedAt: startedAt + 526, lastTurnEvidence: 'turn-completed' },
+    current.currentCanonicalTurn.turnRef).status, 'failed', 'inventory rejection preserves an actual terminal notification')
+  assert.equal(activity.codexDesktopBranchTurnFields({ shadow: running }, {}, { main: true,
+    terminal: { lastTurnStatus: 'interrupted', turnStartedAt: startedAt, lastTurnEvidence: 'targeted-after-exit' }
+  }).lastTurnStatus, undefined, 'recorded independent terminal cannot bypass current owner precedence')
+  checked += 11
+  return checked
+}
+
+function checkInternalReviewMembership(require) {
+  const { createCodexSubagentDiscovery, isInternalReviewThreadSource } = require('./codex/subagent-discovery.cjs')
+  assert.equal(typeof isInternalReviewThreadSource, 'function', 'internal review membership capability exists')
+  assert.equal(isInternalReviewThreadSource('guardian_review'), true, 'exact internal review is excluded')
+  const ordinarySources = ['subagent', 'vscode', undefined, {}, { subAgent: { other: 'guardian' } }]
+  for (const source of ordinarySources) {
+    assert.equal(isInternalReviewThreadSource(source), false, 'ordinary and unknown sources retain task membership')
+  }
+  const review = '42345678-1234-4234-8234-123456789abc'
+  const child = '52345678-1234-4234-8234-123456789abc'
+  const owner = createCodexSubagentDiscovery({ fs: { readdirSync: () => [] }, path: require('node:path'),
+    validThreadId: value => typeof value === 'string' && /^[0-9a-f-]{36}$/.test(value) })
+  owner.codexObserveThreadRows([{ id: review, threadSource: 'guardian_review' }, { id: child, threadSource: 'subagent' }])
+  assert.equal(owner.codexIsInternalReviewThread(review), true, 'verified review identity survives outside discovery rows')
+  assert.equal(owner.codexIsInternalReviewThread(child), false, 'ordinary child remains eligible')
+  owner.codexObserveThreadRows([{ id: review }, { id: review, threadSource: {} }])
+  assert.equal(owner.codexIsInternalReviewThread(review), true, 'missing or malformed source cannot erase exact review identity')
+  owner.codexObserveThreadRows([{ id: review, threadSource: 'vscode' }])
+  assert.equal(owner.codexIsInternalReviewThread(review), false, 'explicit ordinary source corrects previous classification')
+  owner.codexObserveThreadRows([{ id: review, threadSource: 'guardian_review' }])
+  owner.codexResetSubagentDiscovery()
+  assert.equal(owner.codexIsInternalReviewThread(review), false, 'session reset drops source memory')
+  return 11
+}
+
 export async function checkCompanionLifecycles(assetRoot) {
   const require = createRequire(resolve(assetRoot, 'index.js'))
   const { createCompanionTaskKernel } = require('./companion/task-kernel.cjs')
@@ -128,7 +250,7 @@ export async function checkCompanionLifecycles(assetRoot) {
     await opening
     pending.expectRoot('completed', true, 2) // A late open result cannot read a newer Side completion.
   } finally { pending.kernel.close() }
-  return checked
+  return checked + checkDesktopSideTerminalCapability(require) + checkInternalReviewMembership(require)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -124,5 +124,66 @@ export function checkCompanionNativeUnread(assetRoot) {
     assert.equal(current.requests.length, 1, 'Side native-visible question outlives a later aborted generation')
     assert.equal(current.liveTurnRunning, false, 'old question must not fabricate a running witness')
   }
-  return 17
+  // Run the production private projection; unknown Side epochs must never
+  // borrow a newer parent epoch and reject their own later terminal as stale.
+  const terminals = new Map()
+  const member = { parentThreadId: main, runtime: { type: 'active', activeFlags: [] }, activityEvidence: 'activity-event', activityEventSequence: 20 }
+  const ownShadow = { runtime: { type: 'idle', activeFlags: [] } }
+  const activity = value => value ? { status: value.suppressUncorroboratedActive ? 'notLoaded' : value.runtime.type, activeFlags: [] } : null
+  const { createCodexDesktopActivityResolution } = require('./codex/desktop-activity-resolution.cjs')
+  const resolution = createCodexDesktopActivityResolution({ timestampMs: value => Number(value) || 0, validThreadId: () => true,
+    isConfirmedTurnEvidence: () => true, waitingEvidenceVisible: () => true, desktopRequestFlag: () => '', desktopIsPlanImplementationRequest: () => false })
+  const projectionContext = vm.createContext({
+    codexDesktopActivityResolution: resolution, codexDesktopRequestCorrelation: projector.codexDesktopRequestCorrelation,
+    validCodexThreadId: value => [main, side].includes(value),
+    codexDesktopBridge: { shadows: new Map([[main, ownShadow]]), sideShadows: new Map([[side, member]]) },
+    honorHostExternalProjection: (_id, _known, value) => value,
+    codexDesktopShadowActivity: activity, codexAppServerActiveDominates: () => false,
+    codexAllSideRelations: () => new Map([[side, main]]), codexInventorySideBranchEvidence: new Map(),
+    codexInventorySideRelations: new Map(), codexDesktopSideRelations: new Map([[side, main]]),
+    codexDesktopUnreadObservation: () => ({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' }),
+    codexInventorySnapshotLiveSequence: () => 0, codexhostDiscovery: null,
+    codexReadPrivateBranchTerminal: (_parent, id) => terminals.get(id),
+    codexForgetPrivateBranchTerminal: (_parent, id) => terminals.delete(id),
+    codexPrivateThreadGoalEvidence: () => ({ goalStatus: 'none' }), codexPrivateBranchRef: (_parent, id) => id
+  })
+  const projectionStart = source.indexOf('function codexPrivateBranchEvidence(')
+  const projectionEnd = source.indexOf('\nfunction ', projectionStart + 1)
+  assert(projectionStart >= 0 && projectionEnd > projectionStart)
+  vm.runInContext(source.slice(projectionStart, projectionEnd), projectionContext)
+  const known = { key: 'synthetic-root', lastTurnStatus: 'completed', lastTurnStartedAt: 500, connectorLastTurnStartedAt: 500, connectorLastTurnStatus: 'completed', connectorStatus: 'idle' }
+  let branches = projectionContext.codexPrivateBranchEvidence(main, known).branches
+  assert.equal(branches.find(value => value.branchKind === 'side').turnStartedAt, 0, 'unknown Side epoch cannot borrow the parent epoch')
+  terminals.set(side, { lastTurnStatus: 'completed', lastTurnEvidence: 'snapshot-corroborated', turnStartedAt: 100, terminalAt: 120, terminalEvidenceSequence: 30 })
+  member.suppressUncorroboratedActive = true
+  branches = projectionContext.codexPrivateBranchEvidence(main, known).branches
+  assert.equal(branches.find(value => value.branchKind === 'main').turnStartedAt, 500, 'Side completion preserves the newer parent epoch')
+  assert.equal(branches.find(value => value.branchKind === 'side').turnStartedAt, 100, 'Side completion keeps its own exact epoch')
+  // Exercise the actual cold-idle scheduling method without an IPC payload,
+  // messages, process launch or any inferred completion from runtime idle.
+  terminals.clear()
+  member.runtime.type = 'idle'
+  member.sideConversation = true
+  member.activityEvidence = 'initial-snapshot'
+  member.activityRevision = 1
+  delete member.suppressUncorroboratedActive
+  projectionContext.codexActivityInventory = new Map([[main, known]])
+  projectionContext.codexCompleteInventoryThreadIds = new Set([main])
+  projectionContext.codexTimestampMs = value => Number(value) || 0
+  const queries = []
+  const schedulingBridge = { parentLiveEvidenceSequence: () => 0,
+    scheduleLatestTurnRefresh: (threadId, options) => queries.push({ threadId, options }) }
+  const methodStart = source.indexOf('  verifyUncorroboratedActiveSnapshot(')
+  const methodEnd = source.indexOf('\n  retireMissingDesktopSide(', methodStart)
+  assert(methodStart >= 0 && methodEnd > methodStart)
+  vm.runInContext(source.slice(methodStart, methodEnd).replace('  verifyUncorroboratedActiveSnapshot(', 'function verifyUncorroboratedActiveSnapshot('), projectionContext)
+  projectionContext.verifyUncorroboratedActiveSnapshot.call(schedulingBridge, side, member)
+  assert.equal(queries.length, 1, 'cold idle Side requires its own bounded Turn verification')
+  assert.equal(queries[0].threadId, main)
+  assert.equal(queries[0].options.queryThreadId, side)
+  assert.equal(queries[0].options.forceQuery, true)
+  assert.equal(queries[0].options.settleSnapshotTerminal, true)
+  assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 0, '', false, true), true, 'exact inactive member terminal can settle at first successful read')
+  assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 200, 'inProgress', true, true), false, 'idle cannot authorize an older member epoch')
+  return 23
 }
