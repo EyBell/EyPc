@@ -1,5 +1,7 @@
 # EyPc Project Status Hub
 
+- 2026-10-14 Side 状态修复与固定结束窗口已收口：成员自身终态/Goal/原子清退、精确 guardian_review 排除及535 ms来源仲裁已交付。当前包 host-310f2ab85e7cbb9723c2 / renderer-7b0d8a6011b186a733f3 于11:23精确加载，11:30:30 running直接completed，未读包57获applied ACK；20次样本在90.929秒内保持completed/idle/unread、主+两成员不变，无stopped过渡或完成后反弹。结论限该固定轮次的原生/日志/ACK；匿名相位为时间/发布链关联，未取得结束后截图，不代表长期保证。探针11:32退出、一次自动化11:33停用。自动回归历史为477/480（原3失败）；提交范围剥离前序1425补测，独立快照源码/镜像两侧生命周期55/55与原生未读23/23、脚本26/26及筛选Bridge51/51通过，入口预算通过。[当前结果、修复链与历史交付](261013/1946-side-terminal-reconcile/task-card.md#2026-10-14-1133-新包固定结束窗口验收结果) · [诊断因果](261013/1946-side-terminal-reconcile/diagnosis.md)。
+
 - 2026-10-13 未读/Side 生命周期续核：已补原生 identity/host unread 格式与 v3、Desktop-only 精确关系、成员提问与 Side 终态证据归属；旧 generation/floor/匿名缺口一并记录。462/465（3 项既有 Bridge 失败）、async 19/19、source/packaged 各 10+17+17 门禁通过。18:24:53 修复版实际握手与 active=6/applied 对应用户截图；预算等价抽取后 18:29:36 精确握手通过；18:32 再发现 Side 后续 aborted 生成误清待答问题，两个回归先红后绿，较窄回退现场未通过，补齐较晚 completed 后 215/218（同样 3 旧失败）与 async 22/22；18:45:08 精确握手通过；目标 Side 待输入真实维持约 58.3 秒，用户回答后 resolved→running，现场保持/解除已核验。用户限现有日志，未出现的归档/嵌套/完整清退待证；Git 交付以提交和远端回读为准。[核验与问题台账](261013/1425-codex-side-phase/lifecycle-verify.md#L1)。
 
 - 2026-10-13 Codex side chat 与门禁优化：历史子终态覆盖主运行回归已修复；原业务 254 项、新 gate/缓存/异步 26 项通过，标准构建自动验证 source/dist 各 10 核心场景。用户已加载身份与当前身份一致，部分状态计数现场吻合，完整未读/side 生命周期仍未整体验收。[需求与实现](261013/1425-codex-side-phase/spec.md#L1) · [核验](261013/1425-codex-side-phase/verify.md#L1) · [规则失守与问题台账](261013/1425-codex-side-phase/audit.md#L1)。
@@ -169,6 +171,8 @@ This hub routes current implementation, verification gates and durable authoriti
 - RAW-175 confirmation speech-bubble is `increment-automated-verified / host-visual-pending`. 点击归档不再插入确认整行；「再次操作确认」立即出现在浮窗自有、带尖头的气泡中，按展开卡夹紧。聚焦 Domain+UI `128/128`。真实上/下与窄卡夹紧仍待宿主目视。See [RAW-175](260817/1618-float-action-hint-popover/spec.md#L1).
 
 ## Codex Companion
+
+当前状态修复入口：[Side终态、成员资格与主结束来源仲裁](261013/1946-side-terminal-reconcile/task-card.md)；该任务的历史阶段集中保留在任务卡，当前结论见本页顶部。
 
 - Current cross-source runtime authority: [EyPc V7 global refactor](260824/eypc-v7-global-refactor/spec.md#L1). Companion Task Topology V6 and Codex-specific state documents remain historical foundations in [V6 spec](260823/companion-task-topology-v5/spec.md#L1) and [codex-quota-float](260718/1148-codex-quota-float/spec.md#L1).
 

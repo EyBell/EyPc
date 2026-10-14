@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 66 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-3ba5e7af0dfabdb2081f / renderer-819145f74a7bd9ebf06e` · `artifact-ready` |
-| 当前构建时间 | `2026/10/13 18:45:08`（`2026-10-13T10:45:08.769Z`） |
+| 当前构建产物 | `host-310f2ab85e7cbb9723c2 / renderer-7b0d8a6011b186a733f3` · `artifact-ready` |
+| 当前构建时间 | `2026/10/14 09:54:18`（`2026-10-14T01:54:18.485Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-3ba5e7af0dfabdb2081f",
-    "renderer_asset": "renderer-819145f74a7bd9ebf06e",
+    "host_asset": "host-310f2ab85e7cbb9723c2",
+    "renderer_asset": "renderer-7b0d8a6011b186a733f3",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-10-13T10:45:08.769Z",
-    "built_at_local": "2026/10/13 18:45:08",
+    "built_at": "2026-10-14T01:54:18.485Z",
+    "built_at_local": "2026/10/14 09:54:18",
     "package_version": "0.1.0"
   },
   "content_digests": {
     "requirement_registry": "8803255d6badeba39eae5c35ebed48596f5d4491547bbb93fa3e031eb92921ed",
     "raw_sources": "0daaca2afdd856c7fe48c5258e971c2bdcc7a3b5f4495825def3ae81c780c482",
     "source_anchor_catalog": "3b86024db8538f1e93e52de718ffab2681bdef7f129ab4449f01daf5b0330f13",
-    "product_body": "993f51665d3b46f979f06ac5cdc9b8a571e7df92901a478d5d2641446d1015cf",
-    "architecture": "59fe25c8f2b4f1cdc684d4a2e54a3ab1bddb0da4c8df8264fe5b82f57c9d9175",
-    "runtime_contract": "c5e94f069508907fc54285f96ba403cb33664e745c88735b0255fe50dbf225ae"
+    "product_body": "04ccd841b7b1448ae8e69c1c936e9eb7e21fcd688394192b7f48fe35a915ad84",
+    "architecture": "c5c3a1cf0a009e3edb1867c1757acdeb754c3ae7082e4f1707f199e1a2d5a2c2",
+    "runtime_contract": "50eab42c0e3a164477af5a1251ee358b30dafa84f4b7aafd9de17bf953786914"
   }
 }
 ```
@@ -237,6 +237,8 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 - Orca 是第四个独立来源，默认关闭。一张卡对应一个 Agent 终端（`tabId:leafId`）。只开了 Agent 工具栏、还没有任何对话的窗格不进清单。在 Orca 窗口里关掉的窗格也不进清单，不靠 `worktree ps` 残留行维持。抬头优先用 Orca 标签标题，不得因工作中 OSC spinner（`⠋ Grok`）把新对话退化成仓库名。相位：`working` / `waiting` / `blocked` → 进行中；Agents 仍为上述活状态时，`workingMode=monitoring` 与 `turnCompletedAt` 不得收成已完成。Grok 窗格 OSC 工作帧（`Waiting for response` → `⠋ Grok`）在 Agents 仍为 `done`、尚无 toolName 时也是进行中。Claude Agents 已是 `done` 时，残留 OSC `✳` / spinner 不得再钉进行中；`unread=true` 只在已非活状态时作为已完成未读。`interrupted`/断开 → 待继续。工作树 `unread` 只是工作区汇总，不得扇出到组内每张卡。CLI agent 行若带布尔 `unread`，卡片未读以该字段为准，汇总为假不得覆盖；打开仅派发时不清原生未读，后续原生 false 才更新。没有按窗格字段时，仅当该工作树只有一条已完成会话才可吃汇总；多条已完成不得猜最右/最新。标签栏已完成未读（`unreadAgentCompletionPanes`）应在 Orca 按窗格导出；现网未导出时，EyPc 把「曾观测到进行中 → 已完成」记成本地已完成未读，只有插件跳转或点击查看后才变成已完成已读，不得直接跳成已完成已读。冷启动已经完成且从未观测到进行中的窗格不为此凭空标未读。Devin 结束后 `worktree ps` agent 行即消失、窗格退回 `Devin ready` 空闲终端；曾被观测进行中的窗格由 EyPc 按未读账本合成已完成会话续卡并走同一「已完成未读」，从未跑过任务的 ready 窗格不进清单、不标未读。RAW-220。Orca 标签置顶与 EyPc 置顶双向同步，效果与 Codex 线程置顶相同；工作区置顶不扇到组内任务。CLI 缺 `isPinned` 时直读本机会话库 tab 布尔；显式原生 false 优先于旧文件 true。写回须收到同 handle/tab 回执并再从 `terminal list` 核对同 handle/paneKey 的布尔；未确认时不得宣告原生成功。同标签分屏共享原生标签钉。Orca 行的排序、相对时间和活动窗只认最新提问（进入 `working` 的 `stateStartedAt`），回复中的输出/`updatedAt`/轮询不得把卡片抬走。在 Orca 里已读或 EyPc 点卡片，都不能把仍前景 `working` 的会话改成已完成。RAW-219。
 - Codex、Claude Code、Cursor 与 Orca 是彼此独立的来源，可各自开关并共享同一个水球；默认只开启 Codex，此时插件不读取 Claude/Cursor/Orca 数据。数据、状态、额度、空态与角标语义保持 Codex-only 兼容；任务/项目行即使在单来源模式也保留文本化、可访问的来源标记。任务行第二行把可见来源压缩为 `CC` / `CX` / `CS` / `OR`（Claude / Codex / Cursor / Orca），Codex Host 额外进程仍属 Codex 来源、行上标 `XH`；读屏与悬停仍说「归属 …」；项目行仍显示完整「归属 Codex / Claude / 共享」。默认 chats 容器名不占第二行，真实项目名紧跟来源标记；子任务为 `sub+N`；相对时间为 `RECENT` / `Nm` / `Nh` 或一位小数小时 / `Nd`。RAW-217 / RAW-218。Cursor 库存收 `unifiedMode = agent | plan` 的本机会话（chat / ask / edit / subagent / cloud 仍排除）；Cursor 自己的 `hasBlockingPendingActions`（AskQuestion / Plan 提问 / 终端审批）是精确的待输入交互，压过开着的 Turn 并可一键深链跳转，仍不发明待确认。磁盘 `status=completed` 且没有会话/分叉冷路径进行中证据时，陈旧钩子 `turnOpen` 不得单独保持进行中。钩子已折叠为 `completed`/`stopped` 时，会话残留 `unfinishedRunAt` 不得单独保持进行中；活分叉仍使父卡进行中。磁盘 `aborted` 且 Turn 仍开着时仍是进行中。RAW-206 / RAW-214。任务行上的相对时间读公开 `lastQuestionAt`：Turn 仍开着时用 Turn 起点，Turn 关闭后回退到完成时间或最近活动时间，不得显示「时间缺失」；后续 metadata 入站 0 不得清掉已有时钟。这不改变相位。Cursor Cloud Agent 仍排除。RAW-208。
+- Codex 原生权威来源精确标记 `guardian_review` 的内部评审不属于用户任务成员，不显示独立卡片、不计入 `sub+N`、不参与相位或未读聚合；即使它中断或失败，也不能把正常完成的用户会话改成待继续。普通子代理、用户 Side 和未知来源保留原有成员/状态语义。资格更正须同时撤回已纳入的成员节点与关系，库存、实时和恢复提示共用同一来源判定；不得从旧时间、读取失败或缺失字段推断它是内部评审。见 [本会话结束误判续修](261013/1946-side-terminal-reconcile/task-card.md)。
+- Codex 正常结束时，当前桌面拥有者的完整终态与原生未读按证据到达即更新；独立读取器对同一仍运行轮次的 interrupted 重建结果不得先发布为待继续，再跳到完成。状态、轮次起点和身份须同源；主结束不能清除其他成员运行。真实中断/失败、待输入/审批、新轮次、未结束成员和活跃 Goal 仍保留原语义，不通过延迟或强制完成隐藏中间误判。见 [结束事件链验证](261013/1946-side-terminal-reconcile/task-card.md#2026-10-14-0954-结束事件链修复与新产物)。
 - 任务排布与角标以**根任务状态**为准而非来源：待输入、进行中、已完成未读的角标数字是启用来源根任务的合计，子任务不重复计数或进入循环。三个角标按各自状态计数，均排除隐藏、暂停和不可打开项。RAW-222 的通用循环只开放最高非空类别，因此低层角标非零不代表当前可用上一／下一到达；待输入与已完成未读专用入口保持独立可达。每条根任务仍必须以文字、图标和可访问名称显示来源，并使用来源背景与状态标记正交区分。
 - Claude 来源细节权威为 [Claude Code Companion 权威重置](260807/claude-code-companion-authority-reset/spec.md#L1)，技术选择与严格测试门禁见其 [research](260807/claude-code-companion-authority-reset/research.md#L1)，实现/未验收边界见 [verify](260807/claude-code-companion-authority-reset/verify.md#L1)；跨来源拓扑、Snapshot、interaction/artifact 与命令形态由 RAW-179 V7 统揽。真实 Claude App quota 数据权威已通过；完整 uTools 状态/未读/项目筛选矩阵与最终渲染同屏仍待真实 Host 验收，因此不得宣称产品验收完成。
 - Claude 库存只镜像 Claude App **Code 模式**的 `claude-code-sessions/<org>/<user>/local_<uuid>.json`；CLI-only、Cowork、`local-agent-mode-sessions` 和云端索引均不进入卡片。卡片身份使用 App local id，标题使用 App `title`，空标题固定为 `General coding session`；UUID 不得成为可见标题。
