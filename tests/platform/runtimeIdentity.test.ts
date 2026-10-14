@@ -82,6 +82,30 @@ afterEach(() => {
 })
 
 describe('uTools runtime identity', () => {
+  it('ignores OS metadata in source identity while retaining actual source changes', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'eypc-runtime-identity-'))
+    const write = (relativePath: string, content = relativePath) => {
+      const file = resolve(root, relativePath)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, content)
+    }
+    try {
+      write('public/plugin.json', '{}')
+      for (const asset of [...UTOOLS_PRELOAD_ASSETS, ...UTOOLS_PRELOAD_MODULE_ASSETS]) write(asset.canonical)
+      for (const file of ['src/main.ts', 'index.html', 'float.html', 'action.html', 'vite.config.ts', 'package.json']) write(file)
+      const baseline = buildUtoolsRuntimeIdentity(root)
+      for (const name of ['.DS_Store', 'Thumbs.db', 'desktop.ini', '._main.ts']) {
+        write(`src/${name}`, 'local OS metadata')
+        write(`src/nested/${name}`, 'nested OS metadata')
+      }
+      expect(buildUtoolsRuntimeIdentity(root)).toEqual(baseline)
+      write('src/nested/real.ts', 'real source')
+      expect(buildUtoolsRuntimeIdentity(root).rendererAssetId).not.toBe(baseline.rendererAssetId)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('changes Renderer identity with its embedded Host contract and with Renderer source only', () => {
     const root = mkdtempSync(resolve(tmpdir(), 'eypc-runtime-identity-'))
     const write = (relativePath: string, content = relativePath) => {

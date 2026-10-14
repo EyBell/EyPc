@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 66,
+    "source_documents": 67,
     "ordered_anchors": 356,
     "raw_parent_ordered": 230,
     "unparented_ordered": 126,
@@ -669,6 +669,16 @@
       "spec_id": "SPEC-261013-CODEX-SIDE-PHASE",
       "content_sha256": "d09191c135fc590ca44ea732e358a5751a41c04bc873e1c9337199cf5dfea026",
       "raw_identity_count": 1,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "261014/core-regression-capability",
+      "source_path": "vibe/specs/261014/core-regression-capability/raw-requirement.md",
+      "spec_id": null,
+      "content_sha256": "1773bc874e0fc6343947b2e97554a34f3498d483070a1e61c8d35b354edb19eb",
+      "raw_identity_count": 3,
       "ordered_anchor_count": 0,
       "raw_parent_ordered_count": 0,
       "unparented_ordered_count": 0

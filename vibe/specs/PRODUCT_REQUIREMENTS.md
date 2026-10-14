@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 362 leaves / 7 modules / 338 active / 22 superseded / 2 proposed / 0 conflicted |
+| 需求登记 | 365 leaves / 7 modules / 341 active / 22 superseded / 2 proposed / 0 conflicted |
 | 取代关系 | 22 whole / 144 scoped |
-| 原始来源 | 66 documents / 356 ordered / 230 RAW-parent / 126 source-only |
+| 原始来源 | 67 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-310f2ab85e7cbb9723c2 / renderer-7b0d8a6011b186a733f3` · `artifact-ready` |
-| 当前构建时间 | `2026/10/14 09:54:18`（`2026-10-14T01:54:18.485Z`） |
+| 当前构建产物 | `host-d10e931a3ebc96931fd7 / renderer-b444fcf98569a9f24e93` · `artifact-ready` |
+| 当前构建时间 | `2026/10/14 13:39:34`（`2026-10-14T05:39:34.763Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,10 +34,10 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 362,
+    "leaves": 365,
     "modules": 7,
     "proposed": 2,
-    "active": 338,
+    "active": 341,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
@@ -45,7 +45,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "scoped_relations": 144
   },
   "source_anchor_catalog": {
-    "documents": 66,
+    "documents": 67,
     "ordered_anchors": 356,
     "raw_parent_ordered": 230,
     "registered_requirements": 105,
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-310f2ab85e7cbb9723c2",
-    "renderer_asset": "renderer-7b0d8a6011b186a733f3",
+    "host_asset": "host-d10e931a3ebc96931fd7",
+    "renderer_asset": "renderer-b444fcf98569a9f24e93",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-10-14T01:54:18.485Z",
-    "built_at_local": "2026/10/14 09:54:18",
+    "built_at": "2026-10-14T05:39:34.763Z",
+    "built_at_local": "2026/10/14 13:39:34",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "8803255d6badeba39eae5c35ebed48596f5d4491547bbb93fa3e031eb92921ed",
-    "raw_sources": "0daaca2afdd856c7fe48c5258e971c2bdcc7a3b5f4495825def3ae81c780c482",
-    "source_anchor_catalog": "3b86024db8538f1e93e52de718ffab2681bdef7f129ab4449f01daf5b0330f13",
-    "product_body": "04ccd841b7b1448ae8e69c1c936e9eb7e21fcd688394192b7f48fe35a915ad84",
-    "architecture": "c5c3a1cf0a009e3edb1867c1757acdeb754c3ae7082e4f1707f199e1a2d5a2c2",
-    "runtime_contract": "50eab42c0e3a164477af5a1251ee358b30dafa84f4b7aafd9de17bf953786914"
+    "requirement_registry": "4bb1ba7922e1e183e6fdec64e18caaca8cc3d2b9770820ca3f93a50fc5027363",
+    "raw_sources": "09292bf4b26a6854ee314c02129446f39aca7a6f0e4a57c6ebf52f6769050905",
+    "source_anchor_catalog": "5770600a9501d7ce42f2cb41b6247d5db5836c4cb6fe5d5bfd10fde88473a944",
+    "product_body": "b89beb063a02c5369bf760b3771540631d116f5246a24ed0ae927d89703861fe",
+    "architecture": "186eb1c7c860ef298dfc8c1abae10e49c3e92c4b8a560ef27b45b8960299eaca",
+    "runtime_contract": "08b584e8f1be9b0609a98e218af5bf1686cce70686b7f3eacc5ed59cd09d6e9e"
   }
 }
 ```
@@ -390,3 +390,10 @@ Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-globa
 - Project soul: [../knowledge/developer-soul.md](../knowledge/developer-soul.md#L1).
 
 - RAW-221：全局/局部快捷打开、未读快捷入口、上一下一和快速跳转，成功派发实际选中的 completed-unread 项后，EyPc 立即显示本轮已读，无额外存储或库存等待。四 Provider 共用内存投影，不改原生未读或 handoff 确认；同轮旧快照不闪回，真实进行中/新完成/成员变化/任务重建和初始化重置后重新以来源证据为准。普通卡片与自动恢复保留原合同。详见 [冲突与设计](260915/shortcut-immediate-read/spec.md#L1)。
+
+
+## 核心回归与上游演进治理
+
+[本轮RAW-001–003](261014/core-regression-capability/raw-requirement.md#L1)要求自动验证、变更触发和规则脚本形成一条可执行链。现行需求身份仍由需求登记唯一拥有；[验证映射](../knowledge/verification-map.md#变更触发与执行入口)把需求和受影响代码连接到独立门禁、定向测试及负例，未知核心变更必须显式补图。通过结果只覆盖实际检查范围，不代替真实宿主、所有原始条款或远端CI验收。
+
+Codex / Claude / Cursor / Orca的程序身份、声明结构及运行能力分层记录；上游变化触发可定位复核，未知结构不能冒充空成功，版本号不得直接使能力失效。探测器仅读程序元数据或显式脱敏结构，不读会话/凭据、不执行供应方代码，不自动改baseline或运行能力。Orca库存成功信封缺required数组/布局类型失配保守报告不可用，明确空数组保持有效。

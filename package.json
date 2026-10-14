@@ -13,7 +13,7 @@
     "generate:contracts": "node scripts/generate-companion-contracts.mjs",
     "validate:contracts": "node scripts/generate-companion-contracts.mjs --check",
     "sync:preloads": "pnpm run generate:contracts && node scripts/sync-utools-preloads.mjs",
-    "verify": "pnpm run sync:preloads && pnpm run test && pnpm run build && pnpm run validate:mirrors && pnpm run validate:entry-budget",
+    "verify": "pnpm run verify:changed",
     "validate:utools": "node scripts/validate-utools-runtime.mjs",
     "validate:mirrors": "node scripts/validate-committed-preload-mirrors.mjs",
     "validate:entry-budget": "node scripts/validate-preload-entry-budget.mjs",
@@ -29,7 +29,12 @@
     "sync:source-anchors": "node scripts/validate-source-anchors.mjs --write",
     "validate:source-anchors": "node scripts/validate-source-anchors.mjs",
     "validate:requirements": "node scripts/validate-requirements.mjs && node scripts/validate-source-anchors.mjs",
-    "preview": "vite preview --host 0.0.0.0 --port 4174"
+    "preview": "vite preview --host 0.0.0.0 --port 4174",
+    "verify:changed": "node scripts/verify-core-changes.mjs",
+    "verify:core": "node scripts/verify-core-changes.mjs --all",
+    "verify:plan": "node scripts/verify-core-changes.mjs --plan",
+    "probe:provider-contract": "node scripts/provider-contract-drift.mjs",
+    "verify:full": "pnpm run sync:preloads && pnpm run test && pnpm run build && pnpm run validate:mirrors && pnpm run validate:entry-budget"
   },
   "dependencies": {
     "@lucide/vue": "^1.21.0",

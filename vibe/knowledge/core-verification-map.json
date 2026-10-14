@@ -1,0 +1,586 @@
+{
+  "version": 1,
+  "protected": [
+    "src/*",
+    "preload/*",
+    "public/*",
+    "contracts/*",
+    "scripts/*",
+    "tests/*"
+  ],
+  "governance": [
+    "vibe/knowledge/core-verification-map.json",
+    "scripts/verify-core-changes.mjs",
+    "scripts/provider-contract-drift.mjs",
+    "package.json",
+    "pnpm-lock.yaml",
+    ".github/workflows/core-regression.yml",
+    "vibe/specs/requirements/*",
+    "scripts/verify-core-ci.mjs",
+    "vite.config.*",
+    "vitest.config.*",
+    "tsconfig*.json",
+    "scripts/verify-core-changes.d.mts",
+    "scripts/provider-contract-drift.d.mts",
+    "vibe/rules/*",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "exclusions": [
+    "*mqtt*",
+    "*Mqtt*",
+    "*MQTT*"
+  ],
+  "guards": [
+    {
+      "id": "companion-state",
+      "sources": [
+        "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR::RAW-179#2",
+        "SPEC-260810-1155-INSTALL-RUNTIME-DIAGNOSTICS::RAW-160#3"
+      ],
+      "paths": [
+        "contracts/*",
+        "preload/companion/*",
+        "preload/index.js",
+        "public/companion/*",
+        "public/preload.js",
+        "scripts/check-companion-core-invariants.mjs",
+        "scripts/check-companion-lifecycles.mjs",
+        "scripts/check-companion-native-unread.mjs",
+        "src/domain/companion*",
+        "src/platform/eypcPlatform.ts",
+        "src/runtime/appRuntime.ts",
+        "tests/domain/companionProvider.test.ts",
+        "tests/platform/companionProviderAdmission.test.ts",
+        "tests/scripts/companionCoreInvariants.test.ts",
+        "tests/scripts/companionLifecycles.test.ts",
+        "tests/scripts/companionNativeUnread.test.ts",
+        "public/runtime-identity.cjs",
+        "scripts/validate-committed-preload-mirrors.mjs",
+        "src/runtime/codexController.ts",
+        "src/runtime/feature/codex/*",
+        "scripts/validate-preload-entry-budget.mjs",
+        "scripts/check-working-preload-mirrors.mjs",
+        "scripts/check-runtime-identity.mjs",
+        "scripts/utools-runtime-identity.mjs",
+        "scripts/utools-runtime-identity.d.mts",
+        "tests/platform/runtimeIdentity.test.ts"
+      ],
+      "checks": [
+        "core",
+        "lifecycle",
+        "unread",
+        "guard-canaries",
+        "provider-admission",
+        "mirrors",
+        "types",
+        "entry-budget",
+        "working-mirrors",
+        "runtime-identity",
+        "identity-canaries"
+      ],
+      "boundary": "离线证据归约、主/成员、归档与原生未读；不覆盖真实宿主时序、像素或所有Bridge场景。"
+    },
+    {
+      "id": "provider-evidence",
+      "sources": [
+        "SPEC-260913-ORCA-COMPANION::RAW-219",
+        "SPEC-260915-SHORTCUT-IMMEDIATE-READ::RAW-221"
+      ],
+      "paths": [
+        "preload/claude/*",
+        "preload/codex/*",
+        "preload/cursor/*",
+        "preload/index.js",
+        "preload/orca/*",
+        "public/claude/*",
+        "public/codex/*",
+        "public/cursor/*",
+        "public/orca/*",
+        "public/preload.js",
+        "scripts/check-companion-core-invariants.mjs",
+        "scripts/check-companion-lifecycles.mjs",
+        "scripts/check-companion-native-unread.mjs",
+        "src/platform/eypcPlatform.ts",
+        "src/runtime/appRuntime.ts",
+        "tests/domain/companionProvider.test.ts",
+        "tests/platform/codexAppServerBridge.test.ts",
+        "tests/platform/companionProviderAdmission.test.ts",
+        "tests/scripts/companionCoreInvariants.test.ts",
+        "tests/scripts/companionLifecycles.test.ts",
+        "tests/scripts/companionNativeUnread.test.ts",
+        "tests/platform/orcaInventory.test.ts",
+        "tests/scripts/providerContractDrift.test.ts"
+      ],
+      "checks": [
+        "core",
+        "lifecycle",
+        "unread",
+        "guard-canaries",
+        "provider-admission",
+        "orca-schema",
+        "types",
+        "provider-drift",
+        "mirrors",
+        "working-mirrors",
+        "runtime-identity",
+        "identity-canaries"
+      ],
+      "boundary": "四来源共用接纳与生命周期；现有Bridge全文件3项历史失败仍另列，不以本门禁覆盖声明替代。 Orca成功信封缺数组/错误类型必须返回schema-mismatch，合法空数组仍ready。"
+    },
+    {
+      "id": "interaction",
+      "sources": [
+        "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR::RAW-179#4"
+      ],
+      "paths": [
+        "preload/index.js",
+        "public/preload.js",
+        "src/domain/listSelection.ts",
+        "src/domain/recordListSelection.ts",
+        "src/platform/eypcPlatform.ts",
+        "src/runtime/appRuntime.ts",
+        "src/runtime/command/*",
+        "src/runtime/keybinding/*",
+        "tests/domain/listSelection.test.ts",
+        "tests/domain/recordListSelection.test.ts",
+        "tests/runtime/commandCatalog.test.ts",
+        "tests/runtime/keybinding.test.ts",
+        "tests/runtime/keybindingIndex.test.ts"
+      ],
+      "checks": [
+        "interaction",
+        "keybindings",
+        "types",
+        "runtime-identity",
+        "identity-canaries"
+      ],
+      "boundary": "命令身份、选择与快捷键纯逻辑；不代表真实焦点与系统热键。"
+    },
+    {
+      "id": "favorites",
+      "sources": [
+        "SPEC-260711-1452-FILE-FAVORITES-WORKBENCH::RAW-001",
+        "SPEC-260711-1452-FILE-FAVORITES-WORKBENCH::RAW-002"
+      ],
+      "paths": [
+        "preload/index.js",
+        "public/preload.js",
+        "src/domain/favoriteLaunch.ts",
+        "src/domain/favorites.ts",
+        "src/platform/eypcPlatform.ts",
+        "src/runtime/appRuntime.ts",
+        "src/runtime/feature/favorites/*",
+        "tests/domain/favoriteLaunch.test.ts",
+        "tests/domain/favorites.test.ts",
+        "tests/platform/favoriteFileBridge.test.ts"
+      ],
+      "checks": [
+        "favorites",
+        "types",
+        "favorite-bridge",
+        "runtime-identity",
+        "identity-canaries"
+      ],
+      "boundary": "元数据、路径身份与模拟文件桥；不操作真实收藏。"
+    },
+    {
+      "id": "windows",
+      "sources": [
+        "SPEC-260904-WINDOW-UNIQUE-APP-REBIND::RAW-208",
+        "SPEC-260905-WINDOW-TAB-AUTO-REFRESH::RAW-213"
+      ],
+      "paths": [
+        "preload/index.js",
+        "preload/windows/*",
+        "public/preload.js",
+        "public/windows/*",
+        "src/domain/windowRebind.ts",
+        "src/domain/windows.ts",
+        "src/platform/eypcPlatform.ts",
+        "src/runtime/appRuntime.ts",
+        "src/runtime/window/*",
+        "tests/domain/windows.test.ts",
+        "tests/platform/windowPreloadBridge.test.ts",
+        "src/runtime/feature/windows/*"
+      ],
+      "checks": [
+        "windows",
+        "types",
+        "mirrors",
+        "working-mirrors",
+        "runtime-identity",
+        "identity-canaries"
+      ],
+      "boundary": "窗口身份和gone证据；不代表真实跨应用焦点验收。"
+    },
+    {
+      "id": "ports",
+      "sources": [
+        "source-only:vibe/specs/PRODUCT_REQUIREMENTS.md#Ports"
+      ],
+      "paths": [
+        "preload/index.js",
+        "public/preload.js",
+        "src/domain/ports.ts",
+        "src/platform/devPortServer.ts",
+        "src/platform/eypcPlatform.ts",
+        "src/runtime/appRuntime.ts",
+        "src/runtime/feature/ports/*",
+        "tests/domain/ports.test.ts",
+        "tests/platform/devPortServer.test.ts"
+      ],
+      "checks": [
+        "ports",
+        "types",
+        "runtime-identity",
+        "identity-canaries"
+      ],
+      "boundary": "所属PID/port检查与开发桥模拟；不调用真实进程终止。"
+    },
+    {
+      "id": "settings",
+      "sources": [
+        "source-only:vibe/specs/PRODUCT_REQUIREMENTS.md#Settings"
+      ],
+      "paths": [
+        "preload/index.js",
+        "public/preload.js",
+        "src/domain/state.ts",
+        "src/platform/eypcPlatform.ts",
+        "src/runtime/appRuntime.ts",
+        "src/runtime/feature/settings/*",
+        "tests/domain/state.test.ts",
+        "tests/ui/settingsContextPanel.test.ts"
+      ],
+      "checks": [
+        "settings",
+        "settings-state",
+        "types",
+        "runtime-identity",
+        "identity-canaries"
+      ],
+      "boundary": "配置规范化与设置交互；宿主写入后重载仍未覆盖。"
+    },
+    {
+      "id": "verification-governance",
+      "sources": [
+        "SPEC-261014-CORE-REGRESSION-CAPABILITY::RAW-001",
+        "SPEC-261014-CORE-REGRESSION-CAPABILITY::RAW-002",
+        "SPEC-261014-CORE-REGRESSION-CAPABILITY::RAW-003",
+        "SPEC-260905-CLAUDE-NO-VERSION-WHITELIST::RAW-211"
+      ],
+      "paths": [
+        "scripts/provider-contract-drift.mjs",
+        "scripts/verify-core-changes.mjs",
+        "tests/scripts/coreVerification.test.ts",
+        "tests/scripts/providerContractDrift.test.ts",
+        "vibe/knowledge/core-verification-map.json",
+        "scripts/validate-requirements.mjs",
+        "scripts/validate-source-anchors.mjs",
+        "scripts/check-core-types.mjs",
+        "tests/scripts/providerContractDrift.test.ts"
+      ],
+      "checks": [
+        "governance-canaries",
+        "requirements",
+        "source-anchors",
+        "types",
+        "provider-drift",
+        "runtime-identity",
+        "identity-canaries"
+      ],
+      "boundary": "选测失败/零用例/超时/陈旧证据与静态结构漂移；版本不代表能力准入。"
+    }
+  ],
+  "checks": [
+    {
+      "id": "core",
+      "kind": "node",
+      "files": [
+        "scripts/check-companion-core-invariants.mjs"
+      ],
+      "receipt": {
+        "pattern": "Companion core preservation passed: (\\d+) scenarios",
+        "minimum": 1
+      }
+    },
+    {
+      "id": "lifecycle",
+      "kind": "node",
+      "files": [
+        "scripts/check-companion-lifecycles.mjs"
+      ],
+      "receipt": {
+        "pattern": "Companion lifecycles passed: (\\d+) checkpoints",
+        "minimum": 1
+      }
+    },
+    {
+      "id": "unread",
+      "kind": "node",
+      "files": [
+        "scripts/check-companion-native-unread.mjs"
+      ],
+      "receipt": {
+        "pattern": "Companion native unread passed: (\\d+) checkpoints",
+        "minimum": 1
+      }
+    },
+    {
+      "id": "guard-canaries",
+      "kind": "vitest",
+      "files": [
+        "tests/scripts/companionCoreInvariants.test.ts",
+        "tests/scripts/companionLifecycles.test.ts",
+        "tests/scripts/companionNativeUnread.test.ts"
+      ]
+    },
+    {
+      "id": "provider-admission",
+      "kind": "vitest",
+      "files": [
+        "tests/domain/companionProvider.test.ts",
+        "tests/platform/companionProviderAdmission.test.ts"
+      ]
+    },
+    {
+      "id": "interaction",
+      "kind": "vitest",
+      "files": [
+        "tests/runtime/commandCatalog.test.ts",
+        "tests/domain/listSelection.test.ts",
+        "tests/domain/recordListSelection.test.ts",
+        "tests/runtime/keybindingIndex.test.ts"
+      ]
+    },
+    {
+      "id": "favorites",
+      "kind": "vitest",
+      "files": [
+        "tests/domain/favorites.test.ts",
+        "tests/domain/favoriteLaunch.test.ts"
+      ]
+    },
+    {
+      "id": "windows",
+      "kind": "vitest",
+      "files": [
+        "tests/domain/windows.test.ts",
+        "tests/platform/windowPreloadBridge.test.ts"
+      ]
+    },
+    {
+      "id": "ports",
+      "kind": "vitest",
+      "files": [
+        "tests/domain/ports.test.ts",
+        "tests/platform/devPortServer.test.ts"
+      ]
+    },
+    {
+      "id": "settings",
+      "kind": "vitest",
+      "files": [
+        "tests/ui/settingsContextPanel.test.ts"
+      ]
+    },
+    {
+      "id": "governance-canaries",
+      "kind": "vitest",
+      "files": [
+        "tests/scripts/coreVerification.test.ts"
+      ]
+    },
+    {
+      "id": "orca-schema",
+      "kind": "vitest",
+      "files": [
+        "tests/platform/orcaInventory.test.ts"
+      ]
+    },
+    {
+      "id": "requirements",
+      "kind": "node",
+      "files": [
+        "scripts/validate-requirements.mjs"
+      ],
+      "receipt": {
+        "pattern": "requirements: leaves=(\\d+),",
+        "minimum": 1
+      }
+    },
+    {
+      "id": "source-anchors",
+      "kind": "node",
+      "files": [
+        "scripts/validate-source-anchors.mjs"
+      ],
+      "receipt": {
+        "pattern": "source anchors: documents=(\\d+),",
+        "minimum": 1
+      }
+    },
+    {
+      "id": "mirrors",
+      "kind": "node",
+      "files": [
+        "scripts/validate-committed-preload-mirrors.mjs"
+      ],
+      "receipt": {
+        "pattern": "committed preload mirrors: (\\d+) pairs verified",
+        "minimum": 1
+      }
+    },
+    {
+      "id": "keybindings",
+      "kind": "vitest",
+      "files": [
+        "tests/runtime/keybinding.test.ts"
+      ],
+      "testNames": [
+        "keeps the window workbench layered while preserving text-editor ownership",
+        "gives Ctrl+number two exclusive Codex meanings and lets the session search box navigate",
+        "preserves native editing keys in settings edit inputs",
+        "keeps search inputs from owning Tab history behavior",
+        "uses command-soul edit shortcuts and blocks lower layers inside editors",
+        "adds Ctrl+Enter as the save shortcut for editable command layers",
+        "prioritizes favorite pick-review shortcuts over the base favorites workbench",
+        "maps favorites file-management workbench shortcuts",
+        "prioritizes favorite drawer shortcuts over favorite workbench shortcuts",
+        "keeps result-list shortcuts active while the port search input is focused",
+        "keeps group-list navigation active while the port group search input is focused",
+        "prioritizes drawer shortcuts over global tab selection while the drawer is open",
+        "normalizes legacy shortcuts and applies command-level multi-shortcut overrides",
+        "formats shortcuts as Ez-style short labels for display",
+        "merges profile shortcut overrides while preserving global defaults",
+        "detects conflicts only when shortcut and when clauses can overlap",
+        "reports reserved shortcuts and previews layer resolution candidates",
+        "uses Ctrl+Left for port detail and switches panel sides atomically",
+        "uses Ctrl+Shift+W to toggle the group panel and reuses Ctrl+Left/Right for group drawers",
+        "keeps default shortcuts in a command-keyed json map",
+        "creates a port group folder through Ctrl+T from any port work area",
+        "routes port search focus, group search focus, and group focus matches through commands",
+        "maps right-side process kill to delete shortcuts outside search inputs",
+        "maps group and folder deletion to confirmable and force shortcuts",
+        "removes search history shortcuts and leaves arrows on lists",
+        "lets Shift+Escape hide the app above every layer and text input",
+        "allows group search navigation, fold keys, and drawers while blocking unrelated text shortcuts",
+        "applies user override, disabled state, and explains conflicts"
+      ]
+    },
+    {
+      "id": "settings-state",
+      "kind": "vitest",
+      "files": [
+        "tests/domain/state.test.ts"
+      ],
+      "testNames": [
+        "migrates runtime diagnostics to the current enabled debug default and preserves valid choices",
+        "drops legacy built-in port groups while preserving user groups",
+        "normalizes port group folders and clears invalid group folder references",
+        "normalizes unknown persisted data safely",
+        "recovers malformed favorite graphs without changing the app state version",
+        "keeps collapsed favorite container ids only for existing favorite nodes",
+        "normalizes structured search histories by partition and preserves legacy compatibility fields",
+        "normalizes command-level shortcut override shape while preserving legacy shortcutId",
+        "normalizes shortcut profile maps and keeps a legacy aggregate",
+        "persists only valid window targets and keeps slot mappings separate by platform"
+      ]
+    },
+    {
+      "id": "types",
+      "kind": "node",
+      "files": [
+        "scripts/check-core-types.mjs"
+      ],
+      "receipt": {
+        "pattern": "Core typecheck passed: (\\d+) source files",
+        "minimum": 1
+      }
+    },
+    {
+      "id": "provider-drift",
+      "kind": "vitest",
+      "files": [
+        "tests/scripts/providerContractDrift.test.ts"
+      ]
+    },
+    {
+      "id": "entry-budget",
+      "kind": "node",
+      "files": [
+        "scripts/validate-preload-entry-budget.mjs"
+      ],
+      "receipt": {
+        "pattern": "preload entry budget: (\\d+) lines,",
+        "minimum": 1
+      }
+    },
+    {
+      "id": "working-mirrors",
+      "kind": "node",
+      "files": [
+        "scripts/check-working-preload-mirrors.mjs"
+      ],
+      "receipt": {
+        "pattern": "Working preload mirrors passed: (\\d+) pairs",
+        "minimum": 1
+      }
+    },
+    {
+      "id": "favorite-bridge",
+      "kind": "vitest",
+      "files": [
+        "tests/platform/favoriteFileBridge.test.ts"
+      ],
+      "testNames": [
+        "splits file and folder multi-selection dialogs and keeps directory reads non-recursive",
+        "starts background runners with shell disabled and preserves structured arguments",
+        "captures background output to a run log and reports the exit code afterwards",
+        "still launches without capture when the run log cannot be opened",
+        "drops a relative or malformed declared log path instead of guessing",
+        "uses a controlled macOS terminal adapter without execution-policy bypasses or raw user shell",
+        "dispatches Windows terminal mode through a static PowerShell adapter and encoded structured payload",
+        "reports unsupported when Linux terminal mode has no known terminal and never falls back to background",
+        "rejects relative executable paths and malformed requests before spawning",
+        "maps an inaccessible executable to permission-denied without spawning",
+        "rejects direct Windows cmd and bat executables so scripts must use explicit cmd.exe arguments",
+        "packages the uTools preload bridge in a CommonJS package scope",
+        "saves JSON text only after the user chooses a target path and reports cancellation",
+        "prefers Electron openPath and preserves spaces and Unicode arguments",
+        "reports macOS favorite open failures instead of hiding them as success",
+        "reveals macOS files when their extension has no default opener",
+        "falls back to uTools reveal when the macOS native reveal command fails",
+        "reports void uTools open and reveal calls as dispatched on Linux",
+        "maps Electron openPath rejection and timeout to stable failures",
+        "preserves no-handler and macOS native timeout error codes",
+        "does not report copyText false as success and treats void hosts as dispatched",
+        "preflights missing paths before dispatch and exposes stable inspection errors",
+        "preserves permission inspection errors and describes symlinks without recursive reads",
+        "omits special and unresolved directory entries instead of labeling them as files",
+        "bounds directory read promises and reports rejection codes",
+        "copies real files through uTools and reports capabilities",
+        "does not report copyFile false or rejection as success"
+      ]
+    },
+    {
+      "id": "runtime-identity",
+      "kind": "node",
+      "files": [
+        "scripts/check-runtime-identity.mjs"
+      ],
+      "receipt": {
+        "pattern": "Runtime identity passed: (\\d+) fields",
+        "minimum": 1
+      }
+    },
+    {
+      "id": "identity-canaries",
+      "kind": "vitest",
+      "files": [
+        "tests/platform/runtimeIdentity.test.ts"
+      ]
+    }
+  ]
+}

@@ -21,6 +21,8 @@ function filesBelow(directory) {
   if (!existsSync(directory)) return []
   const result = []
   for (const name of readdirSync(directory).sort()) {
+    // Finder/Explorer metadata is local machine state, never renderer source.
+    if (['.DS_Store', 'Thumbs.db', 'desktop.ini'].includes(name) || name.startsWith('._')) continue
     const file = resolve(directory, name)
     const stats = statSync(file)
     if (stats.isDirectory()) result.push(...filesBelow(file))

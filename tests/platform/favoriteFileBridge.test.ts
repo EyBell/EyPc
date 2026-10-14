@@ -448,7 +448,11 @@ describe('favorite file bridge source', () => {
     // broken, and the host loads the committed mirror. `validate:entry-budget`
     // joined under RAW-169: sixteen extraction blocks were fully cancelled out
     // by concurrent growth because nothing pinned the entry's size.
-    expect(packageJson.scripts?.verify).toBe('pnpm run sync:preloads && pnpm run test && pnpm run build && pnpm run validate:mirrors && pnpm run validate:entry-budget')
+    // RAW-001 core-regression-capability makes impact selection the normal entry;
+    // the prior explicit full pipeline and its existing safeguards remain available.
+    expect(packageJson.scripts?.verify).toBe('pnpm run verify:changed')
+    expect(packageJson.scripts?.['verify:changed']).toBe('node scripts/verify-core-changes.mjs')
+    expect(packageJson.scripts?.['verify:full']).toBe('pnpm run sync:preloads && pnpm run test && pnpm run build && pnpm run validate:mirrors && pnpm run validate:entry-budget')
     expect(packageJson.scripts?.['validate:entry-budget']).toBe('node scripts/validate-preload-entry-budget.mjs')
     expect(validateScript).toContain("['index.html', 'float.html', 'action.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'action-preload.js', 'runtime-identity.cjs', 'logo.svg']")
     expect(validateScript).toContain('UTOOLS_PRELOAD_ASSETS.map')
@@ -461,10 +465,28 @@ describe('favorite file bridge source', () => {
     expect(viteConfig).toContain('manualChunks: stableVendorChunk')
     expect(validateScript).toContain('const maxJavaScriptChunkBytes = 500_000')
     expect(validateScript).toContain('JavaScript chunks must stay within 500 kB')
-    for (const page of ['PortsPage', 'FavoritesPage', 'QuickFavoritesPage', 'WindowsPage', 'MqttPage', 'CodexPage', 'SettingsPage']) {
-      expect(appSource).toContain(`const ${page} = defineAsyncComponent(() => import('./pages/${page}.vue'))`)
+    for (const [page, feature] of [
+      ['PortsPage', 'ports'],
+      ['FavoritesPage', 'favorites'],
+      ['QuickFavoritesPage', 'favorites'],
+      ['WindowsPage', 'windows'],
+      ['CodexPage', 'codex'],
+      ['SettingsPage', 'settings']
+    ]) {
+      const pageBindSource = readFileSync(resolve(process.cwd(), `src/runtime/feature/${feature}/pageBind.ts`), 'utf8')
+      expect(pageBindSource).toContain(`const ${page} = defineAsyncComponent(() => import('../../../pages/${page}.vue'))`)
+      expect(pageBindSource).not.toContain(`import ${page} from '../../../pages/${page}.vue'`)
       expect(appSource).not.toContain(`import ${page} from './pages/${page}.vue'`)
     }
+  })
+
+  it('keeps the MQTT page lazy in its feature page binding', () => {
+    const pageBindSource = readFileSync(resolve(process.cwd(), 'src/runtime/feature/mqtt/pageBind.ts'), 'utf8')
+    const appSource = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+
+    expect(pageBindSource).toContain("const MqttPage = defineAsyncComponent(() => import('../../../pages/MqttPage.vue'))")
+    expect(pageBindSource).not.toContain("import MqttPage from '../../../pages/MqttPage.vue'")
+    expect(appSource).not.toContain("import MqttPage from './pages/MqttPage.vue'")
   })
 
   it('saves JSON text only after the user chooses a target path and reports cancellation', async () => {

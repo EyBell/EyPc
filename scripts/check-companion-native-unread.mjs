@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 
 export function checkCompanionNativeUnread(assetRoot) {
@@ -186,4 +187,8 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 0, '', false, true), true, 'exact inactive member terminal can settle at first successful read')
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 200, 'inProgress', true, true), false, 'idle cannot authorize an older member epoch')
   return 23
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  console.log(`Companion native unread passed: ${checkCompanionNativeUnread(resolve(import.meta.dirname, '../preload'))} checkpoints`)
 }

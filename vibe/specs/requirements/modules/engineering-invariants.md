@@ -32,6 +32,10 @@
 - [RAW-179#5](../invariants-raw-179-clause-005.md#L1) — `active` · 有界增量性能合同
 - [RAW-179#7](../invariants-raw-179-clause-007.md#L1) — `active` · 一次性 V7 切换与外部门禁
 
+- [核心回归 RAW-001](../invariants-core-regression-raw-001.md#L1) — `active` · `user-stated`
+- [核心回归 RAW-002](../invariants-core-regression-raw-002.md#L1) — `active` · `user-stated`
+- [核心回归 RAW-003](../invariants-core-regression-raw-003.md#L1) — `active` · `user-stated`
+
 ## Related Requirements
 
 - [RAW-177#1](../invariants-raw-177-clause-001.md#L1) 提供来源锚点与需求身份的分层基础；RAW-178 在其上增加唯一当前真值与同步门禁，不把来源条款自动升级为产品需求。
