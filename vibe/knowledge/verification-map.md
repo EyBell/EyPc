@@ -12,6 +12,10 @@
 - MQTT不自动运行；混合文件使用明确的正向用例名清单，命名消失或多运行用例均失败。正常入口不启动真实供应方CLI、宿主或账号操作。[CI](../../.github/workflows/core-regression.yml#L1)在PR/push/manual调用同入口，权限仅contents:read。仓内配置完成不代表远端已执行或已设为required。
 - 主/成员独立核心检查按manifest四来源共40场景；Codex独有root input优先保留[RAW-207的局部取代](../specs/requirements/shared-raw-207.md#L1)，其它来源input/approval仍按原优先级。每个来源有定向坏实现canary。
 
+状态修复的固定 `provider-state-repair` 检查覆盖 Cursor 子事件时钟与动态窗口、Codex 反序嵌套/缓存/机器 parent 优先、Orca 明确等待及同 epoch 解除；生产 evidence builder 与真实 Kernel 一起断言分组，并保留 Orca 未读消费者。匿名 fixture 不读取真实任务正文。[修复台账](../specs/261018/task-state-repair/task-card.md#L1)。
+
+`codex-side-recovery` 通过精确用例名选取真实生产 Bridge 的 8 个恢复边界：完成临时成员不落盘但保留本进程成员/未读、新运行和等待恢复提示、owner 断开不复活、未完成/未知 Goal 保留、普通/未知能力成员保留，以及既有运行恢复/未知提示/不完整 canonical 门禁。[续修记录](../specs/261018/task-state-repair/terminal-recovery.md#L1)。
+
 上游更新使用[静态探测器](../../scripts/provider-contract-drift.mjs#L1)：`pnpm run probe:provider-contract --provider codex`读取标准Applications候选的安装元数据；`--app`指定或重复提供候选；`--schema`提供严格脱敏结构，`--baseline`比较已审核报告，`--output`只能写新文件。退出2表示unknown，不能解释为能力已移除；退出0也仅说明静态结构可比较，runtimeSupport始终unverified。程序版本/build/选定元数据或ASAR头摘要与契约结构分开；header摘要不是全部程序正文校验。没有契约时仍能报告artifact变化，但不猜测能力。不会自动更新baseline或启动后台监控。
 
 显式schema最小例子（不是供应方实际完整schema）：
