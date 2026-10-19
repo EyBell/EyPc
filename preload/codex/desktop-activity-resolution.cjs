@@ -302,6 +302,18 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     return codexDesktopCanonicalTerminalDecision(shadow, options)
   }
 
+  // Only a current owner-confirmed successful ephemeral terminal can stop
+  // future recovery. Keep the live member/terminal; persist no phase as a hint.
+  function codexDesktopSideNeedsRecoveryHint(shadow, terminal, goal) {
+    if (goal?.goalFreshness !== 'fresh' || !['none', 'complete'].includes(goal.goalStatus)) return true
+    const decision = codexDesktopSideTerminalDecision(shadow, { terminal })
+    return decision.turn?.status !== 'completed'
+      || terminal?.lastTurnStatus !== 'completed'
+      || timestampMs(terminal.turnStartedAt) !== decision.turn.startedAt
+      || !isConfirmedTurnEvidence(terminal.lastTurnEvidence)
+      || !(terminal.terminalEvidenceSequence > 0)
+  }
+
   // A separate App Server reconstructs an unfinished persisted Turn as
   // interrupted even while its Desktop owner is running it. Its inventory or
   // targeted read is not a new stop event for that same owner Turn.
@@ -431,6 +443,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     codexCanRetireMissingDesktopSide,
     codexDesktopCanonicalTerminalDecision,
     codexDesktopSideTerminalDecision,
+    codexDesktopSideNeedsRecoveryHint,
     codexDesktopTerminalConflictsWithOwner,
     codexDesktopBranchInventoryTurn,
     codexDesktopInventoryTurnCandidate,

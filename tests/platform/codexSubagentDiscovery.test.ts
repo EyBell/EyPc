@@ -16,6 +16,7 @@ const discoveryModule = require('../../preload/codex/subagent-discovery.cjs') as
     codexObserveThreadRows(rows: unknown): string[]
     codexObserveThreadSourceKind(threadId: string, kind: unknown): boolean
     codexIsInternalReviewThread(threadId: string): boolean
+    codexIsMachineRunThread(threadId: string): boolean
     codexResetSubagentDiscovery(): void
   }
 }
@@ -51,6 +52,80 @@ afterEach(() => {
 })
 
 describe('codex subagent rollout discovery', () => {
+  it('uses exact machine parent lineage before inherited fork history and keeps ordinary cross-session forks isolated', () => {
+    const { createCodexInventoryThreadTopology } = require('../../preload/codex/inventory-thread-topology.cjs')
+    const ids = ['a', 'b', 'c', 'd'].map(prefix => `${prefix}7345678-1234-4234-8234-123456789abc`)
+    const [rootId, childId, nestedId, ordinaryId] = ids
+    const topology = createCodexInventoryThreadTopology({
+      record: (value: unknown) => value && typeof value === 'object' ? value : {},
+      validThreadId: (value: unknown) => typeof value === 'string' && VALID_THREAD_ID.test(value),
+      nativeString: (value: unknown) => typeof value === 'string' ? value : ''
+    }).codexInventoryThreadTopology([
+      { id: rootId, sessionId: rootId, threadSource: 'user' },
+      { id: childId, sessionId: childId, threadSource: 'subagent', parentThreadId: rootId, forkedFromId: rootId },
+      { id: nestedId, sessionId: nestedId, threadSource: 'subagent', parentThreadId: childId },
+      { id: ordinaryId, sessionId: ordinaryId, threadSource: 'user', parentThreadId: rootId, forkedFromId: rootId }
+    ])
+    expect(topology.relations.get(childId)).toBe(rootId)
+    expect(topology.relations.get(nestedId)).toBe(rootId)
+    expect(topology.depths.get(nestedId)).toBe(2)
+    expect(topology.isolated.has(childId)).toBe(false)
+    expect(topology.isolated.has(ordinaryId)).toBe(true)
+  })
+
+  it('discovers nested descendants before their parents and reuses verified metadata across root admission', async () => {
+    const root = sessionsRoot()
+    const now = 1_788_180_000_000
+    const ids = ['a', 'b', 'c', 'd', 'e'].map(prefix => `${prefix}1345678-1234-4234-8234-123456789abc`)
+    const [rootId, childId, nestedId, cycleA, cycleB] = ids
+    const parents = new Map([[childId, rootId], [nestedId, childId], [cycleA, cycleB], [cycleB, cycleA]])
+    // The newest rollout belongs to the grandchild, so a one-pass admission loses it.
+    for (const [index, id] of [nestedId, childId, cycleA, cycleB].entries()) {
+      writeRollout(root, '2026/08/31', `rollout-2026-08-31T15-38-40-${id}.jsonl`, now - index * 1_000)
+    }
+    let reads = 0
+    const factory = discoveryModule.createCodexSubagentDiscovery({
+      fs: require('node:fs'), path: require('node:path'),
+      validThreadId: (value: unknown) => typeof value === 'string' && VALID_THREAD_ID.test(value),
+      readThread: async (id: string) => {
+        reads += 1
+        return { thread: { id, parentThreadId: parents.get(id), threadSource: 'subagent' } }
+      }
+    })
+    // Not yet in this inventory is not a permanent negative metadata result.
+    expect(await factory.codexDiscoverSubagentThreadRows({ root, rows: [], nowMs: now })).toEqual([])
+    for (let scan = 0; scan < 2; scan += 1) {
+      const found = await factory.codexDiscoverSubagentThreadRows({ root, rows: [{ id: rootId }], nowMs: now })
+      expect(found.map(row => row.id)).toEqual([childId, nestedId])
+      expect(reads).toBe(4)
+    }
+    expect(await factory.codexDiscoverSubagentThreadRows({ root, rows: [], nowMs: now })).toEqual([])
+  })
+
+  it('survives a cache reset during another candidate read without losing the verified graph', async () => {
+    const root = sessionsRoot()
+    const now = 1_788_180_000_000
+    const [rootId, childId, nestedId] = ['a', 'b', 'c'].map(prefix => `${prefix}8345678-1234-4234-8234-123456789abc`)
+    writeRollout(root, '2026/08/31', `rollout-2026-08-31T15-38-40-${childId}.jsonl`, now - 1_000)
+    let machineDuringRead = false
+    const factory = discoveryModule.createCodexSubagentDiscovery({
+      fs: require('node:fs'), path: require('node:path'),
+      validThreadId: (value: unknown) => typeof value === 'string' && VALID_THREAD_ID.test(value),
+      readThread: async (id: string) => {
+        if (id === nestedId) {
+          machineDuringRead = factory.codexIsMachineRunThread(childId)
+          factory.codexResetSubagentDiscovery()
+        }
+        return { thread: { id, parentThreadId: id === childId ? rootId : childId, threadSource: 'subagent' } }
+      }
+    })
+    const input = { root, rows: [{ id: rootId }], nowMs: now }
+    expect((await factory.codexDiscoverSubagentThreadRows(input)).map(row => row.id)).toEqual([childId])
+    writeRollout(root, '2026/08/31', `rollout-2026-08-31T15-38-40-${nestedId}.jsonl`, now - 2_000)
+    expect((await factory.codexDiscoverSubagentThreadRows(input)).map(row => row.id)).toEqual([childId, nestedId])
+    expect(machineDuringRead).toBe(true)
+  })
+
   it('returns only unknown, recent thread ids from rollout basenames, newest first', () => {
     const root = sessionsRoot()
     const now = 1_788_180_000_000

@@ -84,10 +84,15 @@
     {
       "id": "provider-evidence",
       "sources": [
+        "SPEC-260810-1155-INSTALL-RUNTIME-DIAGNOSTICS::RAW-165",
+        "SPEC-260825-CODEX-SIDE-RELOAD-RECOVERY::RAW-181",
+        "SPEC-260903-SAME-TURN-WAITING-INPUT::RAW-207",
+        "SPEC-260907-FLOAT-TASK-META-COMPACT::RAW-217",
         "SPEC-260913-ORCA-COMPANION::RAW-219",
         "SPEC-260915-SHORTCUT-IMMEDIATE-READ::RAW-221"
       ],
       "paths": [
+        "src/help/guides/codex.md",
         "preload/claude/*",
         "preload/codex/*",
         "preload/cursor/*",
@@ -110,6 +115,10 @@
         "tests/scripts/companionLifecycles.test.ts",
         "tests/scripts/companionNativeUnread.test.ts",
         "tests/platform/orcaInventory.test.ts",
+        "tests/platform/orcaUnreadBridge.test.ts",
+        "tests/platform/providerStateRepair.test.ts",
+        "tests/platform/providerEvidenceAdapterV7.test.ts",
+        "tests/platform/codexSubagentDiscovery.test.ts",
         "tests/scripts/providerContractDrift.test.ts"
       ],
       "checks": [
@@ -119,6 +128,8 @@
         "guard-canaries",
         "provider-admission",
         "orca-schema",
+        "provider-state-repair",
+        "codex-side-recovery",
         "types",
         "provider-drift",
         "mirrors",
@@ -397,6 +408,31 @@
       "kind": "vitest",
       "files": [
         "tests/platform/orcaInventory.test.ts"
+      ]
+    },
+    {
+      "id": "provider-state-repair",
+      "kind": "vitest",
+      "files": [
+        "tests/platform/providerStateRepair.test.ts",
+        "tests/platform/orcaUnreadBridge.test.ts",
+        "tests/platform/providerEvidenceAdapterV7.test.ts",
+        "tests/platform/codexSubagentDiscovery.test.ts"
+      ]
+    },
+    {
+      "id": "codex-side-recovery",
+      "kind": "vitest",
+      "files": ["tests/platform/codexAppServerBridge.test.ts"],
+      "testNames": [
+        "omits a confirmed completed ephemeral hint on reload while retaining its current member and unread",
+        "restores the ephemeral recovery hint on new running and waiting edges and removes it after completion",
+        "does not repersist a settled hint after owner disconnect when another Side changes",
+        "keeps unresolved Goal recovery hints and removes them only after an explicit completed Goal",
+        "keeps recovery hints for persistent, unknown-capability and incomplete ephemeral members",
+        "persists Desktop Side relation hints and recovers the running child after a preload reload",
+        "does not fabricate running from a restored side relation hint alone",
+        "waits for the newest canonical island to be complete before accepting an ephemeral terminal"
       ]
     },
     {

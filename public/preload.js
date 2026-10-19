@@ -5370,6 +5370,14 @@ class CodexDesktopCompanionBridge {
         if (refreshGoal) void refreshCodexThreadGoal(threadId, { force: true, publish: true })
       }
     }
+    if (side && shadow.ephemeral === true) {
+      codexDesktopSideRelationObservedAt.set(threadId, Date.now())
+      if (codexDesktopActivityResolution?.codexDesktopSideNeedsRecoveryHint(shadow,
+        codexReadPrivateBranchTerminal(parentThreadId, threadId), codexPrivateThreadGoalEvidence(threadId)) === false) {
+        codexDesktopSideRelationObservedAt.delete(threadId)
+      }
+      codexScheduleDesktopSideRelationHintPersist()
+    }
     if (side && shadow.ephemeral !== true || shadow.terminalDecisionReason === decision?.reason
       || previousShadow?.terminalDecisionReason === decision?.reason) return
     shadow.terminalDecisionReason = decision?.reason
@@ -11864,11 +11872,14 @@ function companionCursorEvidenceV7(sessionValue, hookValue, input = {}) {
     const childKey = companionPrivateChildKey('cursor', key, childId)
     const childRevision = companionEvidenceSequenceV7(
       hotChild?.lastEventAt,
+      hotChild?.startedAt,
+      hotChild?.stoppedAt,
       child.unfinishedRunAt,
       child.lastUpdatedAt,
-      child.createdAt,
-      revisionAt
+      child.createdAt
     )
+    // Root metadata revision includes poll acceptance. Only the child's own
+    // source clocks can advance its activity or renew the family's window.
     const hotCurrent = Number(hotChild?.lastEventAt) > 0
       && Number(hotChild.lastEventAt) >= Number(child.unfinishedRunAt || 0)
     const childRunning = hotCurrent ? hotChild.active === true : Number(child.unfinishedRunAt) > 0
@@ -12004,14 +12015,26 @@ function companionOrcaEvidenceV7(sessionValue, input = {}) {
     capabilities: ['open', 'pin', ...(terminal ? ['archive'] : [])],
     standaloneEligible: true
   })
+  const interactionBundle = companionSyntheticInteractionBundleV7({
+    provider: 'orca',
+    taskKey: key,
+    branchRef: 'root',
+    kind: observation.interactionKind,
+    sequence: observation.interactionSequence || observation.sequence,
+    turnEpoch: observation.turnStartedAt,
+    requestSetRevision: observation.interactionSequence || observation.sequence,
+    authority: input.authority || 'provider-snapshot',
+    exact: observation.exact === true,
+    complete: true
+  })
   return {
     nodes: root ? [root] : [],
-    interactions: [],
-    interactionSets: [],
+    interactions: interactionBundle.interactions,
+    interactionSets: interactionBundle.interactionSets,
     relations: [],
     maxima: {
       activity: observation.sequence,
-      interaction: 0,
+      interaction: observation.interactionSequence || observation.sequence,
       unread: observation.unreadSequence,
       planArtifact: 0,
       topology: 0

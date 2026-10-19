@@ -368,6 +368,9 @@ function orcaSessionObservationV7(value = {}, options = {}) {
   const terminalAt = kind === 'turn-completed' || kind === 'turn-interrupted'
     ? Math.max(lastUpdatedAt, stateStartedAt, turnStartedAt)
     : 0
+  const interactionKind = kind === 'turn-running'
+    && ['user-input', 'plan-implementation'].includes(session.interactionKind)
+    ? session.interactionKind : ''
   return {
     kind,
     exact: kind !== 'unknown',
@@ -389,8 +392,8 @@ function orcaSessionObservationV7(value = {}, options = {}) {
     unreadKnown: true,
     unread: session.unread === true,
     unreadSequence: Math.max(sequence, acceptedAt),
-    interactionKind: '',
-    interactionSequence: 0,
+    interactionKind,
+    interactionSequence: interactionKind ? sequence : 0,
     planState: 'unknown',
     planSequence: 0,
     planActionable: false,

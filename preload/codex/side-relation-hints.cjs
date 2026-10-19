@@ -63,10 +63,14 @@ function createCodexSideRelationHints(dependencies = {}) {
       ? (threadId) => observedAtByThreadId.get(threadId)
       : () => 0
     for (const [threadId, parentThreadId] of entries) {
+      // The bridge removes this timestamp after a confirmed ephemeral
+      // completion, while retaining the current in-memory relation/terminal.
+      const observedAt = timestampMs(observedAtFor(threadId))
+      if (!(observedAt > 0)) continue
       rows.push({
         threadId,
         parentThreadId,
-        observedAt: timestampMs(observedAtFor(threadId)) || nowMs
+        observedAt
       })
     }
     return {

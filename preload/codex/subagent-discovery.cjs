@@ -85,7 +85,7 @@ function createCodexSubagentDiscovery(dependencies = {}) {
     throw new TypeError('codex subagent discovery requires fs, path and validThreadId')
   }
 
-  /** threadId -> { mtimeMs, row|null }; `row: null` records a verified non-link. */
+  /** Cache verified metadata separately from admission to the current root set. */
   let verifiedRows = new Map()
   // Keep only a finite identity decision, never the source object or its data.
   // A missing source on another transport cannot revive an internal review.
@@ -186,13 +186,14 @@ function createCodexSubagentDiscovery(dependencies = {}) {
       nowMs: input.nowMs
     })
     const discovered = []
+    const pending = new Map()
     const seenThisScan = new Set()
     let readCount = 0
     for (const candidate of candidates) {
       seenThisScan.add(candidate.threadId)
       const cached = verifiedRows.get(candidate.threadId)
       if (cached && cached.mtimeMs === candidate.mtimeMs) {
-        if (cached.row && knownIds.has(record(cached.row).parentThreadId)) discovered.push(cached.row)
+        if (cached.row) pending.set(candidate.threadId, cached.row)
         continue
       }
       try {
@@ -200,12 +201,36 @@ function createCodexSubagentDiscovery(dependencies = {}) {
         const thread = record(record(await readThread(candidate.threadId)).thread)
         if (thread.id === candidate.threadId) codexObserveThreadRows([thread])
         const parentThreadId = typeof thread.parentThreadId === 'string' ? thread.parentThreadId : ''
-        const linkable = thread.id === candidate.threadId
+        const validParent = thread.id === candidate.threadId
           && validThreadId(parentThreadId)
-          && knownIds.has(parentThreadId)
-        verifiedRows.set(candidate.threadId, { mtimeMs: candidate.mtimeMs, row: linkable ? thread : null })
-        if (linkable) discovered.push(thread)
+          && parentThreadId !== thread.id
+        verifiedRows.set(candidate.threadId, {
+          mtimeMs: candidate.mtimeMs, row: validParent ? thread : null, linked: cached?.linked === true
+        })
+        if (validParent) pending.set(candidate.threadId, thread)
       } catch {}
+    }
+    // Rollouts are newest-first: a grandchild commonly precedes its parent.
+    // Resolve the bounded verified set to a fixed point without more RPCs.
+    // Unknown parents remain cached metadata, so later root admission can
+    // reconnect them; rootless cycles and unrelated families never advance.
+    let advanced = true
+    while (advanced) {
+      advanced = false
+      for (const [threadId, thread] of pending) {
+        if (!knownIds.has(thread.parentThreadId)) continue
+        knownIds.add(threadId)
+        discovered.push(thread)
+        pending.delete(threadId)
+        advanced = true
+      }
+    }
+    // Publish admission only after all awaited reads: live unread consumers
+    // must not briefly treat an already-known machine member as a human run.
+    const admittedIds = new Set(discovered.map((thread) => thread.id))
+    for (const threadId of seenThisScan) {
+      const cached = verifiedRows.get(threadId)
+      if (cached) cached.linked = admittedIds.has(threadId)
     }
     if (verifiedRows.size > CODEX_SUBAGENT_DISCOVERY_CACHE_LIMIT) {
       for (const threadId of [...verifiedRows.keys()]) {
@@ -238,7 +263,7 @@ function createCodexSubagentDiscovery(dependencies = {}) {
    */
   function codexIsMachineRunThread(threadId) {
     const cached = verifiedRows.get(typeof threadId === 'string' ? threadId.toLowerCase() : '')
-    return Boolean(cached?.row) && isSubAgentThreadSource(record(cached.row).threadSource)
+    return cached?.linked === true && isSubAgentThreadSource(record(cached.row).threadSource)
   }
 
   return {

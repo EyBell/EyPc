@@ -185,6 +185,16 @@ function sessionState(agent, connected, terminalTitle, agentType) {
   return 'done'
 }
 
+function waitingInteractionKind(agent, state) {
+  if (state !== 'working' || !['waiting', 'blocked'].includes(textOf(agent.state).toLowerCase())) return ''
+  // A transport wait alone is not a user request. Admit only finite native
+  // question/Plan tools; never carry arguments or infer approval from Bash.
+  const tool = textOf(agent.toolName)
+  if (tool === 'exit_plan_mode' || tool === 'ExitPlanMode') return 'plan-implementation'
+  if (['AskUserQuestion', 'ask_user_question', 'request_user_input'].includes(tool)) return 'user-input'
+  return ''
+}
+
 function mergeSession(agent, terminal, worktree, tabTitles, tabOrdinals, nativePins) {
   const fromAgent = textOf(agent.paneKey).toLowerCase()
   const paneKey = paneKeyOf(fromAgent.split(':')[0], fromAgent.split(':')[1])
@@ -221,6 +231,7 @@ function mergeSession(agent, terminal, worktree, tabTitles, tabOrdinals, nativeP
     worktreeId: textOf(worktree.worktreeId).slice(0, 256),
     connected,
     state,
+    interactionKind: waitingInteractionKind(agent, state),
     unread: agent.unread === true,
     nativeUnread: typeof agent.unread === 'boolean',
     unreadExplicit: typeof agent.unread === 'boolean',
@@ -374,6 +385,7 @@ function fingerprintOf(sessions) {
     session.agentType,
     session.name,
     session.state,
+    session.interactionKind,
     session.unread,
     session.pinned,
     session.connected,

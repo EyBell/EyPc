@@ -11134,6 +11134,7 @@ describe('Desktop Side terminal sources', () => {
   const sideStartedAt = 2_000_000_100_000
 
   async function setup(ephemeral = true, unread = false) {
+    const storage = { values: new Map<string, unknown>(), writes: [] as string[] }
     const child = new FakeCodexProcess()
     const socket = new FakeCodexDesktopSocket()
     child.turnOverrides.set(parentId, { id: 'parent-newer-turn', status: 'completed', startedAt: 2_000_000_500, completedAt: 2_000_000_520 })
@@ -11150,7 +11151,7 @@ describe('Desktop Side terminal sources', () => {
         return write(line)
       }
     }
-    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread(unread ? [sideId] : []), socket, true)
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread(unread ? [sideId] : []), socket, true, true, null, false, storage)
     const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
     await vi.advanceTimersByTimeAsync(0)
     const parent = baseline.value.threads.find((thread: any) => thread.key === crypto.createHash('sha256').update(parentId).digest('hex').slice(0, 32))
@@ -11170,12 +11171,131 @@ describe('Desktop Side terminal sources', () => {
       type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: owner, version: 11,
       params: { hostId: 'local', conversationId: sideId, change: { type: 'patches', baseRevision, revision, patches } }
     })
-    return { child, context, kernel, parent, socket, snapshot, patch,
+    return { child, context, kernel, parent, socket, snapshot, patch, storage,
+      hints: () => (storage.values.get('eypc/codex/desktop-side-relations/v1') as Record<string, any>)?.relations || [],
       task: () => kernel.getLatest().tasks.find((task: any) => task.key === parent.key),
       evidence: () => context.native.privateBranchEvidence(parentId)?.branches.find((branch: any) => branch.branchKind === 'side'),
       reads: (method: string) => child.writes.filter((frame) => frame.method === method && frame.params?.threadId === sideId)
     }
   }
+
+  it('omits a confirmed completed ephemeral hint on reload while retaining its current member and unread', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup(true, true)
+      state.snapshot(1)
+      await vi.advanceTimersByTimeAsync(80)
+      expect(state.task()).toMatchObject({ phase: 'completed', unread: true, topology: { memberCount: 2 } })
+      expect(state.hints()).toEqual([])
+      state.context.bridge.close()
+      const child = new FakeCodexProcess()
+      const socket = new FakeCodexDesktopSocket()
+      socket.streamOwnerConnected = false
+      const reloaded = loadCodexBridge(child, () => nativeRegistryText(), socket, true, true, null, false, state.storage)
+      await reloaded.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(80)
+      expect(reloaded.native.privateBranchEvidence(parentId)?.branches.filter((branch: any) => branch.branchKind === 'side')).toEqual([])
+      expect(socket.writes.some((frame) => frame.method === 'thread-stream-following-changed' && frame.params?.conversationId === sideId)).toBe(false)
+      reloaded.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('restores the ephemeral recovery hint on new running and waiting edges and removes it after completion', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup()
+      state.snapshot(1)
+      await vi.advanceTimersByTimeAsync(80)
+      expect(state.hints()).toEqual([])
+      state.patch(1, 2, [{ op: 'replace', path: ['requests'], value: [{ id: 'new-question', type: 'userInput', method: 'requestUserInput' }] }])
+      await vi.advanceTimersByTimeAsync(80)
+      expect(state.task().phase).toBe('waiting-input')
+      expect(state.hints()).toEqual([{ threadId: sideId, parentThreadId: parentId, observedAt: expect.any(Number) }])
+      state.patch(2, 3, [{ op: 'replace', path: ['requests'], value: [] }])
+      await vi.advanceTimersByTimeAsync(80)
+      expect(state.task().phase).toBe('completed')
+      expect(state.hints()).toEqual([])
+      state.patch(3, 4, [
+        { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active', activeFlags: [] } },
+        { op: 'replace', path: ['turns'], value: [{ turnId: 'side-new-turn', status: 'inProgress', turnStartedAtMs: sideStartedAt + 1_000_000, items: [] }] }
+      ])
+      await vi.advanceTimersByTimeAsync(80)
+      expect(state.task().phase).toBe('running')
+      expect(state.hints()).toHaveLength(1)
+      state.context.bridge.close()
+      const child = new FakeCodexProcess()
+      const socket = new FakeCodexDesktopSocket()
+      socket.streamOwnerConnected = false
+      const reloaded = loadCodexBridge(child, () => nativeRegistryText(), socket, true, true, null, false, state.storage)
+      await reloaded.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(80)
+      expect(reloaded.diagnosticEvents).toContainEqual(expect.objectContaining({ event: 'side-relation-hints-restored', details: expect.objectContaining({ count: 1 }) }))
+      expect(socket.writes.some((frame) => frame.method === 'thread-stream-following-changed' && frame.params?.conversationId === sideId && frame.params?.following === true)).toBe(true)
+      reloaded.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('does not repersist a settled hint after owner disconnect when another Side changes', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup()
+      state.snapshot(1)
+      await vi.advanceTimersByTimeAsync(80)
+      expect(state.hints()).toEqual([])
+      state.socket.streamOwnerConnected = false
+      state.socket.push({ type: 'broadcast', method: 'ipc-connection-reset', sourceClientId: 'side-owner', version: 1, params: {} })
+      const otherSideId = 'b2345678-1234-4234-8234-123456789abc'
+      state.socket.push({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'another-owner', version: 11,
+        params: { hostId: 'local', conversationId: otherSideId, change: { type: 'snapshot', revision: 1, conversationState: {
+          sideConversation: true, forkedFromId: parentId, threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: []
+        } } }
+      })
+      await vi.advanceTimersByTimeAsync(80)
+      expect(state.hints()).toEqual([{ threadId: otherSideId, parentThreadId: parentId, observedAt: expect.any(Number) }])
+      state.context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('keeps unresolved Goal recovery hints and removes them only after an explicit completed Goal', async () => {
+    vi.useFakeTimers()
+    try {
+      const state = await setup()
+      state.snapshot(1, { threadGoal: { status: 'active', updatedAt: sideStartedAt } })
+      await vi.advanceTimersByTimeAsync(80)
+      expect(state.task().phase).toBe('running')
+      expect(state.hints()).toHaveLength(1)
+      state.patch(1, 2, [{ op: 'replace', path: ['threadGoal'], value: {} }])
+      await vi.advanceTimersByTimeAsync(80)
+      expect(state.evidence()).toMatchObject({ goalStatus: 'unknown', goalFreshness: 'verifying' })
+      expect(state.hints()).toHaveLength(1)
+      state.patch(2, 3, [{ op: 'replace', path: ['threadGoal'], value: { status: 'complete', updatedAt: sideStartedAt + 1_000 } }])
+      await vi.advanceTimersByTimeAsync(80)
+      expect(state.task().phase).toBe('completed')
+      expect(state.hints()).toEqual([])
+      state.context.bridge.close()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('keeps recovery hints for persistent, unknown-capability and incomplete ephemeral members', async () => {
+    vi.useFakeTimers()
+    try {
+      for (const overrides of [
+        { ephemeral: false }, { ephemeral: undefined }, { turnHistory: null },
+        { requests: [{ id: 'waiting', type: 'userInput', method: 'requestUserInput' }] },
+        { threadGoal: { status: 'paused', updatedAt: sideStartedAt } },
+        { threadGoal: { status: 'blocked', updatedAt: sideStartedAt } },
+        { threadGoal: { status: 'budgetLimited', updatedAt: sideStartedAt } },
+        { threadGoal: { status: 'usageLimited', updatedAt: sideStartedAt } }
+      ]) {
+        const state = await setup()
+        state.snapshot(1, overrides)
+        await vi.advanceTimersByTimeAsync(80)
+        expect(state.hints(), JSON.stringify(overrides)).toHaveLength(1)
+        state.context.bridge.close()
+      }
+    } finally { vi.useRealTimers() }
+  })
 
   it.each([false, true])('accepts exact ephemeral canonical completion and preserves unread=%s without unsupported RPCs', async (unread) => {
     vi.useFakeTimers()

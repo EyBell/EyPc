@@ -1,5 +1,7 @@
 'use strict'
 
+const { isSubAgentThreadSource } = require('./subagent-discovery.cjs')
+
 /**
  * Reconstructs the fork/parent topology of a Codex thread inventory from a
  * flat row list: which threads are direct forks of another (or subagent runs
@@ -76,6 +78,16 @@ function createCodexInventoryThreadTopology(dependencies = {}) {
     const directParents = new Map()
     const isolated = new Set()
     for (const [threadId, row] of rowById) {
+      // Full-history machine runs also inherit forkedFromId. Their native RPC
+      // sessionId is their own id, so ordinary fork-session checks would
+      // strand them as unnamed roots despite an exact parent claim.
+      if (isSubAgentThreadSource(row.threadSource) && row.parentThreadId) {
+        const parentThreadId = nativeString(row.parentThreadId)
+        if (!validThreadId(parentThreadId) || parentThreadId === threadId || !rowById.has(parentThreadId)) {
+          isolated.add(threadId)
+        } else directParents.set(threadId, parentThreadId)
+        continue
+      }
       const forkedFromId = validThreadId(row.forkedFromId) ? row.forkedFromId : ''
       if (row.forkedFromId) {
         const parent = forkedFromId ? rowById.get(forkedFromId) : null
