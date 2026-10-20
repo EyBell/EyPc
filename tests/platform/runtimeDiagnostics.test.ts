@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require_ = createRequire(import.meta.url)
 const diagnosticsModule = require_(resolve(process.cwd(), 'preload/diagnostics.cjs')) as {
@@ -22,6 +22,25 @@ afterEach(() => {
 })
 
 describe('runtime diagnostics v3', () => {
+  it('records the freeze recorder start status once after startup', () => {
+    vi.useFakeTimers()
+    try {
+      const root = mkdtempSync(join(tmpdir(), 'eypc-runtime-diagnostics-freeze-'))
+      roots.push(root)
+      const diagnostics = diagnosticsModule.createRuntimeDiagnostics({
+        fs: require_('node:fs'),
+        path: require_('node:path'),
+        directory: root
+      })
+      const freezeEvents = () => diagnostics.snapshot().recent.filter((event: any) => event.scope === 'freeze-trace')
+      expect(freezeEvents()).toEqual([])
+      vi.advanceTimersByTime(5000)
+      expect(freezeEvents()).toEqual([expect.objectContaining({ event: 'worker-status', outcome: 'not-started', level: 'info' })])
+      vi.advanceTimersByTime(60_000)
+      expect(freezeEvents()).toHaveLength(1)
+    } finally { vi.useRealTimers() }
+  })
+
   it('keeps exact operational evidence while structurally excluding conversation and command bodies', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-runtime-diagnostics-'))
     roots.push(root)

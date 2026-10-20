@@ -160,7 +160,7 @@ const cursorModuleProbe = cursorModule.createCursorBridge({
 for (const method of ['inspect', 'readInventory', 'readHookState', 'watchEvents', 'install', 'uninstall', 'openTask', 'diagnostics', 'close']) {
   assert(typeof cursorModuleProbe[method] === 'function', `cursor preload module must expose stable ${method}`)
 }
-assert(cursorModuleProbe.readInventory().sessions.length === 0, 'cursor inventory must degrade to empty without a state database')
+assert((await cursorModuleProbe.readInventory()).sessions.length === 0, 'cursor inventory must degrade to empty without a state database')
 const cursorOpen = await cursorModuleProbe.openTask('00000000-0000-0000-0000-000000000000')
 assert(cursorOpen.outcome === 'unavailable' && cursorOpen.confirmsRead === false, 'cursor open must stay unavailable while jump is live-failed')
 const claudeCodeSource = preloadModuleSources.get('claude/code-sessions.cjs') || ''

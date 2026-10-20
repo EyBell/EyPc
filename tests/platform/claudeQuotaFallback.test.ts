@@ -417,6 +417,46 @@ describe('Claude App encrypted credential authority', () => {
     ], expect.objectContaining({ timeout: 5000 }))
   })
 
+  it('reads the Keychain password without blocking when an async runner is available', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-claude-app-quota-macos-async-'))
+    const appRoot = join(root, 'Claude')
+    mkdirSync(appRoot, { recursive: true })
+    const password = Buffer.from('fixture-safe-storage-password')
+    const key = pbkdf2Sync(password, 'saltysalt', 1003, 16, 'sha1')
+    const cipher = createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 32))
+    const plaintext = Buffer.from(JSON.stringify({
+      'desktop:org-a:https://api.anthropic.com:user:profile': { token: TOKEN, expiresAt: NOW + 60_000 }
+    }))
+    const encrypted = Buffer.concat([Buffer.from('v10'), cipher.update(plaintext), cipher.final()])
+    writeFileSync(join(appRoot, quota.CLAUDE_APP_CONFIG_NAME), JSON.stringify({
+      [quota.CLAUDE_APP_TOKEN_CACHE_KEY]: encrypted.toString('base64')
+    }))
+    let authorization = ''
+    const execFileSync = vi.fn()
+    const execFile = vi.fn((_file: string, _args: string[], _options: unknown, done: (error: Error | null, stdout: Buffer) => void) => {
+      setImmediate(() => done(null, Buffer.from(`${password.toString('utf8')}\n`)))
+    })
+    const fallback = quota.createQuotaFallback({
+      fs,
+      path,
+      platform: 'darwin',
+      claudeAppDataRoot: appRoot,
+      execFile,
+      execFileSync,
+      fetch: async (_url: string, init: { headers: Record<string, string> }) => {
+        authorization = init.headers.Authorization
+        return okResponse({ five_hour: { used_percentage: 10 } })
+      }
+    })
+    await fallback.read({ enabled: true, now: NOW, primaryUpdatedAt: 0 })
+    expect(authorization).toBe(`Bearer ${TOKEN}`)
+    expect(execFileSync).not.toHaveBeenCalled()
+    expect(execFile).toHaveBeenCalledWith('/usr/bin/security', [
+      'find-generic-password', '-w', '-s', quota.CLAUDE_APP_SAFE_STORAGE_SERVICE,
+      '-a', quota.CLAUDE_APP_SAFE_STORAGE_ACCOUNT
+    ], expect.objectContaining({ timeout: 5000, encoding: 'buffer' }), expect.any(Function))
+  })
+
   it('fails closed when an advertised active account does not match any cached account', async () => {
     const fetchImpl = vi.fn()
     const fallback = appFallback({

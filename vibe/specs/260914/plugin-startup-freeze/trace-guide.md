@@ -1,5 +1,7 @@
 # 临时卡顿日志使用与验证
 
+> 2026-10-20 起由 [常驻化任务卡](../../261020/0936-freeze-trace-sync-io/task-card.md#L1) 取代第 1、2、4、7 条的时长、写入量与「排查结束移除 start 接线」约定；其余隐私与归因边界不变。
+
 1. 本轮只准备工作区诊断产物，插件保持屏蔽。新包被用户明确加载后，在实际 uTools renderer 主入口自动启用独立 Worker，最多运行 10 分钟；不通过 uTools.getPath 或 dbStorage 初始化日志。
 2. 文件目录为 `~/.eypc/freeze-traces`，本机展开为 `/Users/gdkmjd/.eypc/freeze-traces`。文件名 `freeze-<timestamp>-<pid>.jsonl`；单文件最多 4 MiB，启动时保留最多 7 个旧自有文件加本次文件，权限目录 0700/文件 0600。不会清理原有 runtime diagnostics。
 3. 每条只有固定调用名、span 编号、PID、时间、耗时、数量、字节数；start 含 host 构建身份。无任务 ID、标题、路径、对话、命令参数、输出、异常正文或堆栈。

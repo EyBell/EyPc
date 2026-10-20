@@ -131,29 +131,43 @@ function readClaudeAppUsageOrganizationHint(dependencies) {
   }
 }
 
-function decryptClaudeAppTokenCache(dependencies, encrypted) {
+// A Keychain prompt can hold `security` for its whole timeout; never block the plugin host on it.
+function readSafeStoragePassword(dependencies) {
+  const args = [
+    'find-generic-password', '-w',
+    '-s', CLAUDE_APP_SAFE_STORAGE_SERVICE,
+    '-a', CLAUDE_APP_SAFE_STORAGE_ACCOUNT
+  ]
+  if (typeof dependencies.execFile !== 'function') {
+    return Promise.resolve().then(() => dependencies.execFileSync('/usr/bin/security', args, {
+      timeout: 5000,
+      maxBuffer: 64 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore']
+    }))
+  }
+  return new Promise((resolve, reject) => {
+    dependencies.execFile('/usr/bin/security', args, {
+      encoding: 'buffer',
+      timeout: 5000,
+      maxBuffer: 64 * 1024
+    }, (error, stdout) => { if (error) reject(error); else resolve(stdout) })
+  })
+}
+
+async function decryptClaudeAppTokenCache(dependencies, encrypted) {
   if (!Buffer.isBuffer(encrypted) || encrypted.length < 4) return ''
   if (typeof dependencies.decryptClaudeAppTokenCache === 'function') {
-    try { return String(dependencies.decryptClaudeAppTokenCache(encrypted) || '') } catch { return '' }
+    try { return String(await dependencies.decryptClaudeAppTokenCache(encrypted) || '') } catch { return '' }
   }
   const platform = dependencies.platform || process.platform
   if (platform === 'darwin') {
-    const execFileSync = dependencies.execFileSync
     const crypto = dependencies.crypto || require('node:crypto')
-    if (typeof execFileSync !== 'function' || !crypto || encrypted.subarray(0, 3).toString('ascii') !== SAFE_STORAGE_PREFIX) return ''
+    if ((typeof dependencies.execFile !== 'function' && typeof dependencies.execFileSync !== 'function') || !crypto || encrypted.subarray(0, 3).toString('ascii') !== SAFE_STORAGE_PREFIX) return ''
     let rawPassword = null
     let derivedKey = null
     let decrypted = null
     try {
-      const output = execFileSync('/usr/bin/security', [
-        'find-generic-password', '-w',
-        '-s', CLAUDE_APP_SAFE_STORAGE_SERVICE,
-        '-a', CLAUDE_APP_SAFE_STORAGE_ACCOUNT
-      ], {
-        timeout: 5000,
-        maxBuffer: 64 * 1024,
-        stdio: ['ignore', 'pipe', 'ignore']
-      })
+      const output = await readSafeStoragePassword(dependencies)
       rawPassword = Buffer.isBuffer(output) ? Buffer.from(output) : Buffer.from(String(output || ''), 'utf8')
       let end = rawPassword.length
       while (end > 0 && (rawPassword[end - 1] === 10 || rawPassword[end - 1] === 13)) end -= 1
@@ -181,14 +195,14 @@ function decryptClaudeAppTokenCache(dependencies, encrypted) {
  * Exactly one live token must remain after optional active-account matching;
  * ambiguity fails closed so EyPc never reads quota for the wrong account.
  */
-function readClaudeAppAccessToken(dependencies, now = Date.now()) {
+async function readClaudeAppAccessToken(dependencies, now = Date.now()) {
   let config
   try { config = JSON.parse(dependencies.fs.readFileSync(appTokenCachePath(dependencies), 'utf8')) } catch { return '' }
   const encrypted = config && typeof config === 'object' ? config[CLAUDE_APP_TOKEN_CACHE_KEY] : ''
   if (typeof encrypted !== 'string' || !encrypted) return ''
   let cache
   try {
-    const plaintext = decryptClaudeAppTokenCache(dependencies, Buffer.from(encrypted, 'base64'))
+    const plaintext = await decryptClaudeAppTokenCache(dependencies, Buffer.from(encrypted, 'base64'))
     if (!plaintext) return ''
     cache = JSON.parse(plaintext)
   } catch { return '' }
@@ -267,13 +281,13 @@ function readClaudeAppAccessToken(dependencies, now = Date.now()) {
   return leastPrivileged.length === 1 ? leastPrivileged[0] : ''
 }
 
-function withAccessToken(dependencies, _claudeHome, use, now = Date.now()) {
-  let token = typeof dependencies.readClaudeAppAccessToken === 'function'
+async function withAccessToken(dependencies, _claudeHome, use, now = Date.now()) {
+  let token = await (typeof dependencies.readClaudeAppAccessToken === 'function'
     ? dependencies.readClaudeAppAccessToken(now)
-    : readClaudeAppAccessToken(dependencies, now)
-  if (!token) return Promise.resolve(null)
+    : readClaudeAppAccessToken(dependencies, now))
+  if (!token) return null
   try {
-    return Promise.resolve(use(token))
+    return await use(token)
   } finally {
     token = ''
   }

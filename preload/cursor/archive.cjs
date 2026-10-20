@@ -127,25 +127,35 @@ function databaseSyncClient(DatabaseSync, dbPath) {
   }
 }
 
-function cliClient(execFileSync, bin, dbPath) {
-  const run = (sql) => {
-    // `.timeout` is a dot command and emits nothing, unlike PRAGMA busy_timeout
-    // whose own result row would corrupt the -json payload.
-    const raw = execFileSync(bin, ['-json', '-cmd', '.timeout 5000', dbPath, sql], {
-      encoding: 'utf8',
-      timeout: SQLITE_QUERY_TIMEOUT_MS,
-      maxBuffer: SQLITE_QUERY_MAX_BUFFER
-    })
+function cliClient(dependencies, bin, dbPath) {
+  const parse = (raw) => {
     const trimmed = String(raw || '').trim()
     if (!trimmed) return []
     const parsed = JSON.parse(trimmed)
     if (!Array.isArray(parsed)) throw new Error('sqlite-json-invalid')
     return parsed
   }
+  const run = (sql) => {
+    // `.timeout` is a dot command and emits nothing, unlike PRAGMA busy_timeout
+    // whose own result row would corrupt the -json payload.
+    const args = ['-json', '-cmd', '.timeout 5000', dbPath, sql]
+    const options = {
+      encoding: 'utf8',
+      timeout: SQLITE_QUERY_TIMEOUT_MS,
+      maxBuffer: SQLITE_QUERY_MAX_BUFFER
+    }
+    if (typeof dependencies.execFile !== 'function') return Promise.resolve().then(() => parse(dependencies.execFileSync(bin, args, options)))
+    return new Promise((resolve, reject) => {
+      dependencies.execFile(bin, args, options, (error, raw) => {
+        if (error) { reject(error); return }
+        try { resolve(parse(raw)) } catch (parseError) { reject(parseError) }
+      })
+    })
+  }
   return {
     rows: run,
-    mutate: (sql) => {
-      const rows = run(`${sql};\nSELECT changes() AS changed;`)
+    mutate: async (sql) => {
+      const rows = await run(`${sql};\nSELECT changes() AS changed;`)
       return Number(rows[0] && rows[0].changed) || 0
     },
     close: () => {}
@@ -156,8 +166,8 @@ function openClient(dependencies, dbPath) {
   const DatabaseSync = dependencies.DatabaseSync
   if (typeof DatabaseSync === 'function') return databaseSyncClient(DatabaseSync, dbPath)
   const bin = resolveSqliteBin(dependencies.fs, dependencies.sqliteBin)
-  if (bin && typeof dependencies.execFileSync === 'function') {
-    return cliClient(dependencies.execFileSync, bin, dbPath)
+  if (bin && (typeof dependencies.execFile === 'function' || typeof dependencies.execFileSync === 'function')) {
+    return cliClient(dependencies, bin, dbPath)
   }
   if (dependencies.allowBuiltinSqlite === false) return null
   let sqlite
@@ -175,7 +185,15 @@ function createArchiver(dependencies) {
     return textOf(dependencies.stateDbPath) || defaultStateDbPath(os, dependencies.path, platform, env)
   }
 
+  // Gate, write and verify must not interleave with another archive.
+  let archiveTail = Promise.resolve()
   function archiveTask(composerId) {
+    const run = archiveTail.then(() => archiveTaskOnce(composerId))
+    archiveTail = run.catch(() => {})
+    return run
+  }
+
+  async function archiveTaskOnce(composerId) {
     const id = normalizeComposerId(composerId)
     if (!id) return outcome('failed', 'Cursor 任务身份已失效')
     const dbPath = resolveDbPath()
@@ -187,7 +205,7 @@ function createArchiver(dependencies) {
     try {
       client = openClient(dependencies, dbPath)
       if (!client) return outcome('failed', '本机缺少可用的 SQLite 运行时，未执行归档')
-      const gate = client.rows(gateSql(id))[0]
+      const gate = (await client.rows(gateSql(id)))[0]
       if (!gate) return outcome('failed', 'Cursor 任务身份无法唯一确认，未执行归档')
       if (flagOf(gate.isSubagent)) return outcome('failed', 'Multitask 分叉不支持独立归档')
       if (flagOf(gate.isArchived)) {
@@ -196,11 +214,11 @@ function createArchiver(dependencies) {
       if (Number(gate.unfinishedRunAt) > 0 || flagOf(gate.hasPendingPlan) || Number(gate.liveForkCount) > 0) {
         return outcome('failed', 'Cursor 任务仍在进行中，未执行归档')
       }
-      const changed = client.mutate(archiveSql(id))
+      const changed = await client.mutate(archiveSql(id))
       if (changed !== 1) {
         return outcome('indeterminate', 'Cursor 任务状态在归档期间发生变化，未确认归档，已保留任务卡片')
       }
-      const verified = client.rows(verifySql(id))[0]
+      const verified = (await client.rows(verifySql(id)))[0]
       if (!verified || !flagOf(verified.isArchived) || verified.jsonType !== 'true') {
         return outcome('indeterminate', 'Cursor 归档写入后未通过复验，已保留任务卡片')
       }

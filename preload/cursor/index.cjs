@@ -111,9 +111,9 @@ function createCursorBridge(dependencies) {
     writeExecutable(hookCommandPath, next)
   }
 
-  function inspect() {
+  async function inspect() {
     try { ensureHookScript() } catch { /* owned script refresh is best effort */ }
-    const snapshot = inventory.readInventory()
+    const snapshot = await inventory.readInventory()
     const hooksFile = inspectHooksFile()
     const hooks = hooksFile.state === 'ok' || hooksFile.state === 'missing'
       ? hookInstallState(hooksFile.value || {}, { command: hookCommandLine })

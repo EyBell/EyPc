@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createRequire } from 'node:module'
 import { DatabaseSync } from 'node:sqlite'
 import fs, { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import * as nodePath from 'node:path'
@@ -142,7 +142,7 @@ describe('cursor inventory reader', () => {
         stateDbPath: dbPath,
         DatabaseSync
       })
-      const snapshot = reader.readInventory()
+      const snapshot = await reader.readInventory()
       expect(snapshot.available).toBe(true)
       expect(snapshot.sessions).toHaveLength(3)
       expect(snapshot.sessions.map((session: { composerId: string }) => session.composerId).sort()).toEqual([
@@ -196,7 +196,7 @@ describe('cursor inventory reader', () => {
     }
   })
 
-  it('maps workspaceStorage workspace.json folder onto the session project name', () => {
+  it('maps workspaceStorage workspace.json folder onto the session project name', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-workspace-'))
     const dbPath = join(root, 'User', 'globalStorage', 'state.vscdb')
     mkdirSync(dirname(dbPath), { recursive: true })
@@ -206,7 +206,7 @@ describe('cursor inventory reader', () => {
     mkdirSync(wsDir, { recursive: true })
     writeFileSync(join(wsDir, 'workspace.json'), JSON.stringify({ folder: 'file:///work/CodeNote' }))
     try {
-      const snapshot = inventoryModule.createInventoryReader({
+      const snapshot = await inventoryModule.createInventoryReader({
         fs,
         path: nodePath,
         os: { homedir: () => root },
@@ -227,7 +227,7 @@ describe('cursor inventory reader', () => {
     }
   })
 
-  it('reads the sidebar pin list from every workspace store and joins it by composer id', () => {
+  it('reads the sidebar pin list from every workspace store and joins it by composer id', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-pinned-'))
     const dbPath = join(root, 'User', 'globalStorage', 'state.vscdb')
     mkdirSync(dirname(dbPath), { recursive: true })
@@ -254,7 +254,7 @@ describe('cursor inventory reader', () => {
         stateDbPath: dbPath,
         DatabaseSync
       })
-      const snapshot = reader.readInventory()
+      const snapshot = await reader.readInventory()
       expect(snapshot.pinnedAvailable).toBe(true)
       expect(snapshot.pinnedStoreCount).toBe(2)
       const byId = new Map(snapshot.sessions.map((session: { composerId: string }) => [session.composerId, session]))
@@ -263,7 +263,7 @@ describe('cursor inventory reader', () => {
       expect(byId.get(LOCAL)).toMatchObject({ pinned: true, pinnedOrder: 0 })
       // A store that unpins is re-read on its next signature; an unchanged one is served from cache.
       writePins(workspaceB, [])
-      const unpinned = reader.readInventory()
+      const unpinned = await reader.readInventory()
       expect(unpinned.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)).toMatchObject({ pinned: false })
       expect(unpinned.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)).not.toHaveProperty('pinnedOrder')
       expect(unpinned.sessions.find((session: { composerId: string }) => session.composerId === NONE_WITH_HEADERS)).toMatchObject({ pinned: true, pinnedOrder: 0 })
@@ -272,7 +272,7 @@ describe('cursor inventory reader', () => {
     }
   })
 
-  it('re-reads pinned composers when the workspace WAL changes even if the main db signature is frozen', () => {
+  it('re-reads pinned composers when the workspace WAL changes even if the main db signature is frozen', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-pinned-wal-'))
     const dbPath = join(root, 'User', 'globalStorage', 'state.vscdb')
     mkdirSync(dirname(dbPath), { recursive: true })
@@ -311,13 +311,13 @@ describe('cursor inventory reader', () => {
         stateDbPath: dbPath,
         DatabaseSync
       })
-      const snapshot = reader.readInventory()
+      const snapshot = await reader.readInventory()
       expect(snapshot.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)).toMatchObject({ pinned: true })
       freezeMain = true
       frozenMain = fs.statSync(workspaceBDb)
       writePins(workspaceB, [])
       require('node:fs').writeFileSync(`${workspaceBDb}-wal`, 'wal-unpin')
-      const unpinned = reader.readInventory()
+      const unpinned = await reader.readInventory()
       expect(unpinned.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)).toMatchObject({ pinned: false })
       expect(unpinned.sessions.find((session: { composerId: string }) => session.composerId === NONE_WITH_HEADERS)).toMatchObject({ pinned: true })
     } finally {
@@ -332,8 +332,8 @@ describe('cursor inventory reader', () => {
     expect(inventoryModule.parsePinnedComposers([])).toEqual([])
   })
 
-  it('degrades when the database is missing', () => {
-    const snapshot = inventoryModule.createInventoryReader({
+  it('degrades when the database is missing', async () => {
+    const snapshot = await inventoryModule.createInventoryReader({
       fs: { existsSync: () => false },
       path: { join },
       os: { homedir: () => '/tmp' },
@@ -345,8 +345,8 @@ describe('cursor inventory reader', () => {
     expect(snapshot.sessions).toEqual([])
   })
 
-  it('reports sqlite-unavailable when neither CLI nor builtin sqlite can run', () => {
-    const snapshot = inventoryModule.createInventoryReader({
+  it('reports sqlite-unavailable when neither CLI nor builtin sqlite can run', async () => {
+    const snapshot = await inventoryModule.createInventoryReader({
       fs: { existsSync: (value: string) => String(value).endsWith('state.vscdb') },
       path: { join },
       os: { homedir: () => '/tmp' },
@@ -359,12 +359,12 @@ describe('cursor inventory reader', () => {
     expect(snapshot.reason).toBe('sqlite-unavailable')
   })
 
-  it('reads inventory through sqlite3 CLI JSON without conversation bodies', () => {
+  it('reads inventory through sqlite3 CLI JSON without conversation bodies', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-sqlite-cli-'))
     const dbPath = join(root, 'state.vscdb')
     writeFixture(dbPath)
     try {
-      const snapshot = inventoryModule.createInventoryReader({
+      const snapshot = await inventoryModule.createInventoryReader({
         fs: {
           existsSync: (value: string) => value === dbPath || value === '/usr/bin/sqlite3'
         },
@@ -415,14 +415,47 @@ describe('cursor inventory reader', () => {
     }
   })
 
-  it('reads a fixture through the real sqlite3 CLI when present', () => {
+  it('reads a fixture through the real sqlite3 CLI when present', async () => {
     if (!existsSync('/usr/bin/sqlite3')) return
     const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-sqlite-real-'))
     const dbPath = join(root, 'state.vscdb')
     writeFixture(dbPath)
     try {
-      const snapshot = inventoryModule.createInventoryReader({
-        fs: { existsSync },
+      for (const runner of [{ execFileSync }, { execFile }]) {
+        const snapshot = await inventoryModule.createInventoryReader({
+          fs: { existsSync },
+          path: { join },
+          os: { homedir: () => root },
+          platform: 'darwin',
+          env: {},
+          stateDbPath: dbPath,
+          sqliteBin: '/usr/bin/sqlite3',
+          allowBuiltinSqlite: false,
+          ...runner
+        }).readInventory()
+        expect(snapshot.available).toBe(true)
+        expect(snapshot.sessions).toHaveLength(3)
+        expect(snapshot.sessions.map((session: { composerId: string }) => session.composerId).sort()).toEqual([
+          LOCAL,
+          NONE_WITH_HEADERS,
+          PLAN
+        ].sort())
+        expect(JSON.stringify(snapshot.sessions)).not.toContain('conversation body')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('runs one sqlite read at a time and serves a mid-read caller with a later read', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-single-flight-'))
+    const dbPath = join(root, 'state.vscdb')
+    writeFixture(dbPath)
+    const pending: Array<() => void> = []
+    let started = 0
+    try {
+      const reader = inventoryModule.createInventoryReader({
+        fs: { existsSync: (value: string) => value === dbPath || value === '/usr/bin/sqlite3' },
         path: { join },
         os: { homedir: () => root },
         platform: 'darwin',
@@ -430,16 +463,23 @@ describe('cursor inventory reader', () => {
         stateDbPath: dbPath,
         sqliteBin: '/usr/bin/sqlite3',
         allowBuiltinSqlite: false,
-        execFileSync
-      }).readInventory()
-      expect(snapshot.available).toBe(true)
-      expect(snapshot.sessions).toHaveLength(3)
-      expect(snapshot.sessions.map((session: { composerId: string }) => session.composerId).sort()).toEqual([
-        LOCAL,
-        NONE_WITH_HEADERS,
-        PLAN
-      ].sort())
-      expect(JSON.stringify(snapshot.sessions)).not.toContain('conversation body')
+        execFile: (_bin: string, _args: string[], _options: unknown, done: (error: Error | null, raw: string) => void) => {
+          started += 1
+          pending.push(() => done(null, JSON.stringify([])))
+        }
+      })
+      const first = reader.readInventory()
+      const second = reader.readInventory()
+      const third = reader.readInventory()
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(started).toBe(1)
+      expect(second).toBe(third)
+      pending.shift()?.()
+      expect((await first).available).toBe(true)
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(started).toBe(2)
+      pending.shift()?.()
+      expect((await second).available).toBe(true)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

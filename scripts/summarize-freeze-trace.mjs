@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { basename } from 'node:path'
 
-// Read one explicitly selected recorder file; never crawl native app data.
+// Read explicitly selected recorder files; never crawl native app data.
 export function summarize(text) {
   const pending = new Map(), operations = new Map(), stalledOperations = new Map()
   let stalls = 0, dropped = 0, identity = 'unmeasured', malformed = 0
@@ -32,8 +32,8 @@ export function summarize(text) {
     interpretation: 'Missing end or heartbeat is a candidate boundary, not proof of causation. Drops or truncated files weaken attribution.' }
 }
 if (process.argv[1]?.endsWith('summarize-freeze-trace.mjs')) {
-  const file = process.argv[2]
-  if (!file || !/^freeze-\d+-\d+\.jsonl$/.test(basename(file))) throw new Error('Select one freeze-<timestamp>-<pid>.jsonl file')
-  if (statSync(file).size > 4 * 1024 * 1024) throw new Error('File exceeds recorder budget')
-  console.log(JSON.stringify(summarize(readFileSync(file, 'utf8')), null, 2))
+  const files = process.argv.slice(2).sort((a, b) => basename(a).localeCompare(basename(b)))
+  if (!files.length || files.some(file => !/^freeze-\d+-\d+\.jsonl$/.test(basename(file)))) throw new Error('Select freeze-<timestamp>-<pid>.jsonl files')
+  if (files.some(file => statSync(file).size > 4 * 1024 * 1024)) throw new Error('File exceeds recorder budget')
+  console.log(JSON.stringify(summarize(files.map(file => readFileSync(file, 'utf8')).join('\n')), null, 2))
 }

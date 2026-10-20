@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createRequire } from 'node:module'
 import { DatabaseSync } from 'node:sqlite'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -88,12 +88,12 @@ function archiver(dbPath: string, overrides: Record<string, unknown> = {}) {
 }
 
 describe('cursor archive adapter', () => {
-  it('archives a settled row by flipping the same isArchived pair the App writes', () => {
+  it('archives a settled row by flipping the same isArchived pair the App writes', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-archive-'))
     const dbPath = join(root, 'state.vscdb')
     writeFixture(dbPath)
     try {
-      const result = archiver(dbPath).archiveTask(SETTLED)
+      const result = await archiver(dbPath).archiveTask(SETTLED)
       expect(result.outcome).toBe('archived')
       expect(readRow(dbPath, SETTLED)).toMatchObject({ isArchived: 1, jsonArchived: 1 })
       // Only the target row moves; neighbors stay untouched.
@@ -103,55 +103,71 @@ describe('cursor archive adapter', () => {
     }
   })
 
-  it('re-verifies live evidence at write time and refuses running/waiting/live-fork rows', () => {
+  it('re-verifies live evidence at write time and refuses running/waiting/live-fork rows', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-archive-'))
     const dbPath = join(root, 'state.vscdb')
     writeFixture(dbPath)
     try {
       const adapter = archiver(dbPath)
       for (const target of [RUNNING, PENDING_PLAN, PARENT_WITH_LIVE_FORK]) {
-        const result = adapter.archiveTask(target)
+        const result = await adapter.archiveTask(target)
         expect(result.outcome).toBe('failed')
         expect(result.message).toContain('仍在进行中')
         expect(readRow(dbPath, target).isArchived).toBe(0)
       }
-      expect(adapter.archiveTask(LIVE_FORK)).toMatchObject({ outcome: 'failed' })
+      expect(await adapter.archiveTask(LIVE_FORK)).toMatchObject({ outcome: 'failed' })
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  it('reports alreadyArchived idempotently and fails cleanly on unknown or invalid ids', () => {
+  it('reports alreadyArchived idempotently and fails cleanly on unknown or invalid ids', async () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-archive-'))
     const dbPath = join(root, 'state.vscdb')
     writeFixture(dbPath)
     try {
       const adapter = archiver(dbPath)
-      expect(adapter.archiveTask(ALREADY_ARCHIVED)).toMatchObject({ outcome: 'archived', alreadyArchived: true })
-      expect(adapter.archiveTask('11111111-2222-3333-4444-555555555555')).toMatchObject({ outcome: 'failed' })
-      expect(adapter.archiveTask('not-a-uuid')).toMatchObject({ outcome: 'failed' })
-      expect(adapter.archiveTask(`${SETTLED}' OR 1=1 --`)).toMatchObject({ outcome: 'failed' })
+      expect(await adapter.archiveTask(ALREADY_ARCHIVED)).toMatchObject({ outcome: 'archived', alreadyArchived: true })
+      expect(await adapter.archiveTask('11111111-2222-3333-4444-555555555555')).toMatchObject({ outcome: 'failed' })
+      expect(await adapter.archiveTask('not-a-uuid')).toMatchObject({ outcome: 'failed' })
+      expect(await adapter.archiveTask(`${SETTLED}' OR 1=1 --`)).toMatchObject({ outcome: 'failed' })
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  it('fails closed when the database file is missing', () => {
+  it('fails closed when the database file is missing', async () => {
     const adapter = archiver('/nonexistent/state.vscdb')
-    expect(adapter.archiveTask(SETTLED)).toMatchObject({ outcome: 'failed' })
+    expect(await adapter.archiveTask(SETTLED)).toMatchObject({ outcome: 'failed' })
   })
 
-  it('archives through the sqlite CLI lane when DatabaseSync is unavailable', () => {
+  it('archives through the sqlite CLI lane when DatabaseSync is unavailable', async () => {
     const bin = ['/usr/bin/sqlite3', '/opt/homebrew/bin/sqlite3', '/usr/local/bin/sqlite3'].find((candidate) => existsSync(candidate))
     if (!bin) return
-    const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-archive-cli-'))
+    for (const runner of [{ execFileSync }, { execFile }]) {
+      const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-archive-cli-'))
+      const dbPath = join(root, 'state.vscdb')
+      writeFixture(dbPath)
+      try {
+        const adapter = archiver(dbPath, { DatabaseSync: undefined, ...runner, allowBuiltinSqlite: false })
+        expect((await adapter.archiveTask(SETTLED)).outcome).toBe('archived')
+        expect(readRow(dbPath, SETTLED)).toMatchObject({ isArchived: 1, jsonArchived: 1 })
+        expect(await adapter.archiveTask(RUNNING)).toMatchObject({ outcome: 'failed' })
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('serializes overlapping archive requests so a second gate sees the first write', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-archive-serial-'))
     const dbPath = join(root, 'state.vscdb')
     writeFixture(dbPath)
     try {
-      const adapter = archiver(dbPath, { DatabaseSync: undefined, execFileSync, allowBuiltinSqlite: false })
-      expect(adapter.archiveTask(SETTLED).outcome).toBe('archived')
-      expect(readRow(dbPath, SETTLED)).toMatchObject({ isArchived: 1, jsonArchived: 1 })
-      expect(adapter.archiveTask(RUNNING)).toMatchObject({ outcome: 'failed' })
+      const adapter = archiver(dbPath)
+      const [first, second] = await Promise.all([adapter.archiveTask(SETTLED), adapter.archiveTask(SETTLED)])
+      expect(first).toMatchObject({ outcome: 'archived' })
+      expect(second).toMatchObject({ outcome: 'archived', alreadyArchived: true })
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

@@ -17,6 +17,7 @@ describe('independent freeze recorder', () => {
     expect(trace.run('test.async', () => promise)).toBe(promise)
     expect(await promise).toBe(9)
     expect(() => trace.run('test.throw', () => { throw new Error('original') })).toThrow('original')
+    expect(trace.snapshot()).toMatchObject({ status: 'disabled', errorCode: '' })
     trace.stop()
   })
 
@@ -29,6 +30,7 @@ describe('independent freeze recorder', () => {
         const span = trace.begin('test.blocked-call', { count: 200, prompt: 'SECRET-CONTENT' });
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
         trace.end(span);
+        trace.end(trace.begin('test.fast-call'));
         setTimeout(() => { trace.stop(); }, 100);
       }, 150);
     `], { stdio: 'ignore' })
@@ -39,19 +41,38 @@ describe('independent freeze recorder', () => {
       const events = text.trim().split('\n').map(line => JSON.parse(line))
       expect(events.some(row => row.type === 'main-stall' && row.pending.some((span: any) => span.op === 'test.blocked-call'))).toBe(true)
       expect(events.some(row => row.type === 'end' && row.op === 'test.blocked-call' && row.durationMs >= 290)).toBe(true)
+      expect(events.some(row => row.op === 'test.fast-call')).toBe(false)
       expect(text).not.toContain('SECRET-CONTENT')
     } finally { child.kill(); rmSync(directory, { recursive: true, force: true }) }
   })
 
-  it('expires automatically and keeps the file under its byte budget', async () => {
+  it('expires only when a duration is given and keeps each file under its byte budget', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'eypc-freeze-test-'))
-    const trace = createFreezeTrace({ directory, durationMs: 100, intervalMs: 10, maxBytes: 1000 })
+    const trace = createFreezeTrace({ directory, durationMs: 100, intervalMs: 10, aliveMs: 0, maxBytes: 1000 })
     try {
       await sleep(300)
       expect(trace.snapshot().stopped).toBe(true)
       const text = readdirSync(directory).map(name => readFileSync(join(directory, name), 'utf8')).join('')
-      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(1000)
       expect(text).toContain('eypc-freeze-trace-v1')
+      expect(text).toContain('"type":"expired"')
+      for (const name of readdirSync(directory)) expect(Buffer.byteLength(readFileSync(join(directory, name)))).toBeLessThanOrEqual(1000)
+    } finally { trace.stop(); await sleep(50); rmSync(directory, { recursive: true, force: true }) }
+  })
+
+  it('stays resident by default and rolls into a bounded set of files', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'eypc-freeze-test-'))
+    const trace = createFreezeTrace({ directory, intervalMs: 5, aliveMs: 0, maxBytes: 600, maxFiles: 3 })
+    try {
+      await sleep(400)
+      expect(trace.snapshot()).toMatchObject({ stopped: false, ready: true, status: 'ready', errorCode: '' })
+      const names = readdirSync(directory)
+      expect(names.length).toBeGreaterThan(1)
+      expect(names.length).toBeLessThanOrEqual(3)
+      for (const name of names) {
+        const text = readFileSync(join(directory, name), 'utf8')
+        expect(Buffer.byteLength(text)).toBeLessThanOrEqual(600)
+        expect(JSON.parse(text.split('\n')[0]).type).toBe('start')
+      }
     } finally { trace.stop(); await sleep(50); rmSync(directory, { recursive: true, force: true }) }
   })
 })
@@ -84,6 +105,8 @@ it('keeps business calls usable after the file worker fails', async () => {
   try {
     await sleep(200)
     expect(trace.snapshot().stopped).toBe(true)
+    expect(trace.snapshot().status).toBe('worker-error')
+    expect(trace.snapshot().errorCode).toMatch(/^[A-Z0-9_]{1,64}$/)
     expect(trace.run('test.after-failure', () => 42)).toBe(42)
   } finally { trace.stop(); rmSync(directory, { recursive: true, force: true }) }
 })

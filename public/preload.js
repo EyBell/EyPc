@@ -12078,8 +12078,8 @@ async function preflightCompanionTaskPackageV7(input = {}) {
     }).catch(() => ({ provider: 'claude', status: 'unavailable', errorCode: 'claude-task-preflight-failed' })))
   }
   if (providers.cursor) {
-    reads.push(Promise.resolve().then(() => ({
-      inventory: cursorBridge?.readInventory?.(),
+    reads.push(Promise.resolve().then(() => cursorBridge?.readInventory?.()).then((inventory) => ({
+      inventory,
       hooks: cursorBridge?.readHookState?.() || []
     })).then(({ inventory, hooks }) => inventory?.available === true
       && Array.isArray(inventory.sessions) && inventory.truncated !== true

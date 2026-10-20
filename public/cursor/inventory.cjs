@@ -16,6 +16,7 @@
  * nested forks still attach to the root conversation the App shows.
  */
 
+const { trace: freezeTrace } = require('../freeze-trace.cjs')
 const CURSOR_INVENTORY_REVISION = 'cursor-agent-inventory-v6'
 /**
  * Unified modes that run a real Turn and therefore become cards. `plan` is a
@@ -320,15 +321,26 @@ function queryWithDatabaseSync(DatabaseSync, dbPath, sql = INVENTORY_SQL) {
   }
 }
 
-function queryWithCli(execFileSync, bin, dbPath, sql = INVENTORY_SQL) {
-  const raw = execFileSync(bin, ['-readonly', '-json', sqliteUri(dbPath), sql], {
+function queryWithCli(dependencies, bin, dbPath, sql = INVENTORY_SQL) {
+  const args = ['-readonly', '-json', sqliteUri(dbPath), sql]
+  const options = {
     encoding: 'utf8',
     timeout: SQLITE_QUERY_TIMEOUT_MS,
     maxBuffer: SQLITE_QUERY_MAX_BUFFER
+  }
+  const parse = (raw) => {
+    const parsed = JSON.parse(String(raw || '').trim() || '[]')
+    if (!Array.isArray(parsed)) throw new Error('sqlite-json-invalid')
+    return parsed
+  }
+  // The live store can be gigabytes; a blocking query freezes the plugin host.
+  if (typeof dependencies.execFile !== 'function') return Promise.resolve().then(() => parse(dependencies.execFileSync(bin, args, options)))
+  return new Promise((resolve, reject) => {
+    dependencies.execFile(bin, args, options, (error, raw) => {
+      if (error) { reject(error); return }
+      try { resolve(parse(raw)) } catch (parseError) { reject(parseError) }
+    })
   })
-  const parsed = JSON.parse(String(raw || '').trim() || '[]')
-  if (!Array.isArray(parsed)) throw new Error('sqlite-json-invalid')
-  return parsed
 }
 
 function queryWithBuiltinSqlite(dbPath, sql = INVENTORY_SQL) {
@@ -338,14 +350,13 @@ function queryWithBuiltinSqlite(dbPath, sql = INVENTORY_SQL) {
   return queryWithDatabaseSync(sqlite.DatabaseSync, dbPath, sql)
 }
 
-function queryRows(dependencies, dbPath, sql) {
+async function queryRows(dependencies, dbPath, sql) {
   const DatabaseSync = dependencies.DatabaseSync
   if (typeof DatabaseSync === 'function') return queryWithDatabaseSync(DatabaseSync, dbPath, sql)
-  const execFileSync = dependencies.execFileSync
   const bin = resolveSqliteBin(dependencies.fs, dependencies.sqliteBin)
-  if (bin && typeof execFileSync === 'function') {
+  if (bin && (typeof dependencies.execFile === 'function' || typeof dependencies.execFileSync === 'function')) {
     try {
-      return queryWithCli(execFileSync, bin, dbPath, sql)
+      return await queryWithCli(dependencies, bin, dbPath, sql)
     } catch (error) {
       if (error && error.code === 'sqlite-unavailable') throw error
       if (dependencies.allowBuiltinSqlite === false) throw error
@@ -427,7 +438,7 @@ function createInventoryReader(dependencies) {
    * windows keeps its lowest position. A store that cannot be read keeps its
    * last known ids, so a transient lock never reads as "everything unpinned".
    */
-  function readPinnedComposers() {
+  async function readPinnedComposers() {
     const order = new Map()
     const dbs = listWorkspaceDbs()
     const seen = new Set(dbs)
@@ -440,7 +451,7 @@ function createInventoryReader(dependencies) {
       let ids = cached ? cached.ids : []
       if (!cached || cached.signature !== signature) {
         try {
-          ids = parsePinnedComposers(queryRows(dependencies, dbPath, PINNED_SQL))
+          ids = parsePinnedComposers(await queryRows(dependencies, dbPath, PINNED_SQL))
           pinnedCache.set(dbPath, { signature, ids })
           scanned += 1
         } catch {
@@ -455,7 +466,21 @@ function createInventoryReader(dependencies) {
     return { order, available, scanned, storeCount: dbs.length }
   }
 
+  // One sqlite read at a time; a caller arriving mid-read gets the next read,
+  // never a snapshot that started before its request.
+  let currentRead = null
+  let queuedRead = null
   function readInventory() {
+    if (!currentRead) {
+      const freezeSpan = freezeTrace.begin('cursor.read-inventory')
+      currentRead = readInventoryOnce().finally(() => { currentRead = null; freezeTrace.end(freezeSpan) })
+      return currentRead
+    }
+    if (!queuedRead) queuedRead = currentRead.catch(() => {}).then(() => { queuedRead = null; return readInventory() })
+    return queuedRead
+  }
+
+  async function readInventoryOnce() {
     const dbPath = resolveDbPath()
     const exists = typeof fs.existsSync === 'function' ? fs.existsSync(dbPath) : false
     if (!exists) {
@@ -470,10 +495,10 @@ function createInventoryReader(dependencies) {
       }
     }
     try {
-      const rows = queryInventoryRows(dependencies, dbPath)
+      const rows = await queryInventoryRows(dependencies, dbPath)
       const allRows = Array.isArray(rows) ? rows : []
       const topology = collectSubagentsByParent(allRows)
-      const pinned = readPinnedComposers()
+      const pinned = await readPinnedComposers()
       const workspaces = readWorkspaceProjects(fs, path, resolveWorkspaceStorageDir())
       const sessions = []
       for (const row of allRows) {

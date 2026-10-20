@@ -410,6 +410,12 @@ function createRuntimeDiagnostics(dependencies = {}) {
       level: 'info', scope: 'runtime-diagnostics', event: 'process-start', outcome: 'started',
       details: { revision: DIAGNOSTICS_REVISION, settings, directory, startedAt }
     })
+    // The freeze recorder fails open; this line is the only proof it runs.
+    const freezeStatusTimer = setTimeout(() => {
+      const status = freezeTrace.snapshot?.()
+      record({ level: 'info', scope: 'freeze-trace', event: 'worker-status', outcome: status?.status || 'not-started', ...(status?.errorCode ? { code: status.errorCode } : {}) })
+    }, 5000)
+    freezeStatusTimer?.unref?.()
   }
   return { revision: DIAGNOSTICS_REVISION, record, configure, snapshot, cleanup, clear, ensureDirectory, flush }
 }
