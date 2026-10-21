@@ -342,7 +342,7 @@ describe('Codex controller', () => {
     await expect(controller.openThread(taskKey)).resolves.toBe(true)
     expect(preflight).not.toHaveBeenCalled()
     expect(opened).toHaveLength(3)
-    expect(companionKernel.getLatest().packageRevision).toBe(revisionBeforeActions)
+    expect(companionKernel.getLatest()).toMatchObject({ packageRevision: revisionBeforeActions + 1, focusedKey: taskKey })
 
     expect(opened[0]).toMatchObject({
       key: taskKey,
