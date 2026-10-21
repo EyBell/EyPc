@@ -3810,7 +3810,7 @@ draft: v7EvidenceDraft({
     kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     await vi.waitFor(() => {
       const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
-      expect(task).toMatchObject({ phase: 'stopped', planReady: true, dynamicGroup: 'stopped', cycleTier: 'plan' })
+      expect(task).toMatchObject({ phase: 'stopped', planReady: true, dynamicGroup: 'stopped', cycleTier: 'unread' })
       expect(task.capabilities.executePlan).toBe(true)
     })
     const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')

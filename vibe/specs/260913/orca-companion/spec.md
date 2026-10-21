@@ -18,7 +18,7 @@ status: implementing
 - 排序与行上时钟：`lastQuestionAt` 只取进入 `working` 的 `stateStartedAt`。`lastOutputAt`、中途 `updatedAt`、轮询 `acceptedAt` 不得进入提问钟。完成/中断发 `lastQuestionAt: 0`，Kernel `incoming || previous` 保留上一问。
 - 打开成功后列表高亮跟到当前任务；「上一个 / 下一个」沿用 Kernel `cycleKeys` 状态候选顺序，只有环内打开会接管循环游标。已读完成项的展示分组不得覆盖循环候选（[RAW-182 修复](../../260915/companion-cycle-authority/task-card.md#L1)）。
 - 2026-10-18：waiting/blocked 加明确问答或 Plan 实施工具时，inventory 保留有限 interaction kind，V7 builder 发布完整 request-set；Kernel 按既有 RAW-207 显示待输入。解除时空集合清除请求。未知等待不猜审批，底层 working 与未读记账规则不改。12:58新包加载后，原生 `waiting/exit_plan_mode` 已与真实浮窗“等待输入”精确对应；AskUserQuestion及解除现场未发生，不宣称真机通过。[实现与回归](../../261018/task-state-repair/task-card.md#L1) · [真实核验L3与边界](../../261018/task-state-repair/live-verification.md#L1)。
-- Kernel 经现有 V7 证据车道消费；Host 1 秒轮询 `watchInventory` 后 `queueCompanionHostReconciliation('orca')`。
+- Kernel 经现有 V7 证据车道消费。Host 只 stat `agent-hooks/last-status.json` 的修改时间（200 毫秒补扫，不读正文）。签名变化时立刻读一次 CLI 库存，并把这一拍交给 `queueCompanionHostReconciliation('orca')`，同一次变化不再读第二轮。文件安静时每 2 秒全量读一次，补不落盘的结构化会话和漏掉的通知。
 - RAW-220：标签栏已完成未读应在 Orca 按窗格导出。未导出前，EyPc `unread-bridge` 把「曾观测到进行中 → Agents `done`」记成本地已完成未读；`working`+`monitoring` 仍算进行中，不记账。缺原生字段时，插件 `terminal switch` 派发成功后只清临时账本这一轮；已有原生布尔时不清本地缓存中的原生未读，等后续轮询原生 false。进行中点卡片仍不得改成已完成。CLI `agent.unread` 布尔优先。原生 `dispatched` 仍不确认 Orca 窗口已读。
 - 设置页「接入 Orca」；Float 项目筛选增加「只显示 Orca」。
 

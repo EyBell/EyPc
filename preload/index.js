@@ -13462,7 +13462,7 @@ if (companionTaskKernel) {
   try { companionClaudeUnreadDispose = claudeBridge?.watchCodeUnread?.(() => { void applyClaudeUnreadToCompanionKernel() }) || null } catch {}
   try { companionCursorEventDispose = cursorBridge?.watchEvents?.(() => queueCompanionHostReconciliation('cursor')) || null } catch {}
   try { companionCursorInventoryDispose = cursorBridge?.watchInventory?.(() => queueCompanionHostReconciliation('cursor')) || null } catch {}
-  try { companionOrcaInventoryDispose = orcaBridge?.watchInventory?.(() => queueCompanionHostReconciliation('orca')) || null } catch {}
+  try { companionOrcaInventoryDispose = orcaBridge?.watchInventory?.(() => queueCompanionHostReconciliation('orca'), { isEnabled: () => companionTaskConfiguration().providers.orca }) || null } catch {}
 }
 
 function runtimeIdentityHandshake(input = {}) {

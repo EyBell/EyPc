@@ -4,18 +4,61 @@
  * Orca Agents companion facade.
  *
  * Cold/hot inventory is `worktree ps` + `terminal list`. Open switches the
- * live terminal. Archive closes that pane. Status tracking is a 1s poll
- * because Orca has no EyPc-owned hook file. Conversation bodies never enter.
+ * live terminal. Archive closes that pane. Status wakes from the mtime of
+ * Orca's `agent-hooks/last-status.json` (stat only — that file holds prompts
+ * and assistant text and must never be read here). A quiet 2s read covers
+ * structured sessions, which Orca does not persist into that file.
+ * Conversation bodies never enter.
  */
 
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
 const ORCA_BRIDGE_REVISION = 'orca-agent-companion-v1'
-const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
+const ORCA_WAKE_STAT_MS = 200
+const ORCA_QUIET_RECOVERY_MS = 2_000
 const { createOrcaCli } = require('./cli.cjs')
+const { userDataPath } = require('./native-state.cjs')
 const { createInventoryReader, fingerprintOf } = require('./inventory.cjs')
 const { createOpener } = require('./open.cjs')
 const { createArchiver } = require('./archive.cjs')
 const { createPinner } = require('./pin.cjs')
 const { createUnreadBridge } = require('./unread-bridge.cjs')
+
+function statusWakeFile(dependencies) {
+  const env = dependencies.env && typeof dependencies.env === 'object' ? dependencies.env : process.env
+  const home = typeof dependencies.homedir === 'string' ? dependencies.homedir : os.homedir()
+  const root = userDataPath(env, home)
+  return root ? path.join(root, 'agent-hooks', 'last-status.json') : ''
+}
+
+function statWakeFile(file, io) {
+  if (!file) return 'missing'
+  try {
+    const stat = io.statSync(file)
+    return `${Number(stat.mtimeMs) || 0}:${Number(stat.size) || 0}`
+  } catch {
+    return 'missing'
+  }
+}
+
+function watchStatusFile(file, onChange, io) {
+  if (!file || !io || typeof io.watch !== 'function') return null
+  try {
+    const watcher = io.watch(path.dirname(file), { persistent: false }, (_event, filename) => {
+      if (filename && String(filename) !== path.basename(file)) return
+      onChange()
+    })
+    if (watcher && typeof watcher.on === 'function') {
+      watcher.on('error', () => {
+        try { if (typeof watcher.close === 'function') watcher.close() } catch { /* already gone */ }
+      })
+    }
+    return watcher
+  } catch {
+    return null
+  }
+}
 
 function createOrcaRuntimeStrategy(cli) {
   return {
@@ -55,8 +98,25 @@ function createOrcaBridge(dependencies = {}) {
   const inventory = createInventoryReader({ cli, unreadBridge })
   const cache = { sessions: [], available: false, reason: 'unknown', readAt: 0, fingerprint: '' }
   const watchers = new Set()
-  let pollTimer = null
+  const clock = typeof dependencies.now === 'function' ? dependencies.now : Date.now
+  const io = dependencies.fs || fs
+  const setTimer = dependencies.setInterval || setInterval
+  const clearTimer = dependencies.clearInterval || clearInterval
+  const wakeFile = typeof dependencies.wakeFile === 'string' ? dependencies.wakeFile : statusWakeFile(dependencies)
+  const statWake = typeof dependencies.statWake === 'function'
+    ? dependencies.statWake
+    : () => statWakeFile(wakeFile, io)
+  const watchWake = typeof dependencies.watchWake === 'function'
+    ? dependencies.watchWake
+    : (onChange) => watchStatusFile(wakeFile, onChange, io)
+  let wakeTimer = null
+  let wakeWatcher = null
   let pollInFlight = false
+  let pollQueued = false
+  let pollEnabled = null
+  let lastWakeSig = null
+  let lastFullReadAt = 0
+  let freshSnapshot = null
   const opener = createOpener({
     cli,
     execFile: dependencies.execFile,
@@ -96,33 +156,78 @@ function createOrcaBridge(dependencies = {}) {
     }
   }
 
-  async function poll() {
-    if (pollInFlight || !watchers.size) return
+  async function readFresh() {
+    if (freshSnapshot) {
+      const snapshot = freshSnapshot
+      freshSnapshot = null
+      return snapshot
+    }
+    const observed = statWake()
+    const snapshot = await inventory.readInventory()
+    remember(snapshot)
+    lastWakeSig = observed
+    lastFullReadAt = clock()
+    return snapshot
+  }
+
+  async function poll(force) {
+    if (!watchers.size) return
+    try { if (pollEnabled && !pollEnabled()) return } catch { return }
+    if (pollInFlight) {
+      pollQueued = true
+      return
+    }
+    const observed = statWake()
+    const changed = lastWakeSig !== null && observed !== lastWakeSig
+    const due = clock() - lastFullReadAt >= ORCA_QUIET_RECOVERY_MS
+    if (!force && lastWakeSig !== null && !changed && !due) return
     pollInFlight = true
     try {
       const previous = cache.fingerprint
       const snapshot = await inventory.readInventory()
       remember(snapshot)
-      if (cache.fingerprint !== previous) broadcast()
-    } catch { /* poll degrades last snapshot */ }
+      lastWakeSig = observed
+      lastFullReadAt = clock()
+      if (cache.fingerprint !== previous) {
+        freshSnapshot = snapshot
+        broadcast()
+      }
+    } catch {
+      lastWakeSig = observed
+      lastFullReadAt = clock()
+    }
     pollInFlight = false
+    if (!watchers.size) return
+    if (pollQueued) {
+      pollQueued = false
+      void poll(false)
+    }
   }
 
-  function ensurePoll() {
-    if (pollTimer || !watchers.size) return
-    pollTimer = setInterval(() => { void poll() }, WATCHER_RECOVERY_INTERVAL_MS)
-    if (typeof pollTimer.unref === 'function') pollTimer.unref()
+  function ensureWake() {
+    if (wakeTimer || !watchers.size) return
+    wakeTimer = setTimer(() => { void poll(false) }, ORCA_WAKE_STAT_MS)
+    if (wakeTimer && typeof wakeTimer.unref === 'function') wakeTimer.unref()
+    if (!wakeWatcher) {
+      try { wakeWatcher = watchWake(() => { void poll(false) }) || null } catch { wakeWatcher = null }
+    }
   }
 
-  function stopPoll() {
-    if (!pollTimer) return
-    clearInterval(pollTimer)
-    pollTimer = null
+  function stopWake() {
+    if (wakeTimer) {
+      clearTimer(wakeTimer)
+      wakeTimer = null
+    }
+    if (wakeWatcher && typeof wakeWatcher.close === 'function') {
+      try { wakeWatcher.close() } catch { /* already gone */ }
+    }
+    wakeWatcher = null
+    pollQueued = false
+    freshSnapshot = null
   }
 
   async function inspect() {
-    const snapshot = await inventory.readInventory()
-    remember(snapshot)
+    const snapshot = await readFresh()
     return {
       available: snapshot.available === true,
       reason: snapshot.reason || (snapshot.available ? 'ready' : 'unknown'),
@@ -135,19 +240,17 @@ function createOrcaBridge(dependencies = {}) {
   return {
     revision: ORCA_BRIDGE_REVISION,
     inspect,
-    readInventory: async () => {
-      const snapshot = await inventory.readInventory()
-      remember(snapshot)
-      return snapshot
-    },
-    watchInventory(listener) {
+    readInventory: () => readFresh(),
+    // `isEnabled` keeps the wake from spawning the CLI while the Orca source is off.
+    watchInventory(listener, options = {}) {
       if (typeof listener !== 'function') return () => {}
+      if (typeof options.isEnabled === 'function') pollEnabled = options.isEnabled
       watchers.add(listener)
-      ensurePoll()
-      void poll()
+      ensureWake()
+      void poll(true)
       return () => {
         watchers.delete(listener)
-        if (!watchers.size) stopPoll()
+        if (!watchers.size) stopWake()
       }
     },
     openTask: async (paneKey, options) => {
@@ -179,7 +282,7 @@ function createOrcaBridge(dependencies = {}) {
       }
     },
     close() {
-      stopPoll()
+      stopWake()
       watchers.clear()
     }
   }
@@ -187,6 +290,8 @@ function createOrcaBridge(dependencies = {}) {
 
 module.exports = {
   ORCA_BRIDGE_REVISION,
+  ORCA_WAKE_STAT_MS,
+  ORCA_QUIET_RECOVERY_MS,
   createOrcaBridge,
   createOrcaRuntimeStrategy
 }

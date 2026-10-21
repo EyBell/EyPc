@@ -30,4 +30,22 @@ describe('Orca native unread handoff', () => {
       expect((await bridge.readInventory()).sessions[0].unread).toBe(false)
     } finally { bridge.close() }
   })
+
+  it('does not run the CLI from the inventory poll while the source is disabled', async () => {
+    let enabled = false
+    const calls: string[] = []
+    const bridge = createOrcaBridge({
+      platform: 'test',
+      unreadBridge: { ready: async () => {}, observe: () => {}, markViewed: () => {} },
+      cli: { json: async (args: string[]) => { calls.push(args[0]); return { ok: true, result: args[0] === 'worktree' ? { worktrees: [] } : { terminals: [] } } } }
+    })
+    try {
+      bridge.watchInventory(() => {}, { isEnabled: () => enabled })
+      await new Promise((resolve) => setTimeout(resolve, 1_100))
+      expect(calls).toEqual([])
+      enabled = true
+      await new Promise((resolve) => setTimeout(resolve, 1_100))
+      expect(calls.length).toBeGreaterThan(0)
+    } finally { bridge.close() }
+  })
 })
