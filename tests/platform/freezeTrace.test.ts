@@ -46,6 +46,24 @@ describe('independent freeze recorder', () => {
     } finally { child.kill(); rmSync(directory, { recursive: true, force: true }) }
   })
 
+  it('records a disconnect and exits when the plugin process is killed', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'eypc-freeze-test-'))
+    const modulePath = resolve('preload/freeze-trace.cjs')
+    const child = spawn(process.execPath, ['-e', `
+      const trace = require(${JSON.stringify(modulePath)}).createFreezeTrace({ directory: ${JSON.stringify(directory)}, intervalMs: 20 });
+      const wait = setInterval(() => { if (trace.snapshot().ready) { clearInterval(wait); process.kill(process.pid, 'SIGKILL') } }, 10);
+    `], { stdio: 'ignore' })
+    try {
+      await new Promise((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) })
+      let text = ''
+      for (let i = 0; i < 50 && !text.includes('"type":"disconnect"'); i++) {
+        await sleep(20)
+        text = readdirSync(directory).map(name => readFileSync(join(directory, name), 'utf8')).join('')
+      }
+      expect(text).toContain('"type":"disconnect"')
+    } finally { child.kill(); rmSync(directory, { recursive: true, force: true }) }
+  })
+
   it('expires only when a duration is given and keeps each file under its byte budget', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'eypc-freeze-test-'))
     const trace = createFreezeTrace({ directory, durationMs: 100, intervalMs: 10, aliveMs: 0, maxBytes: 1000 })

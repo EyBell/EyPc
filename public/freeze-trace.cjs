@@ -1,12 +1,10 @@
 'use strict'
 
-// Resident, content-free freeze recorder. All disk work runs in a worker.
+// Resident, content-free freeze recorder. All disk work runs in a child process.
 // It never obtains a directory through a synchronous uTools SDK call.
 const path = require('node:path')
 const os = require('node:os')
-let threads = {}
-try { threads = require('node:worker_threads') } catch { /* host may not expose workers */ }
-const { Worker } = threads
+const { spawn } = require('node:child_process')
 const REVISION = 'eypc-freeze-trace-v1'
 const numericKeys = new Set(['count', 'bytes', 'durationMs', 'pending', 'dropped', 'lagMs'])
 function metrics(input) {
@@ -26,7 +24,7 @@ function createFreezeTrace(options = {}) {
   let outstanding = 0
   let dropped = 0
   let ready = false
-  let status = options.enabled === false ? 'disabled' : typeof Worker === 'function' ? 'starting' : 'unsupported'
+  let status = options.enabled === false ? 'disabled' : typeof spawn === 'function' ? 'starting' : 'unsupported'
   let errorCode = ''
   const fail = (code) => {
     if (status !== 'starting' && status !== 'ready') return
@@ -38,12 +36,12 @@ function createFreezeTrace(options = {}) {
     if (stopped) return
     stopped = true
     clearInterval(timer)
-    try { worker?.postMessage({ type: 'stop' }) } catch {}
+    try { if (worker?.connected) worker.send({ type: 'stop' }) } catch {}
   }
   function send(event) {
-    if (stopped || !worker) return false
+    if (stopped || !worker?.connected) return false
     if (outstanding >= 256) { dropped++; return false }
-    try { worker.postMessage(event); outstanding++; return true } catch { return false }
+    try { worker.send(event); outstanding++; return true } catch { return false }
   }
   function begin(op, details) {
     if (!validOp(op)) return null
@@ -65,11 +63,12 @@ function createFreezeTrace(options = {}) {
   }
   try {
     if (status === 'starting') {
-      // Eval source: a packaged plugin lives inside an asar archive, which a
-      // Worker cannot load by file path.
-      worker = new Worker(WRITER_SOURCE, { eval: true, workerData: {
-        freezeTrace: true, directory, processId: process.pid,
-        durationMs: options.durationMs ?? Infinity,
+      // The uTools renderer rejects worker_threads (ERR_MISSING_PLATFORM_FOR_WORKER),
+      // and a packaged plugin lives inside an asar archive no child can load by
+      // path, so the writer runs as eval source under the host's own Node mode.
+      const config = {
+        directory, processId: process.pid,
+        durationMs: Number.isFinite(options.durationMs) ? options.durationMs : null,
         intervalMs: options.intervalMs ?? 1000,
         stallMs: options.stallMs ?? 2500,
         aliveMs: options.aliveMs ?? 60_000,
@@ -77,24 +76,31 @@ function createFreezeTrace(options = {}) {
         maxBytes: options.maxBytes ?? 4 * 1024 * 1024,
         maxFiles: options.maxFiles ?? 8,
         identity: /^[a-z0-9-]{1,80}$/.test(options.identity || '') ? options.identity : 'unmeasured'
-      } })
+      }
+      worker = spawn(process.execPath, ['-e', WRITER_SOURCE], {
+        env: { ELECTRON_RUN_AS_NODE: '1', EYPC_FREEZE_TRACE_CONFIG: JSON.stringify(config) },
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        windowsHide: true
+      })
       worker.on('message', message => {
         if (message === 'ack') outstanding = Math.max(0, outstanding - 1)
         if (message === 'ready') { ready = true; if (status === 'starting') status = 'ready' }
+        if (message?.type === 'error') { fail(message.code); stop() }
       })
       worker.on('error', error => { fail(error?.code); stop() })
       worker.on('exit', code => { if (code) fail('WORKER_EXIT'); stopped = true; clearInterval(timer) })
       worker.unref()
+      worker.channel?.unref?.()
       timer = setInterval(() => send({ type: 'pulse', at: Date.now(), dropped }), options.intervalMs ?? 1000)
       timer.unref?.()
     }
   } catch (error) { fail(error?.code || 'WORKER_CONSTRUCT'); stopped = true }
-  return { begin, end, run, stop, directory, snapshot: () => ({ stopped, ready, supported: typeof Worker === 'function', status, errorCode, outstanding, dropped }) }
+  return { begin, end, run, stop, directory, snapshot: () => ({ stopped, ready, supported: typeof spawn === 'function', status, errorCode, outstanding, dropped }) }
 }
 
 function runWriter() {
   const fs = require('node:fs')
-  const data = workerData
+  const data = JSON.parse(process.env.EYPC_FREEZE_TRACE_CONFIG)
   let bytes = 0
   let lastPulse = Date.now()
   let lastAlive = 0
@@ -133,11 +139,13 @@ function runWriter() {
     }
     append(line)
   }
-  function close() { closed = true; clearInterval(tick); parentPort.close() }
+  function close() { closed = true; clearInterval(tick); if (process.connected) process.disconnect() }
   open()
-  parentPort.postMessage('ready')
-  const deadline = Date.now() + data.durationMs
-  parentPort.on('message', event => {
+  process.send('ready')
+  const deadline = Number.isFinite(data.durationMs) ? Date.now() + data.durationMs : Infinity
+  // The channel closes when the plugin process exits or is killed.
+  process.on('disconnect', () => { if (!closed) { write({ type: 'disconnect', at: Date.now() }); close() } })
+  process.on('message', event => {
     if (closed) return
     if (event.type === 'stop') { write({ type: 'stop', at: Date.now() }); close(); return }
     if (event.type === 'pulse') { lastPulse = Date.now(); dropped = event.dropped || 0 }
@@ -148,7 +156,7 @@ function runWriter() {
       const stalled = stalledIds.delete(event.id)
       if (stalled || !(event.durationMs < data.slowSpanMs)) write({ type: 'end', id: event.id, op: event.op, at: event.at, ...metrics(event) })
     }
-    if (!closed) parentPort.postMessage('ack')
+    if (!closed) process.send('ack')
   })
   tick = setInterval(() => {
     const now = Date.now()
@@ -166,13 +174,12 @@ function runWriter() {
 const WRITER_SOURCE = [
   "'use strict'",
   "const path = require('node:path')",
-  "const { workerData, parentPort } = require('node:worker_threads')",
   `const REVISION = ${JSON.stringify(REVISION)}`,
   `const numericKeys = new Set(${JSON.stringify([...numericKeys])})`,
   `const metrics = ${metrics}`,
   `const validOp = ${validOp}`,
   `${runWriter}`,
-  'runWriter()'
+  "try { runWriter() } catch (error) { process.send({ type: 'error', code: String(error && error.code || '') }, () => process.disconnect()) }"
 ].join('\n')
 
 let active = null

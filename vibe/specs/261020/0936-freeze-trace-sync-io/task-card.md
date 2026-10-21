@@ -4,7 +4,7 @@
 
 - 基线时间：2026-10-20 09:36（北京时间），`main` @ `fb61600`，工作区另有与本任务无关的未提交改动（Codex Side 生命周期相关），本任务不触碰。
 - 范围：冻结追踪（用户选项 F-2）与主线程同步外部调用（F-3）。
-- 状态：`focused-automated-verified / artifact-ready / host-not-retested`。用户已确认实现全部四项；代码、构建与版本真值已完成，未提交、未重载插件。
+- 状态：`host-verified`。四项首版已提交 `7fd52dc` 并经用户重载；宿主证实 Worker 不可用，追踪改为子进程后经重载确认运行并落盘（见「宿主复验与子进程改造」）。卡死根因仍待下次卡死取证。
 
 ## 触发事件
 
@@ -36,15 +36,15 @@
 
 ## 根因判断
 
-- 冻结追踪失效：Worker 需从 asar 内加载 `__filename`，推断加载失败后被静默 `stop`。未验证；Electron 22 渲染进程是否支持 `worker_threads` 同样未在真实宿主确认。
+- 冻结追踪失效：起初推断为 asar 内加载 `__filename` 失败。宿主复验否定了这一推断：uTools 渲染进程创建任何 Worker 都报 `ERR_MISSING_PLATFORM_FOR_WORKER`，原 Worker 方案在该宿主里不可能运行。
 - 卡死根因：未确认。Cursor 同步 sqlite 是当前最强候选（单库 9.2 GB、20 秒超时、可多库串行），但崩溃前 Cursor 只在启动时有一次可见预检，不能据此认定。
 
 ## 方案（累计变更）
 
 ### 1. 冻结追踪常驻化（F-2）
 
-1. 写入线程改为 `new Worker(source, { eval: true })`，源码由 `runWriter` 及其依赖的常量与校验函数拼成字符串，不再从 asar 加载文件。
-2. 启动结果记入普通运行诊断：[diagnostics.cjs](../../../../preload/diagnostics.cjs#L413) 在 `process-start` 后 5 秒记录一次 `freeze-trace/worker-status`，结果为 `ready / starting / unsupported / worker-error / disabled / not-started`，只带 Node 错误码（如 `ERR_WORKER_PATH`），不带消息正文。放在诊断模块而非主入口，以免入口行数超出预算。
+1. 写入端改为独立子进程：`spawn(process.execPath, ['-e', source])`，环境只传 `ELECTRON_RUN_AS_NODE=1` 与 `EYPC_FREEZE_TRACE_CONFIG`，经 IPC 收主线程脉冲与 span。源码由 `runWriter` 及其依赖的常量与校验函数拼成字符串，不从 asar 加载文件。子进程启动异常回传错误码；IPC 断开（插件进程退出或被杀）时写一行 `disconnect` 后自行退出。
+2. 启动结果记入普通运行诊断：[diagnostics.cjs](../../../../preload/diagnostics.cjs#L413) 在 `process-start` 后 5 秒记录一次 `freeze-trace/worker-status`，结果为 `ready / starting / unsupported / worker-error / disabled / not-started`，只带 Node 错误码，不带消息正文。放在诊断模块而非主入口，以免入口行数超出预算。
 3. 改为长期运行：默认不再到期；单文件写满后滚动到新文件；保留数从 8 份不变，总量上限约 32 MiB。
 4. 降低写入量：健康时不写每秒心跳，改为每 60 秒一条存活记录；只写耗时超过 200 ms 的 span 结束记录；主线程停顿超过 2.5 秒时照旧写 `main-stall` 并列出未结束 span。
 5. 停用开关 `EYPC_FREEZE_TRACE=0` 保留。
@@ -73,15 +73,15 @@
 
 - 时序变化：Cursor 库存和 Claude 令牌从同步变为异步，原本同一轮内立即可用的结果改为下一个微任务后可用。需逐一核对 `inspect()` 及库存读取的使用方，凡同步取值的地方补 await。
 - 并发：异步化后可能出现重叠读取，靠单飞消除；归档仍按单次调用串行执行，不新增并发写入。
-- 追踪本身：Worker 若在 uTools 中仍不可用，业务照常运行，只是诊断里会出现 `unsupported / worker-error`，这本身就是需要的证据。
+- 追踪本身：子进程若在 uTools 中起不来，业务照常运行，只是诊断里会出现 `worker-error` 与错误码，这本身就是需要的证据。常驻多一个 Node 模式进程，内存约几十 MB。
 - 磁盘：追踪常驻后最多约 32 MiB，位于 `~/.eypc/freeze-traces`。
 - 隐私：维持原约束，只记录固定调用名、编号、耗时、计数、字节数，不记录路径、标题、SQL 或输出。
 - 本方案降低主线程阻塞，但不保证消除这次卡死；真正根因要靠常驻追踪在下次卡死时取证。
 
 ## 测试清单
 
-- 正常流程：Worker 以 eval 方式启动并落盘；Cursor 库存异步返回的字段与原同步结果一致；归档三步顺序与文案不变；Claude 令牌读取成功并在用后清空。
-- 边界与空值：Worker 构造失败、写目录无权限时记录对应结果且业务继续；Cursor 库不存在、sqlite 不可用、JSON 非数组、单个工作区库读失败沿用旧缓存；钥匙串返回空值。
+- 正常流程：追踪子进程以 eval 方式启动并落盘，插件进程被杀后写 `disconnect` 并退出；Cursor 库存异步返回的字段与原同步结果一致；归档三步顺序与文案不变；Claude 令牌读取成功并在用后清空。
+- 边界与空值：子进程启动失败、写目录无权限时记录对应结果且业务继续；Cursor 库不存在、sqlite 不可用、JSON 非数组、单个工作区库读失败沿用旧缓存；钥匙串返回空值。
 - 权限：钥匙串拒绝或超时返回空令牌，不重试、不弹窗循环。
 - 并发与重复提交：两次并发库存读取只起一个 sqlite 进程；归档进行中再次触发不产生第二次写入。
 - 回归：`freezeTrace`、`cursorInventory`、`cursorArchive`、`cursorHooks`、`claudeQuotaFallback` 聚焦套件；preload 与 public 镜像校验。
@@ -103,6 +103,15 @@
 - 产物 EyPc V7：`host-bdd64e663cdf81768423 / renderer-511a20dff7e6a54cc91f`，builtAt `2026-10-20T02:34:47.641Z`（北京时间 `2026/10/20 10:34:47`）。
 - `verify:plan` 报告追踪、汇总脚本、设置说明及三个新改测试文件未登记到 [核心验证映射](../../../knowledge/core-verification-map.json#L1)。修改映射属于治理变更，会触发全量门禁，本任务未改，改为手动执行上述受影响检查；登记留作后续。
 - 未运行：全仓测试、真实 uTools 重载与 Worker 落盘验收。
+
+## 宿主复验与子进程改造（2026-10-20）
+
+- 用户 10:41 重载 `7fd52dc` 产物。运行诊断 `runtime-1792464060945-1.jsonl` 第 134 行：`freeze-trace/worker-status` 为 `worker-error`，错误码 `ERR_MISSING_PLATFORM_FOR_WORKER`；`~/.eypc/freeze-traces` 仍未生成。三处异步化不依赖 Worker，已随该次重载生效。
+- 只读核对 uTools 的 Electron fuse：`RunAsNode` 为 enabled。`uTools Helper`、`(Plugin)`、`(Renderer)` 三个辅助程序在 `ELECTRON_RUN_AS_NODE=1` 下均以 Node 16.17.1 运行，`child_process.spawn` 可用。
+- 用户选定子进程方案，改造见方案 1-1。端到端实测以 `uTools Helper (Plugin)` 作为插件进程：主线程阻塞 4 秒期间写出 2 条 `main-stall` 并点名 `cursor.read-inventory`，恢复后写出约 4,003 ms 的 `end`；插件进程被 SIGKILL 后写出 `disconnect`，无残留子进程。
+- 新增测试：插件进程被杀后追踪写 `disconnect`。聚焦 5 个套件 84/84 通过；构建内伴随核心 40、生命周期 58、原生未读 23（打包）与 uTools 产物校验通过；镜像 96 对、入口预算 14,721 行、类型检查、运行身份 13 字段通过；需求真值已写入。
+- 产物 EyPc V7：`host-d4cd2c8b400bb0ff586e / renderer-b5ab5f039a525344ea4e`，builtAt 北京时间 `2026/10/20 11:21:37`。
+- 宿主验收：用户 11:52 重载该产物。`runtime-1792468368621-1.jsonl` 第 142 行 `freeze-trace/worker-status` 为 `ready`；`~/.eypc/freeze-traces/freeze-1792468368503-31575.jsonl` 已落盘，`identity` 为 `host-d4cd2c8b400bb0ff586e`。追踪子进程 PID 31576 由插件进程 PID 31575 启动，可执行文件为 `uTools Helper (Renderer)`，RSS 约 56 MiB。首 30 秒无 `main-stall`。
 
 ## 非目标
 
