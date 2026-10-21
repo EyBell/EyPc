@@ -8219,6 +8219,96 @@ draft: v7EvidenceDraft({
     }
   })
 
+  it.each(['running', 'waiting-input'])('keeps the root %s and unread when another Side completes', async (remainingPhase) => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeCodexProcess()
+      child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
+      const desktopSocket = new FakeCodexDesktopSocket()
+      const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), desktopSocket)
+      const { bridge, native, publicPlatform } = context
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(0)
+      const parent = baseline.value.threads[3]
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      const terminalChildId = child.createdThreadId
+      const activeChildId = 'b2345678-1234-4234-8234-123456789abc'
+      child.inProgressTurnIds.add(activeChildId)
+
+      const sideSnapshot = (conversationId: string) => ({
+        type: 'broadcast',
+        method: 'thread-stream-state-changed',
+        sourceClientId: 'codex-desktop-owner',
+        version: 11,
+        params: {
+          hostId: 'local',
+          conversationId,
+          change: {
+            type: 'snapshot',
+            revision: 1,
+            conversationState: {
+              sideConversation: true,
+              forkedFromId: FIXED_THREAD_IDS[3],
+              threadRuntimeStatus: { type: 'active', activeFlags: conversationId === activeChildId && remainingPhase === 'waiting-input' ? ['waitingOnUserInput'] : [] },
+              resumeState: '',
+              hasUnreadTurn: false,
+              requests: []
+            }
+          }
+        }
+      })
+      desktopSocket.push(sideSnapshot(terminalChildId))
+      desktopSocket.push(sideSnapshot(activeChildId))
+      await vi.advanceTimersByTimeAsync(0)
+      child.turnOverrides.set(terminalChildId, { id: 'synthetic-side-terminal', status: 'completed', startedAt: 2_000_000_200, completedAt: 2_000_000_220 })
+      child.stdout.emit('data', `${JSON.stringify({ method: 'turn/completed', params: {
+        threadId: terminalChildId, turn: { id: 'synthetic-side-terminal', status: 'completed', startedAt: 2_000_000_200, completedAt: 2_000_000_220 }
+      } })}\n`)
+      await vi.advanceTimersByTimeAsync(1_400)
+
+      const activity = await bridge.readActivitySnapshot()
+      expect(activity.value.entries.find((entry: Record<string, any>) => entry.key === parent.key)).toMatchObject({
+        status: 'active',
+        lastTurnStatus: 'inProgress'
+      })
+      expect(activity.value.decisionDiagnostics).toMatchObject({
+        branchTerminalDeferred: expect.any(Number),
+        snapshotConflictSuppressed: expect.any(Number),
+        staleTurnDiscarded: expect.any(Number)
+      })
+      expect(JSON.stringify(activity.value.decisionDiagnostics)).not.toContain(terminalChildId)
+      expect(JSON.stringify(activity.value.decisionDiagnostics)).not.toContain(activeChildId)
+      const branchEvidence = native.privateBranchEvidence(FIXED_THREAD_IDS[3])
+      const branches = branchEvidence?.branches || []
+      expect(branches).toContainEqual(expect.objectContaining({ branchKind: 'side', lastTurnStatus: 'completed' }))
+      expect(branches).toContainEqual(expect.objectContaining({ lastTurnStatus: 'inProgress' }))
+      expect(branches.every((branch: Record<string, unknown>) => /^[a-f0-9]{32}$/.test(String(branch.ref)))).toBe(true)
+      expect(JSON.stringify(branchEvidence)).not.toContain(FIXED_THREAD_IDS[3])
+      expect(JSON.stringify(branchEvidence)).not.toContain(terminalChildId)
+      expect(JSON.stringify(branchEvidence)).not.toContain(activeChildId)
+      // Exercise the production read-state gateway after one member's exact
+      // terminal. The other member's current wait/run must remain actionable.
+      desktopSocket.push({ type: 'broadcast', method: 'thread-read-state-changed',
+        sourceClientId: 'codex-desktop-owner', version: 3,
+        params: { hostId: 'local', conversationId: terminalChildId, hasUnreadTurn: true,
+          context: { identity: { kind: 'chatgpt', accountId: 'synthetic-account', userId: 'synthetic-user' }, executionHostKey: 'synthetic-local-host' } }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key))
+        .toMatchObject({ phase: remainingPhase, unreadKnown: true, unread: true, topology: { memberCount: 3 }, capabilities: { archive: false } })
+      expect(kernel.getLatest().tasks.filter((task: Record<string, any>) => task.key === parent.key)).toHaveLength(1)
+      expect(kernel.getLatest().tasks.some((task: Record<string, any>) => task.key.startsWith('codex-child:'))).toBe(false)
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key)?.dynamicGroup).toBe(remainingPhase === 'running' ? 'active' : 'input')
+      await bridge.readActivitySnapshot({ phaseOnly: true })
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key))
+        .toMatchObject({ phase: remainingPhase, unread: true })
+      expect(publicPlatform.companionKernel.publishCodexBranchEvidence).toBeUndefined()
+      bridge.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('projects private Codex Desktop snapshots into live authority and dispatches archive broadcasts after verification', async () => {
     const child = new FakeCodexProcess()
     const desktopSocket = new FakeCodexDesktopSocket()

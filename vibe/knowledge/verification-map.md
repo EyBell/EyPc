@@ -35,7 +35,7 @@
 | Rollout decision cache | 文件不变只复用解析，强制探测仍应用原有状态归约；不降检测频率 | codexRolloutDecisionCache 与 codexAsyncQuestions 定向测试；Bridge 既有状态回归 | 文件监听/进程探测 → 归约 → Main/Float | 实际 CPU 与宿主时序独立验收；既有失败不改断言隐藏 |
 | 原生 schema/IPC version、Desktop-only Side、成员交互与 Side 终态查询 | 单一 identity/host；主/子请求与 epoch 独立；未答问题维持；Side 新完成更新根未读；主缓存不能代替子查询 | 原 validate-utools-runtime 的 check-companion-native-unread；11 项 gate 正向/负向 canary；四成员较早终态/较新主轮次独立与实际 Bridge→Kernel 组合回归，含较晚 completed/aborted 生成保留 Side 问题；async questions | 原生持久与 IPC → member evidence → 唯一 root → Main/Float | source/packaged 可证解析与因果语义；原生像素、全部真实生命周期独立；未知身份形式保守 unavailable |
 
-前序1425验证（历史）：2026-10-13；Side 关系撤回/已接纳图与归档清理、未读/打开竞态、匿名恢复日志及根相位 Provider 关联见 [续核](../specs/261013/1425-codex-side-phase/lifecycle-verify.md#L1)。触发规则和负向 canary 证据见[本轮审计](../specs/261013/1425-codex-side-phase/audit.md#L1)。
+前序1425验证（历史）：2026-10-13；19:05 续核补充 Side 完成时剩余成员运行/等待的生产 Bridge→Kernel 断言与 20 点时序 gate，真实独立 Side 完成未读仍待证；Side 关系撤回/已接纳图与归档清理、未读/打开竞态、匿名恢复日志及根相位 Provider 关联见 [续核](../specs/261013/1425-codex-side-phase/lifecycle-verify.md#L1)。触发规则和负向 canary 证据见[本轮审计](../specs/261013/1425-codex-side-phase/audit.md#L1)。
 
 
 ## 当前 Side 终态与主结束验证

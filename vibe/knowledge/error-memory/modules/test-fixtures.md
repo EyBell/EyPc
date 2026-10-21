@@ -13,6 +13,8 @@ Link-only route for fixture isolation, accidental real host dependencies, assert
 
 ## Primary Error Records
 
+- [Side completion fixture awaits topology admission](../codex-side-completion-fixture-before-mapping.md#L1)
+
 - [Native geometry fixtures isolate Provider watchers](../native-geometry-fixture-must-not-watch-provider-files.md#L1)
 - [Host environment leaks into test fixture](../host-environment-leak-into-test-fixture.md#L1)
 - [Impact matrix misses source-text assertions](../impact-matrix-misses-source-text-assertions.md#L1)

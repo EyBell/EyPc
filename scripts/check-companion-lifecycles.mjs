@@ -157,7 +157,12 @@ export async function checkCompanionLifecycles(assetRoot) {
       const relations = rows.filter(row => row.key !== 'main').map(row => ({ childKey: row.key,
         parentKey: row.parent || 'main', provider: 'codex', family, relation: 'side-thread',
         authority: 'lifecycle-exact', exact: true, generation }))
-      const batch = createEvidenceBatchV7({ provider: 'codex', nodes, relations, relationsComplete: complete,
+      const interactions = rows.filter(row => row.phase === 'waiting-input').map(row => ({
+        revision: 'companion-interaction-evidence-v1', provider: 'codex', taskKey: row.key, branchRef: row.key,
+        interactionRef: 'f'.repeat(32), kind: 'user-input', state: 'opened', sequence: row.epoch || 100,
+        turnEpoch: row.epoch || 100, requestSetRevision: generation, authority: 'provider-live', exact: true
+      }))
+      const batch = createEvidenceBatchV7({ provider: 'codex', nodes, interactions, relations, relationsComplete: complete,
         snapshotLanes: complete ? lanes : [], completeLanes: complete ? lanes : [],
         laneGenerations: Object.fromEntries(lanes.map(lane => [lane, lane === 'unread' ? unreadGeneration : generation])),
         removedKeys: { membership: remove }, health: 'ready' })
@@ -179,6 +184,7 @@ export async function checkCompanionLifecycles(assetRoot) {
       assert.equal(snapshot.tasks[0].topology.memberCount, count)
       assert.equal(snapshot.views.counts.unread, phase === 'completed' && unread ? 1 : 0)
       assert.equal(snapshot.views.counts.active, phase === 'running' ? 1 : 0)
+      assert.equal(snapshot.views.counts.input, phase === 'waiting-input' ? 1 : 0)
       assert(!snapshot.views.cycleKeys.includes('side'))
       checked++
       return snapshot.tasks[0]
@@ -232,6 +238,20 @@ export async function checkCompanionLifecycles(assetRoot) {
     read.publish([main, { ...side, unread: false }], 6, { unreadGeneration: 2 })
     read.expectRoot('completed', true, 2) // Old unread cannot erase the new completion.
   } finally { read.kernel.close() }
+  const remaining = fixture()
+  try {
+    remaining.publish([main, { ...side, unread: true }, { key: 'sibling', phase: 'running' }], 1)
+    const liveRoot = remaining.expectRoot('running', true, 3)
+    assert.equal(liveRoot.capabilities.archive, false, 'a Side result cannot permit archive while a sibling runs')
+    remaining.publish([main, { ...side, unread: true }, { key: 'sibling' }], 2)
+    remaining.expectRoot('completed', true, 3)
+  } finally { remaining.kernel.close() }
+  const waiting = fixture()
+  try {
+    waiting.publish([main, { ...side, unread: true }, { key: 'sibling', phase: 'waiting-input' }], 1)
+    const waitingRoot = waiting.expectRoot('waiting-input', true, 3)
+    assert.equal(waitingRoot.capabilities.archive, false, 'a sibling question remains actionable after Side completion')
+  } finally { waiting.kernel.close() }
   const failed = fixture(async () => ({ outcome: 'failed' }))
   try {
     failed.publish([main, { ...side, unread: true }], 1)

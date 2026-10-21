@@ -24,7 +24,7 @@ async function withMutation(mutate: (source: string) => string, target = 'compan
 
 describe('Companion unread and Side lifecycle preservation gate', () => {
   it('covers complete/incomplete retirement, stale evidence, nested sides, unread and open races', async () => {
-    expect(await checkCompanionLifecycles(resolve('preload'))).toBe(55)
+    expect(await checkCompanionLifecycles(resolve('preload'))).toBe(58)
   })
   it('rejects stale relation deletion in a newer transport batch', async () => {
     await withMutation(source => {
@@ -56,6 +56,14 @@ describe('Companion unread and Side lifecycle preservation gate', () => {
       return source.replace(entry, "event: 'phase-transition',\n        outcome: task.phase,")
     })
   })
+  it('rejects dropping a completed Side unread result while its sibling remains live', async () => {
+    await withMutation(source => {
+      const entry = 'const unread = aggregateMemberUnread(members)'
+      expect(source).toContain(entry)
+      return source.replace(entry, "const unread = aggregateMemberUnread(members.filter(node => node.phase === 'running' || node.phase === 'waiting-input'))")
+    })
+  })
+
   it('rejects accepting a terminal without complete newest canonical coverage', async () => {
     await withMutation(source => {
       const guard = 'shadow.canonicalLatestComplete !== true || '

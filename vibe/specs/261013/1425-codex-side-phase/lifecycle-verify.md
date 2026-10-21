@@ -22,7 +22,6 @@
 | L-8 | Desktop-only 已验证 Side 关系没有 exact；接纳后 Side 请求仍落主 key/epoch，活动重放不携带 unchanged opened，真实组合回归 phase completed 先失败 | Desktop 关系 exact；成员请求 key/epoch/完整集独立；原 activity batch 重发仍 opened 的有限实例；完成/连续读取/refollow/匹配回答完整回归先红后绿 |
 | L-9 | Side 完成查询被主完成缓存提前收口，或受主轮次 freshness 约束；组合用例根 phase unknown、Side unread 已知 | 主缓存只用于主查询；现有定向 Side 查询以该成员当前 Turn 确认终态，记录成员证据，不覆盖较新主轮次；跨成员较新轮次夹具及负向检测 |
 | L-10 | 收尾预算发现 entry 超 38 行和新增 1 全局可变绑定 | 成员请求投影等价移入现有 desktop-request-projection owner；绑定放现有 Bridge 实例。entry 降为 14731（原 14804），mutable 163 不增；预算收紧，不放宽门禁 |
-
 | L-11 | 18:32:26 真实 Side 家族 waiting-input→unknown，仍可见 Question；原生 selector 与投影区分提问轮次和最新生成，EyPc 只看最新 aborted 轮次 | 仅 Side 的较晚 completed/failed/interrupted 生成允许保留此前仍 inProgress 的待答轮次；不供应历史 running；接受匹配答复/普通 steering 仍解除；完整 Bridge 组合失败场景修复后通过，主旧问题不复活守卫不改 |
 
 ## 自动生命周期矩阵
@@ -101,3 +100,14 @@
 ## VerificationImpactTrace
 
 影响已接纳关系、归档全家清理、匿名诊断、原生 unread 来源兼容与成员交互/子查询终态归属；未读原归约/快捷回执/跟随与法定人数清退不改。已选择 Kernel/Topology/TaskPackage/Presentation/Adapter、Bridge 精确 Side/未读边界、独立 gate 与类型/生产包边界。全库、MQTT 和实际原生归档不在本轮执行面；无全库升级触发。精确握手通过，完整逐成员及未出现的真实清退/归档仍待证。
+
+
+## 18:54–19:05 Side 完成与根状态/未读续核
+
+- 核验限定现有诊断日志与只读原生元数据，没有创建 Side、改变真实任务、回答业务 Question 或读取凭据。18:45:08 Host/Renderer 未变化。
+- 当前会话至 19:05:30 的持久 unread 读取 11 次全部 ok；没有 sideUnreadCount>0 样本。18:53:08 的 running→stopped→completed/unread=true 对应本任务主成员自身结束，sideUnreadCount=0；revision 267/268 applied，18:54:06 已读回读后未读分组归零，18:54:23 主新轮回到 running。不能把这条主完成链当作 Side 新完成未读已现场通过。
+- 日志包含 Side 家族拓扑与运行/等待转换，但没有各成员独立 completed/terminal 来源序号。普通 Side 数量变化或根状态变更不能证明某 Side 结束；“Side 执行结束后新未读”的独立真实因果样本继续待证。
+- 补充生产 Bridge→Kernel 两个已映射 Side 场景：一个完成并收到 v3 unread，另一个仍 running 或 waiting-input；根保持对应活状态、unread=true、唯一根卡及 archive=false，后续活动读取不丢未读。原 defer 场景所有断言保留。
+- 首版夹具完成先于映射接纳，误判取消规则；按原事件前提推进后，原源码两个场景通过，运行逻辑试改已全部撤回。[防误诊记录](../../../knowledge/error-memory/codex-side-completion-fixture-before-mapping.md#L1)。
+- 原标准校验中的生命周期 gate 从 17 增到 20 点：剩余 Side 运行时保存完成未读；所有成员结束后进入 completed-unread；另一个 Side 待输入时仍保存完成未读和等待优先。新增坏实现 canary 拒绝“只聚合活成员 unread”。source/packaged 原 10 核心 + 20 生命周期 + 17 原生/成员门禁通过。
+- 相关 Bridge 定向 7 项通过；四个 gate 文件 19/19，类型、96 对镜像与入口预算通过。未跑全库或修改三项已知旧失败断言，没有重建/变更宿主产物；本轮测试和记录仅本地，未提交推送。
