@@ -41,7 +41,7 @@ Orca 一个工作区里只有一条实际未读对话，EyPc「已完成未读�
 
 工作树 unread 只是汇总，不得抄到组内每一条。CLI agent 行若带布尔 `unread`，卡片跟窗格，工作区汇总为假不得把仍未读的完成对话打成已读。没有按窗格字段时，只有该工作树恰好一条已完成会话才可吃汇总。多条已完成不得猜最右/最新（会把「清工」标未读、把 KM-8765 放进已完成）。进行中的会话不吃这口汇总未读。宁可少标一条，也不要把已读对话标未读。
 
-Orca 一个 Workspace 窗口里多条 Agent 标签共用工作区 `unread`。橙色标签是渲染层 `unreadAgentCompletionPanes`，正式 1.4.202 CLI 不导出。猜最右侧已完成对话会标错卡。
+Orca 一个 Workspace 窗口里多条 Agent 标签共用工作区 `unread`。橙色标签是渲染层 `unreadAgentCompletionPanes`，正式 1.4.202 CLI 不导出，2026-10-21 复核 1.4.237 仍不导出。猜最右侧已完成对话会标错卡。
 
 不得用工作区 `lastActivityAt`、旁边窗格 `lastOutputAt`、`paneKey` 字母序或标签条右端当未读身份。
 

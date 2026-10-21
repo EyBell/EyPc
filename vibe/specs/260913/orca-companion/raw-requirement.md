@@ -47,7 +47,7 @@ text: >
 
 ## 规范化需求（RAW-220）
 
-1. 把标签栏「已完成未读」登记为 Orca 产品需求：权威是渲染层 `unreadAgentCompletionPanes[paneKey]`，不是 Agent Session History，也不是左侧 Project Tree 圆点。Orca 应把该按窗格布尔导出到 `worktree ps` 的 `agents[].unread`（始终带布尔）；现网 1.4.202 未导出。
+1. 把标签栏「已完成未读」登记为 Orca 产品需求：权威是渲染层 `unreadAgentCompletionPanes[paneKey]`，不是 Agent Session History，也不是左侧 Project Tree 圆点。Orca 应把该按窗格布尔导出到 `worktree ps` 的 `agents[].unread`（始终带布尔）；现网 1.4.202 未导出；2026-10-21 复核 1.4.237 仍未导出。
 2. 在 Orca 导出之前，EyPc 做临时中转：只要库存曾经读到该窗格「进行中」，之后变成 `done` 时进入「已完成未读」，不得直接变成「已完成已读」。冷启动时已经是已完成、且从未观测到进行中的窗格，不为此中转凭空标未读。
 3. 只有插件跳转或点击查看之后，这一轮才变成「已完成已读」。进行中点卡片不得改成已完成。Orca 窗口里点标签仍不作为 EyPc 已读（原生焦点仍不确认）。
 4. CLI 已给出 `agent.unread` 布尔时仍以该字段为准。工作区汇总未读不得扇出。History / 左侧树仍禁止当未读来源。

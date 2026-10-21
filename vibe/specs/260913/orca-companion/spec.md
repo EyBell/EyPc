@@ -47,7 +47,7 @@ Real uTools / 浮窗对照需用户明确授权后再做。
 
 - 授权范围：收敛既有 RAW-219/220 文档，补齐 Orca 原生未读与标签置顶读写、同一任务回读及 EyPc 接管；真实宿主验收仍属后续 F3。
 - 执行：沿用本任务已存在的 EyPc main 与 Orca czz-dev 局部实现，只增量修改状态/置顶边界；保留启动卡顿任务及其他未提交修改。未创建第二份需求权威。
-- 当前：implemented-local / focused-tests-passed / artifact-ready / installed-host-pending。旧“猜最右/最新未读”方案已废弃。旧安装 Orca 1.4.202 的字段/命令缺口仍在；本地构建不等于正式交付。
+- 当前：implemented-local / focused-tests-passed / artifact-ready / installed-host-pending。旧“猜最右/最新未读”方案已废弃。旧安装 Orca 1.4.202 的字段/命令缺口仍在；2026-10-21 复核 1.4.237：`worktree ps` 的 `agents[]` 仍无 `unread`（只有工作区级 `unread`），`terminal list/show` 与 `agent-context` 也无按窗格未读，CLI 无标签置顶命令，插件继续走自管未读回退；本地构建不等于正式交付。
 - VerificationImpactTrace：Orca renderer 未读/钉 → runtime 图与 CLI 行 → EyPc inventory/打开/置顶 → 现有 Kernel 快照。聚焦核验逐窗格 true/false、同标签读写回执、旧 CLI 字段缺失、取消置顶优先级、原生未读不被跳转清除。选择对应边界的单元/合同测试与受影响编译、构建；不运行全仓测试，不启动或重载宿主。
 - Sidecar：main-only；前轮已定位唯一状态与文档所有者，无独立代理检查需求。
 
