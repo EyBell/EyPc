@@ -179,7 +179,8 @@ function sessionState(agent, connected, terminalTitle, agentType) {
   // a stale frame, not a live turn.
   if (leadTurnCompleted(agent)) return 'done'
   if (state === 'working') return 'working'
-  if (oscIndicatesWorking(terminalTitle) && !(type === 'claude' && state === 'done')) {
+  const oscWorking = typeof terminalTitle === 'boolean' ? terminalTitle : oscIndicatesWorking(terminalTitle)
+  if (oscWorking && !(type === 'claude' && state === 'done')) {
     return 'working'
   }
   return 'done'
@@ -230,6 +231,7 @@ function mergeSession(agent, terminal, worktree, tabTitles, tabOrdinals, nativeP
     projectKey: textOf(worktree.worktreeId || worktree.repoId).slice(0, 256),
     worktreeId: textOf(worktree.worktreeId).slice(0, 256),
     connected,
+    oscWorking: oscIndicatesWorking(oscTitle),
     state,
     interactionKind: waitingInteractionKind(agent, state),
     unread: agent.unread === true,
@@ -492,6 +494,8 @@ module.exports = {
   indexTabOrdinals,
   oscIndicatesWorking,
   leadTurnCompleted,
+  sessionState,
+  waitingInteractionKind,
   attributeWorktreeUnread,
   finishUnread,
   createInventoryReader

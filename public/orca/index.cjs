@@ -4,11 +4,13 @@
  * Orca Agents companion facade.
  *
  * Cold/hot inventory is `worktree ps` + `terminal list`. Open switches the
- * live terminal. Archive closes that pane. Status wakes from the mtime of
- * Orca's `agent-hooks/last-status.json` (stat only — that file holds prompts
- * and assistant text and must never be read here). A quiet 2s read covers
- * structured sessions, which Orca does not persist into that file.
- * Conversation bodies never enter.
+ * live terminal. Archive closes that pane. Dynamic phase is projected from
+ * `agent-hooks/last-status.json` as soon as its mtime changes: prompts,
+ * assistant text and tool arguments are deleted before any session field is
+ * copied, through the same phase rules as the CLI path. A turn leaving working
+ * or an unknown pane triggers one CLI read; otherwise the CLI refreshes
+ * membership, titles and pins every 5s, or 1s while a live pane is missing
+ * from the file. Conversation bodies never enter the session.
  */
 
 const fs = require('node:fs')
@@ -16,10 +18,14 @@ const os = require('node:os')
 const path = require('node:path')
 const ORCA_BRIDGE_REVISION = 'orca-agent-companion-v1'
 const ORCA_WAKE_STAT_MS = 200
-const ORCA_QUIET_RECOVERY_MS = 2_000
+// Full CLI reads are slow while every live pane is covered by the status file;
+// a live pane the file never mentions (structured chat) keeps the fast cadence.
+const ORCA_QUIET_RECOVERY_MS = 5_000
+const ORCA_LIVE_RECOVERY_MS = 1_000
+const WAKE_SECRET_KEYS = ['prompt', 'lastAssistantMessage', 'toolInput', 'preview', 'path', 'cwd', 'worktreePath', 'command']
 const { createOrcaCli } = require('./cli.cjs')
 const { userDataPath } = require('./native-state.cjs')
-const { createInventoryReader, fingerprintOf } = require('./inventory.cjs')
+const { createInventoryReader, fingerprintOf, sessionState, waitingInteractionKind } = require('./inventory.cjs')
 const { createOpener } = require('./open.cjs')
 const { createArchiver } = require('./archive.cjs')
 const { createPinner } = require('./pin.cjs')
@@ -40,6 +46,52 @@ function statWakeFile(file, io) {
   } catch {
     return 'missing'
   }
+}
+
+function scrubWake(value) {
+  if (!value || typeof value !== 'object') return
+  for (const key of WAKE_SECRET_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) delete value[key]
+  }
+}
+
+function wakeText(value) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function wakeTime(value) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && numeric > 0 ? Math.round(numeric) : 0
+}
+
+function readWakeEntriesFromFile(file, io) {
+  if (!file || !io || typeof io.readFileSync !== 'function') return null
+  let raw
+  try { raw = io.readFileSync(file, 'utf8') } catch { return null }
+  let parsed
+  try { parsed = JSON.parse(raw) } catch { return null }
+  raw = ''
+  const entries = parsed && parsed.entries
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return null
+  const rows = []
+  for (const value of Object.values(entries)) {
+    if (!value || typeof value !== 'object') continue
+    scrubWake(value)
+    const payload = value.payload && typeof value.payload === 'object' ? value.payload : {}
+    scrubWake(payload)
+    const paneKey = wakeText(value.paneKey).toLowerCase()
+    if (!paneKey) continue
+    const presence = value.agentPresence && typeof value.agentPresence === 'object' ? value.agentPresence : {}
+    rows.push({
+      paneKey,
+      state: wakeText(payload.state).toLowerCase(),
+      agentType: wakeText(payload.agentType || presence.agent).toLowerCase(),
+      toolName: wakeText(payload.toolName).slice(0, 80),
+      interrupted: payload.interrupted === true,
+      stateStartedAt: wakeTime(value.stateStartedAt)
+    })
+  }
+  return rows
 }
 
 function watchStatusFile(file, onChange, io) {
@@ -109,6 +161,9 @@ function createOrcaBridge(dependencies = {}) {
   const watchWake = typeof dependencies.watchWake === 'function'
     ? dependencies.watchWake
     : (onChange) => watchStatusFile(wakeFile, onChange, io)
+  const readWakeEntries = typeof dependencies.readWakeEntries === 'function'
+    ? dependencies.readWakeEntries
+    : () => readWakeEntriesFromFile(wakeFile, io)
   let wakeTimer = null
   let wakeWatcher = null
   let pollInFlight = false
@@ -117,6 +172,9 @@ function createOrcaBridge(dependencies = {}) {
   let lastWakeSig = null
   let lastFullReadAt = 0
   let freshSnapshot = null
+  let wakeCovered = null
+  // Orca keeps entries for closed panes; ones a full read did not return stop triggering reads.
+  let stalePanes = new Set()
   const opener = createOpener({
     cli,
     execFile: dependencies.execFile,
@@ -156,6 +214,67 @@ function createOrcaBridge(dependencies = {}) {
     }
   }
 
+  function currentSnapshot() {
+    return {
+      revision: inventory.revision,
+      available: cache.available,
+      reason: cache.reason,
+      sessions: cache.sessions,
+      truncated: false,
+      readAt: clock()
+    }
+  }
+
+  // Returns true when the file shows something only a CLI read can settle:
+  // a pane the cache lacks, or a turn leaving working (unread, title, OSC).
+  function applyWake() {
+    const rows = readWakeEntries()
+    if (!Array.isArray(rows)) return false
+    const byPane = new Map()
+    for (const row of rows) {
+      if (row && typeof row.paneKey === 'string' && row.paneKey) byPane.set(row.paneKey, row)
+    }
+    wakeCovered = new Set(byPane.keys())
+    const known = new Set(cache.sessions.map((session) => session.paneKey))
+    let needsRead = [...byPane.keys()].some((paneKey) => !known.has(paneKey) && !stalePanes.has(paneKey))
+    let changed = false
+    for (const session of cache.sessions) {
+      const row = byPane.get(session.paneKey)
+      if (!row || (!row.state && row.interrupted !== true)) continue
+      const agent = { state: row.state, interrupted: row.interrupted, agentType: row.agentType, toolName: row.toolName }
+      const phase = sessionState(agent, session.connected, session.oscWorking === true, session.agentType)
+      const interaction = waitingInteractionKind(agent, phase)
+      if (session.state !== phase) {
+        if (phase !== 'working') needsRead = true
+        session.state = phase
+        if (phase === 'working' && row.stateStartedAt) {
+          session.stateStartedAt = row.stateStartedAt
+          session.lastQuestionAt = row.stateStartedAt
+          session.lastUpdatedAt = row.stateStartedAt
+        } else if (phase !== 'working') {
+          session.lastQuestionAt = 0
+        }
+        changed = true
+      }
+      if (session.interactionKind !== interaction) {
+        session.interactionKind = interaction
+        changed = true
+      }
+    }
+    if (changed) {
+      cache.fingerprint = fingerprintOf(cache.sessions)
+      freshSnapshot = currentSnapshot()
+      broadcast()
+    }
+    return needsRead
+  }
+
+  function recoveryInterval() {
+    const uncoveredLive = cache.sessions.some((session) => session.state === 'working'
+      && !(wakeCovered && wakeCovered.has(session.paneKey)))
+    return uncoveredLive ? ORCA_LIVE_RECOVERY_MS : ORCA_QUIET_RECOVERY_MS
+  }
+
   async function readFresh() {
     if (freshSnapshot) {
       const snapshot = freshSnapshot
@@ -179,13 +298,22 @@ function createOrcaBridge(dependencies = {}) {
     }
     const observed = statWake()
     const changed = lastWakeSig !== null && observed !== lastWakeSig
-    const due = clock() - lastFullReadAt >= ORCA_QUIET_RECOVERY_MS
-    if (!force && lastWakeSig !== null && !changed && !due) return
+    let settle = false
+    if (changed || (lastWakeSig !== null && wakeCovered === null)) {
+      lastWakeSig = observed
+      try { settle = applyWake() && changed } catch { /* keep the last snapshot */ }
+    }
+    const due = clock() - lastFullReadAt >= recoveryInterval()
+    if (!force && !settle && lastWakeSig !== null && !due) return
     pollInFlight = true
     try {
       const previous = cache.fingerprint
       const snapshot = await inventory.readInventory()
       remember(snapshot)
+      if (wakeCovered) {
+        const known = new Set(cache.sessions.map((session) => session.paneKey))
+        stalePanes = new Set([...wakeCovered].filter((paneKey) => !known.has(paneKey)))
+      }
       lastWakeSig = observed
       lastFullReadAt = clock()
       if (cache.fingerprint !== previous) {
@@ -292,6 +420,9 @@ module.exports = {
   ORCA_BRIDGE_REVISION,
   ORCA_WAKE_STAT_MS,
   ORCA_QUIET_RECOVERY_MS,
+  ORCA_LIVE_RECOVERY_MS,
+  readWakeEntriesFromFile,
+  scrubWake,
   createOrcaBridge,
   createOrcaRuntimeStrategy
 }

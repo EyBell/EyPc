@@ -18,7 +18,7 @@ status: implementing
 - 排序与行上时钟：`lastQuestionAt` 只取进入 `working` 的 `stateStartedAt`。`lastOutputAt`、中途 `updatedAt`、轮询 `acceptedAt` 不得进入提问钟。完成/中断发 `lastQuestionAt: 0`，Kernel `incoming || previous` 保留上一问。
 - 打开成功后列表高亮跟到当前任务；「上一个 / 下一个」沿用 Kernel `cycleKeys` 状态候选顺序，只有环内打开会接管循环游标。已读完成项的展示分组不得覆盖循环候选（[RAW-182 修复](../../260915/companion-cycle-authority/task-card.md#L1)）。
 - 2026-10-18：waiting/blocked 加明确问答或 Plan 实施工具时，inventory 保留有限 interaction kind，V7 builder 发布完整 request-set；Kernel 按既有 RAW-207 显示待输入。解除时空集合清除请求。未知等待不猜审批，底层 working 与未读记账规则不改。12:58新包加载后，原生 `waiting/exit_plan_mode` 已与真实浮窗“等待输入”精确对应；AskUserQuestion及解除现场未发生，不宣称真机通过。[实现与回归](../../261018/task-state-repair/task-card.md#L1) · [真实核验L3与边界](../../261018/task-state-repair/live-verification.md#L1)。
-- Kernel 经现有 V7 证据车道消费。Host 只 stat `agent-hooks/last-status.json` 的修改时间（200 毫秒补扫，不读正文）。签名变化时立刻读一次 CLI 库存，并把这一拍交给 `queueCompanionHostReconciliation('orca')`，同一次变化不再读第二轮。文件安静时每 2 秒全量读一次，补不落盘的结构化会话和漏掉的通知。
+- Kernel 经现有 V7 证据车道消费。Host 在 `agent-hooks/last-status.json` 修改时间变化时，只把相位和有限工具名投影到已有卡片（提示、回复、工具参数先删掉），并立刻交给 `queueCompanionHostReconciliation('orca')`，这拍不跑 CLI。投影与 CLI 共用 `sessionState` / `waitingInteractionKind`，OSC 工作帧取上次 CLI 读到的 `oscWorking`，所以 Grok 等已由 OSC 标成进行中的卡片不会被文件里的 `done` 打回去。文件出现未知窗格或某窗格离开进行中时，立即补一次 CLI（校准未读、标题和 OSC）；全量读后仍不存在的窗格记为已关闭，不再触发。平时全量 CLI 每 5 秒补成员、标题、置顶；有进行中的窗格不在文件里（如结构化会话）时改为每 1 秒。
 - RAW-220：标签栏已完成未读应在 Orca 按窗格导出。未导出前，EyPc `unread-bridge` 把「曾观测到进行中 → Agents `done`」记成本地已完成未读；`working`+`monitoring` 仍算进行中，不记账。缺原生字段时，插件 `terminal switch` 派发成功后只清临时账本这一轮；已有原生布尔时不清本地缓存中的原生未读，等后续轮询原生 false。进行中点卡片仍不得改成已完成。CLI `agent.unread` 布尔优先。原生 `dispatched` 仍不确认 Orca 窗口已读。
 - 设置页「接入 Orca」；Float 项目筛选增加「只显示 Orca」。
 
@@ -29,6 +29,18 @@ Focused：`orcaCli` / `orcaInventory` / `orcaPin` / `orcaOpen` / `orcaArchive` /
 Real uTools / 浮窗对照需用户明确授权后再做。
 
 - 2026-09-15 存储隔离：未读账本每轮扫描合并提交，未变化的完成记录不写；通过宿主注入的 `utools.db.promises.get/put` 沿用 `_id/value/_rev` 文档，禁止这条链调用同步 `dbStorage`。单写者只保留最新待写状态；失败留脏到下一次观测重试。初读最多异步等待 1 秒，失败或超时后仅保留会话内状态，不覆盖未知旧账本；因此异常会话的新回执不保证跨重启保存。该修复尚无真实宿主验收。
+
+## 2026-10-22 状态文件唤醒与按需 CLI
+
+- 授权范围：用户要求 Orca 任务状态感知更快、更轻；核验另一对话的唤醒实现后，确认合并相位规则、CLI 按需读取，并把隐私说明改为准确说法。
+- 实现：
+  - 唤醒：[index.cjs](../../../../preload/orca/index.cjs#L1) 每 200 毫秒 stat 状态文件并监听其目录；签名变化时读文件，`scrubWake` 先删 `prompt` / `lastAssistantMessage` / `toolInput` 等字段，只留 `paneKey`、`state`、`toolName`、`interrupted`、`stateStartedAt`，投影到已有卡片后立即广播，这一拍不跑 CLI。
+  - 相位：投影调用 [inventory.cjs](../../../../preload/orca/inventory.cjs#L170) 导出的 `sessionState` / `waitingInteractionKind`；OSC 工作帧用上次 CLI 读到的 `oscWorking`，`connected` 用缓存值。原文件路径的 `wakePhase` / `wakeInteraction` 与 Grok 单独特判已删除。
+  - 按需 CLI：文件出现缓存外窗格，或某窗格离开 `working`，立即补一次全量读，校准未读、标题与 OSC。全量读后仍不存在的窗格记入 `stalePanes`，之后不再触发；首次覆盖读只记录覆盖集，不触发读取。
+  - 兜底：`ORCA_QUIET_RECOVERY_MS = 5000`；存在 `working` 且不在状态文件覆盖集的窗格时用 `ORCA_LIVE_RECOVERY_MS = 1000`。来源关闭时 `isEnabled` 让整拍跳过。
+- 当前：implemented-local / tests-passed / artifact-built / host-retest-pending。`orcaWake` 6/6、全量 2199/2199；构建 `host-83c5266318a1c7739b2a / renderer-9ddc96217321ca4ff4c4`（2026/10/22 16:18:43）。
+- 已知边界：状态文件只覆盖钩子上报的终端 agent；结构化会话仍靠 CLI。窗格转入完成到补读完成之间（约 0.15 秒）沿用上次 OSC 状态。
+- VerificationImpactTrace：状态文件签名 → `applyWake` 共享相位规则 → 按需/兜底 CLI → Kernel reconciliation。聚焦 `orcaWake`、Orca 相关测试与全量回归；真实宿主仍需重载复验完成延迟、无来回跳与空闲 CLI 频率。
 
 ## 2026-09-17 Claude 残留 OSC 不得钉进行中
 

@@ -322,3 +322,5 @@ Desktop 主轮结束来源（2026-10-14）：`desktop-activity-resolution.cjs` �
 当前验证关系由[机器映射](core-verification-map.json#L1)连接现行需求、代码owner/消费者与有界检查；[选测器](../../scripts/verify-core-changes.mjs#L1)提供工作树、暂存选区、base与显式全核心模式，执行回执绑定内容摘要。共享入口关联多个功能；未映射核心变更、无有效用例和执行中输入漂移不能通过。实际覆盖及运行命令由[verification-map](verification-map.md#变更触发与执行入口)统一说明。
 
 [Provider契约探测](../../scripts/provider-contract-drift.mjs#L1)仅观察安装产物元数据与显式脱敏结构，版本变化是复核信号，不是运行能力白名单。Orca库存reader对成功信封仍验证required数组与可选布局类型；结构失配返回available:false/schema-mismatch，不能把未知库存投影成已确认空库存。真实供应方/宿主行为仍需独立证据。
+
+Orca状态感知（2026-10-22）：[orca/index.cjs](../../preload/orca/index.cjs#L1)以`agent-hooks/last-status.json`的stat签名唤醒，读文件后先删正文类字段，再经[inventory.cjs](../../preload/orca/inventory.cjs#L170)同一`sessionState`投影相位（OSC取缓存`oscWorking`），不跑CLI。离开working或未知窗格补一次全量CLI；已关闭残留窗格进`stalePanes`不再触发；兜底5秒，有未被文件覆盖的进行中窗格时1秒；来源关闭时整拍跳过。
