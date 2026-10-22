@@ -111,6 +111,9 @@ function runWriter() {
   let file = ''
   const pending = new Map()
   const stalledIds = new Set()
+  // One stall episode writes one main-stall, repeated only when new spans join it,
+  // and one stall-end on recovery. A suspended host otherwise logs every tick.
+  let stall = null
   fs.mkdirSync(data.directory, { recursive: true, mode: 0o700 })
   // Bound only this recorder's files. Never touch ordinary diagnostics.
   function prune(keep) {
@@ -139,16 +142,21 @@ function runWriter() {
     }
     append(line)
   }
+  function endStall(now) {
+    if (!stall) return
+    write({ type: 'stall-end', at: now, lagMs: stall.maxLagMs, durationMs: now - stall.since, dropped })
+    stall = null
+  }
   function close() { closed = true; clearInterval(tick); if (process.connected) process.disconnect() }
   open()
   process.send('ready')
   const deadline = Number.isFinite(data.durationMs) ? Date.now() + data.durationMs : Infinity
   // The channel closes when the plugin process exits or is killed.
-  process.on('disconnect', () => { if (!closed) { write({ type: 'disconnect', at: Date.now() }); close() } })
+  process.on('disconnect', () => { if (!closed) { endStall(Date.now()); write({ type: 'disconnect', at: Date.now() }); close() } })
   process.on('message', event => {
     if (closed) return
-    if (event.type === 'stop') { write({ type: 'stop', at: Date.now() }); close(); return }
-    if (event.type === 'pulse') { lastPulse = Date.now(); dropped = event.dropped || 0 }
+    if (event.type === 'stop') { endStall(Date.now()); write({ type: 'stop', at: Date.now() }); close(); return }
+    if (event.type === 'pulse') { lastPulse = Date.now(); dropped = event.dropped || 0; endStall(lastPulse) }
     else if (event.type === 'begin' && validOp(event.op)) {
       if (pending.size < 128) pending.set(event.id, { id: event.id, op: event.op, at: event.at })
     } else if (event.type === 'end' && validOp(event.op)) {
@@ -161,8 +169,12 @@ function runWriter() {
   tick = setInterval(() => {
     const now = Date.now()
     if (now - lastPulse > data.stallMs) {
+      const joined = [...pending.keys()].some(id => !stalledIds.has(id))
       for (const id of pending.keys()) stalledIds.add(id)
-      write({ type: 'main-stall', at: now, lagMs: now - lastPulse, pending: [...pending.values()], dropped })
+      if (!stall) stall = { since: lastPulse, maxLagMs: 0 }
+      const first = stall.maxLagMs === 0
+      stall.maxLagMs = now - lastPulse
+      if (first || joined) write({ type: 'main-stall', at: now, lagMs: now - lastPulse, pending: [...pending.values()], dropped })
     } else if (now - lastAlive >= data.aliveMs) {
       lastAlive = now
       write({ type: 'heartbeat', at: now, lagMs: now - lastPulse, pending: pending.size, dropped })
