@@ -14,7 +14,7 @@
 
 状态修复的固定 `provider-state-repair` 检查覆盖 Cursor 子事件时钟与动态窗口、Codex 反序嵌套/缓存/机器 parent 优先、Orca 明确等待及同 epoch 解除；生产 evidence builder 与真实 Kernel 一起断言分组，并保留 Orca 未读消费者。匿名 fixture 不读取真实任务正文。[修复台账](../specs/261018/task-state-repair/task-card.md#L1)。
 
-`codex-side-recovery` 通过精确用例名选取真实生产 Bridge 的 8 个恢复边界：完成临时成员不落盘但保留本进程成员/未读、新运行和等待恢复提示、owner 断开不复活、未完成/未知 Goal 保留、普通/未知能力成员保留，以及既有运行恢复/未知提示/不完整 canonical 门禁。[续修记录](../specs/261018/task-state-repair/terminal-recovery.md#L1)。
+`codex-side-recovery` 选取生产 Bridge 的 13 个恢复边界，新增大帧线性复制界限、库存 notLoaded/interrupted 下定向订阅、新问题及接受回答、缓存 none 后外部 Goal（有/无 Plan）和既有残留等待/Side 恢复。`provider-state-repair` 同时运行匿名异步问题/有限 Goal 投影文件；覆盖具体集合以 [机器映射](core-verification-map.json#L1) 为准。[本轮任务](../specs/261010/0937-gpt-input-compat/task-card.md#L3)。
 
 上游更新使用[静态探测器](../../scripts/provider-contract-drift.mjs#L1)：`pnpm run probe:provider-contract --provider codex`读取标准Applications候选的安装元数据；`--app`指定或重复提供候选；`--schema`提供严格脱敏结构，`--baseline`比较已审核报告，`--output`只能写新文件。退出2表示unknown，不能解释为能力已移除；退出0也仅说明静态结构可比较，runtimeSupport始终unverified。程序版本/build/选定元数据或ASAR头摘要与契约结构分开；header摘要不是全部程序正文校验。没有契约时仍能报告artifact变化，但不猜测能力。不会自动更新baseline或启动后台监控。
 

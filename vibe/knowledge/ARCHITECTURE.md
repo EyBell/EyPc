@@ -296,6 +296,10 @@ The bullets below retain source-specific evidence、quota、archive and presenta
 
 ## Verification
 
+- Desktop IPC 帧读取由 [desktop-ipc-endpoint.cjs](../../preload/codex/desktop-ipc-endpoint.cjs#L1) 在原256MiB上限内一次分配、线性分片写入；不再每片复制整个前缀。长度/JSON错误与断连释放沿用原保护；大帧日志仅字节/耗时。实测251MB快照使旧算法阻塞实时状态，见[错误记录](error-memory/codex-ipc-large-frame-quadratic-buffering.md#L1)。
+
+- 2026-10-25：Desktop [库存订阅](../../preload/codex/desktop-request-projection.cjs#L142) 在连接/原生轮次边界有界定位实际 owner，不能以独立连接器 active 或已有 pending 为前提；旧 pending 另保留宽限复核。[root Goal](../../preload/codex/desktop-shadow.cjs#L238) 补齐另一进程 Goal 更新与本连接器旧 none 缓存之间的缺口，按时钟和因果序号仲裁。公共相位仍由唯一 Kernel 计算。
+
 - Project gates are listed in [../specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1).
 - MQTT verification evidence is indexed in [../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
 - Current cross-source Codex companion V6 verification is recorded in [../specs/260823/companion-task-topology-v5/verify.md](../specs/260823/companion-task-topology-v5/verify.md#L1)；its [post-V5 assessments](../specs/260823/companion-task-topology-v5/assessment/README.md#L1) and the older [codex-quota-float verification](../specs/260718/1148-codex-quota-float/verify.md#L1) remain historical evidence.

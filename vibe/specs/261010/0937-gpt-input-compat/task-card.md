@@ -1,5 +1,18 @@
 # GPT 新版待输入兼容
 
+## 2026-10-25 任务状态与订阅续修
+
+- 过程更正：18:21版热态样本仍漏报；原生 A 快照头实测 251039011 字节、B 28375634、本任务约4861040、第四项4426230。旧 handleData 每片 Buffer.concat 的 2.38MB 回归产生348042076字节复制，已先红；增量改为原有256MiB上限内一次分配、线性分片写入，回归转绿。验证覆盖UTF-8/头部拆分、多帧、非法长度、重置释放和消费方拒绝，不改业务状态或协议上限；此前“并发协议问题”的猜测撤回，串行源读取也被大帧拖延。
+
+- 当前状态：`implemented / automated-verified / host-loaded / limited-live-verified`；19:47:51 最终版已于20:01:51精确加载，完成本轮有限实机闭环；此前旧版加载与失败样本仅作为历史证据，详见核验记录。
+- 用户范围：核验两项水肥机任务、排查短暂待继续，并处理本任务新问题漏显示待输入；不发送消息给源任务，不改其 Goal、归档或回答。
+- BusinessChangeReview：沿用 [RAW-207](../../requirements/shared-raw-207.md#L1)、[RAW-162](../../requirements/shared-raw-162.md#L1) 与现有交互/Goal 合同。独立 App Server 把其他进程正在执行的任务报成 notLoaded/interrupted；恢复不能要求连接器 active，也不能以已有 pending 为前提。仅对已验证库存 root/Side 有界查询实际 owner，再按现有 snapshot/patch→Kernel 产生状态。
+- 订阅实现：[库存 owner](../../../../preload/codex/desktop-request-projection.cjs#L142) 初次连接和原生轮次变化时查询一次；最多 8 在途、1000 排队、1000 去重项、单请求 5 秒超时，响应/超时释放队列；移除、断连和轮次变更拒绝迟到结果。既有精确异步等待另保留 20 秒宽限复核，失败或超时不清等待。无新增轮询器。
+- Goal 实现：[当前 owner Goal](../../../../preload/codex/desktop-shadow.cjs#L238) 只接纳有限状态、updatedAt 与因果序号，补齐 RPC 缓存 none 后外部创建 Goal 的缺口；较新缓存时钟/同钟序号、未知/断连、Side 合同和唯一 Kernel 仲裁保留。
+- VerificationImpactTrace：库存 notLoaded/interrupted＋无 shadow→定向 snapshot→新问题→接受回答；排队限流、迟到/移除/断连、失败保留；缓存无 Goal＋外部 active Goal＋有/无 Plan→单轮完成全程 running；既有 Goal/终态/Side/问题增量和隐私门禁。三条新缺口均已取得旧实现失败，聚焦通过；正常核心入口26项检查/463测试通过（执行时fresh=true，随后仅补现场/索引收据），不运行全库或 MQTT。
+- 产物：EyPc V7 / host-df1d950f6de45e0c2b99 / renderer-d5a67b79e87844756e5d / 2026/10/25 19:47:51（北京时间）。源码、public、dist构建校验通过；20:02:00待输入出现、20:02:04接受回答后解除、20:02:08恢复4进行中/0待输入；20:11新增活动E后源/UI均5/0，原四项齐备。Git交付以本轮提交与origin/main版本回读为准。实机证据与历史限度见 [verify.md](verify.md#L3)。
+- 帮助影响：本轮恢复既定状态合同，未改变操作步骤、默认值或入口；现有 [Codex 指南](../../../../src/help/guides/codex.md#L209) 已描述等待优先及活动成员聚合，无须增加操作说明。
+
 2026-10-12 续修：已接受普通强制插入按同轮顺序结束旧问题，后续新问题与正式部分回答边界保留。真实快照投影零个旧请求、19/19 匿名回归和 3/3 Kernel 定向回归通过；10:05:38 产物已构建，宿主验收待确认。Git 交付以提交记录及远端回读为准。
 
 ## 2026-10-11 当前续修

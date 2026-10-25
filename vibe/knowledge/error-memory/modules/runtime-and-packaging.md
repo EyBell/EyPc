@@ -15,6 +15,8 @@ Link-only route for GUI launch environments、preload/runtime identity、packagi
 
 ## Primary Error Records
 
+- [大快照逐片拼接阻塞实时状态](../codex-ipc-large-frame-quadratic-buffering.md#L1)
+
 - [Float bridge mock contract drift](../codex-float-bridge-mock-contract-drift.md#L1)
 - [GUI NVM launcher path](../codex-gui-nvm-launcher-path.md#L1)
 - [GUI PAC proxy timeout](../codex-gui-pac-proxy-timeout.md#L1)

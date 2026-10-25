@@ -4,8 +4,8 @@ status: verified
 scope: project
 fingerprint: codex-long-running-goal__turn-completed-published-whole-task-completed__use-private-goal-evidence-as-the-completion-boundary
 first_seen: 2026-08-12
-last_verified: 2026-08-12
-review_after: 2026-09-12
+last_verified: 2026-10-25
+review_after: 2027-01-25
 evidence:
   - preload/index.js
   - preload/companion/task-kernel.cjs
@@ -43,6 +43,8 @@ tags:
 - Goal Evidence 只保留有限 status、updatedAt、freshness 和会话因果序号；测试故意向假 App Server 响应加入 objective、用量和原始身份字段，并证明它们不进入公共 Activity、任务包或 Float。
 
 ## Detection Order
+
+2026-10-25：独立 App Server 不共享另一执行进程的 Goal 更新。root 若一直使用初次 none 缓存，忽略真实 owner 的 active Goal，单轮结束会误 completed；有 Plan 遗留时误 stopped，再随新进度恢复 running。生产 Bridge 两种组合均先失败后通过。[有限 owner Goal](../../../preload/codex/desktop-shadow.cjs#L238) 以 updatedAt 与因果序号补齐此入口；旧缓存时钟、同钟较新观测、无效/断连源均保留既有保护。历史旧宿主的具体 Goal 缓存值未留存，不把路径复现夸大成逐帧历史还原。实机收据见[本轮核验](../../specs/261010/0937-gpt-input-compat/verify.md#L3)。
 
 1. 先确认产品表面代表“单轮 Turn”还是“长期 Goal”；不要从事件名称直接推导完成边界。
 2. 同时记录 Host 发布的 task-package phase 与 Float applied revision。若两端一致出现错误终态，先查 Evidence/Kernel，不查动画或 CSS。

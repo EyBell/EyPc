@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: codex-v11-running-and-question-state__canonical-async-lifecycle-not-projected__latest-turn-anonymous-progress-and-exact-accepted-reply
 first_seen: 2026-10-10
-last_verified: 2026-10-13
+last_verified: 2026-10-25
 review_after: 2027-01-10
 evidence:
   - preload/codex/desktop-shadow.cjs
@@ -12,6 +12,7 @@ evidence:
   - preload/codex/desktop-activity-resolution.cjs
   - tests/platform/codexAsyncQuestions.test.ts
   - tests/platform/codexAppServerBridge.test.ts
+  - tests/platform/providerStateRepair.test.ts
   - vibe/specs/261010/0937-gpt-input-compat/verify.md
 tags:
   - codex-companion
@@ -48,6 +49,12 @@ tags:
 
 ## Detection Order
 
+同日后续真实热态失败还查出[大快照平方复制](codex-ipc-large-frame-quadratic-buffering.md#L1)：单帧251MB，owner/follow成功仍可能被读取层阻塞。先查帧大小、复制量和快照已消费收据，再归因于并发或状态规则；此问题独立于问题投影语义。
+
+2026-10-25 实机补充：独立连接器可将正在执行的其他进程任务报为 notLoaded/interrupted，不能用 active 过滤恢复入口，也不能等已有 pending 才建立订阅。先查原生 owner 快照和真实提问/回答投影；广播已发或 IPC connected 均不证明已有当前 shadow。库存初次/轮次边界按 8 在途、1000 排队、5 秒超时定位 owner，迟到/移除/断连保持门禁。
+
+2026-10-25 补充：原生当前快照没有待答、EyPc 却仍保留旧请求时，先核对已接受回答的精确身份，再以实际 owner 定向取得当前快照。只做广播 follow/unfollow 在本轮未取得快照，不能据连接在线认定当前缓存正确。最早缺失的帧未完整取得，不将“历史具体丢帧原因”记成已证实。
+
 1. 核对已加载宿主与实际协议，区分 requests、live turns、canonical 最新轮次和 runtime flags。
 2. 只输出匿名身份、状态、计数和序号；正文/问题/答案只在内存瞬时解析，不持久化或公开。
 3. 顺查问题打开、接受回复、请求墓碑、runtime 旧等待解除及 Kernel 最终相位。
@@ -60,6 +67,7 @@ tags:
 
 ## Latest Applicable Implementation
 
+- [owner 定向恢复](../../../preload/codex/desktop-request-projection.cjs#L142) 对已验证库存 root/Side 建立订阅，独立 notLoaded/interrupted 不作为排除；旧精确 pending 另宽限 20 秒后一次复核。最多 8 在途、1000 排队/去重、5 秒超时；失败不清等待，普通增量不反复订阅。
 - [匿名投影](../../../preload/codex/desktop-shadow.cjs#L126) 只保存有限问题身份、回答关联、turn 状态与活动标记。
 - [请求解除](../../../preload/codex/desktop-request-projection.cjs#L219) 保留精确墓碑，并在无其他可见输入时关闭旧等待。
 - [运行边界](../../../preload/codex/desktop-activity-resolution.cjs#L130) 不允许同轮/旧轮 completed 被进度或回答重新打开。
@@ -78,6 +86,7 @@ tags:
 
 | Date | Task | Trigger | Failed Route | Evidence | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-25 | 当前任务状态核验 | 已接受回答后原生 asyncPending=0，EyPc 仍 waiting-input | 旧缓存保留且仅广播恢复未取得当前快照 | [核验与来源边界](../../specs/261010/0937-gpt-input-compat/verify.md#L3) | 精确 owner 查询与定向 snapshot；生产 helper/Bridge 组合已接入正常入口 | 最终19:47:51宿主于20:01:51精确加载，待输入出现、回答解除与原四项齐备已实测；历史原始缺失帧未逐帧判定 |
 | 2026-10-10 | GPT 状态兼容 | 新版问题、进度与接受回复 | 只看旧字段或 shadow 请求删除 | [核验](../../specs/261010/0937-gpt-input-compat/verify.md#L1) | 最新 Turn 匿名投影与完整 Kernel 生命周期回归 | automated verified；user-reported-normal；实际加载四元组未独立取得 |
 
 | 2026-10-13 | Side 生命周期续核 | 子对话仍有未答问题却不维持 waiting；Side completed-unread 漏相位 | Desktop-only 关系未精确；成员请求误归主；活动重放漏交互；主缓存提前结束子查询 | [续核](../../specs/261013/1425-codex-side-phase/lifecycle-verify.md#L1) | 成员证据归属、同批 opened 重放与现有子查询成员终态确认 | 组合回归先红后绿，source/packaged gate 拒绝对应坏实现；18:45:08 宿主精确握手与目标 Side waiting-input 维持约 58.3 秒、用户回答后 resolved→running 已取得，全部真实生命周期未声明通过 |

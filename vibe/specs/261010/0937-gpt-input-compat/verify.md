@@ -1,6 +1,55 @@
 # GPT 状态兼容验收记录
 
-更新日期：2026-10-12。当前状态：`accepted-insertion-fix-automated-verified / host-acceptance-pending`。关闭问题卡片后强制插入普通消息的残留等待已补充处理。
+## 2026-10-25 残留等待、新问题漏报与待继续跳变
+
+最新追加：18:49:52 已加载18:21版，冷启动曾4进行中/0待输入，但热态新问题仍漏报；原生pending=1而宿主无shadow，不能结案。随后实测A单帧251039011字节，排除“并发协议缺陷”的过早推断，确认逐片Buffer.concat平方复制。2.38MB生产回归复制348042076字节先红；线性读取后转绿。真连接四项在4769ms收齐（A251220740、B28520242、本任务4936646、第四项5022652字节），复制总量289702106、残留0。第四项原生runtime当时idle，最终计数须以当前源状态为准，不强行维持旧4。新产物19:47:51，host-df1d950f6de45e0c2b99 / renderer-d5a67b79e87844756e5d，20:01:51已取得实际加载与有限实机闭环收据。
+
+当前状态：`implemented / automated-verified / host-loaded / limited-live-verified`。最新产物为 EyPc V7 / host-df1d950f6de45e0c2b99 / renderer-d5a67b79e87844756e5d / 2026/10/25 19:47:51（北京时间）；此前18:49:52的已加载版本为e6948c8d，热态验收失败，不作为最终版通过。
+
+| 编号 | 北京时间 | 已核事实 | 边界 |
+|---|---|---|---|
+| D01 | 15:08:23 / 15:17:39 | 目标旧异步问题已得到同 ID/下标的精确接受回答，15:50:31 EyPc 仍 waiting-input | 仅有限身份、计数和时序，未保存问题/答案正文 |
+| D02 | 16:13:51 | 直接查询实际 owner 后定向 follow，生产解析当前 asyncPending=0，原生仍 active/inProgress | 单纯广播未取得当前快照；最早缺失帧未完整留存 |
+| D03 | 16:02:32.381→16:02:33.228 | 旧宿主真实发布 running→stopped→running，间隔 847ms，附近为 owner canonical completed 判定 | 是 Host 上游状态发布；同窗口源 rollout 没有 task_complete/task_started/turn_aborted |
+| D04 | 17:16:23.824 | host-bbe9fd094c914b2fc6f8 / renderer-77de88dcbc965e2305ed 实际/预期握手一致 | 首轮补丁已加载；不是最终库存订阅版 |
+| D05 | 17:40 后 | 本任务真实新提问，独立生产投影 pending=1，浮窗仍进行中；17:46 再次核对仍进行中 | 已超宽限且两次观察失配；完整同源三层 canary 未取得 |
+| D06 | 17:54:45.024 | 原首轮宿主才发布本任务 waiting-input，Float 包 60 有 applied ACK；用户后选择“本任务显示待输入” | 存在明显延迟，不能拿最终显示正常否定先前漏报 |
+| D07 | 18:06:23.398 | 用户接受回答后本任务 waiting-input→running；原生浮窗也恢复进行中 | 旧包的真实解除样本，不是最终新提问验收 |
+| D08 | 18:09 / 18:06 界面 | 两项水肥机当前 Goal RPC 都为 active；两次浮窗样本均在进行中 | A 显示核验中；源任务未改动 |
+| D09 | 18:11:21.431 | host-7dc5ccaaf7a981055c04 / renderer-b00848e4adb78bef882a 精确加载，开始时三目标均无 shadow | 当前连接在线不等于已有状态订阅 |
+| D10 | 18:14:17 / 18:15:57 | 与 EyPc 同一绝对 native binary 新建独立连接读取：三目标 thread/read 均 notLoaded，最新 Turn 均 interrupted；真实 owner 仍执行 | 证明以独立连接器 active 过滤 owner 查询会排除真实活动任务；不拿独立 interrupted 直接当终态 |
+| D11 | 18:16:38 后 | 上一版依靠迟到的 owner 广播才陆续收到 shadow；没有执行 active 过滤下的 owner 查询 | 最终版移除该错误前提，订阅本身不推断状态 |
+
+已复现根因一：广播订阅冷启动未及时取得实际 owner 快照；首轮恢复又要求连接器 active/已有 pending，因此既可能保留已答的旧问题，也可能完全看不到新问题。当前库存 owner 查询对 root 与已验证 Side 都不要求独立连接器 active，按原生轮次去重，并有 8 在途/1000 排队/5 秒超时的上限；旧 pending 复核仍只请求真实快照，不按时间清状态。
+
+已复现根因二：独立 App Server 不共享另一个执行进程的 Goal 更新；root 只消费 RPC 缓存，缓存 none 后忽略 owner 的 active Goal，终态门禁也不复查 none。新组合回归精确复现：无 Plan 时误 completed，有 Plan 时误 stopped；随后 owner 新进度会恢复 running。现接纳当前 owner 的有限 Goal，并按时钟/因果序号拒绝旧值，active Goal 跨 canonical completed 保持 running。旧宿主从 10 月 22 日长驻至本轮重载，未留存当时 Goal 缓存值；该复现说明了匹配的错误路径，不宣称已逐帧还原每次历史跳变。
+
+| 编号 | 检查 | 结果 |
+|---|---|---|
+| V01 | notLoaded/interrupted 冷启动→实际 owner→新问题→回答 | 旧实现未定位 owner 而失败，修复后 Kernel waiting-input→running |
+| V02 | 缓存 none 后外部创建 Goal，有/无 Plan | 旧实现分别 stopped/completed，修后全程 running；保留所有中间包断言 |
+| V03 | helper 与 Goal/主终态组合 | 最新聚焦 49 项通过；含队列、移除、Side 无 shadow、失败/迟到，以及现有 Goal 路径 |
+| V04 | 正常核心选测入口 | [本地最终线性帧报告](../../../../output/verification/261025-linear-ipc-core.json#L1)：26项检查、463测试通过，执行时fresh=true；其后仅补现场/索引收据。包含13条Bridge组合及来源文件29条 |
+| V05 | 构建与源码/包内门禁 | 类型、1935 模块构建、source/packaged 各 40 核心/58 生命周期/23 未读通过，镜像及预算另按正常入口核验 |
+| V06 | 最终产物现场 | 19:47:51线性读取版20:01:51.028实际/预期Host与Renderer一致；待输入出现/回答解除及四项根任务在浮窗逐项核验通过，详见下表。旧版热态失败保留，不覆盖 |
+
+### 最终宿主有限实机收据
+
+| 编号 | 北京时间 | 证据 | 结论 |
+|---|---|---|---|
+| H01 | 20:01:51.028 | PID13801实际/预期均host-df1d950f6de45e0c2b99、renderer-d5a67b79e87844756e5d | 最终版已加载，前序旧包收据不混用 |
+| H02 | 20:01:59.884 | 原生251430897字节帧解析/投影604ms，复制计数251433602；随后28.65MB帧178ms | 大包已被宿主消费，shadow不再一直缺失 |
+| H03 | 20:02:00.071→00.077→00.096 | 本任务owner投影pending/visible=1；Kernel包12为waiting-input；Float包12 applied17ms | 真实待输入贯通来源、Kernel和Float |
+| H04 | 20:02:04.781→04.789→04.983 | 同任务pending/visible=0，清除序号31715；Kernel包15恢复running；Float applied192ms | 用户接受回答后等待真实解除 |
+| H05 | 20:02:08.733及20:07后复核 | Kernel包16为4进行中/0待输入；原生浮窗四项均在进行中 | 原两项水肥机、本任务、分润并行制度设计齐备；无强制改计数 |
+| H06 | 20:08:15→20:08:28 | A的canonical completed→新轮，Goal始终active/fresh；该宿主stopped相位跳变总数0 | 实机自动轮次边界保持进行中 |
+| H07 | 20:11收尾 | 原生列表与浮窗均新增一项活动E，合计5进行中/0待输入；原四项均保留 | 数量随真实新活动变化，不固定为4 |
+
+原始宿主日志仅按精确匿名事件读取，没有复制到仓库。替换过程备份当前asar及18个原生依赖，保留[本地结构收据](../../../../output/recovery/261025-linear-host-replacement.json#L1)；本地报告、收据和备份不纳入Git交付，关键结果已记于本文。正式持续监控canary、全部现场生命周期和全库/MQTT未运行；有限闭环不冒作全部矩阵通过。历史847ms跳变对应的Goal缓存错误路径已先红后绿，但旧缓存值与全部原始帧未留存，无法逐帧归因每一次历史跳变。
+
+修复归属：[库存订阅](../../../../preload/codex/desktop-request-projection.cjs#L142)、[精确旧请求复核](../../../../preload/codex/desktop-request-projection.cjs#L147)、[root Goal](../../../../preload/codex/desktop-shadow.cjs#L238)；[任务、设计与影响](task-card.md#L3)。Git交付以本轮提交与origin/main版本回读为准；全库/MQTT未运行，Bridge 全文件三个既有失败未重跑。不会把有限实机样本当成全部生命周期或持续监控 canary 已通过。
+
+历史记录（2026-10-12）：当时状态为 `accepted-insertion-fix-automated-verified / host-acceptance-pending`。关闭问题卡片后强制插入普通消息的残留等待已补充处理。
 
 ## 2026-10-12 关闭卡片后强制插入继续对话
 

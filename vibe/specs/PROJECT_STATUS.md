@@ -1,5 +1,7 @@
 # EyPc Project Status Hub
 
+- 2026-10-25 任务状态续修：独立连接器notLoaded/interrupted、外部Goal旧none缓存和251MB快照逐片拼接三条缺口已修；最新生产回归先红后绿，核心26项检查/463测试通过，真连接四项约290MB在4769ms收齐。产物19:47:51：host-df1d950f6de45e0c2b99 / renderer-d5a67b79e87844756e5d；20:01:51精确加载；真实待输入出现→接受回答解除，原四项齐备；收尾新增活动E后原生/UI均5进行中/0待输入，20:08自动轮次边界无stopped跳变；旧版热态失败保留；Git交付以本轮提交与origin/main版本回读为准。[任务与设计](261010/0937-gpt-input-compat/task-card.md#L3) · [状态与核验](261010/0937-gpt-input-compat/verify.md#L3)。
+
 - 2026-10-22 Orca 状态文件唤醒与按需 CLI：相位投影与 CLI 共用 `sessionState`，消除来回跳；离开进行中或未知窗格补读一次，兜底 5 秒（未被状态文件覆盖的进行中窗格 1 秒），来源关闭不调 CLI；帮助改为“正文读入即丢弃”。`orcaWake` 6/6、全量 2199/2199，构建 `host-83c5266318a1c7739b2a / renderer-9ddc96217321ca4ff4c4`（2026/10/22 16:18:43）；宿主重载复验待做。[任务与实现](260913/orca-companion/spec.md#L33)。
 
 - 2026-10-18 任务状态及 Desktop-only 恢复提示续修：已确认完成的 ephemeral Side 保留本进程成员/终态，停止写入未来恢复提示；新运行/等待重新保存，未知证据与未完成 Goal 仍保留。排除前序脏改的提交候选快照26项检查/365测试、55项生命周期通过；生产 Bridge 定向17项及既有工作区完整构建证据独立保留。最新包 EyPc V7 / host-abd34702f885b19bbd12 / renderer-941f0a10e4b7c1c3269d / 13:47:59，用户安装后13:59:57.738精确握手 `host-loaded`。原目标目前已归档，获准清理的旧提示也已缺席，精确预检因此未写入；可见另一未知根身份不同，未扩展清理授权。原目标整组终态为 `live-terminal-inconclusive-target-archived`，不将归档缺席当作完成展示通过。首轮 Cursor、机器拓扑、Orca 等待和未命名归根的现场证据保留。已授权提交推送，精确提交与远端结果以 Git 回执为准；其余未知根后续核查。[任务](261018/task-state-repair/task-card.md#L1) · [续修与收据](261018/task-state-repair/terminal-recovery.md#L1) · [真实核验](261018/task-state-repair/live-verification.md#L1)。
