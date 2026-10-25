@@ -192,7 +192,9 @@ const BUDGET = Object.freeze({
   // 2026-10-18: +8 wiring lines to retire only confirmed completed ephemeral
   // recovery timestamps and restore them on later owner activity/Goal changes.
   // The eligibility decision stays in desktop-activity-resolution.cjs.
-  lines: 14721,
+  // 2026-10-25: owner/Goal wiring adds 16 lines; linear IPC frame ingestion
+  // moves 7 back into its transport owner. No entry state/functions added.
+  lines: 14730,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

@@ -6506,6 +6506,171 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
+  it('decodes a fragmented large Desktop snapshot with linear copy volume before publishing input', async () => {
+    const threadId = FIXED_THREAD_IDS[1]
+    const child = new FakeCodexProcess()
+    child.inProgressTurnIds.add(threadId)
+    const socket = new FakeCodexDesktopSocket()
+    socket.streamOwnerConnected = false
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), socket)
+    let spy: ReturnType<typeof vi.spyOn> | undefined
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      const task = baseline.value.threads.find((row: any) => row.key === crypto.createHash('sha256').update(threadId).digest('hex').slice(0, 32))
+      const kernel = seedSingleCodexKernelTask(context, baseline, task)
+      const body = Buffer.from(JSON.stringify({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'fixture-owner', version: 11,
+        params: { hostId: 'local', conversationId: threadId, change: { type: 'snapshot', revision: 100, conversationState: {
+          threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [],
+          ignoredPrivateToolData: 'private-output'.repeat(170_000),
+          turnHistory: { kind: 'canonical', history: {
+            islands: [{ entries: [{ value: 'current' }] }], entitiesByKey: {
+              current: { turnId: 'current', status: 'inProgress', turnStartedAtMs: 1_900_000_000_000,
+                items: [{ type: 'agentMessage', id: 'new-question', questions: [{}] }] }
+            }
+          } }
+        } } }
+      }))
+      const frame = Buffer.alloc(body.length + 4)
+      frame.writeUInt32LE(body.length)
+      body.copy(frame, 4)
+      const concat = Buffer.concat
+      let copied = 0
+      spy = vi.spyOn(Buffer, 'concat').mockImplementation((buffers: readonly Uint8Array[], length?: number) => {
+        copied += length ?? buffers.reduce((sum, value) => sum + value.length, 0)
+        return concat(buffers, length)
+      }) as any
+      for (let offset = 0; offset < frame.length; offset += 8_192) socket.emit('data', frame.subarray(offset, offset + 8_192))
+      spy!.mockRestore()
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: any) => row.key === task.key)?.phase).toBe('waiting-input'))
+      expect(copied).toBeLessThanOrEqual(frame.length * 2)
+      expect(JSON.stringify(kernel.getLatest())).not.toContain('private-output')
+    } finally { spy?.mockRestore(); context.bridge.close() }
+  })
+
+  it('subscribes the inventory owner when the independent connector is notLoaded and interrupted', async () => {
+    const targetId = FIXED_THREAD_IDS[1]
+    class ActiveOwnerSocket extends FakeCodexDesktopSocket {
+      streamOwnerConnected = false
+      write(frame: Buffer, callback?: () => void) {
+        const message = JSON.parse(frame.subarray(4, frame.readUInt32LE(0) + 4).toString())
+        const result = super.write(frame, callback)
+        if (message.method === 'thread-owner-discovery' && message.params?.conversationId === targetId) this.push({
+          type: 'response', method: message.method, requestId: message.requestId,
+          resultType: 'success', handledByClientId: 'active-owner', result: {}
+        })
+        if (message.method === 'thread-stream-following-changed' && message.params?.conversationId === targetId
+          && message.params?.following && message.targetClientIds?.includes('active-owner')) this.push({
+          type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'active-owner', version: 11,
+          params: { hostId: 'local', conversationId: targetId, change: {
+            type: 'snapshot', revision: 100, conversationState: {
+              threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [],
+              turnHistory: { kind: 'canonical', history: {
+                islands: [{ entries: [{ value: 'current' }] }], entitiesByKey: {
+                  current: { turnId: 'current', status: 'inProgress', turnStartedAtMs: 1_900_000_000_000, items: [] }
+                }
+              } }
+            }
+          } }
+        })
+        return result
+      }
+    }
+    const child = new FakeCodexProcess()
+    child.statusOverrides.set(targetId, 'notLoaded')
+    child.turnOverrides.set(targetId, { id: 'current', status: 'interrupted', startedAt: 1_900_000_000 })
+    const socket = new ActiveOwnerSocket()
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), socket)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      const task = baseline.value.threads.find((row: any) => row.key === crypto.createHash('sha256').update(targetId).digest('hex').slice(0, 32))
+      const kernel = seedSingleCodexKernelTask(context, baseline, task)
+      await vi.waitFor(() => expect(socket.writes.some((row) => row.method === 'thread-stream-following-changed'
+        && row.params?.conversationId === targetId && row.targetClientIds?.includes('active-owner'))).toBe(true))
+      const patch = (revision: number, value: any[]) => socket.push({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'active-owner', version: 11,
+        params: { hostId: 'local', conversationId: targetId, change: {
+          type: 'patches', baseRevision: revision - 1, revision,
+          patches: [{ op: 'replace', path: ['turnHistory', 'history', 'entitiesByKey', 'current', 'items'], value }]
+        } }
+      })
+      const question = { type: 'agentMessage', id: 'new-question', questions: [{}] }
+      patch(101, [question])
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: any) => row.key === task.key)?.phase).toBe('waiting-input'))
+      expect(kernel.getLatest().views.groups.input).toContain(task.key)
+      patch(102, [question, { type: 'steeringUserMessage', status: 'accepted', input: [{ type: 'text', text: 'private accepted answer' }] }])
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: any) => row.key === task.key)?.phase).toBe('running'))
+      expect(kernel.getLatest().views.groups.input).not.toContain(task.key)
+      expect(JSON.stringify(kernel.getLatest())).not.toContain('private accepted answer')
+      expect(socket.writes.filter((row) => row.method === 'thread-owner-discovery' && row.params?.conversationId === targetId)).toHaveLength(1)
+    } finally { context.bridge.close() }
+  })
+
+  it('reconciles a stale async wait through an exact owner snapshot before updating Kernel', async () => {
+    const targetId = FIXED_THREAD_IDS[1]
+    class OwnerSnapshotSocket extends FakeCodexDesktopSocket {
+      write(frame: Buffer, callback?: () => void) {
+        const message = JSON.parse(frame.subarray(4, frame.readUInt32LE(0) + 4).toString())
+        const targeted = message.method === 'thread-stream-following-changed'
+          && message.params?.conversationId === targetId && message.params?.following === true
+          && message.targetClientIds?.includes('current-owner')
+        const connected = this.streamOwnerConnected
+        if (targeted) this.streamOwnerConnected = false
+        const result = super.write(frame, callback)
+        this.streamOwnerConnected = connected
+        if (message.method === 'thread-owner-discovery') this.push({
+          type: 'response', method: message.method, requestId: message.requestId,
+          resultType: 'success', handledByClientId: 'current-owner', result: {}
+        })
+        if (targeted) this.push({
+          type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'current-owner', version: 11,
+          params: { hostId: 'local', conversationId: targetId, change: {
+            type: 'snapshot', revision: 200, conversationState: {
+              threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [],
+              turnHistory: { kind: 'canonical', history: {
+                islands: [{ entries: [{ value: 'answered' }] }], entitiesByKey: {
+                  answered: { turnId: 'current', status: 'inProgress', turnStartedAtMs: 1_900_000_000_000, items: [] }
+                }
+              } }
+            }
+          } }
+        })
+        return result
+      }
+    }
+    const child = new FakeCodexProcess()
+    child.inProgressTurnIds.add(targetId)
+    const socket = new OwnerSnapshotSocket()
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), socket)
+    let clock: ReturnType<typeof vi.spyOn> | undefined
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      const task = baseline.value.threads.find((row: any) => row.key === crypto.createHash('sha256').update(targetId).digest('hex').slice(0, 32))
+      const kernel = seedSingleCodexKernelTask(context, baseline, task)
+      socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'stale-owner', version: 11,
+        params: { hostId: 'local', conversationId: targetId, change: {
+          type: 'snapshot', revision: 100, conversationState: {
+            threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [],
+            turnHistory: { kind: 'canonical', history: {
+              islands: [{ entries: [{ value: 'old-question' }] }], entitiesByKey: {
+                'old-question': { turnId: 'previous', status: 'completed', turnStartedAtMs: 1_899_000_000_000,
+                  items: [{ type: 'agentMessage', id: 'old-question', questions: [{}] }] }
+              }
+            } }
+          }
+        } }
+      })
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: any) => row.key === task.key)?.phase).toBe('waiting-input'))
+      const later = Date.now() + 21_000
+      clock = vi.spyOn(Date, 'now').mockReturnValue(later)
+      await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.waitFor(() => expect(socket.writes.some((row) => row.method === 'thread-owner-discovery'
+        && row.params?.conversationId === targetId)).toBe(true))
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: any) => row.key === task.key)?.phase).toBe('running'))
+      expect(kernel.getLatest().views.groups.input).not.toContain(task.key)
+    } finally { clock?.mockRestore(); context.bridge.close() }
+  })
+
   it.each(['exact reply', 'normal insertion'])('keeps a question across repeated same-turn start until accepted %s', async (replyKind) => {
     const child = new FakeCodexProcess()
     child.inProgressTurnIds.add(FIXED_THREAD_IDS[1])
@@ -6824,6 +6989,13 @@ draft: v7EvidenceDraft({
     await vi.waitFor(() => expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.key === task.key)?.phase).toBe('waiting-input'))
     expect(follows()).toBe(before)
     expect(kernel.getPackage().views.counts.active).toBe(expectedCount - 1)
+    for (let index = 0; index < 3; index++) {
+      push({ type: 'patches', baseRevision: 31 + index, revision: 32 + index, patches: [
+        { op: 'replace', path: ['turnHistory', 'history', 'entitiesByKey', 'entity', 'items', 0, 'aggregatedOutput'], value: 'private later progress' }
+      ] })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.key === task.key)?.phase).toBe('waiting-input')
+    }
     expect(JSON.stringify(kernel.getLatest())).not.toContain('private tool progress')
     bridge.close()
   })
@@ -10962,9 +11134,13 @@ describe('Desktop main end-event ordering', () => {
   const turnId = 'owner-current-turn'
   const startedAt = 2_000_000_100_526
 
-  async function setup(options: { rootOnly?: boolean; missingSideTurnId?: boolean } = {}) {
+  async function setup(options: { rootOnly?: boolean; missingSideTurnId?: boolean; planArtifact?: boolean } = {}) {
     const child = new FakeCodexProcess()
     const socket = new FakeCodexDesktopSocket()
+    if (options.planArtifact) child.rolloutTexts.set(parentId, [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan artifact' } } })
+    ].join('\n'))
     socket.waitingInputSnapshotThreadIds.clear()
     socket.unreadSnapshotThreadIds.clear()
     // The independent App Server can call the still-running owner Turn
@@ -11184,6 +11360,24 @@ describe('Desktop main end-event ordering', () => {
       await state.patch([idle, canonical('completed'), unread])
       expect(state.task()).toMatchObject({ phase, topology: { memberCount: 3 } })
       expect(state.evidence()).toMatchObject({ lastTurnStatus: 'completed', turnStartedAt: startedAt })
+    } finally { state.close(); vi.useRealTimers() }
+  })
+
+  it.each([false, true])('uses the owner Goal after a cached no-Goal read with plan artifact=%s', async (planArtifact) => {
+    vi.useFakeTimers()
+    const state = await setup({ rootOnly: true, planArtifact })
+    try {
+      expect(state.evidence()).toMatchObject({ goalStatus: 'none', goalFreshness: 'fresh' })
+      // A different App Server owns this Goal. Our connector gets no local
+      // goal/updated notification, while the Desktop owner carries it live.
+      state.child.goalStates.set(parentId, { status: 'active', updatedAt: startedAt / 1000 + 1 })
+      state.snapshot({ threadGoal: { status: 'active', updatedAt: startedAt / 1000 + 1 } })
+      await vi.advanceTimersByTimeAsync(0)
+      await state.patch([idle, canonical('completed')])
+      expect(state.task().phase).toBe('running')
+      expect(state.evidence()).toMatchObject({ goalStatus: 'active', goalFreshness: 'fresh' })
+      expect(state.trace.map(row => row.phase)).not.toContain('stopped')
+      expect(state.trace.map(row => row.phase)).not.toContain('completed')
     } finally { state.close(); vi.useRealTimers() }
   })
 

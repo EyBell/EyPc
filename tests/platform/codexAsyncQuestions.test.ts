@@ -29,6 +29,53 @@ function harness(shadowFactory = createCodexDesktopShadow) {
   return { shadow, projection, question, reply, snapshot }
 }
 
+describe('Desktop root Goal source evidence', () => {
+  function goalSnapshot(shadow: any, goal: any, previous?: any) {
+    const state = shadow.codexDesktopShadowFromSnapshot({ revision: 1, conversationState: {
+      threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [], threadGoal: goal
+    } }, previous)
+    state.ownerClientId = 'fixture-owner'
+    return state
+  }
+
+  it.each(['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'])('admits the finite owner Goal %s after an older no-Goal cache', (status) => {
+    const { shadow } = harness()
+    const state = goalSnapshot(shadow, { status, updatedAt: 100, objective: 'private objective' })
+    const evidence = shadow.codexDesktopRootGoalEvidence(state, { goalStatus: 'none', goalUpdatedAt: 0 })
+    expect(evidence).toMatchObject({ goalStatus: status, goalUpdatedAt: 100, goalFreshness: 'fresh' })
+    expect(JSON.stringify(state)).not.toContain('private objective')
+    const repeated = goalSnapshot(shadow, { status, updatedAt: 100 }, state)
+    expect(shadow.codexDesktopRootGoalEvidence(repeated, null)).toEqual(evidence)
+  })
+
+  it('does not replace a newer Goal clock or a newer same-clock connector observation', () => {
+    const { shadow } = harness()
+    const state = goalSnapshot(shadow, { status: 'active', updatedAt: 100 })
+    const evidence = shadow.codexDesktopRootGoalEvidence(state, null)
+    expect(shadow.codexDesktopRootGoalEvidence(state, { goalStatus: 'paused', goalUpdatedAt: 200, goalEvidenceSequence: 1 })).toBeNull()
+    expect(shadow.codexDesktopRootGoalEvidence(state, { goalStatus: 'complete', goalUpdatedAt: 100,
+      goalEvidenceSequence: evidence.goalEvidenceSequence + 1 })).toBeNull()
+    expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'replace', path: ['threadGoal'], value: { status: 'complete', updatedAt: 300 } })).toBe(true)
+    expect(shadow.codexDesktopRootGoalEvidence(state, evidence)).toMatchObject({ goalStatus: 'complete', goalUpdatedAt: 300 })
+  })
+
+  it('abstains on invalid, missing, disconnected and Side Goal sources', () => {
+    const { shadow } = harness()
+    for (const goal of [null, undefined, {}, { status: 'active' }, { status: 'future', updatedAt: 100 }]) {
+      expect(shadow.codexDesktopRootGoalEvidence(goalSnapshot(shadow, goal), null)).toBeNull()
+    }
+    const state = goalSnapshot(shadow, { status: 'active', updatedAt: 100 })
+    delete state.ownerClientId
+    expect(shadow.codexDesktopRootGoalEvidence(state, null)).toBeNull()
+    state.ownerClientId = 'fixture-owner'
+    state.ownerDisconnectedAt = 1
+    expect(shadow.codexDesktopRootGoalEvidence(state, null)).toBeNull()
+    delete state.ownerDisconnectedAt
+    state.sideConversation = true
+    expect(shadow.codexDesktopRootGoalEvidence(state, null)).toBeNull()
+  })
+})
+
 describe('Desktop finite thread source evidence', () => {
   function sourceSnapshot(shadow: any, threadSource?: unknown, previous?: any) {
     return shadow.codexDesktopShadowFromSnapshot({ revision: 1, conversationState: {

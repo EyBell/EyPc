@@ -791,6 +791,7 @@ try {
       timestampMs: codexTimestampMs,
       crypto,
       correlationSalt: readCompanionInteractionIdentitySalt(),
+      recordDiagnostic: recordCompanionDiagnosticEvent,
       nextLiveEvidenceSequence: codexNextLiveEvidenceSequence
     })
   }
@@ -3832,6 +3833,8 @@ function codexPrivateThreadGoalEvidence(threadId) {
   const desktop = codexDesktopShadow?.codexDesktopSideGoalEvidence?.(codexDesktopBridge?.sideShadows?.get(threadId))
   if (desktop) return desktop
   const entry = codexThreadGoalCache.get(threadId)
+  const ownerGoal = codexDesktopShadow?.codexDesktopRootGoalEvidence?.(codexDesktopBridge?.shadows?.get(threadId), entry)
+  if (ownerGoal) return ownerGoal
   if (!entry) {
     return codexThreadGoalRpcAvailable === false
       ? { goalStatus: 'none', goalFreshness: 'fresh', goalEvidenceSequence: 0, goalUpdatedAt: 0 }
@@ -3847,7 +3850,7 @@ function codexPrivateThreadGoalEvidence(threadId) {
 
 function codexThreadGoalNeedsTerminalRefresh(threadId, known) {
   if (codexThreadGoalRpcAvailable === false) return false
-  const entry = codexThreadGoalCache.get(threadId)
+  const entry = codexPrivateThreadGoalEvidence(threadId)
   if (!entry || entry.goalFreshness === 'verifying' || entry.goalStatus === 'unknown') return true
   // A cached active Goal predates this exact terminal Turn observation. It may
   // legitimately remain active for another automatic Turn, but it may also
@@ -4911,7 +4914,7 @@ class CodexDesktopCompanionBridge {
   constructor() {
     this.state = 'not-checked'
     this.socket = null
-    this.buffer = Buffer.alloc(0)
+    this.frames = codexDesktopIpcEndpointModule?.createFrameReader(CODEX_DESKTOP_IPC_FRAME_MAX_BYTES)
     this.clientId = 'initializing-client'
     this.initializeRequestId = ''
     this.initializeTimer = null
@@ -4977,6 +4980,7 @@ class CodexDesktopCompanionBridge {
   }
 
   clearWaitingEdgeRefreshes() {
+    codexDesktopRequestProjection?.codexDesktopClearOwnerRefreshes?.(this)
     for (const threadId of [...this.waitingEdgeRefreshes.keys()]) this.cancelWaitingEdgeRefresh(threadId)
   }
 
@@ -5386,7 +5390,9 @@ class CodexDesktopCompanionBridge {
       outcome: decision?.turn ? 'corroborated' : 'abstained', provider: 'codex',
       taskRef: known?.key || '', details: {
         memberRef: codexPrivateBranchRef(parentThreadId, threadId), reason: decision?.reason || 'unavailable',
-        source: 'owner-canonical', terminalStatus: decision?.turn?.status || 'unknown'
+        source: 'owner-canonical', terminalStatus: decision?.turn?.status || 'unknown',
+        goalStatus: codexPrivateThreadGoalEvidence(threadId).goalStatus,
+        goalFreshness: codexPrivateThreadGoalEvidence(threadId).goalFreshness
       }
     })
   }
@@ -5980,24 +5986,17 @@ class CodexDesktopCompanionBridge {
 
   handleData(chunk) {
     if (!Buffer.isBuffer(chunk) || !chunk.length) return
-    this.buffer = Buffer.concat([this.buffer, chunk])
-    for (;;) {
-      if (this.buffer.length < 4) return
-      const length = this.buffer.readUInt32LE(0)
-      if (!length || length > CODEX_DESKTOP_IPC_FRAME_MAX_BYTES) {
-        this.failConnection('incompatible')
-        return
-      }
-      if (this.buffer.length < length + 4) return
-      const payload = this.buffer.subarray(4, length + 4).toString('utf8')
-      this.buffer = this.buffer.subarray(length + 4)
+    const valid = this.frames?.push(chunk, (payload) => {
+      const startedAt = Date.now()
       let message
-      try { message = JSON.parse(payload) } catch {
-        this.failConnection('incompatible')
-        return
-      }
+      try { message = JSON.parse(payload.toString('utf8')) } catch { return false }
       this.handleMessage(message)
-    }
+      if (payload.length >= 8 * 1024 * 1024) runtimeDiagnostics.record({ level: 'info', scope: 'desktop-ipc',
+        event: 'desktop-large-frame-decoded', outcome: 'accepted', count: payload.length, durationMs: Date.now() - startedAt,
+        details: { frameBytes: payload.length, copiedBytes: this.frames.stats().copiedBytes } })
+      return true
+    })
+    if (valid !== true) this.failConnection('incompatible')
   }
 
   handleMessage(value) {
@@ -6027,6 +6026,7 @@ class CodexDesktopCompanionBridge {
       }
       return
     }
+    if (codexDesktopRequestProjection?.codexDesktopHandleOwnerDiscoveryResponse?.(this, message)) return
     if (message.type !== 'broadcast' || typeof message.method !== 'string') return
     if (Array.isArray(message.targetClientIds) && !message.targetClientIds.includes(this.clientId)) return
     if (!codexDesktopIpcVersionAccepted(message.method, message.version)) {
@@ -6749,11 +6749,15 @@ class CodexDesktopCompanionBridge {
 
   followAll(following, targetClientIds) {
     if (this.state !== 'connected') return
-    for (const threadId of this.inventory) this.follow(threadId, following, targetClientIds)
+    for (const threadId of this.inventory) {
+      this.follow(threadId, following, targetClientIds)
+      if (following) codexDesktopRequestProjection?.codexDesktopRefreshInventoryOwner?.(this, threadId, codexActivityInventory.get(threadId))
+    }
     for (const [threadId, parentThreadId] of codexAllSideRelations()) {
       if (!this.inventory.has(parentThreadId)) continue
       if (following && !this.sideShadows.has(threadId)) this.sideRecoveryPending.add(threadId)
       this.followAny(threadId, following, targetClientIds)
+      if (following) codexDesktopRequestProjection?.codexDesktopRefreshInventoryOwner?.(this, threadId, codexActivityInventory.get(parentThreadId), parentThreadId)
     }
   }
 
@@ -7167,8 +7171,10 @@ class CodexDesktopCompanionBridge {
     if (next.size) this.ensureUnreadStateWatcher()
     else this.closeUnreadStateWatcher()
     this.ensure()
+    for (const threadId of next) codexDesktopRequestProjection?.codexDesktopRefreshInventoryOwner?.(this, threadId, codexActivityInventory.get(threadId))
     for (const [threadId, shadow] of this.shadows) {
       if (next.has(threadId)) {
+        codexDesktopRequestProjection?.codexDesktopRefreshPendingOwner?.(this, threadId, codexActivityInventory.get(threadId))
         this.publishShadow(threadId, shadow)
         this.verifyUncorroboratedActiveSnapshot(threadId, shadow)
       }
@@ -7176,6 +7182,8 @@ class CodexDesktopCompanionBridge {
     const sideParents = new Set()
     for (const [threadId, shadow] of this.sideShadows) {
       if (!next.has(shadow.parentThreadId)) continue
+      codexDesktopRequestProjection?.codexDesktopRefreshInventoryOwner?.(this, threadId, codexActivityInventory.get(shadow.parentThreadId), shadow.parentThreadId)
+      codexDesktopRequestProjection?.codexDesktopRefreshPendingOwner?.(this, threadId, codexActivityInventory.get(shadow.parentThreadId))
       sideParents.add(shadow.parentThreadId)
       this.verifyUncorroboratedActiveSnapshot(threadId, shadow)
     }
@@ -7189,6 +7197,7 @@ class CodexDesktopCompanionBridge {
         if (!relationIsNew) continue
         this.sideRecoveryPending.add(threadId)
         this.followAny(threadId, true)
+        codexDesktopRequestProjection?.codexDesktopRefreshInventoryOwner?.(this, threadId, codexActivityInventory.get(parentThreadId), parentThreadId)
       }
     }
   }
@@ -7240,7 +7249,7 @@ class CodexDesktopCompanionBridge {
     if (this.initializeTimer) clearTimeout(this.initializeTimer)
     this.initializeTimer = null
     this.socket = null
-    this.buffer = Buffer.alloc(0)
+    this.frames?.reset()
     this.clientId = 'initializing-client'
     if (this.closed) return
     this.resetLiveAuthority()

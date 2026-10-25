@@ -235,6 +235,24 @@ function createCodexDesktopShadow(dependencies = {}) {
     return shadow.sideGoalEvidence
   }
 
+  function codexDesktopRootGoalEvidence(shadow, cached) {
+    const goal = shadow?.nativeGoal
+    if (!shadow || shadow.sideConversation === true || !shadow.ownerClientId || shadow.ownerDisconnectedAt
+      || goal?.kind !== 'goal' || !goalStatuses.includes(goal.status) || !(goal.updatedAt > 0)) return null
+    const previous = shadow.rootGoalEvidence
+    if (previous?.goalStatus !== goal.status || previous.goalUpdatedAt !== goal.updatedAt) {
+      shadow.rootGoalEvidence = { goalStatus: goal.status, goalFreshness: 'fresh', goalUpdatedAt: goal.updatedAt,
+        goalEvidenceSequence: nextLiveEvidenceSequence() }
+    }
+    const current = shadow.rootGoalEvidence
+    // Independent App Servers do not share goal/updated notifications. The
+    // exact Desktop owner is another current source, but cannot replace a
+    // later Goal clock or an already newer same-clock connector observation.
+    return Number(cached?.goalUpdatedAt) > current.goalUpdatedAt
+      || Number(cached?.goalUpdatedAt) === current.goalUpdatedAt
+        && Number(cached?.goalEvidenceSequence) >= current.goalEvidenceSequence ? null : current
+  }
+
   function refreshAsyncRequests(shadow, previous = shadow.requests) {
     const overlays = shadow.asyncTurns || []
     // Only the current live overlay can supply activity; canonical history
@@ -476,6 +494,7 @@ function createCodexDesktopShadow(dependencies = {}) {
       ephemeral: typeof state.ephemeral === 'boolean' ? state.ephemeral : undefined,
       nativeGoal: Object.prototype.hasOwnProperty.call(state, 'threadGoal') ? nativeGoal(state.threadGoal) : null,
       sideGoalEvidence: previousShadow?.sideGoalEvidence ? { ...previousShadow.sideGoalEvidence } : null,
+      rootGoalEvidence: previousShadow?.rootGoalEvidence ? { ...previousShadow.rootGoalEvidence } : null,
       nativeTurnSubmissions: Array.isArray(state.unconfirmedTurnSubmissions)
         ? state.unconfirmedTurnSubmissions.map((submission) => submission?.terminal === true)
         : Object.prototype.hasOwnProperty.call(state, 'unconfirmedTurnSubmissions') ? [false] : [],
@@ -701,6 +720,7 @@ function createCodexDesktopShadow(dependencies = {}) {
     codexDesktopRequestObservationCandidates,
     codexDesktopShadowFromSnapshot,
     codexDesktopSideGoalEvidence,
+    codexDesktopRootGoalEvidence,
     codexDesktopPatchIndex,
     codexApplyDesktopShadowPatch,
     codexApplyNativeConnectorUnread,

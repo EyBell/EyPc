@@ -13,6 +13,8 @@ const { COMPANION_V7_REVISIONS } = require('../companion/contracts-v7.cjs')
  * `(type, method, startedAt)` — so a request's `observedSequence` and
  * `startedAt` survive across repeated observations instead of resetting on
  * every poll.
+ * A bounded owner lookup can revalidate an async question against a current
+ * snapshot; lookup failure never decides that the question has been answered.
  *
  * `record`, `timestampMs` and `nextLiveEvidenceSequence` are injected on the
  * rollout-evidence precedent: `codexRecord`/`codexTimestampMs` are among the
@@ -37,6 +39,166 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     : typeof suppliedSalt === 'string' && /^[a-f0-9]{32,128}$/i.test(suppliedSalt)
       ? Buffer.from(suppliedSalt, 'hex')
       : crypto.randomBytes(16)
+  const ownerRefreshes = new WeakMap()
+  const streamObservations = new WeakMap()
+  const now = typeof dependencies.now === 'function' ? dependencies.now : () => Date.now()
+  const startTimer = dependencies.setTimeout || setTimeout
+  const stopTimer = dependencies.clearTimeout || clearTimeout
+
+  function pendingOwnerSignature(shadow, known) {
+    const requests = (shadow?.requests || []).filter((request) => request.asyncQuestion === true
+      && request.identityExact === true
+      && !['resolved', 'cancelled', 'execution-started'].includes(request.interactionState))
+    return requests.length ? {
+      value: `${timestampMs(known?.connectorLastTurnStartedAt)}:${requests.map((request) => request.observedSequence).sort((a, b) => a - b).join(',')}`,
+      observedAt: Math.max(...requests.map((request) => timestampMs(request.observedAt)))
+    } : null
+  }
+
+  function recordOwnerRefresh(threadId, outcome, entry) {
+    dependencies.recordDiagnostic?.({ level: 'info', scope: 'task-recovery', event: 'desktop-owner-snapshot',
+      provider: 'codex', taskRef: threadId, outcome,
+      details: { mode: entry.mode, pendingCount: entry.shadow?.requests?.filter((request) => request.asyncQuestion).length || 0,
+        ...(typeof entry.ownerMatched === 'boolean' ? { ownerMatched: entry.ownerMatched } : {}) } })
+  }
+
+  function inventoryOwnerSignature(known) {
+    return `${timestampMs(known?.connectorLastTurnStartedAt)}:${known?.connectorLastTurnId || ''}`
+  }
+
+  function ownerEntryCurrent(bridge, state, entry) {
+    if (bridge.closed || bridge.state !== 'connected' || bridge.socket !== entry.socket
+      || !bridge.inventory.has(entry.parentId)) return false
+    if (entry.mode === 'inventory') return state.latest.get(entry.threadId) === entry.signature
+      && inventoryOwnerSignature(entry.known) === entry.signature
+    const shadow = bridge.shadows.get(entry.threadId) || bridge.sideShadows.get(entry.threadId)
+    return shadow === entry.shadow
+      && pendingOwnerSignature(shadow, { connectorLastTurnStartedAt: entry.turnStartedAt })?.value === entry.signature
+  }
+
+  function drainOwnerQueue(bridge, state) {
+    while (state.pending.size < 8 && state.queue.size) {
+      const [threadId, entry] = state.queue.entries().next().value
+      state.queue.delete(threadId)
+      if (!ownerEntryCurrent(bridge, state, entry)) {
+        entry.outcome = 'discarded'
+        recordOwnerRefresh(threadId, 'discarded', entry)
+        continue
+      }
+      const requestId = crypto.randomUUID()
+      const attemptKey = `${entry.mode}:${threadId}`
+      state.attempted.delete(attemptKey)
+      state.attempted.set(attemptKey, entry.signature)
+      while (state.attempted.size > 1_000) state.attempted.delete(state.attempted.keys().next().value)
+      state.pending.set(requestId, entry)
+      entry.timer = startTimer(() => {
+        if (state.pending.get(requestId) !== entry) return
+        state.pending.delete(requestId)
+        recordOwnerRefresh(threadId, 'expired', entry)
+        drainOwnerQueue(bridge, state)
+      }, 5_000)
+      entry.timer?.unref?.()
+      entry.outcome = 'requested'
+      recordOwnerRefresh(threadId, 'requested', entry)
+      if (bridge.send({ type: 'request', method: 'thread-owner-discovery', requestId,
+        sourceClientId: bridge.clientId, version: 1, params: { hostId: 'local', conversationId: threadId } })) continue
+      stopTimer(entry.timer)
+      state.pending.delete(requestId)
+      entry.outcome = 'unavailable'
+      recordOwnerRefresh(threadId, 'unavailable', entry)
+    }
+  }
+
+  function refreshOwner(bridge, threadId, known, mode, verifiedParentId) {
+    const shadow = bridge?.shadows?.get(threadId) || bridge?.sideShadows?.get(threadId)
+    const parentId = shadow?.parentThreadId || verifiedParentId || threadId
+    if (bridge?.closed || bridge?.state !== 'connected' || !bridge.socket
+      || !bridge.inventory?.has(parentId) || !known) return false
+    const signature = mode === 'inventory' ? { value: inventoryOwnerSignature(known) } : pendingOwnerSignature(shadow, known)
+    if (mode === 'pending' && (codexDesktopRuntimeHasWaitingFlags({ activeFlags: known.connectorActiveFlags })
+      || !signature?.observedAt || now() - signature.observedAt < 20_000)) return false
+    let state = ownerRefreshes.get(bridge)
+    if (!state) {
+      state = { pending: new Map(), attempted: new Map(), queue: new Map(), latest: new Map() }
+      ownerRefreshes.set(bridge, state)
+    }
+    if (mode === 'inventory') {
+      state.latest.delete(threadId)
+      state.latest.set(threadId, signature.value)
+      while (state.latest.size > 1_000) state.latest.delete(state.latest.keys().next().value)
+    }
+    const attemptKey = `${mode}:${threadId}`
+    if (state.queue.size >= 1_000 || state.queue.has(threadId)
+      || mode === 'pending' && state.pending.size >= 8 || state.attempted.get(attemptKey) === signature.value
+      || [...state.pending.values()].some((entry) => entry.threadId === threadId)) return false
+    const entry = { threadId, parentId, shadow, known, mode, signature: signature.value,
+      turnStartedAt: timestampMs(known.connectorLastTurnStartedAt), socket: bridge.socket, timer: null, outcome: 'queued' }
+    state.queue.set(threadId, entry)
+    drainOwnerQueue(bridge, state)
+    return !['unavailable', 'discarded'].includes(entry.outcome)
+  }
+
+  /** Subscription discovers authority; independent notLoaded/interrupted is not an exclusion. */
+  function codexDesktopRefreshInventoryOwner(bridge, threadId, known, verifiedParentId) {
+    return refreshOwner(bridge, threadId, known, 'inventory', verifiedParentId)
+  }
+
+  /** Revalidate evidence, never infer that plain-active or elapsed time answered it. */
+  function codexDesktopRefreshPendingOwner(bridge, threadId, known) {
+    return refreshOwner(bridge, threadId, known, 'pending')
+  }
+
+  function codexDesktopHandleOwnerDiscoveryResponse(bridge, message) {
+    const state = ownerRefreshes.get(bridge)
+    const entry = message?.type === 'response' ? state?.pending.get(message.requestId) : null
+    if (!entry) return false
+    state.pending.delete(message.requestId)
+    stopTimer(entry.timer)
+    const shadow = bridge.shadows.get(entry.threadId) || bridge.sideShadows.get(entry.threadId)
+    if (message.method !== 'thread-owner-discovery' || message.resultType !== 'success'
+      || typeof message.handledByClientId !== 'string' || !message.handledByClientId || message.handledByClientId.length > 512
+      || !ownerEntryCurrent(bridge, state, entry)) {
+      recordOwnerRefresh(entry.threadId, 'discarded', entry)
+      drainOwnerQueue(bridge, state)
+      return true
+    }
+    entry.ownerMatched = shadow?.ownerClientId === message.handledByClientId
+    const sent = bridge.followAny(entry.threadId, true, [message.handledByClientId])
+    recordOwnerRefresh(entry.threadId, sent ? 'targeted' : 'unavailable', entry)
+    drainOwnerQueue(bridge, state)
+    return true
+  }
+
+  function codexDesktopClearOwnerRefreshes(bridge) {
+    streamObservations.delete(bridge)
+    const state = ownerRefreshes.get(bridge)
+    if (!state) return
+    for (const entry of state.pending.values()) stopTimer(entry.timer)
+    ownerRefreshes.delete(bridge)
+  }
+
+  function recordStreamProjection(bridge, threadId, shadow, waitingEvidenceVisible) {
+    if (typeof dependencies.recordDiagnostic !== 'function') return
+    let observations = streamObservations.get(bridge)
+    if (!observations) { observations = new Map(); streamObservations.set(bridge, observations) }
+    const details = {
+      ownerRef: anonymousInteractionRef('stream-owner', shadow.ownerClientId),
+      canonicalStatus: shadow.currentCanonicalTurn?.status || 'unknown',
+      canonicalStartedAt: Number(shadow.currentCanonicalTurn?.startedAt) || 0,
+      pendingCount: (shadow.requests || []).filter((request) => request.asyncQuestion
+        && !['resolved', 'cancelled', 'execution-started'].includes(request.interactionState)).length,
+      visibleCount: (shadow.requests || []).filter((request) => waitingEvidenceVisible(shadow.waitingState,
+        codexDesktopRequestFlag(request), request.observedSequence)).length,
+      inputClearSequence: Number(shadow.waitingState?.inputClearSequence) || 0
+    }
+    const fingerprint = JSON.stringify(details)
+    if (observations.get(threadId) === fingerprint) return
+    observations.delete(threadId)
+    observations.set(threadId, fingerprint)
+    while (observations.size > 1_000) observations.delete(observations.keys().next().value)
+    dependencies.recordDiagnostic({ level: 'debug', scope: 'task-evidence', event: 'desktop-stream-projection',
+      provider: 'codex', taskRef: threadId, outcome: 'observed', details: { ...details, streamRevision: Number(shadow.revision) || 0 } })
+  }
 
   function anonymousInteractionRef(...parts) {
     const hash = crypto.createHash('sha256')
@@ -286,6 +448,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     const byInstance = new Map()
     const interactionSets = []
     for (const [threadId, shadow] of shadowEntries) {
+      recordStreamProjection(bridge, threadId, shadow, waitingEvidenceVisible)
       const branchRef = threadId === parentThreadId
         ? 'root'
         : privateBranchRef(parentThreadId, threadId)
@@ -384,6 +547,10 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
 
   return {
     revision: CODEX_DESKTOP_REQUEST_PROJECTION_REVISION,
+    codexDesktopRefreshInventoryOwner,
+    codexDesktopRefreshPendingOwner,
+    codexDesktopHandleOwnerDiscoveryResponse,
+    codexDesktopClearOwnerRefreshes,
     codexDesktopCompanionInteractionsForParent,
     codexDesktopRequestTimestamp,
     codexDesktopRequestCorrelation,

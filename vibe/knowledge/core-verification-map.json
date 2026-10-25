@@ -117,6 +117,7 @@
         "tests/platform/orcaInventory.test.ts",
         "tests/platform/orcaUnreadBridge.test.ts",
         "tests/platform/providerStateRepair.test.ts",
+        "tests/platform/codexAsyncQuestions.test.ts",
         "tests/platform/providerEvidenceAdapterV7.test.ts",
         "tests/platform/codexSubagentDiscovery.test.ts",
         "tests/scripts/providerContractDrift.test.ts"
@@ -414,6 +415,7 @@
       "id": "provider-state-repair",
       "kind": "vitest",
       "files": [
+        "tests/platform/codexAsyncQuestions.test.ts",
         "tests/platform/providerStateRepair.test.ts",
         "tests/platform/orcaUnreadBridge.test.ts",
         "tests/platform/providerEvidenceAdapterV7.test.ts",
@@ -425,6 +427,11 @@
       "kind": "vitest",
       "files": ["tests/platform/codexAppServerBridge.test.ts"],
       "testNames": [
+        "decodes a fragmented large Desktop snapshot with linear copy volume before publishing input",
+        "uses the owner Goal after a cached no-Goal read with plan artifact=false",
+        "uses the owner Goal after a cached no-Goal read with plan artifact=true",
+        "subscribes the inventory owner when the independent connector is notLoaded and interrupted",
+        "reconciles a stale async wait through an exact owner snapshot before updating Kernel",
         "omits a confirmed completed ephemeral hint on reload while retaining its current member and unread",
         "restores the ephemeral recovery hint on new running and waiting edges and removes it after completion",
         "does not repersist a settled hint after owner disconnect when another Side changes",
