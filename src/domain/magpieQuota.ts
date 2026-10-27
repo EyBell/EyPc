@@ -337,3 +337,64 @@ export function buildMagpieQuotaExpandCards(
 
   return cards
 }
+
+export interface MagpieQuotaResetLine {
+  key: string
+  /** Short label for the single-line bar, e.g. Codex / Grok / Cursor. */
+  label: string
+  resetAt: number | null
+}
+
+/**
+ * One reset countdown per supplier for the expanded float bar. Cursor C/O share
+ * one line because Magpie reports the same reset window for both.
+ */
+export function buildMagpieQuotaResetLines(
+  providers: MagpieQuotaProvider[] | null | undefined
+): MagpieQuotaResetLine[] {
+  const list = normalizeMagpieQuotaProviders(providers)
+  if (!list.length) return []
+  const lines: MagpieQuotaResetLine[] = []
+
+  const codex = providerEntry(list, 'codex')
+  const codexWeekly = windowByName(codex, '7 days')
+  if (finiteNumber(codexWeekly?.remaining) !== null || parseMagpieResetAt(codexWeekly?.resetsAt)) {
+    lines.push({
+      key: 'magpie-codex',
+      label: 'Codex',
+      resetAt: parseMagpieResetAt(codexWeekly?.resetsAt)
+    })
+  }
+
+  const grok = providerEntry(list, 'grok')
+  const grokWeekly = windowByName(grok, '7 days')
+  if (finiteNumber(grokWeekly?.remaining) !== null) {
+    lines.push({
+      key: 'magpie-grok',
+      label: 'Grok',
+      resetAt: parseMagpieResetAt(grokWeekly?.resetsAt)
+    })
+  }
+
+  const cursor = providerEntry(list, 'cursor')
+  const cursorModels = windowByName(cursor, 'Cursor Models')
+  const cursorOther = windowByName(cursor, 'Other Models')
+  const hasCursor = finiteNumber(cursorModels?.remaining) !== null || finiteNumber(cursorOther?.remaining) !== null
+  if (hasCursor) {
+    const resetAt = parseMagpieResetAt(cursorModels?.resetsAt)
+      ?? parseMagpieResetAt(cursorOther?.resetsAt)
+    lines.push({ key: 'magpie-cursor', label: 'Cursor', resetAt })
+  }
+
+  return lines
+}
+
+export function formatMagpieQuotaResetInline(
+  lines: readonly MagpieQuotaResetLine[],
+  now: number
+): string {
+  if (!lines.length) return ''
+  return lines
+    .map((line) => `${line.label} ${magpieResetCountdownText(line.resetAt, now)}`)
+    .join(' · ')
+}

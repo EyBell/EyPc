@@ -47,7 +47,7 @@ import {
   companionQuotaRefreshReceiptText
 } from './domain/companionPresentation'
 import type { CompanionProjectMarker, CompanionQuotaChip, CompanionRowMarker } from './domain/companionPresentation'
-import { buildMagpieQuotaExpandCards, magpieResetCountdownText } from './domain/magpieQuota'
+import { buildMagpieQuotaResetLines, formatMagpieQuotaResetInline } from './domain/magpieQuota'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import {
   CODEX_THEME_PRESETS,
@@ -288,18 +288,17 @@ const companionWaterBall = computed(() => resolveCompanionWaterBallPresentation(
 }))
 const quotaResetClock = ref(Date.now())
 let quotaResetTimer: ReturnType<typeof setInterval> | null = null
-const magpieQuotaExpandCards = computed(() => {
+const magpieQuotaResetLines = computed(() => {
   const magpie = companionSlice.value?.magpieQuota
   if (!magpie || magpie.status === 'idle') return []
-  return buildMagpieQuotaExpandCards(magpie.providers)
+  return buildMagpieQuotaResetLines(magpie.providers)
 })
-function magpieQuotaCardResetLine(resetAt: number | null) {
-  return magpieResetCountdownText(resetAt, quotaResetClock.value)
-}
-function magpieQuotaCardHint(card: ReturnType<typeof buildMagpieQuotaExpandCards>[number]) {
-  const reset = companionResetDetailText(card.resetAt, quotaResetClock.value)
-  return reset ? `${card.detail} · ${reset}` : card.detail
-}
+/** 默认收起；展开后显示单行重置倒计时。 */
+const magpieResetsExpanded = ref(false)
+const magpieQuotaResetInline = computed(() => formatMagpieQuotaResetInline(
+  magpieQuotaResetLines.value,
+  quotaResetClock.value
+))
 function taskFocusItem(task: CodexTaskCard): Extract<FocusItem, { kind: 'task' }> {
   return { kind: 'task', key: `task:${task.key}`, task, marker: resolveCompanionRowMarker(task)! }
 }
@@ -3653,23 +3652,20 @@ onUnmounted(() => {
       </section>
 
       <section
-        v-if="magpieQuotaExpandCards.length"
-        class="float-quota-grid"
-        :class="{ single: magpieQuotaExpandCards.length === 1 }"
-        aria-label="供应商额度与重置倒计时"
+        v-if="magpieQuotaResetLines.length"
+        class="float-magpie-reset-bar"
+        aria-label="供应商重置倒计时"
       >
-        <article
-          v-for="card in magpieQuotaExpandCards"
-          :key="card.key"
-          :title="magpieQuotaCardHint(card)"
+        <button
+          type="button"
+          class="float-magpie-reset-toggle"
+          :aria-expanded="magpieResetsExpanded"
+          @click="magpieResetsExpanded = !magpieResetsExpanded"
         >
-          <div class="quota-heading">
-            <span>{{ card.label }}</span>
-            <strong>{{ card.percent !== null ? `${card.valueText}%` : card.valueText }}</strong>
-          </div>
-          <div v-if="card.percent !== null" class="quota-track"><i :style="{ width: `${card.percent}%` }" /></div>
-          <small>{{ magpieQuotaCardResetLine(card.resetAt) }}</small>
-        </article>
+          <ChevronRight :size="12" class="float-magpie-reset-chevron" :class="{ open: magpieResetsExpanded }" aria-hidden="true" />
+          <span class="float-magpie-reset-label">重置</span>
+          <span v-if="magpieResetsExpanded" class="float-magpie-reset-summary">{{ magpieQuotaResetInline }}</span>
+        </button>
       </section>
 
       <form v-if="aliasEditor" class="float-inline-editor" @submit.prevent="saveAlias">

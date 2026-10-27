@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildMagpieQuotaExpandCards,
+  buildMagpieQuotaResetLines,
+  formatMagpieQuotaResetInline,
   formatMagpieTokenBalance,
   magpieResetCountdownText,
   resolveCompactQuotaGridPresentation
@@ -19,8 +21,8 @@ const SAMPLE = [
   {
     provider: 'cursor',
     windows: [
-      { name: 'Cursor Models', remaining: 93.4 },
-      { name: 'Other Models', remaining: 19.5 }
+      { name: 'Cursor Models', remaining: 93.4, resetsAt: '2026-11-17T05:52:21Z' },
+      { name: 'Other Models', remaining: 19.5, resetsAt: '2026-11-17T05:52:21Z' }
     ]
   }
 ]
@@ -60,5 +62,16 @@ describe('magpie quota grid', () => {
     expect(cards[1].resetAt).toBeGreaterThan(0)
     const now = Date.parse('2026-10-27T00:00:00Z')
     expect(magpieResetCountdownText(cards[1].resetAt, now)).toMatch(/重置/)
+  })
+
+  it('merges cursor into one reset line', () => {
+    const lines = buildMagpieQuotaResetLines(SAMPLE)
+    expect(lines.map((line) => line.label)).toEqual(['Codex', 'Grok', 'Cursor'])
+    expect(lines[2].resetAt).toBeGreaterThan(0)
+    const text = formatMagpieQuotaResetInline(lines, Date.parse('2026-10-27T00:00:00Z'))
+    expect(text).toContain('Codex')
+    expect(text).toContain('Grok')
+    expect(text).toContain('Cursor')
+    expect(text.split('Cursor').length).toBe(2)
   })
 })
