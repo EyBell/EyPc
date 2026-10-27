@@ -38,6 +38,7 @@ import {
 } from '../domain/codex'
 import { companionPinAppLabel, companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
 import type { CompanionQuotaRefreshReceipt, CompanionSnapshotSlice } from '../domain/companionPresentation'
+import { fetchMagpieQuotaProviders, type MagpieQuotaProvider } from '../domain/magpieQuota'
 import {
   emptyClaudeEnvironment,
   emptyClaudeQuota,
@@ -133,6 +134,7 @@ export interface CodexRuntimeView {
   orcaInventoryReason: string
   claudeQuota: ClaudeQuotaSnapshot
   refreshing: boolean
+  companion?: CompanionSnapshotSlice
   floatHost: {
     displayId: string
     expandedWidth: number
@@ -450,6 +452,10 @@ export function createCodexController(options: CodexControllerOptions) {
   /** Lane facts of the latest Claude quota read; a manual refresh turns them into a float receipt. */
   let lastClaudeQuotaRead: NonNullable<CompanionQuotaRefreshReceipt['claude']> | null = null
   let quotaRefreshReceipt: CompanionQuotaRefreshReceipt | null = null
+  let magpieQuotaProviders: MagpieQuotaProvider[] = []
+  let magpieQuotaStatus: NonNullable<CompanionSnapshotSlice['magpieQuota']>['status'] = 'idle'
+  let magpieQuotaUpdatedAt = 0
+  let magpieQuotaError = ''
   let cursorSessions: CursorAgentObservation[] = []
   let cursorAvailable = false
   let cursorInventoryReason = ''
@@ -468,6 +474,36 @@ export function createCodexController(options: CodexControllerOptions) {
   let claudeInventoryInFlight: Promise<boolean> | null = null
   let claudeUnreadInFlight: Promise<ClaudeLaneRefreshResult> | null = null
   let claudeQuotaInFlight = false
+
+  async function refreshMagpieQuota(now = Date.now()) {
+    if (!codexState().settings.magpieQuotaAccess) {
+      magpieQuotaProviders = []
+      magpieQuotaStatus = 'idle'
+      magpieQuotaUpdatedAt = 0
+      magpieQuotaError = ''
+      return
+    }
+    try {
+      magpieQuotaProviders = await fetchMagpieQuotaProviders()
+      magpieQuotaStatus = 'ok'
+      magpieQuotaUpdatedAt = now
+      magpieQuotaError = ''
+    } catch (error) {
+      magpieQuotaStatus = magpieQuotaUpdatedAt > 0 ? 'stale' : 'error'
+      magpieQuotaError = error instanceof Error ? error.message : 'magpie unavailable'
+      if (magpieQuotaUpdatedAt <= 0) magpieQuotaProviders = []
+    }
+  }
+
+  function companionMagpieQuotaSlice(): CompanionSnapshotSlice['magpieQuota'] | undefined {
+    if (!codexState().settings.magpieQuotaAccess) return undefined
+    return {
+      providers: magpieQuotaProviders,
+      status: magpieQuotaStatus,
+      updatedAt: magpieQuotaUpdatedAt,
+      ...(magpieQuotaError ? { errorMessage: magpieQuotaError } : {})
+    }
+  }
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
   let lastThreadsPartial = false
@@ -2016,6 +2052,9 @@ export function createCodexController(options: CodexControllerOptions) {
         }
         lastQuotaReadAt = quotaReceivedAt
       }
+      if (includeQuota) {
+        await refreshMagpieQuota(receivedAt)
+      }
       if (threadResult) {
         const taskReceivedAt = threadResult.receivedAt || receivedAt
         if (threadResult.ok && threadResult.value.threads) {
@@ -2256,9 +2295,13 @@ export function createCodexController(options: CodexControllerOptions) {
     const taskAuthorityChanged = inboxChanged || providerEnablementChanged
     const quotaPolicyChanged = current.quotaRefreshSeconds !== next.quotaRefreshSeconds
       || current.claudeAppQuotaAccess !== next.claudeAppQuotaAccess
+      || current.magpieQuotaAccess !== next.magpieQuotaAccess
     if (providerEnablementChanged) beginCompanionNavigation()
     syncActivation(taskAuthorityChanged)
-    if (quotaPolicyChanged && shouldRun()) void refresh({ forceQuota: true })
+    if (quotaPolicyChanged && shouldRun()) {
+      if (!next.magpieQuotaAccess) void refreshMagpieQuota()
+      void refresh({ forceQuota: true })
+    }
     // A provider toggle must take effect now: disabling should clear the lane
     // immediately rather than leaving stale cards until the next Codex tick.
     if (claudeEnablementChanged) syncClaudeEnablement()
@@ -3684,6 +3727,7 @@ export function createCodexController(options: CodexControllerOptions) {
         claudeReceipt = lastClaudeQuotaRead || undefined
       }
       await refresh({ forceQuota: true, manualQuota: true })
+      if (codexState().settings.magpieQuotaAccess) await refreshMagpieQuota()
       if (disposed) return false
       quotaRefreshReceipt = {
         at: Date.now(),
@@ -3806,6 +3850,18 @@ export function createCodexController(options: CodexControllerOptions) {
         orcaInventoryReason,
         claudeQuota,
         refreshing,
+        companion: {
+          providers: settings.providers,
+          claudeAppQuotaAccess: settings.claudeAppQuotaAccess,
+          revision: claudeControllerRevision,
+          stateGeneration: lastClaudeStateGeneration,
+          unreadGeneration: lastClaudeUnreadGeneration,
+          claudeQuotaAccess,
+          claudeQuota,
+          claudeEnvironment,
+          ...(quotaRefreshReceipt ? { quotaRefreshReceipt } : {}),
+          ...(companionMagpieQuotaSlice() ? { magpieQuota: companionMagpieQuotaSlice() } : {})
+        },
         floatHost: {
           displayId,
           expandedWidth: preferred?.width || 360,
@@ -3853,7 +3909,8 @@ export function createCodexController(options: CodexControllerOptions) {
         claudeQuotaAccess,
         claudeQuota,
         claudeEnvironment,
-        ...(quotaRefreshReceipt ? { quotaRefreshReceipt } : {})
+        ...(quotaRefreshReceipt ? { quotaRefreshReceipt } : {}),
+        ...(companionMagpieQuotaSlice() ? { magpieQuota: companionMagpieQuotaSlice() } : {})
       },
         generatedAt: 0
       }

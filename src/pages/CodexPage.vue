@@ -169,7 +169,8 @@ const waterPreview = computed(() => buildCodexCompactPresentation({
 const companionPreview = computed(() => resolveCompanionWaterBallPresentation({
   providers: props.snapshot.settings.providers,
   claudeQuota: props.snapshot.claudeQuota,
-  claudeEnvironment: props.snapshot.claudeEnvironment
+  claudeEnvironment: props.snapshot.claudeEnvironment,
+  magpieQuota: props.snapshot.companion?.magpieQuota
 }, {
   primary: waterPreview.value.primary,
   secondary: waterPreview.value.secondary
@@ -848,12 +849,13 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 :primary="waterPreview.primary"
                 :secondary="waterPreview.secondary"
                 :state-label="waterPreview.stateLabel"
-                :label="`${waterPreview.ariaLabel}${companionPreview.ariaSuffix}`"
+                :label="`${waterPreview.ariaLabel}${companionPreview.ariaSuffix}${companionPreview.quotaGrid.ariaSuffix}`"
                 :percent-override="companionPreview.percentOverride"
                 :scoped-percent="companionPreview.scopedPercent"
                 :percent-provider-label="companionPreview.percentProviderLabel"
                 :liquid-percent="companionPreview.liquidPercent"
                 :ring-percent="companionPreview.ringPercent"
+                :quota-grid="companionPreview.quotaGrid.enabled ? companionPreview.quotaGrid.cells : null"
                 :appearance="waterDraft"
                 :colors="snapshot.settings.colors"
                 decorative
@@ -1160,6 +1162,19 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               data-operation-tooltip="额度刷新（秒）"
               data-operation-description="按整数秒设置自动额度刷新周期；默认 300 秒，最大 86400 秒。"
             />
+          </label>
+          <label class="codex-switch-row codex-switch-row--grid">
+            <span>
+              <strong>允许读取 Magpie 额度</strong>
+            </span>
+            <input
+              type="checkbox"
+              :checked="snapshot.settings.magpieQuotaAccess"
+              data-operation-tooltip="允许读取 Magpie 额度"
+              data-operation-description="默认关闭。开启后通过本机 Magpie（Macpa）网关读取 Codex / Grok / Cursor 等供应商额度，用于悬浮水球四格与展开卡片中的重置倒计时；不勾选则不查询、不展示。"
+              @change="update({ magpieQuotaAccess: ($event.target as HTMLInputElement).checked })"
+            />
+            <i />
           </label>
           <button
             type="button"

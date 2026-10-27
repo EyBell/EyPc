@@ -740,6 +740,11 @@ export interface CodexSettings {
   /** @deprecated One-release storage compatibility for pre-access-gate profiles. */
   claudeQuotaFallback: boolean
   /**
+   * Read multi-provider quota from the local Magpie (Macpa) gateway for the
+   * water-ball grid and expanded quota cards. Defaults off.
+   */
+  magpieQuotaAccess: boolean
+  /**
    * Jump readiness: probe the target app before a task jump and launch it when
    * it is closed. Absent normalizes to on — launch-first is the intended
    * default for every profile, old or new.
@@ -1418,6 +1423,7 @@ export function defaultCodexSettings(): CodexSettings {
     providers: { ...DEFAULT_COMPANION_ENABLEMENT },
     claudeAppQuotaAccess: false,
     claudeQuotaFallback: false,
+    magpieQuotaAccess: false,
     openLaunchesTarget: true,
     codexhostLaunch: 'auto',
     compactFields: [...COMPACT_FIELDS],
@@ -1473,6 +1479,7 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
     providers: normalizeCompanionEnablement(source.providers),
     claudeAppQuotaAccess: source.claudeAppQuotaAccess === true || source.claudeQuotaFallback === true,
     claudeQuotaFallback: source.claudeQuotaFallback === true,
+    magpieQuotaAccess: source.magpieQuotaAccess === true,
     openLaunchesTarget: source.openLaunchesTarget !== false,
     codexhostLaunch: enumValue(source.codexhostLaunch, ['auto', 'on', 'off'] as const, fallback.codexhostLaunch),
     compactFields: orderedFields(source.compactFields, COMPACT_FIELDS, fallback.compactFields),

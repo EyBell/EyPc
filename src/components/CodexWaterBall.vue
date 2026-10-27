@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { CodexColorSettings, CodexWaterAppearanceSettings } from '../domain/codex'
 import { codexWaterAppearanceCssVars } from '../domain/codexAppearance'
 import { codexWeeklyReading, type CodexQuotaReading } from '../domain/codexPresentation'
+import type { CompactQuotaGridCell } from '../domain/magpieQuota'
 
 const props = withDefaults(defineProps<{
   primary: CodexQuotaReading | null
@@ -36,6 +37,8 @@ const props = withDefaults(defineProps<{
   liquidPercent?: number | null
   /** Same fallback for the outer weekly ring. */
   ringPercent?: number | null
+  /** When set, the centre renders a 2×2 Magpie quota grid instead of one percentage. */
+  quotaGrid?: CompactQuotaGridCell[] | null
 }>(), {
   taskCount: 0,
   signal: 'quiet',
@@ -44,7 +47,8 @@ const props = withDefaults(defineProps<{
   scopedPercent: null,
   percentProviderLabel: '',
   liquidPercent: null,
-  ringPercent: null
+  ringPercent: null,
+  quotaGrid: null
 })
 
 // Liquid level follows this ball's own primary reading; an override only
@@ -61,6 +65,7 @@ const dualReading = computed(() => hasPercentOverride.value
   && Number.isFinite(props.scopedPercent)
   ? { scoped: props.scopedPercent as number, primary: props.percentOverride as number }
   : null)
+const gridMode = computed(() => Array.isArray(props.quotaGrid) && props.quotaGrid.length === 4)
 const weekly = computed(() => codexWeeklyReading(props.primary, props.secondary))
 const hasRingOverride = computed(() => typeof props.ringPercent === 'number' && Number.isFinite(props.ringPercent))
 const weeklyPercent = computed(() => hasRingOverride.value ? props.ringPercent as number : weekly.value?.bucket.remainingPercent ?? 0)
@@ -122,12 +127,26 @@ const style = computed(() => ({
     </svg>
 
     <div v-if="!primary || appearance.inner.showPercent" class="codex-water-ball__value" :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary && !hasPercentOverride }]">
-      <span v-if="primary?.family === 'spark' && !hasLiquidOverride" class="codex-water-ball__spark" aria-hidden="true">S</span>
-      <strong v-if="dualReading" class="codex-water-ball__pair">
-        <span>{{ dualReading.scoped }}</span><i aria-hidden="true">/</i><span>{{ dualReading.primary }}</span>
-      </strong>
-      <strong v-else>{{ displayPercent === null ? stateLabel : `${displayPercent}%` }}</strong>
-      <em v-if="hasPercentOverride && percentProviderLabel" class="codex-water-ball__percent-source">{{ percentProviderLabel }}</em>
+      <div v-if="gridMode" class="codex-water-ball__grid" aria-hidden="true">
+        <div
+          v-for="cell in quotaGrid"
+          :key="cell.key"
+          class="codex-water-ball__grid-cell"
+          :class="[`kind-${cell.kind}`]"
+          :title="cell.detail"
+        >
+          <span class="codex-water-ball__grid-label">{{ cell.label }}</span>
+          <strong class="codex-water-ball__grid-value">{{ cell.text }}</strong>
+        </div>
+      </div>
+      <template v-else>
+        <span v-if="primary?.family === 'spark' && !hasLiquidOverride" class="codex-water-ball__spark" aria-hidden="true">S</span>
+        <strong v-if="dualReading" class="codex-water-ball__pair">
+          <span>{{ dualReading.scoped }}</span><i aria-hidden="true">/</i><span>{{ dualReading.primary }}</span>
+        </strong>
+        <strong v-else>{{ displayPercent === null ? stateLabel : `${displayPercent}%` }}</strong>
+        <em v-if="hasPercentOverride && percentProviderLabel" class="codex-water-ball__percent-source">{{ percentProviderLabel }}</em>
+      </template>
     </div>
   </div>
 </template>
@@ -369,6 +388,50 @@ const style = computed(() => ({
 }
 .codex-water-ball__value.empty { width: 64px; padding: 0 7px; text-align: center; }
 .codex-water-ball__value.empty strong { font-size: 11px; line-height: 1.15; letter-spacing: 0; }
+
+.codex-water-ball__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 4px;
+  width: min(100%, 72px);
+  min-height: 42px;
+  align-content: center;
+}
+.codex-water-ball__grid-cell {
+  display: grid;
+  gap: 0;
+  justify-items: center;
+  min-width: 0;
+  padding: 1px 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, rgba(3, 13, 24, .72) 72%, transparent);
+}
+.codex-water-ball__grid-label {
+  font-size: 7px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  opacity: .72;
+}
+.codex-water-ball__grid-value {
+  font-size: min(calc(var(--water-percent-size, 22px) * .32), 9px);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -.02em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+.codex-water-ball__grid-cell.kind-token .codex-water-ball__grid-value {
+  font-size: min(calc(var(--water-percent-size, 22px) * .5), 13px);
+}
+.codex-water-ball__grid-cell.kind-placeholder .codex-water-ball__grid-value {
+  opacity: .42;
+}
+.codex-water-ball__grid-cell.kind-missing .codex-water-ball__grid-value {
+  opacity: .58;
+}
 
 @keyframes codex-water-wave-left {
   from { transform: translate3d(0, 0, 0); }

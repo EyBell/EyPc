@@ -47,6 +47,7 @@ import {
   companionQuotaRefreshReceiptText
 } from './domain/companionPresentation'
 import type { CompanionProjectMarker, CompanionQuotaChip, CompanionRowMarker } from './domain/companionPresentation'
+import { buildMagpieQuotaExpandCards, magpieResetCountdownText } from './domain/magpieQuota'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import {
   CODEX_THEME_PRESETS,
@@ -285,6 +286,20 @@ const companionWaterBall = computed(() => resolveCompanionWaterBallPresentation(
   primary: compact.value.primary,
   secondary: compact.value.secondary
 }))
+const quotaResetClock = ref(Date.now())
+let quotaResetTimer: ReturnType<typeof setInterval> | null = null
+const magpieQuotaExpandCards = computed(() => {
+  const magpie = companionSlice.value?.magpieQuota
+  if (!magpie || magpie.status === 'idle') return []
+  return buildMagpieQuotaExpandCards(magpie.providers)
+})
+function magpieQuotaCardResetLine(resetAt: number | null) {
+  return magpieResetCountdownText(resetAt, quotaResetClock.value)
+}
+function magpieQuotaCardHint(card: ReturnType<typeof buildMagpieQuotaExpandCards>[number]) {
+  const reset = companionResetDetailText(card.resetAt, quotaResetClock.value)
+  return reset ? `${card.detail} · ${reset}` : card.detail
+}
 function taskFocusItem(task: CodexTaskCard): Extract<FocusItem, { kind: 'task' }> {
   return { kind: 'task', key: `task:${task.key}`, task, marker: resolveCompanionRowMarker(task)! }
 }
@@ -3254,6 +3269,7 @@ watch(taskScroll, (element) => {
 })
 
 onMounted(() => {
+  quotaResetTimer = setInterval(() => { quotaResetClock.value = Date.now() }, 30_000)
   const expectation = {
     hostAssetId: __EYPC_HOST_ASSET_ID__,
     rendererAssetId: __EYPC_RENDERER_ASSET_ID__,
@@ -3383,6 +3399,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (quotaResetTimer) clearInterval(quotaResetTimer)
   clearRailHover()
   window.eypcFloat?.cancelInteraction?.()
   if (collapseTimer) clearTimeout(collapseTimer)
@@ -3463,7 +3480,7 @@ onUnmounted(() => {
           :primary="compact.primary"
           :secondary="compact.secondary"
           :state-label="compact.stateLabel"
-          :label="`${compact.ariaLabel}${companionWaterBall.ariaSuffix}`"
+          :label="`${compact.ariaLabel}${companionWaterBall.ariaSuffix}${companionWaterBall.quotaGrid.ariaSuffix}`"
           :appearance="settings?.waterAppearance || fallbackWaterAppearance"
           :colors="settings?.colors || fallbackColors"
           :percent-override="companionWaterBall.percentOverride"
@@ -3471,6 +3488,7 @@ onUnmounted(() => {
           :percent-provider-label="companionWaterBall.percentProviderLabel"
           :liquid-percent="companionWaterBall.liquidPercent"
           :ring-percent="companionWaterBall.ringPercent"
+          :quota-grid="companionWaterBall.quotaGrid.enabled ? companionWaterBall.quotaGrid.cells : null"
           decorative
         />
         <template v-else>
@@ -3632,6 +3650,26 @@ onUnmounted(() => {
         </div>
         <!-- Refresh receipt overlays the row for a few seconds instead of adding a line. -->
         <p v-if="quotaFeedback" class="float-quota-feedback" role="status">{{ quotaFeedback }}</p>
+      </section>
+
+      <section
+        v-if="magpieQuotaExpandCards.length"
+        class="float-quota-grid"
+        :class="{ single: magpieQuotaExpandCards.length === 1 }"
+        aria-label="供应商额度与重置倒计时"
+      >
+        <article
+          v-for="card in magpieQuotaExpandCards"
+          :key="card.key"
+          :title="magpieQuotaCardHint(card)"
+        >
+          <div class="quota-heading">
+            <span>{{ card.label }}</span>
+            <strong>{{ card.percent !== null ? `${card.valueText}%` : card.valueText }}</strong>
+          </div>
+          <div v-if="card.percent !== null" class="quota-track"><i :style="{ width: `${card.percent}%` }" /></div>
+          <small>{{ magpieQuotaCardResetLine(card.resetAt) }}</small>
+        </article>
       </section>
 
       <form v-if="aliasEditor" class="float-inline-editor" @submit.prevent="saveAlias">

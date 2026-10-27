@@ -24,6 +24,11 @@ import {
   type CompanionProviderId,
   type CompanionWaterBallMapping
 } from './companionProvider'
+import {
+  resolveCompactQuotaGridPresentation,
+  type CompactQuotaGridPresentation,
+  type MagpieQuotaProvider
+} from './magpieQuota'
 
 /**
  * Companion presentation.
@@ -46,6 +51,13 @@ export interface CompanionSnapshotSlice {
   claudeEnvironment: ClaudeEnvironmentSnapshot
   /** Outcome of the latest manual quota refresh, so the float can say what it did. */
   quotaRefreshReceipt?: CompanionQuotaRefreshReceipt
+  /** Optional Magpie gateway quota payload for the collapsed water-ball grid. */
+  magpieQuota?: {
+    providers: MagpieQuotaProvider[]
+    status: CompactQuotaGridPresentation['status']
+    updatedAt: number
+    errorMessage?: string
+  }
 }
 
 /**
@@ -151,6 +163,8 @@ export interface CompanionWaterBallPresentation {
   ringPercent: number | null
   /** Accessible suffix describing the override; empty when not overridden. */
   ariaSuffix: string
+  /** 2×2 centre grid sourced from Magpie when enabled. */
+  quotaGrid: CompactQuotaGridPresentation
 }
 
 /** The Codex compact readings the float already resolved; the ball keeps them authoritative for Codex-owned channels. */
@@ -167,7 +181,8 @@ const EMPTY_PRESENTATION: CompanionWaterBallPresentation = {
   percentProviderLabel: '',
   liquidPercent: null,
   ringPercent: null,
-  ariaSuffix: ''
+  ariaSuffix: '',
+  quotaGrid: resolveCompactQuotaGridPresentation(null, { enabled: false })
 }
 
 function clampQuotaPercent(value: number): number {
@@ -185,14 +200,20 @@ export function resolveCompanionWaterBallPresentation(
   slice: CompanionSnapshotSlice | null | undefined,
   codex: CompanionWaterBallCodexReadings = {}
 ): CompanionWaterBallPresentation {
-  if (!slice) return EMPTY_PRESENTATION
+  const quotaGrid = resolveCompactQuotaGridPresentation(slice?.magpieQuota?.providers ?? null, {
+    enabled: Boolean(slice?.magpieQuota && slice.magpieQuota.status !== 'idle'),
+    status: slice?.magpieQuota?.status || 'idle',
+    updatedAt: slice?.magpieQuota?.updatedAt || 0,
+    errorMessage: slice?.magpieQuota?.errorMessage
+  })
+  if (!slice) return { ...EMPTY_PRESENTATION, quotaGrid }
   const appQuotaReadable = claudeAppQuotaReadable(slice)
   const claudeLive = slice.providers.claude === true
     && (isClaudeAvailable(slice.claudeEnvironment) || appQuotaReadable)
   const mapping = resolveCompanionWaterBallMapping(slice.providers, { claude: claudeLive })
-  if (mapping.percent !== 'claude') return { ...EMPTY_PRESENTATION, mapping }
+  if (mapping.percent !== 'claude') return { ...EMPTY_PRESENTATION, mapping, quotaGrid }
   const window = claudePrimaryQuotaWindow(slice.claudeQuota)
-  if (!window) return { ...EMPTY_PRESENTATION, mapping }
+  if (!window) return { ...EMPTY_PRESENTATION, mapping, quotaGrid }
   const percent = clampQuotaPercent(window.remainingPercent)
   // A channel whose mapped provider has no positive reading falls back to the
   // centre owner instead of leaving dead glass under a foreign number. The
@@ -239,7 +260,8 @@ export function resolveCompanionWaterBallPresentation(
       percentProviderLabel: COMPANION_PROVIDER_LABELS.claude,
       liquidPercent,
       ringPercent,
-      ariaSuffix: `，Claude 剩余 ${percent}%`
+      ariaSuffix: `，Claude 剩余 ${percent}%`,
+      quotaGrid
     }
   }
   const scopedPercent = clampQuotaPercent(scoped.remainingPercent)
@@ -251,7 +273,8 @@ export function resolveCompanionWaterBallPresentation(
     percentProviderLabel: COMPANION_PROVIDER_LABELS.claude,
     liquidPercent,
     ringPercent,
-    ariaSuffix: `，Claude ${scoped.scope}周限额剩余 ${scopedPercent}%，普通周限额剩余 ${percent}%`
+    ariaSuffix: `，Claude ${scoped.scope}周限额剩余 ${scopedPercent}%，普通周限额剩余 ${percent}%`,
+    quotaGrid
   }
 }
 
