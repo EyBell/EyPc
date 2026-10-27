@@ -965,8 +965,20 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!claudeEnabled()) {
       unsubscribeClaudeEvents()
       resetClaudeLane()
+      const bridge = options.platform.claude
+      if (bridge && typeof bridge.uninstall === 'function') {
+        void Promise.resolve(bridge.uninstall()).catch(() => false)
+      }
       options.notify()
       return
+    }
+    const bridge = options.platform.claude
+    if (bridge && typeof bridge.install === 'function') {
+      void Promise.resolve(bridge.install({ statusline: true })).then(async (result) => {
+        if (disposed || !claudeEnabled()) return
+        if (result?.ok) await refreshClaudeEnvironment().catch(() => false)
+        if (!disposed) options.notify()
+      }).catch(() => undefined)
     }
     // Provider task state is observed by the Host/Kernel. This one-shot read is
     // settings telemetry only and never participates in task classification.
@@ -1217,9 +1229,21 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function syncCursorEnablement() {
     if (!cursorEnabled()) {
+      const bridge = options.platform.cursor
+      if (bridge && typeof bridge.uninstall === 'function') {
+        void Promise.resolve(bridge.uninstall()).catch(() => false)
+      }
       resetCursorLane()
       options.notify()
       return
+    }
+    const bridge = options.platform.cursor
+    if (bridge && typeof bridge.install === 'function') {
+      void Promise.resolve(bridge.install()).then(async (result) => {
+        if (disposed || !cursorEnabled()) return
+        if (result?.ok) await refreshCursorRegistration().catch(() => false)
+        if (!disposed) options.notify()
+      }).catch(() => undefined)
     }
     // Provider task state is observed by the Host/Kernel. This one-shot read is
     // settings telemetry only and never participates in task classification.
@@ -3689,6 +3713,9 @@ export function createCodexController(options: CodexControllerOptions) {
       subscribeClaudeQuotaLifecycle()
       if (isFeatureEnabled()) void inspectEnvironment()
       syncActivation(true)
+      syncClaudeEnablement()
+      syncCursorEnablement()
+      syncOrcaEnablement()
       refreshCompanionRegistrationTelemetry()
     },
     dispose() {

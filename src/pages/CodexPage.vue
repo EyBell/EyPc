@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import {
-  AlertTriangle,
   BellRing,
   Bot,
   Check,
-  CircleCheckBig,
   CircleGauge,
   Eye,
   EyeOff,
+  Activity,
+  HeartPulse,
   Keyboard,
   LayoutDashboard,
   LoaderCircle,
   Palette,
-  RefreshCw,
-  RotateCcw,
+  Package,
+  Pin,
+  Wifi,
   SlidersHorizontal
 } from '@lucide/vue'
 import CodexStyleSwitch from '../components/CodexStyleSwitch.vue'
@@ -27,13 +28,8 @@ import {
   resolveCodexExpandedCardTheme
 } from '../domain/codexAppearance'
 import { buildCodexCompactPresentation, codexBadgeText, codexWeeklyReading } from '../domain/codexPresentation'
-import {
-  buildCodexEnvironmentPresentation,
-  codexConnectionStatusLabel,
-  shouldInlineCodexEnvironmentDetail,
-  visibleCodexEnvironmentRows
-} from '../domain/codexEnvironmentPresentation'
-import { claudeRegistrationRows, claudeSourceStatusText, cursorRegistrationRows, cursorSourceStatusText, orcaSourceStatusText, resolveCompanionWaterBallPresentation, codexhostSourceStatusText } from '../domain/companionPresentation'
+import { codexConnectionStatusLabel } from '../domain/codexEnvironmentPresentation'
+import { resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
   CODEX_MAX_QUOTA_REFRESH_SECONDS,
@@ -47,7 +43,7 @@ import type {
   CodexExpandedCardAppearanceSettings,
   CodexSettings,
   CodexSavedThemePreset,
-  CodexWaterAppearanceSettings, CodexhostLaunchMode } from '../domain/codex'
+  CodexWaterAppearanceSettings } from '../domain/codex'
 import type { RuntimeDiagnosticsLevel } from '../domain/types'
 import { formatShortcutLabel } from '../domain/shortcuts'
 import type { CodexRuntimeView } from '../runtime/codexController'
@@ -55,10 +51,6 @@ import type { CodexRuntimeView } from '../runtime/codexController'
 const props = defineProps<{ snapshot: CodexRuntimeView }>()
 const emit = defineEmits<{ dispatch: [actionId: string, args?: Record<string, unknown>] }>()
 const themePresetError = ref('')
-const manualLaunchPath = ref('')
-const launchPathError = ref('')
-const manualCodexhostPath = ref('')
-const codexhostPathError = ref('')
 const THEME_PRESET_BUILTIN_PREFIX = 'builtin:'
 const THEME_PRESET_SAVED_PREFIX = 'saved:'
 const THEME_PRESET_CUSTOM = 'custom'
@@ -233,8 +225,6 @@ watch([() => props.snapshot.settings.colors, () => props.snapshot.settings.water
   const match = activeSavedId ? props.snapshot.settings.savedThemePresets.find((entry) => entry.id === activeSavedId) : null
   savedThemeName.value = match?.name || ''
 }, { deep: true, immediate: true })
-const ordinaryModels = computed(() => props.snapshot.modelCatalog.models.filter((model) => model.family === 'normal'))
-const sparkModels = computed(() => props.snapshot.modelCatalog.models.filter((model) => model.family === 'spark'))
 const statusLabel = computed(() => codexConnectionStatusLabel({
   refreshing: props.snapshot.refreshing,
   quotaStatus: props.snapshot.quota.status,
@@ -242,31 +232,6 @@ const statusLabel = computed(() => codexConnectionStatusLabel({
   desktopBridgeState: props.snapshot.environment.desktopBridgeState,
   statusFeedMode: props.snapshot.environment.statusFeedMode || 'unavailable'
 }))
-
-const preferredModelName = computed(() => {
-  if (!ordinaryModels.value.length) return '暂未读取到可用普通模型'
-  const selected = props.snapshot.settings.newThreadPreferredModel
-  if (!selected) {
-    const fallback = ordinaryModels.value.find((model) => model.isDefault) || ordinaryModels.value[0]
-    return fallback ? `${fallback.displayName} · ${fallback.id}` : '暂未读取到可用普通模型'
-  }
-  const model = ordinaryModels.value.find((item) => item.id === selected)
-  return model ? `${model.displayName} · ${model.id}` : '当前选择不在目录中'
-})
-
-const preferredModelMode = computed(() => props.snapshot.settings.newThreadPreferredModel ? '手动指定' : '目录默认')
-
-const environmentPresentation = computed(() => buildCodexEnvironmentPresentation(
-  props.snapshot.environment,
-  props.snapshot.activityDecisionDiagnostics
-))
-const visibleEnvironmentRows = computed(() => visibleCodexEnvironmentRows(environmentPresentation.value))
-const showEnvironmentDetail = computed(() => shouldInlineCodexEnvironmentDetail(environmentPresentation.value.diagnostic.tone))
-
-const runtimeDiagnosticHighlights = computed(() => (props.snapshot.runtimeDiagnostics?.recent || [])
-  .filter((entry) => entry.level === 'error' || (entry.durationMs || 0) >= 250)
-  .slice(-6)
-  .reverse())
 
 const runtimeBuildPresentation = computed(() => {
   const identity = props.snapshot.runtimeIdentity
@@ -281,6 +246,52 @@ const runtimeBuildPresentation = computed(() => {
   }
 })
 
+const statusIconBar = computed(() => {
+  const env = props.snapshot.environment
+  const ws = props.snapshot.floatHost.workspaceVisibility
+  const health = ws?.health
+  const identity = props.snapshot.runtimeIdentity
+  const log = props.snapshot.runtimeDiagnostics
+  const connectionTone = props.snapshot.refreshing || env.checking
+    ? 'checking'
+    : props.snapshot.quota.status === 'error' || env.connectionState === 'failed'
+      ? 'error'
+      : props.snapshot.quota.status === 'stale' || env.connectionState !== 'connected'
+        ? 'warning'
+        : 'ready'
+  return [
+    { id: 'connection', icon: Wifi, tone: connectionTone, label: '连接', title: statusLabel.value },
+    {
+      id: 'build',
+      icon: Package,
+      tone: identity?.status === 'host-loaded' ? 'ready' : identity ? 'warning' : 'muted',
+      label: '产物',
+      title: runtimeBuildPresentation.value.summary
+    },
+    {
+      id: 'pin',
+      icon: Pin,
+      tone: ws?.allWorkspaces && ws?.visibleOnFullScreen ? 'ready' : ws?.supported ? 'warning' : 'muted',
+      label: '置顶',
+      title: ws?.allWorkspaces && ws?.visibleOnFullScreen ? '跨桌面置顶已启用' : ws?.errorCode || '跨桌面置顶'
+    },
+    {
+      id: 'health',
+      icon: HeartPulse,
+      tone: health?.alive ? 'ready' : health?.persistent ? 'warning' : 'muted',
+      label: '健康',
+      title: health?.alive ? '悬浮球心跳正常' : health?.persistent ? '悬浮球等待恢复' : '悬浮球未启用'
+    },
+    {
+      id: 'log',
+      icon: Activity,
+      tone: log?.settings.enabled ? (log.status === 'ok' ? 'ready' : 'warning') : 'muted',
+      label: '日志',
+      title: log?.settings.enabled ? `诊断日志 · ${log.settings.level}` : '诊断日志已关闭'
+    }
+  ]
+})
+
 function formatDiagnosticBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '0 KB'
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`
@@ -292,101 +303,20 @@ function formatDiagnosticTime(value: number): string {
   return new Date(value).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function saveLaunchPath() {
-  const candidate = manualLaunchPath.value.trim()
-  if (!candidate) {
-    launchPathError.value = '请输入 Codex CLI 可执行文件的完整绝对路径'
-    return
-  }
-  launchPathError.value = ''
-  emit('dispatch', 'codex.set-launch-path', { path: candidate })
-}
-
-function clearLaunchPath() {
-  launchPathError.value = ''
-  manualLaunchPath.value = ''
-  emit('dispatch', 'codex.clear-launch-path')
-}
-
-function saveCodexhostPath() {
-  const candidate = manualCodexhostPath.value.trim()
-  if (!candidate) {
-    codexhostPathError.value = '请输入 codexhost 可执行文件的完整绝对路径'
-    return
-  }
-  codexhostPathError.value = ''
-  emit('dispatch', 'codex.set-codexhost-path', { path: candidate })
-}
-
-function clearCodexhostPath() {
-  codexhostPathError.value = ''
-  manualCodexhostPath.value = ''
-  emit('dispatch', 'codex.clear-codexhost-path')
-}
-
-const codexhostStatusText = computed(() => codexhostSourceStatusText(props.snapshot.environment.codexhost))
-const codexhostManualConfigured = computed(() => {
-  const state = props.snapshot.environment.codexhost?.cliState
-  return state === 'manual-valid' || state === 'manual-invalid'
-})
-
 function update(patch: Partial<CodexSettings>) {
   emit('dispatch', 'codex.settings.update', { settings: patch })
 }
-
-// `outdated` means our marked entries are present but their command string no
-// longer matches, so the honest label is "重新注册" and removal must stay
-// available — treating it as "never registered" left the only way to clean up
-// hidden behind a successful re-registration.
-const claudeRegistered = computed(() => {
-  const hooks = props.snapshot.claudeEnvironment?.hooks
-  return hooks === 'installed' || hooks === 'outdated'
-})
-const claudeRegistrationGrid = computed(() => claudeRegistrationRows(props.snapshot.claudeEnvironment, Date.now()))
-const claudeStatusText = computed(() => claudeSourceStatusText({
-  enabled: props.snapshot.settings.providers.claude,
-  environment: props.snapshot.claudeEnvironment,
-  codeSessionCount: props.snapshot.claudeCodeSessionCount
-}))
 
 function toggleClaude(enabled: boolean) {
   update({ providers: { ...props.snapshot.settings.providers, claude: enabled } })
 }
 
-const cursorStatusText = computed(() => cursorSourceStatusText({
-  enabled: props.snapshot.settings.providers.cursor === true,
-  available: props.snapshot.cursorAvailable,
-  reason: props.snapshot.cursorInventoryReason,
-  sessionCount: props.snapshot.cursorSessionCount,
-  hooks: props.snapshot.cursorHooks
-}))
-const cursorRegistered = computed(() => {
-  const hooks = props.snapshot.cursorHooks
-  return hooks === 'installed' || hooks === 'outdated'
-})
-const cursorRegistrationGrid = computed(() => cursorRegistrationRows(props.snapshot.cursorHooks))
-
 function toggleCursor(enabled: boolean) {
   update({ providers: { ...props.snapshot.settings.providers, cursor: enabled } })
 }
 
-const orcaStatusText = computed(() => orcaSourceStatusText({
-  enabled: props.snapshot.settings.providers.orca === true,
-  available: props.snapshot.orcaAvailable,
-  reason: props.snapshot.orcaInventoryReason,
-  sessionCount: props.snapshot.orcaSessionCount
-}))
-
 function toggleOrca(enabled: boolean) {
   update({ providers: { ...props.snapshot.settings.providers, orca: enabled } })
-}
-
-function registerClaude(register: boolean) {
-  emit('dispatch', 'codex.claude.register', { register, statusline: true })
-}
-
-function registerCursor(register: boolean) {
-  emit('dispatch', 'codex.cursor.register', { register })
 }
 
 function changeStyle(style: CodexDisplayStyle) {
@@ -531,6 +461,20 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
       <h1>额度任务悬浮球</h1>
       <span class="codex-eyebrow"><Bot :size="12" /> CODEX · CLAUDE COMPANION</span>
     </div>
+      <nav class="codex-status-icon-bar" aria-label="运行状态">
+        <button
+          v-for="item in statusIconBar"
+          :key="item.id"
+          type="button"
+          class="codex-status-icon"
+          :class="`tone-${item.tone}`"
+          :title="item.title"
+          :aria-label="`${item.label}：${item.title}`"
+        >
+          <component :is="item.icon" :size="14" aria-hidden="true" />
+          <span>{{ item.label }}</span>
+        </button>
+      </nav>
       <div class="codex-hero-actions">
         <button
           type="button"
@@ -547,17 +491,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           <Eye v-else :size="13" aria-hidden="true" />
           {{ snapshot.settings.floatEnabled ? '隐藏桌面悬浮' : '显示桌面悬浮' }}
         </button>
-        <span
-          class="codex-status-pill"
-          :class="[snapshot.quota.status, { busy: snapshot.refreshing }]"
-          :aria-busy="snapshot.refreshing ? 'true' : undefined"
-          data-operation-tooltip="连接状态"
-          :data-operation-description="statusLabel"
-        >
-          <LoaderCircle v-if="snapshot.refreshing" :size="12" class="spinning" aria-hidden="true" />
-          {{ statusLabel }}
-        </span>
-        <CodexStyleSwitch :model-value="snapshot.settings.displayStyle" @update:model-value="changeStyle" />
+<CodexStyleSwitch :model-value="snapshot.settings.displayStyle" @update:model-value="changeStyle" />
       </div>
     </header>
 
@@ -583,99 +517,6 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
       role="tabpanel"
       :aria-labelledby="configTabButtonId(activeConfigTab)"
     >
-    <section v-if="activeConfigTab === 'runtime'" class="codex-diagnostic" :class="[environmentPresentation.diagnostic.tone, { busy: environmentPresentation.busy }]">
-      <div
-        class="codex-diagnostic-copy"
-        :role="environmentPresentation.diagnostic.role"
-        :aria-live="environmentPresentation.diagnostic.role === 'alert' ? 'polite' : undefined"
-        :aria-atomic="environmentPresentation.diagnostic.role === 'alert' ? 'true' : undefined"
-        :aria-busy="environmentPresentation.busy ? 'true' : undefined"
-      >
-        <LoaderCircle v-if="environmentPresentation.diagnostic.tone === 'checking'" :size="13" class="spinning" aria-hidden="true" />
-        <CircleCheckBig v-else-if="environmentPresentation.diagnostic.tone === 'ready'" :size="13" aria-hidden="true" />
-        <AlertTriangle v-else :size="13" aria-hidden="true" />
-        <div class="codex-diagnostic-heading">
-          <strong>{{ environmentPresentation.diagnostic.title }}</strong>
-          <button
-            type="button"
-            class="codex-tip"
-            aria-label="运行诊断详情"
-            data-operation-tooltip="运行诊断详情"
-            :data-operation-description="environmentPresentation.diagnostic.detail"
-            :data-tip="environmentPresentation.diagnostic.detail"
-          >i</button>
-          <p v-if="showEnvironmentDetail">{{ environmentPresentation.diagnostic.detail }}</p>
-        </div>
-        <button
-          type="button"
-          class="secondary"
-          :disabled="snapshot.refreshing || snapshot.environment.checking"
-          data-operation-tooltip="重新检测"
-          data-operation-description="立即重新核查当前 Codex 运行环境与连接可用性。"
-          @click="$emit('dispatch', 'codex.inspect-environment')"
-        >
-          <RefreshCw :size="12" :class="{ spinning: snapshot.refreshing || snapshot.environment.checking }" />重新检测
-        </button>
-      </div>
-      <dl v-if="visibleEnvironmentRows.length" class="codex-diagnostic-grid">
-        <div v-for="row in visibleEnvironmentRows" :key="row.label">
-          <dt :class="{ 'has-detail': row.detail }">
-            <span>{{ row.label }}</span>
-            <button
-              v-if="row.detail"
-              type="button"
-              class="codex-tip codex-diagnostic-tip"
-              :aria-label="`${row.label}详情`"
-              :data-operation-tooltip="`${row.label}详情`"
-              :data-operation-description="row.detail"
-              :data-tip="row.detail"
-            >i</button>
-          </dt>
-          <dd>{{ row.value }}</dd>
-        </div>
-      </dl>
-      <form class="codex-launch-config" @submit.prevent="saveLaunchPath">
-        <div class="codex-launch-row">
-          <button
-            type="button"
-            class="codex-tip"
-            aria-label="连接位置说明"
-            data-operation-tooltip="连接位置说明"
-            :data-operation-description="environmentPresentation.launchHelpText"
-            :data-tip="environmentPresentation.launchHelpText"
-          >i</button>
-          <label class="codex-launch-field" for="codex-launch-path">
-            <span class="codex-sr-only">手动指定 Codex CLI 路径（可选）</span>
-            <input
-              id="codex-launch-path"
-              v-model="manualLaunchPath"
-              class="codex-input codex-launch-path-input"
-              type="text"
-              autocomplete="off"
-              spellcheck="false"
-              :aria-invalid="launchPathError ? 'true' : undefined"
-              :aria-describedby="launchPathError ? 'codex-launch-path-error' : undefined"
-              placeholder="手动指定 Codex CLI 路径（可选）"
-            />
-          </label>
-          <button type="button" class="secondary" :disabled="snapshot.refreshing" @click="$emit('dispatch', 'codex.pick-launch-path')">从磁盘选择</button>
-          <button type="submit" class="secondary" :disabled="snapshot.refreshing">使用此位置</button>
-          <button
-            type="button"
-            class="secondary"
-            :disabled="snapshot.refreshing || snapshot.environment.launchMode !== 'manual'"
-            @click="clearLaunchPath"
-          >恢复自动发现</button>
-        </div>
-        <p v-if="launchPathError" id="codex-launch-path-error" class="codex-launch-error" role="alert">{{ launchPathError }}</p>
-        <ul v-if="environmentPresentation.launchCandidates.length" class="codex-launch-candidates" aria-label="已发现的 Codex 启动来源">
-          <li v-for="candidate in environmentPresentation.launchCandidates" :key="`${candidate.source}-${candidate.state}`">
-            {{ candidate.label }} · {{ candidate.state === 'available' ? '可用' : '不可用' }}
-          </li>
-        </ul>
-      </form>
-    </section>
-
     <div class="codex-workbench">
       <article v-if="activeConfigTab === 'shortcuts'" class="codex-panel codex-settings-section codex-shortcuts-panel">
         <div class="codex-panel-title">
@@ -929,401 +770,81 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </div>
       </article>
 
-      <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section">
+      <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section codex-runtime-panel">
         <div class="codex-panel-title">
           <div><CircleGauge :size="13" /><strong>接入来源</strong></div>
-          <button
-            type="button"
-            class="codex-tip"
-            aria-label="接入来源区域说明"
-            data-operation-tooltip="接入来源区域说明"
-            data-operation-description="Codex、Claude Code 与 Cursor Agent 是独立来源，可分别开关。关闭的来源完全不读取。Cursor 只列本机 Agent 卡片，不读额度；点卡片经官方 deeplink 跳到该对话。"
-            data-tip="Codex、Claude Code 与 Cursor Agent 是独立来源，可分别开关。关闭的来源完全不读取。Cursor 只列本机 Agent 卡片，不读额度；点卡片经官方 deeplink 跳到该对话。"
-          >i</button>
+          <button type="button" class="codex-tip" aria-label="接入来源说明" data-operation-tooltip="接入来源" data-operation-description="各来源独立开关。开启 Claude / Cursor 时会自动注册事件钩子，关闭时自动移除。" data-tip="各来源独立开关。开启 Claude / Cursor 时会自动注册事件钩子，关闭时自动移除。">i</button>
         </div>
-        <label class="codex-switch-row">
-          <span>
-            <strong>跳转前确保目标应用已打开</strong>
-            <small>未运行时先启动 Codex / Claude / Cursor，确认进程后再打开任务；最长等待 25 秒</small>
-          </span>
-          <input
-            type="checkbox"
-            :checked="snapshot.settings.openLaunchesTarget"
-            data-operation-tooltip="跳转前确保目标应用已打开"
-            data-operation-description="开启后，点击任务或用快捷键跳转时先探测目标应用是否在运行；未运行则先启动，确认进程（Claude、Cursor 还会等窗口）后再发送打开请求，最长等待 25 秒，超时不跳转、不清未读。关闭后只发送深链，由系统决定是否启动。"
-            @change="update({ openLaunchesTarget: ($event.target as HTMLInputElement).checked })"
-          />
+        <label class="codex-switch-row codex-switch-row--compact">
+          <span><strong>跳转前启动目标应用</strong></span>
+          <input type="checkbox" :checked="snapshot.settings.openLaunchesTarget" @change="update({ openLaunchesTarget: ($event.target as HTMLInputElement).checked })" />
           <i />
         </label>
-        <label v-if="snapshot.settings.providers.codex" class="codex-switch-row codex-select-row">
-          <span>
-            <strong>通过 CodexHost 打开 Codex</strong>
-            <small>{{ codexhostStatusText }}</small>
-          </span>
-          <select
-            class="codex-select"
-            :value="snapshot.settings.codexhostLaunch"
-            data-operation-tooltip="通过 CodexHost 打开 Codex"
-            data-operation-description="CodexHost 只在用 codexhost launch 启动 Codex 时接管它；用 Dock 或深链冷启动的 Codex 不经 CodexHost，之后 codexhost launch 会拒绝接管。「自动检测」在找到 codexhost 命令、Host 正在运行或当前 Codex 已经 CodexHost 启动时，经 codexhost launch 启动并等 Host 就绪再打开任务；「开」总是如此，找不到 codexhost 命令时拦下不启动；「关」用普通方式启动。Codex 已在运行时直接打开任务。"
-            @change="update({ codexhostLaunch: ($event.target as HTMLSelectElement).value as CodexhostLaunchMode })"
-          >
-            <option value="auto">自动检测</option>
-            <option value="on">开</option>
-            <option value="off">关</option>
-          </select>
-        </label>
-        <form v-if="snapshot.settings.providers.codex" class="codex-launch-config" @submit.prevent="saveCodexhostPath">
-          <div class="codex-launch-row">
-            <button
-              type="button"
-              class="codex-tip"
-              aria-label="codexhost 位置说明"
-              data-operation-tooltip="codexhost 位置说明"
-              data-operation-description="手动位置只保存在本机插件存储，页面不会回显完整路径；未设置时按上次会合点观察到的位置、用户目录、Homebrew、Cargo、Volta、Bun、NVM 与系统 PATH 自动查找。"
-              data-tip="手动位置只保存在本机插件存储，页面不会回显完整路径；未设置时按上次会合点观察到的位置、用户目录、Homebrew、Cargo、Volta、Bun、NVM 与系统 PATH 自动查找。"
-            >i</button>
-            <label class="codex-launch-field" for="codex-codexhost-path">
-              <span class="codex-sr-only">手动指定 codexhost 命令位置（可选）</span>
-              <input
-                id="codex-codexhost-path"
-                v-model="manualCodexhostPath"
-                class="codex-input codex-launch-path-input"
-                type="text"
-                autocomplete="off"
-                spellcheck="false"
-                :aria-invalid="codexhostPathError ? 'true' : undefined"
-                :aria-describedby="codexhostPathError ? 'codex-codexhost-path-error' : undefined"
-                placeholder="手动指定 codexhost 命令位置（可选）"
-              />
-            </label>
-            <button type="button" class="secondary" :disabled="snapshot.refreshing" @click="$emit('dispatch', 'codex.pick-codexhost-path')">从磁盘选择</button>
-            <button type="submit" class="secondary" :disabled="snapshot.refreshing">使用此位置</button>
-            <button
-              type="button"
-              class="secondary"
-              :disabled="snapshot.refreshing || !codexhostManualConfigured"
-              @click="clearCodexhostPath"
-            >恢复自动查找</button>
-          </div>
-          <p v-if="codexhostPathError" id="codex-codexhost-path-error" class="codex-launch-error" role="alert">{{ codexhostPathError }}</p>
-        </form>
-        <label class="codex-switch-row">
-          <span>
-            <strong>接入 Claude Code</strong>
-            <small>{{ claudeStatusText }}</small>
-          </span>
-          <input
-            type="checkbox"
-            :checked="snapshot.settings.providers.claude"
-            data-operation-tooltip="接入 Claude Code"
-            data-operation-description="开启后，Claude Code 会话与 Codex 任务在同一水球中按状态汇总；关闭时完全不读取 Claude 数据。Claude 桌面端在本机运行的会话同属这一开关，只读取会话元数据与事件日志，无需注册任何东西；从卡片打开它们只能把桌面端前置，再由你在应用内选中该会话。"
-            @change="toggleClaude(($event.target as HTMLInputElement).checked)"
-          />
+        <label class="codex-switch-row codex-switch-row--compact">
+          <span><strong>Claude Code</strong><small>{{ snapshot.settings.providers.claude ? '已启用' : '未启用' }}</small></span>
+          <input type="checkbox" :checked="snapshot.settings.providers.claude" @change="toggleClaude(($event.target as HTMLInputElement).checked)" />
           <i />
         </label>
-        <label class="codex-switch-row">
-          <span>
-            <strong>接入 Cursor Agent</strong>
-            <small>{{ cursorStatusText }}</small>
-          </span>
-          <input
-            type="checkbox"
-            :checked="snapshot.settings.providers.cursor"
-            data-operation-tooltip="接入 Cursor Agent"
-            data-operation-description="开启后只读本机 Cursor Agent 会话元数据并列入同一任务清单；默认关闭。不做额度。事件钩子需点下方按钮确认后才写入 ~/.cursor/hooks.json。点卡片经 Cursor 官方 deeplink 跳到该对话（Cursor 未运行会先被启动）。"
-            @change="toggleCursor(($event.target as HTMLInputElement).checked)"
-          />
+        <label class="codex-switch-row codex-switch-row--compact">
+          <span><strong>Cursor Agent</strong><small>{{ snapshot.settings.providers.cursor ? '已启用' : '未启用' }}</small></span>
+          <input type="checkbox" :checked="snapshot.settings.providers.cursor" @change="toggleCursor(($event.target as HTMLInputElement).checked)" />
           <i />
         </label>
-        <dl v-if="snapshot.settings.providers.cursor" class="codex-diagnostic-grid codex-claude-grid">
-          <div v-for="row in cursorRegistrationGrid" :key="row.id">
-            <dt class="has-detail">
-              <span>{{ row.label }}</span>
-              <button
-                type="button"
-                class="codex-tip codex-diagnostic-tip"
-                :aria-label="`${row.label}详情`"
-                :data-operation-tooltip="`${row.label}详情`"
-                :data-operation-description="row.detail"
-                :data-tip="row.detail"
-              >i</button>
-            </dt>
-            <dd :class="`is-${row.tone}`">{{ row.value }}</dd>
-          </div>
-        </dl>
-        <div v-if="snapshot.settings.providers.cursor" class="codex-claude-actions">
-          <button
-            type="button"
-            class="codex-secondary-button"
-            data-operation-tooltip="注册 Cursor 事件钩子"
-            data-operation-description="向 ~/.cursor/hooks.json 加法写入 EyPc 的观察脚本引用；保留你已有的钩子，可随时移除。失败开放，不阻断 Cursor。"
-            @click="registerCursor(true)"
-          >{{ cursorRegistered ? '重新注册钩子' : '注册事件钩子' }}</button>
-          <button
-            v-if="cursorRegistered"
-            type="button"
-            class="codex-secondary-button"
-            data-operation-tooltip="移除 Cursor 事件钩子"
-            data-operation-description="从 ~/.cursor/hooks.json 移除 EyPc 写入的条目，保留你原有的钩子。"
-            @click="registerCursor(false)"
-          >移除钩子</button>
+        <label class="codex-switch-row codex-switch-row--compact">
+          <span><strong>Orca</strong><small>{{ snapshot.settings.providers.orca ? '已启用' : '未启用' }}</small></span>
+          <input type="checkbox" :checked="snapshot.settings.providers.orca" @change="toggleOrca(($event.target as HTMLInputElement).checked)" />
+          <i />
+        </label>
+        <label v-if="snapshot.settings.providers.claude" class="codex-switch-row codex-switch-row--compact">
+          <span><strong>Claude App 额度</strong></span>
+          <input type="checkbox" :checked="snapshot.settings.claudeAppQuotaAccess" @change="update({ claudeAppQuotaAccess: ($event.target as HTMLInputElement).checked, claudeQuotaFallback: false })" />
+          <i />
+        </label>
+      </article>
+
+      <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section codex-runtime-panel">
+        <div class="codex-panel-title">
+          <div><CircleGauge :size="13" /><strong>额度</strong></div>
         </div>
-        <label class="codex-switch-row">
-          <span>
-            <strong>接入 Orca</strong>
-            <small>{{ orcaStatusText }}</small>
-          </span>
-          <input
-            type="checkbox"
-            :checked="snapshot.settings.providers.orca"
-            data-operation-tooltip="接入 Orca"
-            data-operation-description="开启后只读本机 Orca Agents 的任务状态（进行中/已完成/未读），列入同一任务清单；默认关闭。不做额度，不读对话正文。点卡片经 Orca CLI 切到该终端；归档会关闭该终端窗格。进行中的任务不能归档。"
-            @change="toggleOrca(($event.target as HTMLInputElement).checked)"
-          />
-          <i />
-        </label>
-        <label v-if="snapshot.settings.providers.claude" class="codex-switch-row">
-          <span>
-            <strong>允许读取 Claude App 额度</strong>
-          </span>
-          <input
-            type="checkbox"
-            :checked="snapshot.settings.claudeAppQuotaAccess"
-            data-operation-tooltip="允许读取 Claude App 额度"
-            data-operation-description="默认关闭。开启后只读 Claude App 当前账号的加密登录缓存，用于读取 5 小时、总周额度和模型周额度；令牌只在请求期间存在，不写入 EyPc，也不进入诊断。多个账号无法唯一确认时会停止读取。"
-            @change="update({ claudeAppQuotaAccess: ($event.target as HTMLInputElement).checked, claudeQuotaFallback: false })"
-          />
-          <i />
-        </label>
-        <dl v-if="snapshot.settings.providers.claude" class="codex-diagnostic-grid codex-claude-grid">
-          <div v-for="row in claudeRegistrationGrid" :key="row.id">
-            <dt class="has-detail">
-              <span>{{ row.label }}</span>
-              <button
-                type="button"
-                class="codex-tip codex-diagnostic-tip"
-                :aria-label="`${row.label}详情`"
-                :data-operation-tooltip="`${row.label}详情`"
-                :data-operation-description="row.detail"
-                :data-tip="row.detail"
-              >i</button>
-            </dt>
-            <dd :class="`is-${row.tone}`">{{ row.value }}</dd>
-          </div>
-        </dl>
-        <div v-if="snapshot.settings.providers.claude" class="codex-claude-actions">
-          <button
-            type="button"
-            class="codex-secondary-button"
-            data-operation-tooltip="注册 Claude 事件钩子"
-            data-operation-description="向 ~/.claude/settings.json 写入 EyPc 的事件钩子与状态栏包装；保留你已有的钩子与状态栏，可随时移除。"
-            @click="registerClaude(true)"
-          >{{ claudeRegistered ? '重新注册钩子' : '注册事件钩子' }}</button>
-          <button
-            v-if="claudeRegistered"
-            type="button"
-            class="codex-secondary-button"
-            data-operation-tooltip="移除 Claude 事件钩子"
-            data-operation-description="从 ~/.claude/settings.json 移除 EyPc 写入的条目并还原你原有的状态栏。"
-            @click="registerClaude(false)"
-          >移除钩子</button>
+        <div class="codex-quota-compact">
+          <label class="codex-quota-refresh">
+            <span>刷新</span>
+            <input class="codex-number codex-number--compact" type="number" :min="CODEX_MIN_QUOTA_REFRESH_SECONDS" :max="CODEX_MAX_QUOTA_REFRESH_SECONDS" step="1" :value="snapshot.settings.quotaRefreshSeconds" @change="update({ quotaRefreshSeconds: Number(($event.target as HTMLInputElement).value) })" />
+            <span>秒</span>
+          </label>
+          <label class="codex-switch-row codex-switch-row--compact codex-switch-row--inline">
+            <span><strong>Magpie</strong></span>
+            <input type="checkbox" :checked="snapshot.settings.magpieQuotaAccess" @change="update({ magpieQuotaAccess: ($event.target as HTMLInputElement).checked })" />
+            <i />
+          </label>
         </div>
       </article>
 
-      <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section">
+      <article v-if="activeConfigTab === 'runtime' && snapshot.runtimeDiagnostics" class="codex-panel codex-settings-section codex-runtime-panel codex-runtime-log-panel">
         <div class="codex-panel-title">
-          <div><CircleGauge :size="13" /><strong>额度与 Codex 配置</strong></div>
-          <button
-            type="button"
-            class="codex-tip"
-            aria-label="额度与配置区域说明"
-            data-operation-tooltip="额度与配置区域说明"
-            data-operation-description="包含模型策略、额度自动更新与窗口几何设置。"
-            data-tip="包含模型策略、额度自动更新与窗口几何设置。"
-          >i</button>
+          <div><Activity :size="13" /><strong>诊断日志</strong></div>
+          <span :class="`codex-log-badge is-${snapshot.runtimeDiagnostics.status}`">{{ snapshot.runtimeDiagnostics.settings.enabled ? snapshot.runtimeDiagnostics.settings.level : '关' }}</span>
         </div>
-        <div class="codex-config-facts">
-          <div><span>套餐</span><strong>{{ snapshot.quota.plan || '未提供' }}</strong></div>
-          <div><span>模型</span><strong>{{ snapshot.config.model || '未提供' }}</strong></div>
-          <div><span>Reasoning</span><strong>{{ snapshot.config.reasoningEffort || '未提供' }}</strong></div>
-          <div><span>Service tier</span><strong>{{ snapshot.config.serviceTier || '未提供' }}</strong></div>
-        </div>
-        <div class="codex-form-grid refresh-grid">
-          <label>
-            <span>额度刷新（秒）</span>
-            <input
-              class="codex-number"
-              type="number"
-              :min="CODEX_MIN_QUOTA_REFRESH_SECONDS"
-              :max="CODEX_MAX_QUOTA_REFRESH_SECONDS"
-              step="1"
-              :value="snapshot.settings.quotaRefreshSeconds"
-              @change="update({ quotaRefreshSeconds: Number(($event.target as HTMLInputElement).value) })"
-              data-operation-tooltip="额度刷新（秒）"
-              data-operation-description="按整数秒设置自动额度刷新周期；默认 300 秒，最大 86400 秒。"
-            />
+        <div class="codex-runtime-log-controls codex-runtime-log-controls--compact" role="group" aria-label="诊断日志">
+          <label class="codex-runtime-log-toggle">
+            <input type="checkbox" aria-label="启用诊断日志" :checked="snapshot.runtimeDiagnostics.settings.enabled" @change="configureRuntimeDiagnostics({ enabled: ($event.target as HTMLInputElement).checked })" />
+            <span><strong>{{ snapshot.runtimeDiagnostics.settings.enabled ? '已开启' : '已关闭' }}</strong></span>
           </label>
-          <label class="codex-switch-row codex-switch-row--grid">
-            <span>
-              <strong>允许读取 Magpie 额度</strong>
-            </span>
-            <input
-              type="checkbox"
-              :checked="snapshot.settings.magpieQuotaAccess"
-              data-operation-tooltip="允许读取 Magpie 额度"
-              data-operation-description="默认关闭。开启后通过本机 Magpie（Macpa）网关读取 Codex / Grok / Cursor 等供应商额度，用于悬浮水球四格与展开卡片中的重置倒计时；不勾选则不查询、不展示。"
-              @change="update({ magpieQuotaAccess: ($event.target as HTMLInputElement).checked })"
-            />
-            <i />
-          </label>
-          <button
-            type="button"
-            class="secondary"
-            :title="'重置浮窗到首次配置记录的尺寸与位置。'"
-            data-operation-tooltip="重置浮窗位置"
-            data-operation-description="恢复浮窗尺寸与窗口位置到首次配置记录，不影响当前布局策略。"
-            @click="$emit('dispatch', 'codex.float.position.reset')"
-          >
-            <RotateCcw :size="12" />重置浮窗位置
-          </button>
-        </div>
-        <div class="codex-model-policy-card" role="note">
-          <div class="codex-model-policy-copy">
-            <strong>模型策略：普通优先，自动兜底 Spark</strong>
-            <span class="codex-model-policy-summary">当前生效：{{ preferredModelMode }} · {{ preferredModelName }}</span>
-          </div>
-          <label class="codex-model-policy-select">
-            <span>新会话普通模型</span>
-            <select
-              class="codex-select"
-              :value="snapshot.settings.newThreadPreferredModel"
-              :disabled="!ordinaryModels.length"
-              @change="update({ newThreadPreferredModel: ($event.target as HTMLSelectElement).value })"
-              title="空则使用目录默认模型"
-              data-operation-tooltip="新会话普通模型"
-              data-operation-description="未选择则使用目录默认普通模型；普通模型不可用时自动回退可用优先项。"
-            >
-              <option value="">目录默认非 Spark 模型</option>
-              <option v-for="model in ordinaryModels" :key="model.id" :value="model.id">{{ model.displayName }} · {{ model.id }}</option>
+          <label class="codex-runtime-log-level" for="codex-runtime-diagnostics-level">
+            <span>级别</span>
+            <select id="codex-runtime-diagnostics-level" :value="snapshot.runtimeDiagnostics.settings.level" @change="configureRuntimeDiagnostics({ level: ($event.target as HTMLSelectElement).value as RuntimeDiagnosticsLevel })">
+              <option value="error">error</option>
+              <option value="info">info</option>
+              <option value="debug">debug</option>
             </select>
           </label>
-        </div>
-        <div class="codex-size-summary">
-          <span>
-            <strong>{{ snapshot.floatHost.expandedManual ? `展开面板：${snapshot.floatHost.expandedWidth} × ${snapshot.floatHost.expandedHeight}` : '展开面板：内容自适应' }}</strong>
-            <button type="button" class="codex-tip" aria-label="展开面板尺寸说明" data-operation-tooltip="展开面板尺寸说明" :data-operation-description="snapshot.floatHost.expandedManual ? `按显示器保存${snapshot.floatHost.displayId ? ` · ${snapshot.floatHost.displayId}` : ''}` : '默认宽 360px，高度随内容在 280–460px 间变化'" :data-tip="snapshot.floatHost.expandedManual ? `按显示器保存${snapshot.floatHost.displayId ? ` · ${snapshot.floatHost.displayId}` : ''}` : '默认宽 360px，高度随内容在 280–460px 间变化'">i</button>
-          </span>
-          <button
-            type="button"
-            class="secondary"
-            :disabled="!snapshot.floatHost.expandedManual"
-            data-operation-tooltip="恢复自适应尺寸"
-            data-operation-description="恢复浮窗为内容驱动尺寸，清空手动修改后的宽高。"
-            @click="$emit('dispatch', 'codex.float.size.reset', { displayId: snapshot.floatHost.displayId })"
-          >
-            <RotateCcw :size="12" />恢复自适应尺寸
-          </button>
-        </div>
-        <div class="codex-size-summary codex-runtime-build" role="status" aria-label="当前宿主产物构建时间">
-          <span>
-            <strong>当前宿主产物：<time :datetime="runtimeBuildPresentation.builtAt || undefined">{{ runtimeBuildPresentation.builtAtLocal }}</time> · {{ runtimeBuildPresentation.summary }}</strong>
-            <button type="button" class="codex-tip" aria-label="构建时间凭据说明" data-operation-tooltip="构建时间凭据说明" :data-operation-description="runtimeBuildPresentation.detail" :data-tip="runtimeBuildPresentation.detail">i</button>
-          </span>
-        </div>
-        <div class="codex-size-summary codex-workspace-diagnostic">
-          <span>
-            <strong>{{ snapshot.floatHost.workspaceVisibility?.allWorkspaces && snapshot.floatHost.workspaceVisibility?.visibleOnFullScreen ? '跨桌面置顶：已启用' : snapshot.floatHost.workspaceVisibility?.supported ? '跨桌面置顶：核验失败' : '跨桌面置顶：当前平台不支持' }}</strong>
-            <button type="button" class="codex-tip" aria-label="跨桌面置顶说明" data-operation-tooltip="跨桌面置顶说明" :data-operation-description="snapshot.floatHost.workspaceVisibility?.allWorkspaces && snapshot.floatHost.workspaceVisibility?.visibleOnFullScreen ? '当前显示器的所有 Space 与全屏 Space 可见' : snapshot.floatHost.workspaceVisibility?.errorCode || '等待悬浮窗宿主核验'" :data-tip="snapshot.floatHost.workspaceVisibility?.allWorkspaces && snapshot.floatHost.workspaceVisibility?.visibleOnFullScreen ? '当前显示器的所有 Space 与全屏 Space 可见' : snapshot.floatHost.workspaceVisibility?.errorCode || '等待悬浮窗宿主核验'">i</button>
-          </span>
-        </div>
-        <div v-if="snapshot.floatHost.workspaceVisibility?.health" class="codex-size-summary codex-float-health">
-          <span>
-            <strong>{{ snapshot.floatHost.workspaceVisibility.health.recoveryDeadline > Date.now() ? '悬浮球健康：正在恢复' : snapshot.floatHost.workspaceVisibility.health.alive ? '悬浮球健康：心跳通道已建立' : snapshot.floatHost.workspaceVisibility.health.persistent ? '悬浮球健康：等待自动恢复' : '悬浮球健康：当前未启用' }}</strong>
-            <button type="button" class="codex-tip" aria-label="悬浮球健康说明" data-operation-tooltip="悬浮球健康说明" :data-operation-description="`最近心跳 ${formatDiagnosticTime(snapshot.floatHost.workspaceVisibility.health.lastHeartbeatAt)} · 最近重建 ${formatDiagnosticTime(snapshot.floatHost.workspaceVisibility.health.lastRecreateAt)} · 当前交互 ${snapshot.floatHost.workspaceVisibility.health.interaction}`" :data-tip="`最近心跳 ${formatDiagnosticTime(snapshot.floatHost.workspaceVisibility.health.lastHeartbeatAt)} · 最近重建 ${formatDiagnosticTime(snapshot.floatHost.workspaceVisibility.health.lastRecreateAt)} · 当前交互 ${snapshot.floatHost.workspaceVisibility.health.interaction}`">i</button>
-          </span>
-        </div>
-        <section v-if="snapshot.runtimeDiagnostics" class="codex-runtime-log" aria-labelledby="codex-runtime-log-title">
-          <header>
-            <div>
-              <strong id="codex-runtime-log-title">全局安装诊断日志</strong>
-              <button
-                type="button"
-                class="codex-tip"
-                aria-label="安装诊断日志说明"
-                data-operation-tooltip="安装诊断日志说明"
-                data-operation-description="精确记录运行 ID、Provider 状态、水位、缓存、路径、动作结果与耗时；可在这里直接启停和切换等级，设置页保留同一入口。"
-                data-tip="精确记录运行 ID、Provider 状态、水位、缓存、路径、动作结果与耗时；可在这里直接启停和切换等级，设置页保留同一入口。"
-              >i</button>
-            </div>
-            <span :class="`is-${snapshot.runtimeDiagnostics.status}`">{{ snapshot.runtimeDiagnostics.status === 'ok' ? '正常写入' : snapshot.runtimeDiagnostics.status === 'degraded' ? '写入降级' : snapshot.runtimeDiagnostics.status === 'disabled' ? '已关闭' : '不可用' }}</span>
-          </header>
-          <div class="codex-runtime-log-controls" role="group" aria-label="安装诊断日志控制">
-            <label class="codex-runtime-log-toggle">
-              <input
-                type="checkbox"
-                aria-label="启用安装诊断日志"
-                :checked="snapshot.runtimeDiagnostics.settings.enabled"
-                @change="configureRuntimeDiagnostics({ enabled: ($event.target as HTMLInputElement).checked })"
-              />
-              <span>
-                <strong>{{ snapshot.runtimeDiagnostics.settings.enabled ? '日志已开启' : '日志已关闭' }}</strong>
-              </span>
-            </label>
-            <label class="codex-runtime-log-level" for="codex-runtime-diagnostics-level">
-              <span>记录级别</span>
-              <select
-                id="codex-runtime-diagnostics-level"
-                aria-label="安装诊断日志记录级别"
-                :value="snapshot.runtimeDiagnostics.settings.level"
-                @change="configureRuntimeDiagnostics({ level: ($event.target as HTMLSelectElement).value as RuntimeDiagnosticsLevel })"
-              >
-                <option value="error">error · 失败</option>
-                <option value="info">info · 关键流程</option>
-                <option value="debug">debug · 完整诊断</option>
-              </select>
-            </label>
+          <div class="codex-runtime-log-actions codex-runtime-log-actions--compact">
+            <button type="button" :disabled="!snapshot.runtimeDiagnostics.activeFile" @click="emit('dispatch', 'runtime.logs.openFile')">打开文件</button>
+            <button type="button" @click="emit('dispatch', 'runtime.logs.openDirectory')">目录</button>
+            <button type="button" class="danger" :disabled="snapshot.runtimeDiagnostics.storage.fileCount === 0" @click="emit('dispatch', 'runtime.logs.clear')">清空</button>
           </div>
-          <dl class="codex-runtime-log-facts">
-            <div><dt>事件</dt><dd>{{ snapshot.runtimeDiagnostics.totals.events }}</dd></div>
-            <div><dt>慢操作 ≥250ms</dt><dd>{{ snapshot.runtimeDiagnostics.totals.slow }}</dd></div>
-            <div><dt>debug / info / error</dt><dd>{{ snapshot.runtimeDiagnostics.totals.debug }} / {{ snapshot.runtimeDiagnostics.totals.info }} / {{ snapshot.runtimeDiagnostics.totals.error }}</dd></div>
-            <div><dt>落盘</dt><dd>{{ snapshot.runtimeDiagnostics.storage.fileCount }} 文件 · {{ formatDiagnosticBytes(snapshot.runtimeDiagnostics.storage.totalBytes) }}</dd></div>
-          </dl>
-          <div class="codex-runtime-log-actions" role="group" aria-label="安装诊断日志文件操作">
-            <button
-              type="button"
-              aria-label="打开当前安装诊断日志文件"
-              data-operation-tooltip="打开当前日志文件"
-              :data-disabled-reason="snapshot.runtimeDiagnostics.activeFile ? undefined : '尚未生成日志文件'"
-              :disabled="!snapshot.runtimeDiagnostics.activeFile"
-              @click="emit('dispatch', 'runtime.logs.openFile')"
-            >打开当前文件</button>
-            <button
-              type="button"
-              aria-label="打开安装诊断日志目录"
-              data-operation-tooltip="在文件管理器中打开日志目录"
-              @click="emit('dispatch', 'runtime.logs.openDirectory')"
-            >打开日志目录</button>
-            <button
-              type="button"
-              class="danger"
-              aria-label="清空安装诊断日志文件"
-              data-operation-tooltip="清空安装诊断日志"
-              :data-disabled-reason="snapshot.runtimeDiagnostics.storage.fileCount ? undefined : '当前没有可清理的日志文件'"
-              :disabled="snapshot.runtimeDiagnostics.storage.fileCount === 0"
-              @click="emit('dispatch', 'runtime.logs.clear')"
-            >清空日志</button>
-          </div>
-          <ul v-if="runtimeDiagnosticHighlights.length" class="codex-runtime-log-events" aria-label="最近慢操作与异常">
-            <li v-for="entry in runtimeDiagnosticHighlights" :key="`${entry.sessionId}:${entry.seq}`" :class="`is-${entry.level}`">
-              <time :datetime="new Date(entry.at).toISOString()">{{ formatDiagnosticTime(entry.at) }}</time>
-              <strong>{{ entry.scope }} · {{ entry.event }}</strong>
-              <span>{{ entry.outcome }}<template v-if="entry.code"> · {{ entry.code }}</template><template v-if="entry.durationMs"> · {{ entry.durationMs }}ms</template><template v-if="entry.cache"> · cache:{{ entry.cache }}</template></span>
-            </li>
-          </ul>
-          <p v-else class="codex-runtime-log-empty">暂无慢操作或异常事件。</p>
-          <footer>级别 {{ snapshot.runtimeDiagnostics.settings.level }}；单文件上限 {{ formatDiagnosticBytes(snapshot.runtimeDiagnostics.storage.maxFileBytes) }}，总量上限 {{ formatDiagnosticBytes(snapshot.runtimeDiagnostics.storage.maxTotalBytes) }}，保留 {{ snapshot.runtimeDiagnostics.storage.retentionDays }} 天；最近事件 {{ formatDiagnosticTime(snapshot.runtimeDiagnostics.updatedAt) }}。不写入提示词、对话正文、命令参数、stdout/stderr、凭据或隐藏推理。</footer>
-        </section>
+        </div>
+        <p class="codex-runtime-log-meta">事件 {{ snapshot.runtimeDiagnostics.totals.events }} · 慢 {{ snapshot.runtimeDiagnostics.totals.slow }} · 落盘 {{ snapshot.runtimeDiagnostics.storage.fileCount }} 文件</p>
       </article>
     </div>
     </section>
