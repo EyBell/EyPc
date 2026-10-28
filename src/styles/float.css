@@ -785,49 +785,15 @@ button.float-search-glyph { cursor: pointer; }
 .float-quota-chip.is-danger:not(.is-stale) strong { color: var(--codex-critical); }
 .float-quota-group.provider-claude .float-quota-chip:focus-visible { border-radius: 4px; outline: 2px solid var(--codex-focus); outline-offset: 2px; }
 
-.float-magpie-reset-bar {
-  flex: none;
-  padding: 0 12px 4px;
+.float-magpie-reset-inline {
+  display: flex; min-width: 0; flex: 0 1 auto; align-items: center; gap: 6px;
+  margin-left: auto; padding: 2px 0; border: 0; background: transparent;
+  color: var(--codex-muted); font-size: 10px; line-height: 1.35;
+  white-space: nowrap; overflow: hidden; cursor: help;
 }
-.float-magpie-reset-toggle {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 0;
-  border: 0;
-  background: transparent;
-  color: var(--codex-muted);
-  font-size: 10px;
-  line-height: 1.35;
-  text-align: left;
-  cursor: pointer;
-}
-.float-magpie-reset-toggle:hover { color: var(--codex-fg); }
-.float-magpie-reset-chevron {
-  flex: none;
-  opacity: .7;
-  transition: transform 160ms ease;
-}
-.float-magpie-reset-chevron.open { transform: rotate(90deg); }
-.float-magpie-reset-label {
-  flex: none;
-  font-weight: 700;
-  letter-spacing: .02em;
-}
-.float-magpie-reset-summary {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.float-magpie-reset-line {
-  margin: 2px 0 0 18px;
-  color: var(--codex-muted);
-  font-size: 10px;
-  line-height: 1.4;
-}
+.float-magpie-reset-item { flex: none; white-space: nowrap; }
+.float-magpie-reset-item b { color: var(--codex-fg); }
+.float-magpie-reset-inline:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 2px; }
 /* Row-level provider marker.
    It rides the existing bottom metadata line rather than adding an element of
    its own: the dense list's row height and learned spatial rhythm must not

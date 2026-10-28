@@ -5,6 +5,7 @@ import {
   formatMagpieQuotaResetInline,
   formatMagpieTokenBalance,
   magpieResetCountdownText,
+  magpieResetCompactText,
   resolveCompactQuotaGridPresentation
 } from '../../src/domain/magpieQuota'
 
@@ -62,6 +63,15 @@ describe('magpie quota grid', () => {
     expect(cards[1].resetAt).toBeGreaterThan(0)
     const now = Date.parse('2026-10-27T00:00:00Z')
     expect(magpieResetCountdownText(cards[1].resetAt, now)).toMatch(/重置/)
+  })
+
+  it('formats compact countdowns without inventing missing reset times', () => {
+    const now = Date.parse('2026-10-27T00:00:00Z')
+    expect(magpieResetCompactText(now + 120_000, now)).toBe('2分')
+    expect(magpieResetCompactText(now + 3_600_000, now)).toBe('1时')
+    expect(magpieResetCompactText(now + 5 * 86_400_000, now)).toBe('5天')
+    expect(magpieResetCompactText(null, now)).toBe('—')
+    expect(magpieResetCompactText(now - 1, now)).toBe('已重置')
   })
 
   it('merges cursor into one reset line', () => {

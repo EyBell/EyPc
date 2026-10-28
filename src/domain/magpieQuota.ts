@@ -338,6 +338,17 @@ export function buildMagpieQuotaExpandCards(
   return cards
 }
 
+/** Compact reading for the single quota row; full details remain in the hint. */
+export function magpieResetCompactText(resetAt: number | null | undefined, now: number): string {
+  if (typeof resetAt !== 'number' || !Number.isFinite(resetAt) || resetAt <= 0) return '—'
+  if (now >= resetAt) return '已重置'
+  const minutes = Math.max(1, Math.ceil((resetAt - now) / 60_000))
+  if (minutes < 60) return `${minutes}分`
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}时`
+  return `${Math.floor(minutes / 1440)}天`
+}
+
+
 export interface MagpieQuotaResetLine {
   key: string
   /** Short label for the single-line bar, e.g. Codex / Grok / Cursor. */

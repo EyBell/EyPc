@@ -1870,6 +1870,35 @@ describe('Codex Companion V4 UI contract', () => {
     expect(css).toContain('@container (max-width: 350px)')
   })
 
+  it('shows Magpie reset countdowns beside quota without a collapsed row', async () => {
+    vi.useFakeTimers({ now: NOW })
+    const source = {
+      ...floatSnapshot('ongoing', quota(true, true)),
+      companion: {
+        providers: { codex: true, claude: false, cursor: true },
+        claudeQuota: normalizeClaudeQuota(null),
+        claudeEnvironment: emptyClaudeEnvironment(),
+        magpieQuota: { status: 'ok' as const, updatedAt: NOW, providers: [
+          { provider: 'codex', windows: [{ name: '7 days', remaining: 0, resetsAt: new Date(NOW + 5 * 86_400_000).toISOString() }] },
+          { provider: 'grok', windows: [{ name: '7 days', remaining: 85, resetsAt: new Date(NOW + 3_600_000).toISOString() }] },
+          { provider: 'cursor', windows: [{ name: 'Cursor Models', remaining: 80, resetsAt: new Date(NOW + 10 * 60_000).toISOString() }] }
+        ] }
+      }
+    }
+    const { wrapper } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+    const row = wrapper.get('.float-quota-text')
+    const reset = row.get('.float-magpie-reset-inline')
+    expect(reset.findAll('.float-magpie-reset-item').map(item => item.text())).toEqual(['C 5天', 'G 1时', 'U 10分'])
+    expect(reset.attributes('aria-label')).toContain('Codex')
+    expect(wrapper.find('.float-magpie-reset-bar').exists()).toBe(false)
+    expect(reset.attributes('tabindex')).toBeUndefined()
+    await reset.trigger('pointerenter')
+    vi.advanceTimersByTime(200)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.float-action-hint').text()).toContain('Cursor')
+  })
+
   it('keeps the quota area on one line and moves titles into hover help', async () => {
     // Pinned to the fixture clock so the reset wording is a real assertion.
     vi.useFakeTimers({ now: NOW })

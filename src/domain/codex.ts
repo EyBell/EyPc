@@ -691,6 +691,9 @@ export interface CodexSavedThemePreset {
   colors: CodexColorSettings
   waterAppearance: CodexWaterAppearanceSettings
   expandedCardAppearance: CodexExpandedCardAppearanceSettings
+  /** Older presets omit counter colors and keep the current counter settings. */
+  counterColors?: CodexCounterColors
+  alternate?: boolean
   createdAt: number
   updatedAt: number
 }
@@ -1237,7 +1240,7 @@ function normalizeSavedThemePresets(value: unknown, fallbackColors: CodexColorSe
     const updatedAt = numberValue(source.updatedAt, createdAt || Date.now())
     const existing = presets.get(id)
     if (!existing || updatedAt >= existing.updatedAt) {
-      presets.set(id, { id, name, colors, waterAppearance, expandedCardAppearance, createdAt: createdAt || updatedAt, updatedAt })
+      presets.set(id, { id, name, colors, waterAppearance, expandedCardAppearance, ...(source.counterColors && typeof source.counterColors === 'object' ? { counterColors: normalizeCounterColors(source.counterColors, defaultCodexCounterColors()) } : {}), ...(source.alternate === true ? { alternate: true } : {}), createdAt: createdAt || updatedAt, updatedAt })
     }
   }
   return [...presets.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SAVED_THEME_PRESETS)

@@ -935,3 +935,14 @@
     box-shadow: none;
   }
 }
+/* Compact unified appearance editor; legacy controls remain available below. */
+.codex-theme-toolbar { grid-template-columns: minmax(150px, 1fr) minmax(120px, .75fr) auto auto; }
+.codex-theme-toolbar .secondary { min-width: 60px; }
+.codex-theme-actions { position: relative; align-self: end; }
+.codex-theme-actions summary { display: grid; min-width: 36px; height: 34px; place-items: center; list-style: none; border: 1px solid var(--eypc-color-border); border-radius: 8px; cursor: pointer; }
+.codex-theme-actions summary::-webkit-details-marker { display: none; }
+.codex-theme-actions > div { position: absolute; z-index: 30; top: calc(100% + 4px); right: 0; display: grid; min-width: 112px; padding: 4px; border: 1px solid var(--eypc-color-border); border-radius: 8px; background: var(--eypc-color-surface); box-shadow: 0 8px 22px #1233; }
+.codex-theme-actions button { padding: 7px 9px; border: 0; background: transparent; color: var(--eypc-color-text); text-align: left; cursor: pointer; }
+.codex-theme-actions button:hover { background: var(--eypc-color-surface-raised); }
+.codex-appearance-advanced > summary { padding: 8px 4px; color: var(--eypc-color-text-muted); font-size: 11px; cursor: pointer; }
+@media (max-width: 620px) { .codex-theme-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .codex-theme-toolbar .secondary { width: auto; } }

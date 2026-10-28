@@ -19,6 +19,7 @@ import {
   SlidersHorizontal
 } from '@lucide/vue'
 import CodexStyleSwitch from '../components/CodexStyleSwitch.vue'
+import CodexAppearanceStudio from '../components/CodexAppearanceStudio.vue'
 import CodexWaterBall from '../components/CodexWaterBall.vue'
 import {
   CODEX_THEME_PRESETS,
@@ -55,17 +56,22 @@ const THEME_PRESET_BUILTIN_PREFIX = 'builtin:'
 const THEME_PRESET_SAVED_PREFIX = 'saved:'
 const THEME_PRESET_CUSTOM = 'custom'
 const MAX_SAVED_THEME_PRESETS = 20
+const THEME_PRESET_CURRENT = 'preference'
+const visibleThemePresets = CODEX_THEME_PRESETS.filter(preset => ['graphite', 'amber-mist', 'jade-pulse', 'ice-prism'].includes(preset.id))
+const currentPreference = { colors: { ...props.snapshot.settings.colors }, waterAppearance: cloneWaterAppearance(props.snapshot.settings.waterAppearance), expandedCardAppearance: cloneExpandedCardAppearance(props.snapshot.settings.expandedCardAppearance), counterColors: { ...props.snapshot.settings.counterColors } }
+const editingThemeId = ref<string | null>(null)
+const themeChoiceLocked = ref(false)
 
 type CodexConfigTabId = 'shortcuts' | 'tasks' | 'water' | 'card' | 'runtime'
 
 const configTabs: Array<{ id: CodexConfigTabId; label: string }> = [
   { id: 'shortcuts', label: '快捷方式' },
   { id: 'tasks', label: '任务' },
-  { id: 'water', label: '水球' },
-  { id: 'card', label: '卡片' },
+  { id: 'water', label: '外观' },
   { id: 'runtime', label: '运行' }
 ]
 const activeConfigTab = ref<CodexConfigTabId>('shortcuts')
+const appearanceMode = ref<'water' | 'card'>('water')
 
 interface CodexHotkeyRow {
   title: string
@@ -198,9 +204,11 @@ function matchesThemePreset(
   theme: Pick<CodexSavedThemePreset, 'colors' | 'waterAppearance' | 'expandedCardAppearance'>,
   colors: CodexColorSettings,
   waterAppearance: CodexWaterAppearanceSettings,
-  expandedCardAppearance: CodexExpandedCardAppearanceSettings
+  expandedCardAppearance: CodexExpandedCardAppearanceSettings,
+  counterColors: CodexSettings['counterColors']
 ) {
-  return JSON.stringify(theme.colors) === JSON.stringify(colors)
+  return (!('counterColors' in theme) || !theme.counterColors || JSON.stringify(theme.counterColors) === JSON.stringify(counterColors))
+    && JSON.stringify(theme.colors) === JSON.stringify(colors)
     && JSON.stringify(theme.waterAppearance) === JSON.stringify(waterAppearance)
     && JSON.stringify(theme.expandedCardAppearance) === JSON.stringify(expandedCardAppearance)
 }
@@ -209,7 +217,7 @@ const activeThemeOption = computed(() => {
   const colors = props.snapshot.settings.colors
   const waterAppearance = props.snapshot.settings.waterAppearance
   const expandedCardAppearance = props.snapshot.settings.expandedCardAppearance
-  const savedId = props.snapshot.settings.savedThemePresets.find((item) => matchesThemePreset(item, colors, waterAppearance, expandedCardAppearance))?.id
+  const savedId = props.snapshot.settings.savedThemePresets.find((item) => matchesThemePreset(item, colors, waterAppearance, expandedCardAppearance, props.snapshot.settings.counterColors))?.id
   if (savedId) return `${THEME_PRESET_SAVED_PREFIX}${savedId}`
   const builtinId = matchCodexThemePreset(colors, waterAppearance, expandedCardAppearance)
   return builtinId ? `${THEME_PRESET_BUILTIN_PREFIX}${builtinId}` : THEME_PRESET_CUSTOM
@@ -217,13 +225,19 @@ const activeThemeOption = computed(() => {
 watch(() => props.snapshot.settings.waterAppearance, (value) => {
   waterDraft.value = cloneWaterAppearance(value)
 }, { deep: true })
-watch([() => props.snapshot.settings.colors, () => props.snapshot.settings.waterAppearance, () => props.snapshot.settings.expandedCardAppearance, () => props.snapshot.settings.savedThemePresets], () => {
+watch([() => props.snapshot.settings.colors, () => props.snapshot.settings.counterColors, () => props.snapshot.settings.waterAppearance, () => props.snapshot.settings.expandedCardAppearance, () => props.snapshot.settings.savedThemePresets], () => {
+  const previousOption = savedThemeOption.value
   savedThemeOption.value = activeThemeOption.value
   const activeSavedId = activeThemeOption.value.startsWith(THEME_PRESET_SAVED_PREFIX)
     ? activeThemeOption.value.slice(THEME_PRESET_SAVED_PREFIX.length)
     : null
-  const match = activeSavedId ? props.snapshot.settings.savedThemePresets.find((entry) => entry.id === activeSavedId) : null
-  savedThemeName.value = match?.name || ''
+  if (!themeChoiceLocked.value) editingThemeId.value = activeSavedId
+  const match = editingThemeId.value ? props.snapshot.settings.savedThemePresets.find((entry) => entry.id === editingThemeId.value) : null
+  if (match) savedThemeOption.value = `${THEME_PRESET_SAVED_PREFIX}${match.id}`
+  else if (themeChoiceLocked.value) savedThemeOption.value = previousOption
+  else if (!activeThemeOption.value.startsWith(THEME_PRESET_BUILTIN_PREFIX) || visibleThemePresets.some(preset => `${THEME_PRESET_BUILTIN_PREFIX}${preset.id}` === activeThemeOption.value)) savedThemeOption.value = activeThemeOption.value
+  else savedThemeOption.value = THEME_PRESET_CUSTOM
+  if (!savedThemeName.value || match) savedThemeName.value = match?.name || ''
 }, { deep: true, immediate: true })
 const statusLabel = computed(() => codexConnectionStatusLabel({
   refreshing: props.snapshot.refreshing,
@@ -328,12 +342,13 @@ function toggleField<T extends string>(fields: T[], field: T, checked: boolean, 
   update({ [key]: next } as Partial<CodexSettings>)
 }
 
-function applyThemePreset(preset: { colors: CodexColorSettings, waterAppearance: CodexWaterAppearanceSettings, expandedCardAppearance: CodexExpandedCardAppearanceSettings }, source: string) {
+function applyThemePreset(preset: { colors: CodexColorSettings, waterAppearance: CodexWaterAppearanceSettings, expandedCardAppearance: CodexExpandedCardAppearanceSettings, counterColors?: CodexSettings['counterColors'] }, source: string) {
   waterDraft.value = cloneWaterAppearance(preset.waterAppearance)
   update({
     colors: { ...preset.colors },
     waterAppearance: cloneWaterAppearance(preset.waterAppearance),
-    expandedCardAppearance: cloneExpandedCardAppearance(preset.expandedCardAppearance)
+    expandedCardAppearance: cloneExpandedCardAppearance(preset.expandedCardAppearance),
+    ...(preset.counterColors ? { counterColors: { ...preset.counterColors } } : {})
   })
   savedThemeOption.value = source
 }
@@ -343,6 +358,9 @@ function applyThemePresetBySelect(event: Event) {
   themePresetError.value = ''
   if (!value || value === THEME_PRESET_CUSTOM) return
   savedThemeOption.value = value
+  themeChoiceLocked.value = true
+  editingThemeId.value = value.startsWith(THEME_PRESET_SAVED_PREFIX) ? value.slice(THEME_PRESET_SAVED_PREFIX.length) : null
+  if (value === THEME_PRESET_CURRENT) { savedThemeName.value = ''; applyThemePreset(currentPreference, value); return }
   if (value.startsWith(THEME_PRESET_BUILTIN_PREFIX)) {
     const presetId = value.slice(THEME_PRESET_BUILTIN_PREFIX.length)
     const preset = CODEX_THEME_PRESETS.find((item) => item.id === presetId)
@@ -368,67 +386,32 @@ function generateThemePresetId() {
   return `theme-${Date.now().toString(36)}-${Math.floor(Math.random() * 100000).toString(16)}`
 }
 
-function saveCurrentThemePreset() {
+function saveThemePreset(action: 'save' | 'saveAs' | 'backup' | 'rename') {
   const name = sanitizeThemeName(savedThemeName.value)
-  if (!name) {
-    themePresetError.value = '请先填写主题名称'
-    return
-  }
-  const colors = { ...props.snapshot.settings.colors }
-  const waterAppearance = cloneWaterAppearance(props.snapshot.settings.waterAppearance)
-  const expandedCardAppearance = cloneExpandedCardAppearance(props.snapshot.settings.expandedCardAppearance)
-  const now = Date.now()
-  const existingSavedId = savedThemeOption.value.startsWith(THEME_PRESET_SAVED_PREFIX)
-    ? savedThemeOption.value.slice(THEME_PRESET_SAVED_PREFIX.length)
-    : null
   const next = [...props.snapshot.settings.savedThemePresets]
-  const existing = existingSavedId ? next.findIndex((item) => item.id === existingSavedId) : -1
-
-  if (existing >= 0) {
-    next[existing] = {
-      ...next[existing],
-      name,
-      colors,
-      waterAppearance,
-      expandedCardAppearance,
-      updatedAt: now
-    }
-  } else {
-    const sameNameIndex = next.findIndex((item) => item.name === name)
-    if (sameNameIndex >= 0) {
-      next[sameNameIndex] = {
-        ...next[sameNameIndex],
-        name,
-        colors,
-        waterAppearance,
-        expandedCardAppearance,
-        updatedAt: now
-      }
-    } else {
-      next.unshift({
-        id: generateThemePresetId(),
-        name,
-        colors,
-        waterAppearance,
-        expandedCardAppearance,
-        createdAt: now,
-        updatedAt: now
-      })
-    }
+  const index = editingThemeId.value ? next.findIndex(item => item.id === editingThemeId.value) : -1
+  if (action === 'rename') {
+    if (index < 0) { themePresetError.value = '请先选择已保存的方案'; return }
+    if (!name) { themePresetError.value = '请填写新名称'; return }
+    if (next.some((item, i) => i !== index && item.name === name)) { themePresetError.value = '方案名称已存在'; return }
+    next[index] = { ...next[index], name, updatedAt: Date.now() }
+    update({ savedThemePresets: next }); themePresetError.value = ''; return
   }
-
-  const sanitized = next.slice(0, MAX_SAVED_THEME_PRESETS)
-  const ordered = [...sanitized].sort((a, b) => b.updatedAt - a.updatedAt)
-  update({ savedThemePresets: ordered })
-  themePresetError.value = ''
-  const selected = ordered.find((entry) => entry.name === name
-    && JSON.stringify(entry.colors) === JSON.stringify(colors)
-    && JSON.stringify(entry.waterAppearance) === JSON.stringify(waterAppearance)
-    && JSON.stringify(entry.expandedCardAppearance) === JSON.stringify(expandedCardAppearance))
-  if (selected) {
-    savedThemeOption.value = `${THEME_PRESET_SAVED_PREFIX}${selected.id}`
-    savedThemeName.value = selected.name
+  if (action !== 'save' || index < 0) {
+    if (!name) { themePresetError.value = '请填写主题名称'; return }
+    if (next.some(item => item.name === name)) { themePresetError.value = '方案名称已存在，请使用其他名称'; return }
+    if (next.length >= MAX_SAVED_THEME_PRESETS) { themePresetError.value = '最多保存 20 个方案'; return }
   }
+  const now = Date.now()
+  const values = { colors: { ...props.snapshot.settings.colors }, waterAppearance: cloneWaterAppearance(props.snapshot.settings.waterAppearance), expandedCardAppearance: cloneExpandedCardAppearance(props.snapshot.settings.expandedCardAppearance), counterColors: { ...props.snapshot.settings.counterColors } }
+  if (action === 'save' && index >= 0) next[index] = { ...next[index], ...values, updatedAt: now }
+  else {
+    const entry: CodexSavedThemePreset = { id: generateThemePresetId(), name, ...values, ...(action === 'backup' ? { alternate: true } : {}), createdAt: now, updatedAt: now }
+    next.unshift(entry)
+    if (action !== 'backup') { editingThemeId.value = entry.id; themeChoiceLocked.value = true; savedThemeOption.value = `${THEME_PRESET_SAVED_PREFIX}${entry.id}` }
+  }
+  if (action === 'backup') themeChoiceLocked.value = true
+  update({ savedThemePresets: next }); themePresetError.value = ''
 }
 
 function updateColor(key: keyof CodexColorSettings, value: string) {
@@ -663,9 +646,9 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </div>
       </article>
 
-      <article v-if="activeConfigTab === 'water' || activeConfigTab === 'card'" class="codex-panel codex-settings-section codex-appearance-panel">
+      <article v-if="activeConfigTab === 'water'" class="codex-panel codex-settings-section codex-appearance-panel">
         <div class="codex-panel-title">
-          <div><Palette :size="13" /><strong>{{ activeConfigTab === 'water' ? '悬浮水球' : '展开卡片' }}</strong></div>
+          <div><Palette :size="13" /><strong>{{ appearanceMode === 'water' ? '悬浮水球' : '展开卡片' }}</strong></div>
           <button type="button" class="codex-tip" aria-label="外观配置说明" data-operation-tooltip="外观配置说明" data-operation-description="主题预设会同时保存水球与展开卡片；当前页只展示所选目标的预览与控件。" data-tip="主题预设会同时保存水球与展开卡片；当前页只展示所选目标的预览与控件。">i</button>
         </div>
         <div class="codex-theme-toolbar">
@@ -673,17 +656,19 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <span>整套主题</span>
             <select class="codex-select" :value="savedThemeOption" @change="applyThemePresetBySelect">
               <option :value="THEME_PRESET_CUSTOM">当前配置（未匹配）</option>
-              <optgroup label="默认样式"><option v-for="preset in CODEX_THEME_PRESETS" :key="preset.id" :value="`${THEME_PRESET_BUILTIN_PREFIX}${preset.id}`">{{ preset.label }} · {{ preset.description }}</option></optgroup>
-              <optgroup v-if="snapshot.settings.savedThemePresets.length" label="已保存"><option v-for="preset in snapshot.settings.savedThemePresets" :key="preset.id" :value="`${THEME_PRESET_SAVED_PREFIX}${preset.id}`">{{ preset.name }}</option></optgroup>
+              <optgroup label="默认主题"><option :value="THEME_PRESET_CURRENT">当前偏好</option><option v-for="preset in visibleThemePresets" :key="preset.id" :value="`${THEME_PRESET_BUILTIN_PREFIX}${preset.id}`">{{ preset.label }}</option></optgroup>
+              <optgroup v-if="snapshot.settings.savedThemePresets.length" label="已保存"><option v-for="preset in snapshot.settings.savedThemePresets" :key="preset.id" :value="`${THEME_PRESET_SAVED_PREFIX}${preset.id}`">{{ preset.alternate ? '备选 · ' : '' }}{{ preset.name }}</option></optgroup>
             </select>
           </label>
           <label class="codex-theme-name"><span>保存当前外观</span><input v-model="savedThemeName" type="text" class="codex-input" maxlength="40" placeholder="主题名称" /></label>
-          <button type="button" class="secondary" @click="saveCurrentThemePreset">另存主题</button>
+          <button type="button" class="secondary" @click="saveThemePreset('save')">保存</button><details class="codex-theme-actions"><summary aria-label="更多方案操作">•••</summary><div><button type="button" @click="saveThemePreset('saveAs')">另存为</button><button type="button" @click="saveThemePreset('backup')">保存备选</button><button type="button" @click="saveThemePreset('rename')">重命名</button></div></details>
         </div>
         <p v-if="themePresetError" class="codex-color-error" role="alert">{{ themePresetError }}</p>
 
-        <div class="codex-appearance-zones" :class="{ 'card-only': activeConfigTab === 'card' }">
-          <section v-if="activeConfigTab === 'water'" class="codex-appearance-zone codex-appearance-zone--water" aria-labelledby="water-appearance-title">
+        <CodexAppearanceStudio :snapshot="snapshot" :mode="appearanceMode" @update:mode="appearanceMode = $event" @dispatch="(action, args) => emit('dispatch', action, args)" />
+        <details class="codex-appearance-advanced"><summary>更多外观参数</summary>
+        <div class="codex-appearance-zones" :class="{ 'card-only': appearanceMode === 'card' }">
+          <section v-if="appearanceMode === 'water'" class="codex-appearance-zone codex-appearance-zone--water" aria-labelledby="water-appearance-title">
             <div class="codex-appearance-zone-head"><div><span>01 · 悬浮水球</span><h3 id="water-appearance-title">水球外观</h3></div><button type="button" class="codex-tip" aria-label="水球外观说明" data-operation-tooltip="水球外观说明" data-operation-description="预览与桌面水球共用渲染；可分别控制球体背景、液体、Weekly 进度环、百分比读数和三类数字角标。" data-tip="预览与桌面水球共用渲染；可分别控制球体背景、液体、Weekly 进度环、百分比读数和三类数字角标。">i</button></div>
             <div class="codex-water-appearance-preview" :style="waterPreviewStyle" aria-label="与真实悬浮水球一致的颜色部位预览">
               <CodexWaterBall
@@ -729,7 +714,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <div class="codex-counter-colors"><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.input" @input="update({ counterColors: { ...snapshot.settings.counterColors, input: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>待输入角标</strong><small>左下数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.active" @input="update({ counterColors: { ...snapshot.settings.counterColors, active: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>进行中角标</strong><small>右下上方数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.unread" @input="update({ counterColors: { ...snapshot.settings.counterColors, unread: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>已未读角标</strong><small>右下角数字</small></span></label></div>
           </section>
 
-          <section v-if="activeConfigTab === 'card'" class="codex-appearance-zone codex-appearance-zone--card" aria-labelledby="card-appearance-title">
+          <section v-if="appearanceMode === 'card'" class="codex-appearance-zone codex-appearance-zone--card" aria-labelledby="card-appearance-title">
             <div class="codex-appearance-zone-head"><div><span>02 · 悬浮展开卡片</span><h3 id="card-appearance-title">展开卡片主题</h3></div><button type="button" class="codex-tip" aria-label="展开卡片主题说明" data-operation-tooltip="展开卡片主题说明" data-operation-description="单独控制展开面板、文字、交互与任务状态；不会读取水球配色。" data-tip="单独控制展开面板、文字、交互与任务状态；不会读取水球配色。">i</button></div>
             <div class="codex-expanded-card-preview" :style="cardPreviewStyle" aria-label="悬浮展开卡片颜色部位预览">
               <div class="expanded-card-preview-tabs"><b><i>3</i>动态</b><span>已完成</span><span>已隐藏</span><span>项目</span></div>
@@ -763,11 +748,12 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             </div>
           </section>
 
-          <section v-if="activeConfigTab === 'water'" class="codex-appearance-zone codex-appearance-zone--signals" aria-labelledby="signal-appearance-title">
+          <section v-if="appearanceMode === 'water'" class="codex-appearance-zone codex-appearance-zone--signals" aria-labelledby="signal-appearance-title">
             <div class="codex-appearance-zone-head"><div><span>02 · 状态信号</span><h3 id="signal-appearance-title">额度状态色</h3></div><button type="button" class="codex-tip" aria-label="额度状态颜色说明" data-operation-tooltip="额度状态颜色说明" data-operation-description="用于跟随额度状态的 Weekly 进度和状态强调：充足、提醒、紧张。" data-tip="用于跟随额度状态的 Weekly 进度和状态强调：充足、提醒、紧张。">i</button></div>
             <div class="codex-signal-controls"><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.healthy" @input="updateColor('healthy', ($event.target as HTMLInputElement).value)" /><span><strong>充足</strong><small>高额度状态</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.warning" @input="updateColor('warning', ($event.target as HTMLInputElement).value)" /><span><strong>提醒</strong><small>中额度状态</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.critical" @input="updateColor('critical', ($event.target as HTMLInputElement).value)" /><span><strong>紧张</strong><small>低额度状态</small></span></label></div>
           </section>
         </div>
+        </details>
       </article>
 
       <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section codex-runtime-panel">

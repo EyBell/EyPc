@@ -47,7 +47,7 @@ import {
   companionQuotaRefreshReceiptText
 } from './domain/companionPresentation'
 import type { CompanionProjectMarker, CompanionQuotaChip, CompanionRowMarker } from './domain/companionPresentation'
-import { buildMagpieQuotaResetLines, formatMagpieQuotaResetInline } from './domain/magpieQuota'
+import { buildMagpieQuotaResetLines, formatMagpieQuotaResetInline, magpieResetCompactText } from './domain/magpieQuota'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import {
   CODEX_THEME_PRESETS,
@@ -293,8 +293,6 @@ const magpieQuotaResetLines = computed(() => {
   if (!magpie || magpie.status === 'idle') return []
   return buildMagpieQuotaResetLines(magpie.providers)
 })
-/** 默认收起；展开后显示单行重置倒计时。 */
-const magpieResetsExpanded = ref(false)
 const magpieQuotaResetInline = computed(() => formatMagpieQuotaResetInline(
   magpieQuotaResetLines.value,
   quotaResetClock.value
@@ -3647,26 +3645,20 @@ onUnmounted(() => {
             @blur="clearActionHint"
           >!</span>
         </div>
+        <span
+          v-if="magpieQuotaResetLines.length"
+          class="float-magpie-reset-inline"
+          role="img"
+          :aria-label="`重置倒计时：${magpieQuotaResetInline}`"
+          @pointerenter="queueActionHint($event, magpieQuotaResetInline)"
+          @pointerleave="clearActionHint"
+        >
+          <span v-for="line in magpieQuotaResetLines" :key="line.key" class="float-magpie-reset-item" aria-hidden="true"><b>{{ line.label === 'Codex' ? 'C' : line.label === 'Grok' ? 'G' : 'U' }}</b> {{ magpieResetCompactText(line.resetAt, quotaResetClock) }}</span>
+        </span>
         <!-- Refresh receipt overlays the row for a few seconds instead of adding a line. -->
         <p v-if="quotaFeedback" class="float-quota-feedback" role="status">{{ quotaFeedback }}</p>
       </section>
 
-      <section
-        v-if="magpieQuotaResetLines.length"
-        class="float-magpie-reset-bar"
-        aria-label="供应商重置倒计时"
-      >
-        <button
-          type="button"
-          class="float-magpie-reset-toggle"
-          :aria-expanded="magpieResetsExpanded"
-          @click="magpieResetsExpanded = !magpieResetsExpanded"
-        >
-          <ChevronRight :size="12" class="float-magpie-reset-chevron" :class="{ open: magpieResetsExpanded }" aria-hidden="true" />
-          <span class="float-magpie-reset-label">重置</span>
-          <span v-if="magpieResetsExpanded" class="float-magpie-reset-summary">{{ magpieQuotaResetInline }}</span>
-        </button>
-      </section>
 
       <form v-if="aliasEditor" class="float-inline-editor" @submit.prevent="saveAlias">
         <label><span>本地别名</span><input ref="aliasInput" v-model="aliasEditor.value" maxlength="120" :placeholder="aliasEditor.originalName" /></label>
