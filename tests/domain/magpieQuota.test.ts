@@ -29,20 +29,57 @@ const SAMPLE = [
 ]
 
 describe('magpie quota grid', () => {
-  it('shows token balance in the top-left when codex weekly is exhausted', () => {
+  it('uses a 3-cell grid when codex weekly is present, even if exhausted', () => {
     const grid = resolveCompactQuotaGridPresentation(SAMPLE, { enabled: true, status: 'ok', updatedAt: 1 })
-    expect(grid.cells[0]).toMatchObject({ key: 'token', kind: 'token', text: '6.9W' })
-    expect(grid.cells[1]).toMatchObject({ key: 'grok', text: '85' })
-    expect(grid.cells[2]).toMatchObject({ key: 'cursor-models', label: 'C', text: '93' })
-    expect(grid.cells[3]).toMatchObject({ key: 'cursor-other', label: 'O', text: '20' })
+    expect(grid.cells).toHaveLength(3)
+    expect(grid.cells[0]).toMatchObject({ key: 'grok', text: '85' })
+    expect(grid.cells[1]).toMatchObject({ key: 'cursor-models', label: 'G', text: '93' })
+    expect(grid.cells[2]).toMatchObject({ key: 'cursor-other', label: 'A', text: '20' })
   })
 
-  it('uses a placeholder instead of repeating codex weekly percent', () => {
+  it('hides zero-percent provider cells', () => {
+    const grid = resolveCompactQuotaGridPresentation([
+      { provider: 'codex', windows: [{ name: '7 days', remaining: 0 }] },
+      { provider: 'grok', windows: [{ name: '7 days', remaining: 0 }] },
+      {
+        provider: 'cursor',
+        windows: [
+          { name: 'Cursor Models', remaining: 0 },
+          { name: 'Other Models', remaining: 19.5 }
+        ]
+      }
+    ], { enabled: true, status: 'ok', updatedAt: 1 })
+    expect(grid.cells).toHaveLength(1)
+    expect(grid.cells[0]).toMatchObject({ key: 'cursor-other', label: 'A', text: '20' })
+  })
+
+  it('accepts custom cursor grid labels', () => {
+    const grid = resolveCompactQuotaGridPresentation(SAMPLE, {
+      enabled: true,
+      status: 'ok',
+      updatedAt: 1,
+      labels: { cursorModels: 'M', cursorOther: 'X' }
+    })
+    expect(grid.cells[1]).toMatchObject({ label: 'M' })
+    expect(grid.cells[2]).toMatchObject({ label: 'X' })
+  })
+
+  it('omits token when codex weekly percent is available', () => {
     const grid = resolveCompactQuotaGridPresentation([
       { provider: 'codex', windows: [{ name: '7 days', remaining: 42 }], balance: '100 credits' },
       ...SAMPLE.slice(1)
     ], { enabled: true, status: 'ok', updatedAt: 1 })
-    expect(grid.cells[0]).toMatchObject({ key: 'token', kind: 'placeholder', text: '—' })
+    expect(grid.cells).toHaveLength(3)
+    expect(grid.cells.some((cell) => cell.key === 'token')).toBe(false)
+  })
+
+  it('shows token in a 4-cell grid when codex weekly window is missing', () => {
+    const grid = resolveCompactQuotaGridPresentation([
+      { provider: 'codex', balance: '68541.61 credits', windows: [] },
+      ...SAMPLE.slice(1)
+    ], { enabled: true, status: 'ok', updatedAt: 1 })
+    expect(grid.cells).toHaveLength(4)
+    expect(grid.cells[0]).toMatchObject({ key: 'token', kind: 'token', text: '6.9W' })
   })
 
   it('formats token balances compactly', () => {

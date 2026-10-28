@@ -497,10 +497,15 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function companionMagpieQuotaSlice(): CompanionSnapshotSlice['magpieQuota'] | undefined {
     if (!codexState().settings.magpieQuotaAccess) return undefined
+    const settings = codexState().settings
     return {
       providers: magpieQuotaProviders,
       status: magpieQuotaStatus,
       updatedAt: magpieQuotaUpdatedAt,
+      gridLabels: {
+        cursorModels: settings.magpieQuotaGridCursorPrimaryLabel,
+        cursorOther: settings.magpieQuotaGridCursorSecondaryLabel
+      },
       ...(magpieQuotaError ? { errorMessage: magpieQuotaError } : {})
     }
   }
@@ -2331,6 +2336,9 @@ export function createCodexController(options: CodexControllerOptions) {
     if (claudeEnablementChanged) syncClaudeEnablement()
     if (cursorEnablementChanged) syncCursorEnablement()
     if (orcaEnablementChanged) syncOrcaEnablement()
+    if (current.floatCrossDesktopPin !== next.floatCrossDesktopPin) {
+      options.platform.float.setCrossDesktopPin?.(next.floatCrossDesktopPin)
+    }
     return true
   }
 
@@ -3716,6 +3724,7 @@ export function createCodexController(options: CodexControllerOptions) {
       syncClaudeEnablement()
       syncCursorEnablement()
       syncOrcaEnablement()
+      options.platform.float.setCrossDesktopPin?.(codexState().settings.floatCrossDesktopPin)
       refreshCompanionRegistrationTelemetry()
     },
     dispose() {

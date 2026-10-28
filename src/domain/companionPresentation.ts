@@ -27,6 +27,7 @@ import {
 import {
   resolveCompactQuotaGridPresentation,
   type CompactQuotaGridPresentation,
+  type MagpieQuotaGridLabelOptions,
   type MagpieQuotaProvider
 } from './magpieQuota'
 
@@ -57,6 +58,7 @@ export interface CompanionSnapshotSlice {
     status: CompactQuotaGridPresentation['status']
     updatedAt: number
     errorMessage?: string
+    gridLabels?: MagpieQuotaGridLabelOptions
   }
 }
 
@@ -204,7 +206,8 @@ export function resolveCompanionWaterBallPresentation(
     enabled: Boolean(slice?.magpieQuota && slice.magpieQuota.status !== 'idle'),
     status: slice?.magpieQuota?.status || 'idle',
     updatedAt: slice?.magpieQuota?.updatedAt || 0,
-    errorMessage: slice?.magpieQuota?.errorMessage
+    errorMessage: slice?.magpieQuota?.errorMessage,
+    labels: slice?.magpieQuota?.gridLabels
   })
   if (!slice) return { ...EMPTY_PRESENTATION, quotaGrid }
   const appQuotaReadable = claudeAppQuotaReadable(slice)

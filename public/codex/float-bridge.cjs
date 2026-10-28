@@ -143,6 +143,7 @@ function createCodexFloatBridge(dependencies = {}) {
   let codexFloatSyncedPosition = ''
   let codexFloatDisplaySignature = ''
   let codexFloatPersistent = false
+  let codexFloatCrossDesktopPinEnabled = true
   let codexFloatBoundMainRendererId = ''
   let codexFloatWorkspaceDiagnostics = {
     supported: process.platform === 'darwin',
@@ -228,7 +229,8 @@ function createCodexFloatBridge(dependencies = {}) {
     }
   }
 
-  function applyCodexFloatWorkspaceVisibility() {
+  function applyCodexFloatWorkspaceVisibility(forceCrossDesktop) {
+    const crossDesktop = typeof forceCrossDesktop === 'boolean' ? forceCrossDesktop : codexFloatCrossDesktopPinEnabled
     const diagnostics = {
       supported: process.platform === 'darwin',
       alwaysOnTop: false,
@@ -256,14 +258,36 @@ function createCodexFloatBridge(dependencies = {}) {
       return false
     }
     try {
-      codexFloatWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-      diagnostics.allWorkspaces = true
-      diagnostics.visibleOnFullScreen = true
+      if (crossDesktop) {
+        codexFloatWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+        diagnostics.allWorkspaces = true
+        diagnostics.visibleOnFullScreen = true
+      } else if (typeof codexFloatWindow.setVisibleOnAllWorkspaces === 'function') {
+        codexFloatWindow.setVisibleOnAllWorkspaces(false)
+        diagnostics.allWorkspaces = false
+        diagnostics.visibleOnFullScreen = false
+      }
     } catch {
       diagnostics.errorCode = diagnostics.errorCode || 'all-workspaces-failed'
     }
     codexFloatWorkspaceDiagnostics = diagnostics
     return diagnostics.alwaysOnTop && diagnostics.allWorkspaces && diagnostics.visibleOnFullScreen
+  }
+
+  function setCodexFloatCrossDesktopPin(enabled) {
+    codexFloatCrossDesktopPinEnabled = enabled === true
+    if (!codexFloatAlive()) {
+      codexFloatWorkspaceDiagnostics = {
+        ...codexFloatWorkspaceDiagnostics,
+        checkedAt: Date.now(),
+        allWorkspaces: false,
+        visibleOnFullScreen: false,
+        errorCode: codexFloatCrossDesktopPinEnabled ? 'not-checked' : 'cross-desktop-off'
+      }
+      return true
+    }
+    applyCodexFloatWorkspaceVisibility(codexFloatCrossDesktopPinEnabled)
+    return true
   }
 
   function getCodexFloatWorkspaceDiagnostics() {
@@ -1366,6 +1390,7 @@ function createCodexFloatBridge(dependencies = {}) {
     sync: syncCodexFloat,
     activate: activateCodexFloat,
     diagnostics: getCodexFloatWorkspaceDiagnostics,
+    setCrossDesktopPin: setCodexFloatCrossDesktopPin,
     resetGeometry: resetCodexFloatGeometry,
     close() {
       // Destroy the child window only. Desired visibility stays owned by

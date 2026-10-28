@@ -2,9 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import {
   BellRing,
-  Bot,
   Check,
-  CircleGauge,
   Eye,
   EyeOff,
   Activity,
@@ -12,9 +10,11 @@ import {
   Keyboard,
   LayoutDashboard,
   LoaderCircle,
+  Network,
   Palette,
   Package,
   Pin,
+  RefreshCw,
   Wifi,
   SlidersHorizontal
 } from '@lucide/vue'
@@ -169,6 +169,14 @@ const companionPreview = computed(() => resolveCompanionWaterBallPresentation({
   claudeQuota: props.snapshot.claudeQuota,
   claudeEnvironment: props.snapshot.claudeEnvironment,
   magpieQuota: props.snapshot.companion?.magpieQuota
+    ? {
+        ...props.snapshot.companion.magpieQuota,
+        gridLabels: {
+          cursorModels: props.snapshot.settings.magpieQuotaGridCursorPrimaryLabel,
+          cursorOther: props.snapshot.settings.magpieQuotaGridCursorSecondaryLabel
+        }
+      }
+    : undefined
 }, {
   primary: waterPreview.value.primary,
   secondary: waterPreview.value.secondary
@@ -260,12 +268,21 @@ const runtimeBuildPresentation = computed(() => {
   }
 })
 
-const statusIconBar = computed(() => {
+type StatusIconItem = {
+  id: string
+  icon: typeof Wifi
+  tone: string
+  label: string
+  title: string
+  toggle?: 'pin' | 'log'
+  pressed?: boolean
+}
+
+const statusIconBarLeft = computed((): StatusIconItem[] => {
   const env = props.snapshot.environment
   const ws = props.snapshot.floatHost.workspaceVisibility
   const health = ws?.health
   const identity = props.snapshot.runtimeIdentity
-  const log = props.snapshot.runtimeDiagnostics
   const connectionTone = props.snapshot.refreshing || env.checking
     ? 'checking'
     : props.snapshot.quota.status === 'error' || env.connectionState === 'failed'
@@ -280,14 +297,7 @@ const statusIconBar = computed(() => {
       icon: Package,
       tone: identity?.status === 'host-loaded' ? 'ready' : identity ? 'warning' : 'muted',
       label: '产物',
-      title: runtimeBuildPresentation.value.summary
-    },
-    {
-      id: 'pin',
-      icon: Pin,
-      tone: ws?.allWorkspaces && ws?.visibleOnFullScreen ? 'ready' : ws?.supported ? 'warning' : 'muted',
-      label: '置顶',
-      title: ws?.allWorkspaces && ws?.visibleOnFullScreen ? '跨桌面置顶已启用' : ws?.errorCode || '跨桌面置顶'
+      title: `${runtimeBuildPresentation.value.summary}\n${runtimeBuildPresentation.value.builtAtLocal}${runtimeBuildPresentation.value.builtAt ? ` · ${runtimeBuildPresentation.value.builtAt}` : ''}`
     },
     {
       id: 'health',
@@ -295,16 +305,64 @@ const statusIconBar = computed(() => {
       tone: health?.alive ? 'ready' : health?.persistent ? 'warning' : 'muted',
       label: '健康',
       title: health?.alive ? '悬浮球心跳正常' : health?.persistent ? '悬浮球等待恢复' : '悬浮球未启用'
+    }
+  ]
+})
+
+const statusIconBarRight = computed((): StatusIconItem[] => {
+  const ws = props.snapshot.floatHost.workspaceVisibility
+  const log = props.snapshot.runtimeDiagnostics
+  const pinOn = props.snapshot.settings.floatCrossDesktopPin
+  const pinLive = pinOn && ws?.allWorkspaces && ws?.visibleOnFullScreen
+  return [
+    {
+      id: 'pin',
+      icon: Pin,
+      tone: pinLive ? 'ready' : pinOn && ws?.supported ? 'warning' : 'muted',
+      label: '置顶',
+      title: pinLive ? '跨桌面置顶已开启，点击关闭' : pinOn ? '跨桌面置顶待生效，点击关闭' : '跨桌面置顶已关闭，点击开启',
+      toggle: 'pin',
+      pressed: pinOn
     },
     {
       id: 'log',
       icon: Activity,
       tone: log?.settings.enabled ? (log.status === 'ok' ? 'ready' : 'warning') : 'muted',
       label: '日志',
-      title: log?.settings.enabled ? `诊断日志 · ${log.settings.level}` : '诊断日志已关闭'
+      title: log?.settings.enabled ? `诊断日志已开启（${log.settings.level}），点击关闭` : '诊断日志已关闭，点击开启',
+      toggle: 'log',
+      pressed: log?.settings.enabled === true
     }
   ]
 })
+
+const enabledProviderCount = computed(() => {
+  const providers = props.snapshot.settings.providers
+  return [providers.claude, providers.cursor, providers.orca].filter(Boolean).length
+})
+
+const runtimeDiagnosticsSummary = computed(() => {
+  const diagnostics = props.snapshot.runtimeDiagnostics
+  if (!diagnostics) return null
+  return {
+    events: diagnostics.totals.events,
+    slow: diagnostics.totals.slow,
+    files: diagnostics.storage.fileCount,
+    level: diagnostics.settings.enabled ? diagnostics.settings.level : '关'
+  }
+})
+
+function onStatusIconClick(item: StatusIconItem) {
+  if (item.toggle === 'pin') {
+    update({ floatCrossDesktopPin: !props.snapshot.settings.floatCrossDesktopPin })
+    return
+  }
+  if (item.toggle === 'log') {
+    const settings = props.snapshot.runtimeDiagnostics?.settings
+    if (!settings) return
+    configureRuntimeDiagnostics({ enabled: !settings.enabled })
+  }
+}
 
 function formatDiagnosticBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '0 KB'
@@ -440,25 +498,45 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
     :data-companion-package-revision="snapshot.taskSnapshot.packageRevision || undefined"
   >
   <header class="codex-config-hero" aria-label="额度任务悬浮球配置总览">
-    <div class="codex-hero-copy">
-      <h1>额度任务悬浮球</h1>
-      <span class="codex-eyebrow"><Bot :size="12" /> CODEX · CLAUDE COMPANION</span>
-    </div>
-      <nav class="codex-status-icon-bar" aria-label="运行状态">
+    <div class="codex-hero-main">
+      <div class="codex-hero-copy">
+        <p class="codex-hero-eyebrow">Codex Companion</p>
+        <h1 class="codex-hero-title">运行控制台</h1>
+        <p class="codex-hero-subtitle">连接、悬浮入口与展示样式集中在一处，便于快速调整。</p>
+      </div>
+      <div class="codex-hero-status-strip" aria-label="运行状态">
         <button
-          v-for="item in statusIconBar"
+          v-for="item in statusIconBarLeft"
           :key="item.id"
           type="button"
-          class="codex-status-icon"
-          :class="`tone-${item.tone}`"
+          class="codex-status-pill codex-status-pill--metric"
+          :class="[`tone-${item.tone}`, { 'is-toggle': item.toggle, 'is-on': item.pressed }]"
           :title="item.title"
           :aria-label="`${item.label}：${item.title}`"
+          :aria-pressed="item.toggle ? item.pressed : undefined"
+          @click="item.toggle ? onStatusIconClick(item) : undefined"
         >
           <component :is="item.icon" :size="14" aria-hidden="true" />
           <span>{{ item.label }}</span>
         </button>
-      </nav>
-      <div class="codex-hero-actions">
+        <button
+          v-for="item in statusIconBarRight"
+          :key="item.id"
+          type="button"
+          class="codex-status-pill codex-status-pill--metric"
+          :class="[`tone-${item.tone}`, { 'is-toggle': item.toggle, 'is-on': item.pressed }]"
+          :title="item.title"
+          :aria-label="`${item.label}：${item.title}`"
+          :aria-pressed="item.pressed"
+          @click="onStatusIconClick(item)"
+        >
+          <component :is="item.icon" :size="14" aria-hidden="true" />
+          <span>{{ item.label }}</span>
+        </button>
+      </div>
+    </div>
+    <div class="codex-hero-actions">
+      <div class="codex-hero-action-group" aria-label="悬浮入口">
         <button
           type="button"
           class="codex-float-toggle"
@@ -472,11 +550,14 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         >
           <EyeOff v-if="snapshot.settings.floatEnabled" :size="13" aria-hidden="true" />
           <Eye v-else :size="13" aria-hidden="true" />
-          {{ snapshot.settings.floatEnabled ? '隐藏桌面悬浮' : '显示桌面悬浮' }}
+          <span class="codex-float-toggle-label">{{ snapshot.settings.floatEnabled ? '隐藏悬浮' : '显示悬浮' }}</span>
         </button>
-<CodexStyleSwitch :model-value="snapshot.settings.displayStyle" @update:model-value="changeStyle" />
       </div>
-    </header>
+      <div class="codex-hero-action-group codex-hero-action-group--style" aria-label="展示样式">
+        <CodexStyleSwitch compact :model-value="snapshot.settings.displayStyle" @update:model-value="changeStyle" />
+      </div>
+    </div>
+  </header>
 
     <nav class="codex-config-tabs" role="tablist" aria-label="Codex 配置分类">
       <button
@@ -756,82 +837,127 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </details>
       </article>
 
-      <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section codex-runtime-panel">
-        <div class="codex-panel-title">
-          <div><CircleGauge :size="13" /><strong>接入来源</strong></div>
-          <button type="button" class="codex-tip" aria-label="接入来源说明" data-operation-tooltip="接入来源" data-operation-description="各来源独立开关。开启 Claude / Cursor 时会自动注册事件钩子，关闭时自动移除。" data-tip="各来源独立开关。开启 Claude / Cursor 时会自动注册事件钩子，关闭时自动移除。">i</button>
-        </div>
-        <label class="codex-switch-row codex-switch-row--compact">
-          <span><strong>跳转前启动目标应用</strong></span>
-          <input type="checkbox" :checked="snapshot.settings.openLaunchesTarget" @change="update({ openLaunchesTarget: ($event.target as HTMLInputElement).checked })" />
-          <i />
-        </label>
-        <label class="codex-switch-row codex-switch-row--compact">
-          <span><strong>Claude Code</strong><small>{{ snapshot.settings.providers.claude ? '已启用' : '未启用' }}</small></span>
-          <input type="checkbox" :checked="snapshot.settings.providers.claude" @change="toggleClaude(($event.target as HTMLInputElement).checked)" />
-          <i />
-        </label>
-        <label class="codex-switch-row codex-switch-row--compact">
-          <span><strong>Cursor Agent</strong><small>{{ snapshot.settings.providers.cursor ? '已启用' : '未启用' }}</small></span>
-          <input type="checkbox" :checked="snapshot.settings.providers.cursor" @change="toggleCursor(($event.target as HTMLInputElement).checked)" />
-          <i />
-        </label>
-        <label class="codex-switch-row codex-switch-row--compact">
-          <span><strong>Orca</strong><small>{{ snapshot.settings.providers.orca ? '已启用' : '未启用' }}</small></span>
-          <input type="checkbox" :checked="snapshot.settings.providers.orca" @change="toggleOrca(($event.target as HTMLInputElement).checked)" />
-          <i />
-        </label>
-        <label v-if="snapshot.settings.providers.claude" class="codex-switch-row codex-switch-row--compact">
-          <span><strong>Claude App 额度</strong></span>
-          <input type="checkbox" :checked="snapshot.settings.claudeAppQuotaAccess" @change="update({ claudeAppQuotaAccess: ($event.target as HTMLInputElement).checked, claudeQuotaFallback: false })" />
-          <i />
-        </label>
-      </article>
-
-      <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section codex-runtime-panel">
-        <div class="codex-panel-title">
-          <div><CircleGauge :size="13" /><strong>额度</strong></div>
-        </div>
-        <div class="codex-quota-compact">
-          <label class="codex-quota-refresh">
-            <span>刷新</span>
-            <input class="codex-number codex-number--compact" type="number" :min="CODEX_MIN_QUOTA_REFRESH_SECONDS" :max="CODEX_MAX_QUOTA_REFRESH_SECONDS" step="1" :value="snapshot.settings.quotaRefreshSeconds" @change="update({ quotaRefreshSeconds: Number(($event.target as HTMLInputElement).value) })" />
-            <span>秒</span>
-          </label>
-          <label class="codex-switch-row codex-switch-row--compact codex-switch-row--inline">
-            <span><strong>Magpie</strong></span>
-            <input type="checkbox" :checked="snapshot.settings.magpieQuotaAccess" @change="update({ magpieQuotaAccess: ($event.target as HTMLInputElement).checked })" />
-            <i />
-          </label>
-        </div>
-      </article>
-
-      <article v-if="activeConfigTab === 'runtime' && snapshot.runtimeDiagnostics" class="codex-panel codex-settings-section codex-runtime-panel codex-runtime-log-panel">
-        <div class="codex-panel-title">
-          <div><Activity :size="13" /><strong>诊断日志</strong></div>
-          <span :class="`codex-log-badge is-${snapshot.runtimeDiagnostics.status}`">{{ snapshot.runtimeDiagnostics.settings.enabled ? snapshot.runtimeDiagnostics.settings.level : '关' }}</span>
-        </div>
-        <div class="codex-runtime-log-controls codex-runtime-log-controls--compact" role="group" aria-label="诊断日志">
-          <label class="codex-runtime-log-toggle">
-            <input type="checkbox" aria-label="启用诊断日志" :checked="snapshot.runtimeDiagnostics.settings.enabled" @change="configureRuntimeDiagnostics({ enabled: ($event.target as HTMLInputElement).checked })" />
-            <span><strong>{{ snapshot.runtimeDiagnostics.settings.enabled ? '已开启' : '已关闭' }}</strong></span>
-          </label>
-          <label class="codex-runtime-log-level" for="codex-runtime-diagnostics-level">
-            <span>级别</span>
-            <select id="codex-runtime-diagnostics-level" :value="snapshot.runtimeDiagnostics.settings.level" @change="configureRuntimeDiagnostics({ level: ($event.target as HTMLSelectElement).value as RuntimeDiagnosticsLevel })">
-              <option value="error">error</option>
-              <option value="info">info</option>
-              <option value="debug">debug</option>
-            </select>
-          </label>
-          <div class="codex-runtime-log-actions codex-runtime-log-actions--compact">
-            <button type="button" :disabled="!snapshot.runtimeDiagnostics.activeFile" @click="emit('dispatch', 'runtime.logs.openFile')">打开文件</button>
-            <button type="button" @click="emit('dispatch', 'runtime.logs.openDirectory')">目录</button>
-            <button type="button" class="danger" :disabled="snapshot.runtimeDiagnostics.storage.fileCount === 0" @click="emit('dispatch', 'runtime.logs.clear')">清空</button>
+      <div v-if="activeConfigTab === 'runtime'" class="codex-runtime-layout">
+        <article class="codex-panel codex-settings-section codex-runtime-panel codex-runtime-panel--sources">
+          <div class="codex-panel-title codex-runtime-panel-head">
+            <div class="codex-runtime-panel-title">
+              <span class="codex-runtime-panel-icon" aria-hidden="true"><Network :size="14" /></span>
+              <div>
+                <strong>接入来源</strong>
+                <small>已启用 {{ enabledProviderCount }} / 3</small>
+              </div>
+            </div>
+            <button type="button" class="codex-tip" aria-label="接入来源说明" data-operation-tooltip="接入来源" data-operation-description="各来源独立开关。开启 Claude / Cursor 时会自动注册事件钩子，关闭时自动移除。" data-tip="各来源独立开关。开启 Claude / Cursor 时会自动注册事件钩子，关闭时自动移除。">i</button>
           </div>
-        </div>
-        <p class="codex-runtime-log-meta">事件 {{ snapshot.runtimeDiagnostics.totals.events }} · 慢 {{ snapshot.runtimeDiagnostics.totals.slow }} · 落盘 {{ snapshot.runtimeDiagnostics.storage.fileCount }} 文件</p>
-      </article>
+          <div class="codex-runtime-switch-grid">
+            <label class="codex-switch-row codex-switch-row--runtime">
+              <span><strong>跳转前启动目标应用</strong><small>打开任务前先启动对应应用</small></span>
+              <input type="checkbox" :checked="snapshot.settings.openLaunchesTarget" @change="update({ openLaunchesTarget: ($event.target as HTMLInputElement).checked })" />
+              <i />
+            </label>
+            <label class="codex-switch-row codex-switch-row--runtime" :class="{ 'is-active': snapshot.settings.providers.claude }">
+              <span><strong>Claude Code</strong><small>{{ snapshot.settings.providers.claude ? '已启用 · 自动注册钩子' : '未启用' }}</small></span>
+              <input type="checkbox" :checked="snapshot.settings.providers.claude" @change="toggleClaude(($event.target as HTMLInputElement).checked)" />
+              <i />
+            </label>
+            <label class="codex-switch-row codex-switch-row--runtime" :class="{ 'is-active': snapshot.settings.providers.cursor }">
+              <span><strong>Cursor Agent</strong><small>{{ snapshot.settings.providers.cursor ? '已启用 · 自动注册钩子' : '未启用' }}</small></span>
+              <input type="checkbox" :checked="snapshot.settings.providers.cursor" @change="toggleCursor(($event.target as HTMLInputElement).checked)" />
+              <i />
+            </label>
+            <label class="codex-switch-row codex-switch-row--runtime" :class="{ 'is-active': snapshot.settings.providers.orca }">
+              <span><strong>Orca</strong><small>{{ snapshot.settings.providers.orca ? '已启用' : '未启用' }}</small></span>
+              <input type="checkbox" :checked="snapshot.settings.providers.orca" @change="toggleOrca(($event.target as HTMLInputElement).checked)" />
+              <i />
+            </label>
+            <label v-if="snapshot.settings.providers.claude" class="codex-switch-row codex-switch-row--runtime" :class="{ 'is-active': snapshot.settings.claudeAppQuotaAccess }">
+              <span><strong>Claude App 额度</strong><small>读取 Claude App 侧额度</small></span>
+              <input type="checkbox" :checked="snapshot.settings.claudeAppQuotaAccess" @change="update({ claudeAppQuotaAccess: ($event.target as HTMLInputElement).checked, claudeQuotaFallback: false })" />
+              <i />
+            </label>
+          </div>
+        </article>
+
+        <article class="codex-panel codex-settings-section codex-runtime-panel codex-runtime-panel--quota">
+          <div class="codex-panel-title codex-runtime-panel-head">
+            <div class="codex-runtime-panel-title">
+              <span class="codex-runtime-panel-icon" aria-hidden="true"><RefreshCw :size="14" /></span>
+              <div>
+                <strong>额度刷新</strong>
+                <small>自动轮询与 Magpie 接入</small>
+              </div>
+            </div>
+          </div>
+          <div class="codex-runtime-quota-card">
+            <label class="codex-runtime-metric">
+              <span>刷新间隔</span>
+              <div class="codex-runtime-metric-input">
+                <input class="codex-number codex-number--compact" type="number" :min="CODEX_MIN_QUOTA_REFRESH_SECONDS" :max="CODEX_MAX_QUOTA_REFRESH_SECONDS" step="1" :value="snapshot.settings.quotaRefreshSeconds" @change="update({ quotaRefreshSeconds: Number(($event.target as HTMLInputElement).value) })" />
+                <em>秒</em>
+              </div>
+            </label>
+            <label class="codex-switch-row codex-switch-row--runtime codex-switch-row--runtime-inline" :class="{ 'is-active': snapshot.settings.magpieQuotaAccess }">
+              <span><strong>Magpie 额度</strong><small>{{ snapshot.settings.magpieQuotaAccess ? '已接入 Magpie 读数' : '关闭后仅保留本地额度' }}</small></span>
+              <input type="checkbox" :checked="snapshot.settings.magpieQuotaAccess" @change="update({ magpieQuotaAccess: ($event.target as HTMLInputElement).checked })" />
+              <i />
+            </label>
+            <div v-if="snapshot.settings.magpieQuotaAccess" class="codex-runtime-magpie-labels" aria-label="水球 Cursor 格标签">
+              <label class="codex-runtime-metric codex-runtime-metric--mini">
+                <span>Cursor 主格</span>
+                <input
+                  class="codex-text codex-text--compact"
+                  type="text"
+                  maxlength="4"
+                  :value="snapshot.settings.magpieQuotaGridCursorPrimaryLabel"
+                  @change="update({ magpieQuotaGridCursorPrimaryLabel: ($event.target as HTMLInputElement).value })"
+                />
+              </label>
+              <label class="codex-runtime-metric codex-runtime-metric--mini">
+                <span>Cursor 次格</span>
+                <input
+                  class="codex-text codex-text--compact"
+                  type="text"
+                  maxlength="4"
+                  :value="snapshot.settings.magpieQuotaGridCursorSecondaryLabel"
+                  @change="update({ magpieQuotaGridCursorSecondaryLabel: ($event.target as HTMLInputElement).value })"
+                />
+              </label>
+            </div>
+          </div>
+        </article>
+
+        <article v-if="snapshot.runtimeDiagnostics" class="codex-panel codex-settings-section codex-runtime-panel codex-runtime-log-panel">
+          <div class="codex-panel-title codex-runtime-panel-head">
+            <div class="codex-runtime-panel-title">
+              <span class="codex-runtime-panel-icon" aria-hidden="true"><Activity :size="14" /></span>
+              <div>
+                <strong>诊断日志</strong>
+                <small v-if="runtimeDiagnosticsSummary">事件 {{ runtimeDiagnosticsSummary.events }} · 慢 {{ runtimeDiagnosticsSummary.slow }} · 落盘 {{ runtimeDiagnosticsSummary.files }} 文件</small>
+              </div>
+            </div>
+            <span :class="`codex-log-badge is-${snapshot.runtimeDiagnostics.status}`">{{ runtimeDiagnosticsSummary?.level }}</span>
+          </div>
+          <div class="codex-runtime-log-controls codex-runtime-log-controls--compact" role="group" aria-label="诊断日志">
+            <label class="codex-runtime-log-toggle">
+              <input type="checkbox" aria-label="启用诊断日志" :checked="snapshot.runtimeDiagnostics.settings.enabled" @change="configureRuntimeDiagnostics({ enabled: ($event.target as HTMLInputElement).checked })" />
+              <span><strong>{{ snapshot.runtimeDiagnostics.settings.enabled ? '已开启' : '已关闭' }}</strong><small>记录运行 ID、Provider 状态与耗时</small></span>
+            </label>
+            <label class="codex-runtime-log-level" for="codex-runtime-diagnostics-level">
+              <span>级别</span>
+              <select id="codex-runtime-diagnostics-level" :value="snapshot.runtimeDiagnostics.settings.level" @change="configureRuntimeDiagnostics({ level: ($event.target as HTMLSelectElement).value as RuntimeDiagnosticsLevel })">
+                <option value="error">error</option>
+                <option value="info">info</option>
+                <option value="debug">debug</option>
+              </select>
+            </label>
+            <div class="codex-runtime-log-actions codex-runtime-log-actions--compact">
+              <button type="button" :disabled="!snapshot.runtimeDiagnostics.activeFile" @click="emit('dispatch', 'runtime.logs.openFile')">打开文件</button>
+              <button type="button" @click="emit('dispatch', 'runtime.logs.openDirectory')">目录</button>
+              <button type="button" class="danger" :disabled="snapshot.runtimeDiagnostics.storage.fileCount === 0" @click="emit('dispatch', 'runtime.logs.clear')">清空</button>
+            </div>
+          </div>
+        </article>
+      </div>
     </div>
     </section>
   </section>

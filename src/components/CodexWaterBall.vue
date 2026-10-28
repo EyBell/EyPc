@@ -65,7 +65,15 @@ const dualReading = computed(() => hasPercentOverride.value
   && Number.isFinite(props.scopedPercent)
   ? { scoped: props.scopedPercent as number, primary: props.percentOverride as number }
   : null)
-const gridMode = computed(() => Array.isArray(props.quotaGrid) && props.quotaGrid.length === 4)
+const gridCells = computed(() => (Array.isArray(props.quotaGrid) ? props.quotaGrid : []))
+const gridMode = computed(() => gridCells.value.length > 0)
+const gridLayout = computed(() => {
+  const count = gridCells.value.length
+  if (count <= 1) return 'one'
+  if (count === 2) return 'two'
+  if (count === 3) return 'three'
+  return 'four'
+})
 const weekly = computed(() => codexWeeklyReading(props.primary, props.secondary))
 const hasRingOverride = computed(() => typeof props.ringPercent === 'number' && Number.isFinite(props.ringPercent))
 const weeklyPercent = computed(() => hasRingOverride.value ? props.ringPercent as number : weekly.value?.bucket.remainingPercent ?? 0)
@@ -127,9 +135,9 @@ const style = computed(() => ({
     </svg>
 
     <div v-if="!primary || appearance.inner.showPercent" class="codex-water-ball__value" :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary && !hasPercentOverride }]">
-      <div v-if="gridMode" class="codex-water-ball__grid" aria-hidden="true">
+      <div v-if="gridMode" class="codex-water-ball__grid" :class="`layout-${gridLayout}`" aria-hidden="true">
         <div
-          v-for="cell in quotaGrid"
+          v-for="cell in gridCells"
           :key="cell.key"
           class="codex-water-ball__grid-cell"
           :class="[`kind-${cell.kind}`]"
@@ -391,11 +399,31 @@ const style = computed(() => ({
 
 .codex-water-ball__grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2px 4px;
   width: min(100%, 72px);
   min-height: 42px;
   align-content: center;
+}
+.codex-water-ball__grid.layout-four {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.codex-water-ball__grid.layout-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(100%, 64px);
+  min-height: 30px;
+}
+.codex-water-ball__grid.layout-one {
+  grid-template-columns: minmax(0, 1fr);
+  width: min(100%, 44px);
+  min-height: 28px;
+}
+.codex-water-ball__grid.layout-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(100%, 78px);
+  min-height: 34px;
+}
+.codex-water-ball__grid.layout-one .codex-water-ball__grid-value {
+  font-size: min(calc(var(--water-percent-size, 22px) * .55), 14px);
 }
 .codex-water-ball__grid-cell {
   display: grid;

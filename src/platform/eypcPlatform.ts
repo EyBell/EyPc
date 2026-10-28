@@ -767,6 +767,7 @@ export interface EypcPlatformApi {
   companionKernel?: CompanionTaskKernelBridge
   float: {
     sync(payload: { visible: boolean; snapshot?: unknown; position?: unknown; expandedSizes?: unknown }): boolean
+    setCrossDesktopPin?(enabled: boolean): boolean
     activate?(payload?: { command?: 'new-thread' | 'quick' }): boolean
     diagnostics?(): CodexFloatWorkspaceDiagnostics
     resetGeometry?(payload?: { position?: unknown; expandedSizes?: unknown }): boolean
@@ -1415,6 +1416,7 @@ export function getPlatform(): EypcPlatformApi {
       float: {
         sync: hostFloat?.sync || (() => false),
         activate: hostFloat?.activate,
+        setCrossDesktopPin: hostFloat?.setCrossDesktopPin,
         diagnostics: hostFloat?.diagnostics,
         resetGeometry: hostFloat?.resetGeometry,
         close: hostFloat?.close || (() => undefined),
@@ -1550,6 +1552,7 @@ export function getPlatform(): EypcPlatformApi {
     float: {
       sync: () => false,
       activate: () => false,
+      setCrossDesktopPin: () => false,
       diagnostics: () => ({ supported: false, alwaysOnTop: false, allWorkspaces: false, visibleOnFullScreen: false, checkedAt: 0, errorCode: 'unsupported' }),
       resetGeometry: () => false,
       close: () => undefined,

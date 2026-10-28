@@ -128,16 +128,31 @@ function percentCell(
   return { key, label, kind: 'percent', percent, text: String(percent), detail }
 }
 
+function shouldShowPercentQuota(percent: number | null): boolean {
+  return percent !== null && percent > 0
+}
+
+export interface MagpieQuotaGridLabelOptions {
+  cursorModels?: string
+  cursorOther?: string
+}
+
 /**
- * Resolves the 2×2 centre grid.
+ * Resolves the centre grid (3 or 4 cells).
  *
- * The outer ring already shows Codex weekly remaining, so the top-left cell
- * never repeats that percentage: it shows a token balance only when the weekly
- * window is exhausted, otherwise a neutral placeholder.
+ * When Codex reports a weekly window, the outer ring already shows that
+ * reading — use a 3-cell grid (Grok + Cursor C/O) only. Token balance appears
+ * in a 4th top-left cell only when the weekly window is absent.
  */
 export function resolveCompactQuotaGridPresentation(
   providers: MagpieQuotaProvider[] | null | undefined,
-  options: { enabled?: boolean; status?: CompactQuotaGridPresentation['status']; updatedAt?: number; errorMessage?: string } = {}
+  options: {
+    enabled?: boolean
+    status?: CompactQuotaGridPresentation['status']
+    updatedAt?: number
+    errorMessage?: string
+    labels?: MagpieQuotaGridLabelOptions
+  } = {}
 ): CompactQuotaGridPresentation {
   const enabled = options.enabled === true
   if (!enabled) return EMPTY_GRID
@@ -151,12 +166,14 @@ export function resolveCompactQuotaGridPresentation(
   const grokWeekly = windowRemaining(grok, '7 days')
   const cursorModels = windowRemaining(cursor, 'Cursor Models')
   const cursorOther = windowRemaining(cursor, 'Other Models')
+  const cursorModelsLabel = (options.labels?.cursorModels ?? 'G').trim().slice(0, 4) || 'G'
+  const cursorOtherLabel = (options.labels?.cursorOther ?? 'A').trim().slice(0, 4) || 'A'
 
   const tokenBalance = codex?.balance ?? null
   const tokenText = formatMagpieTokenBalance(tokenBalance)
   const tokenValue = parseMagpieTokenBalance(tokenBalance)
 
-  const tokenCell: CompactQuotaGridCell = codexWeekly === 0 && tokenValue !== null
+  const tokenCell: CompactQuotaGridCell = tokenValue !== null
     ? {
         key: 'token',
         label: 'Token',
@@ -165,30 +182,26 @@ export function resolveCompactQuotaGridPresentation(
         text: tokenText,
         detail: typeof tokenBalance === 'string' ? `Codex Token 余量 ${tokenBalance}` : `Codex Token 余量 ${tokenText}`
       }
-    : codexWeekly === null
-      ? missingCell('token', 'Token', 'Codex 周额度暂不可用')
-      : {
-          key: 'token',
-          label: '额度',
-          kind: 'placeholder',
-          percent: null,
-          text: '—',
-          detail: 'Codex 周额度由外圈显示'
-        }
+    : missingCell('token', 'Token', 'Codex Token 余量暂不可用')
 
-  const grokCell = grokWeekly === null
-    ? missingCell('grok', 'Grok', 'Grok 7 天额度暂不可用')
-    : percentCell('grok', 'Grok', grokWeekly, `Grok 7 天剩余 ${grokWeekly}%`)
+  const optionalCells: CompactQuotaGridCell[] = []
+  if (shouldShowPercentQuota(grokWeekly)) {
+    optionalCells.push(percentCell('grok', 'Grok', grokWeekly as number, `Grok 7 天剩余 ${grokWeekly}%`))
+  }
+  if (shouldShowPercentQuota(cursorModels)) {
+    optionalCells.push(
+      percentCell('cursor-models', cursorModelsLabel, cursorModels as number, `Cursor Models 剩余 ${cursorModels}%`)
+    )
+  }
+  if (shouldShowPercentQuota(cursorOther)) {
+    optionalCells.push(
+      percentCell('cursor-other', cursorOtherLabel, cursorOther as number, `Cursor Other Models 剩余 ${cursorOther}%`)
+    )
+  }
 
-  const cursorModelsCell = cursorModels === null
-    ? missingCell('cursor-models', 'C', 'Cursor Models 额度暂不可用')
-    : percentCell('cursor-models', 'C', cursorModels, `Cursor Models 剩余 ${cursorModels}%`)
-
-  const cursorOtherCell = cursorOther === null
-    ? missingCell('cursor-other', 'O', 'Cursor Other Models 额度暂不可用')
-    : percentCell('cursor-other', 'O', cursorOther, `Cursor Other Models 剩余 ${cursorOther}%`)
-
-  const cells = [tokenCell, grokCell, cursorModelsCell, cursorOtherCell]
+  const cells = codexWeekly !== null
+    ? optionalCells
+    : [tokenCell, ...optionalCells]
   const ariaParts = cells
     .filter((cell) => cell.kind !== 'placeholder')
     .map((cell) => cell.detail)

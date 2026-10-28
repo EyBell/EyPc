@@ -713,6 +713,8 @@ export interface CodexFirstPromptTimeCacheEntry {
 
 export interface CodexSettings {
   floatEnabled: boolean
+  /** macOS: show float on all workspaces and over fullscreen. Defaults on. */
+  floatCrossDesktopPin: boolean
   displayStyle: CodexDisplayStyle
   conversationInboxEnabled: boolean
   /** Automatic quota refresh interval in whole seconds. */
@@ -747,6 +749,9 @@ export interface CodexSettings {
    * water-ball grid and expanded quota cards. Defaults off.
    */
   magpieQuotaAccess: boolean
+  /** Short labels for Magpie water-ball Cursor grid cells (Models / Other). */
+  magpieQuotaGridCursorPrimaryLabel: string
+  magpieQuotaGridCursorSecondaryLabel: string
   /**
    * Jump readiness: probe the target app before a task jump and launch it when
    * it is closed. Absent normalizes to on — launch-first is the intended
@@ -1415,6 +1420,7 @@ export function defaultCodexSettings(): CodexSettings {
   const colors = defaultCodexSettingsColors()
   return {
     floatEnabled: false,
+    floatCrossDesktopPin: true,
     displayStyle: 'water',
     conversationInboxEnabled: true,
     quotaRefreshSeconds: CODEX_DEFAULT_QUOTA_REFRESH_SECONDS,
@@ -1427,6 +1433,8 @@ export function defaultCodexSettings(): CodexSettings {
     claudeAppQuotaAccess: false,
     claudeQuotaFallback: false,
     magpieQuotaAccess: false,
+    magpieQuotaGridCursorPrimaryLabel: 'G',
+    magpieQuotaGridCursorSecondaryLabel: 'A',
     openLaunchesTarget: true,
     codexhostLaunch: 'auto',
     compactFields: [...COMPACT_FIELDS],
@@ -1441,6 +1449,12 @@ export function defaultCodexSettings(): CodexSettings {
   }
 }
 
+function sanitizeMagpieQuotaGridLabel(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim().slice(0, 4)
+  return trimmed.length ? trimmed : fallback
+}
+
 export function normalizeCodexSettings(value: unknown): CodexSettings {
   const fallback = defaultCodexSettings()
   const source = record(value)
@@ -1449,6 +1463,7 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
   const counterColors = normalizeCounterColors(source.counterColors, fallback.counterColors)
   return {
     floatEnabled: source.floatEnabled === true,
+    floatCrossDesktopPin: source.floatCrossDesktopPin !== false,
     displayStyle: enumValue(source.displayStyle, ['water', 'card', 'edge'] as const, fallback.displayStyle),
     conversationInboxEnabled: source.conversationInboxEnabled !== false,
     quotaRefreshSeconds: boundedInteger(
@@ -1483,6 +1498,14 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
     claudeAppQuotaAccess: source.claudeAppQuotaAccess === true || source.claudeQuotaFallback === true,
     claudeQuotaFallback: source.claudeQuotaFallback === true,
     magpieQuotaAccess: source.magpieQuotaAccess === true,
+    magpieQuotaGridCursorPrimaryLabel: sanitizeMagpieQuotaGridLabel(
+      source.magpieQuotaGridCursorPrimaryLabel,
+      fallback.magpieQuotaGridCursorPrimaryLabel
+    ),
+    magpieQuotaGridCursorSecondaryLabel: sanitizeMagpieQuotaGridLabel(
+      source.magpieQuotaGridCursorSecondaryLabel,
+      fallback.magpieQuotaGridCursorSecondaryLabel
+    ),
     openLaunchesTarget: source.openLaunchesTarget !== false,
     codexhostLaunch: enumValue(source.codexhostLaunch, ['auto', 'on', 'off'] as const, fallback.codexhostLaunch),
     compactFields: orderedFields(source.compactFields, COMPACT_FIELDS, fallback.compactFields),

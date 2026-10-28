@@ -12464,8 +12464,7 @@ companionTaskKernel = typeof createCompanionTaskKernel === 'function' && compani
       },
       record: (event) => recordCompanionDiagnosticEvent(event)
     })
-  : null
-
+  : null; try { if (process.type === 'renderer' && globalThis.utools && companionTaskKernel) require('./companion/appearance-preview-bridge.cjs').start(companionTaskKernel) } catch {}
 if (!companionPersistedSideState.planPauseStorageReady()) {
   runtimeDiagnostics.record({
     level: 'error',
@@ -13567,8 +13566,10 @@ if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') 
   globalThis.utools.onPluginEnter((action) => {
     const freezeSpan = freezeTrace.begin('main.plugin-enter')
     try {
-    ensureCodexInventoryMembershipWatchers({ reconcile: false })
-    requestCodexInventoryMembershipReconciliation('plugin-enter', { forceTasksOnly: true })
+    if (!['eypc-codex-task-previous', 'eypc-codex-task-next'].includes(action?.code) || companionTaskKernel?.getLatest?.()?.complete !== true) {
+      ensureCodexInventoryMembershipWatchers({ reconcile: false })
+      requestCodexInventoryMembershipReconciliation('plugin-enter', { forceTasksOnly: true })
+    }
     codexFloatBridge?.handlePluginEnter?.(action)
     // 快速任务查看的载体是宿主自己拥有的悬浮子窗口，不依赖 Renderer 挂载。
     // 冷启动直接激活，避免"全局快捷键第一次按没反应、第二次才生效"。
@@ -13636,7 +13637,7 @@ if (globalThis.utools && typeof globalThis.utools.onPluginOut === 'function') {
       companionCursorInventoryDispose = null
       companionOrcaInventoryDispose = null
       closeCodexInventoryMembershipWatchers()
-      companionTaskKernel?.close()
+      try { require('./companion/appearance-preview-bridge.cjs').stop(companionTaskKernel) } catch {}; companionTaskKernel?.close()
       codexEnvironmentBridge?.shutdownCodexEnvironmentActions()
       closeCodexActionRunner()
       closeCodexConnections({ force: true })
@@ -14655,6 +14656,7 @@ window.eypcPlatform = {
     // a new case.
     sync: (payload) => codexFloatBridge ? codexFloatBridge.sync(payload) : false,
     activate: (payload) => codexFloatBridge ? codexFloatBridge.activate(payload) : false,
+    setCrossDesktopPin: (enabled) => codexFloatBridge?.setCrossDesktopPin?.(enabled) ?? false,
     diagnostics: () => codexFloatBridge ? codexFloatBridge.diagnostics() : {
       supported: process.platform === 'darwin',
       alwaysOnTop: false,
