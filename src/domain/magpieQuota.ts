@@ -20,6 +20,8 @@ export interface MagpieQuotaWindow {
 export interface MagpieQuotaProvider {
   provider: MagpieQuotaProviderId | string
   name?: string
+  plan?: string | null
+  last?: boolean
   balance?: string | null
   windows?: MagpieQuotaWindow[]
   readAt?: string
@@ -42,12 +44,29 @@ export interface CompactQuotaGridCell {
   detail: string
 }
 
+export type CompactQuotaGridSlot = CompactQuotaGridCell['key']
+
+export interface CompactQuotaGridRow {
+  id: 'top' | 'bottom'
+  slots: CompactQuotaGridSlot[]
+  cells: CompactQuotaGridCell[]
+}
+
+export type CompactQuotaGridLayout =
+  | 'empty'
+  | 'one'
+  | 'top-only'
+  | 'bottom-only'
+  | 'rows'
+
 export interface CompactQuotaGridPresentation {
   enabled: boolean
   status: 'idle' | 'loading' | 'ok' | 'stale' | 'error'
   updatedAt: number
   errorMessage?: string
   cells: CompactQuotaGridCell[]
+  rows: CompactQuotaGridRow[]
+  layout: CompactQuotaGridLayout
   ariaSuffix: string
 }
 
@@ -56,6 +75,8 @@ const EMPTY_GRID: CompactQuotaGridPresentation = {
   status: 'idle',
   updatedAt: 0,
   cells: [],
+  rows: [],
+  layout: 'empty',
   ariaSuffix: ''
 }
 
@@ -111,14 +132,6 @@ export function normalizeMagpieQuotaProviders(input: unknown): MagpieQuotaProvid
   return []
 }
 
-function missingCell(
-  key: CompactQuotaGridCell['key'],
-  label: string,
-  detail: string
-): CompactQuotaGridCell {
-  return { key, label, kind: 'missing', percent: null, text: '—', detail }
-}
-
 function percentCell(
   key: Exclude<CompactQuotaGridCell['key'], 'token'>,
   label: string,
@@ -132,17 +145,160 @@ function shouldShowPercentQuota(percent: number | null): boolean {
   return percent !== null && percent > 0
 }
 
+function shouldShowTokenBalance(tokenValue: number | null, codexWeekly: number | null): boolean {
+  if (tokenValue === null || tokenValue <= 0) return false
+  return codexWeekly === null || codexWeekly === 0
+}
+
+
+const REMOTE_CODEX_PROVIDER = 'remote-magpie/codex'
+const REMOTE_GROK_PROVIDER = 'remote-magpie/grok'
+const REMOTE_CURSOR_PROVIDER = 'remote-magpie/cursor'
+
+function isRemoteQuotaProvider(provider: string): boolean {
+  return provider === REMOTE_CODEX_PROVIDER
+    || provider === REMOTE_GROK_PROVIDER
+    || provider === REMOTE_CURSOR_PROVIDER
+}
+
+function entriesByProvider(list: MagpieQuotaProvider[], provider: string): MagpieQuotaProvider[] {
+  return list.filter((entry) => entry?.provider === provider)
+}
+
+function normalizedPlan(plan: string | null | undefined): string {
+  return typeof plan === 'string' ? plan.trim().toLowerCase() : ''
+}
+
+function isFreeCodexPlan(entry: MagpieQuotaProvider): boolean {
+  return normalizedPlan(entry.plan) === 'free'
+}
+
+function isPromaxPlan(entry: MagpieQuotaProvider): boolean {
+  return normalizedPlan(entry.plan) === 'promax'
+}
+
+interface CodexQuotaCandidate {
+  entry: MagpieQuotaProvider
+  index: number
+  weekly: number | null
+}
+
+function compareActiveCodex(left: CodexQuotaCandidate, right: CodexQuotaCandidate): number {
+  const leftLast = left.entry.last === true ? 1 : 0
+  const rightLast = right.entry.last === true ? 1 : 0
+  if (leftLast !== rightLast) return rightLast - leftLast
+  const leftPromax = isPromaxPlan(left.entry) ? 1 : 0
+  const rightPromax = isPromaxPlan(right.entry) ? 1 : 0
+  if (leftPromax !== rightPromax) return rightPromax - leftPromax
+  const leftWeekly = left.weekly ?? -1
+  const rightWeekly = right.weekly ?? -1
+  if (leftWeekly !== rightWeekly) return rightWeekly - leftWeekly
+  return left.index - right.index
+}
+
+function compareTokenCodex(left: CodexQuotaCandidate, right: CodexQuotaCandidate): number {
+  const leftPromax = isPromaxPlan(left.entry) ? 1 : 0
+  const rightPromax = isPromaxPlan(right.entry) ? 1 : 0
+  if (leftPromax !== rightPromax) return rightPromax - leftPromax
+  const leftLast = left.entry.last === true ? 1 : 0
+  const rightLast = right.entry.last === true ? 1 : 0
+  if (leftLast !== rightLast) return rightLast - leftLast
+  return left.index - right.index
+}
+
+function selectRemoteCodex(entries: MagpieQuotaProvider[]): MagpieQuotaProvider | null {
+  const candidates = entries
+    .map((entry, index) => ({ entry, index, weekly: windowRemaining(entry, '7 days') }))
+    .filter((candidate) => !isFreeCodexPlan(candidate.entry))
+  if (!candidates.length) return null
+  const active = candidates.filter((candidate) => candidate.weekly !== null && candidate.weekly > 0)
+  if (active.length) return [...active].sort(compareActiveCodex)[0].entry
+  const funded = candidates.filter((candidate) => {
+    const balance = parseMagpieTokenBalance(candidate.entry.balance)
+    return balance !== null && balance > 0
+  })
+  if (funded.length) return [...funded].sort(compareTokenCodex)[0].entry
+  return [...candidates].sort(compareActiveCodex)[0].entry
+}
+
+interface MagpieQuotaSources {
+  codex: MagpieQuotaProvider | null
+  grok: MagpieQuotaProvider | null
+  cursor: MagpieQuotaProvider | null
+}
+
+function resolveMagpieQuotaSources(list: MagpieQuotaProvider[]): MagpieQuotaSources {
+  const remoteMode = list.some((entry) => typeof entry?.provider === 'string' && isRemoteQuotaProvider(entry.provider))
+  if (!remoteMode) {
+    return {
+      codex: providerEntry(list, 'codex'),
+      grok: providerEntry(list, 'grok'),
+      cursor: providerEntry(list, 'cursor')
+    }
+  }
+  return {
+    codex: selectRemoteCodex(entriesByProvider(list, REMOTE_CODEX_PROVIDER)),
+    grok: entriesByProvider(list, REMOTE_GROK_PROVIDER)[0] ?? null,
+    cursor: entriesByProvider(list, REMOTE_CURSOR_PROVIDER)[0] ?? null
+  }
+}
+
+
+function buildQuotaGridRows(
+  top: Array<CompactQuotaGridCell | null>,
+  bottom: Array<CompactQuotaGridCell | null>
+): { cells: CompactQuotaGridCell[]; rows: CompactQuotaGridRow[]; layout: CompactQuotaGridLayout } {
+  const topCells = top.filter((cell): cell is CompactQuotaGridCell => cell !== null)
+  const bottomCells = bottom.filter((cell): cell is CompactQuotaGridCell => cell !== null)
+  const rows: CompactQuotaGridRow[] = []
+  if (topCells.length) {
+    rows.push({
+      id: 'top',
+      slots: topCells.map((cell) => cell.key),
+      cells: topCells
+    })
+  }
+  if (bottomCells.length) {
+    rows.push({
+      id: 'bottom',
+      slots: bottomCells.map((cell) => cell.key),
+      cells: bottomCells
+    })
+  }
+  const cells = rows.flatMap((row) => row.cells)
+  let layout: CompactQuotaGridLayout = 'empty'
+  if (cells.length === 0) layout = 'empty'
+  else if (cells.length === 1) layout = 'one'
+  else if (rows.length === 1 && rows[0].id === 'top') layout = 'top-only'
+  else if (rows.length === 1 && rows[0].id === 'bottom') layout = 'bottom-only'
+  else layout = 'rows'
+  return { cells, rows, layout }
+}
+
+/** Rebuilds fixed-slot rows from a flat visible-cell list (tests / legacy callers). */
+export function presentCompactQuotaGridCells(
+  cells: CompactQuotaGridCell[] | null | undefined
+): Pick<CompactQuotaGridPresentation, 'cells' | 'rows' | 'layout'> {
+  const list = Array.isArray(cells) ? cells : []
+  const byKey = new Map(list.map((cell) => [cell.key, cell] as const))
+  return buildQuotaGridRows(
+    [byKey.get('token') ?? null, byKey.get('grok') ?? null],
+    [byKey.get('cursor-models') ?? null, byKey.get('cursor-other') ?? null]
+  )
+}
+
 export interface MagpieQuotaGridLabelOptions {
   cursorModels?: string
   cursorOther?: string
 }
 
 /**
- * Resolves the centre grid (3 or 4 cells).
+ * Resolves the centre Magpie quadrant grid.
  *
- * When Codex reports a weekly window, the outer ring already shows that
- * reading — use a 3-cell grid (Grok + Cursor C/O) only. Token balance appears
- * in a 4th top-left cell only when the weekly window is absent.
+ * Fixed slots: Token top-left, Grok top-right, Cursor Models bottom-left,
+ * Cursor Other bottom-right. A slot appears only when it still has remaining
+ * value; a lone cell in a row centres; an empty row disappears and the other
+ * row recentres in the ball.
  */
 export function resolveCompactQuotaGridPresentation(
   providers: MagpieQuotaProvider[] | null | undefined,
@@ -159,9 +315,10 @@ export function resolveCompactQuotaGridPresentation(
   const status = options.status || 'idle'
   const updatedAt = options.updatedAt || 0
   const list = normalizeMagpieQuotaProviders(providers)
-  const codex = providerEntry(list, 'codex')
-  const grok = providerEntry(list, 'grok')
-  const cursor = providerEntry(list, 'cursor')
+  const sources = resolveMagpieQuotaSources(list)
+  const codex = sources.codex
+  const grok = sources.grok
+  const cursor = sources.cursor
   const codexWeekly = windowRemaining(codex, '7 days')
   const grokWeekly = windowRemaining(grok, '7 days')
   const cursorModels = windowRemaining(cursor, 'Cursor Models')
@@ -173,7 +330,7 @@ export function resolveCompactQuotaGridPresentation(
   const tokenText = formatMagpieTokenBalance(tokenBalance)
   const tokenValue = parseMagpieTokenBalance(tokenBalance)
 
-  const tokenCell: CompactQuotaGridCell = tokenValue !== null
+  const tokenCell: CompactQuotaGridCell | null = shouldShowTokenBalance(tokenValue, codexWeekly)
     ? {
         key: 'token',
         label: 'Token',
@@ -182,26 +339,21 @@ export function resolveCompactQuotaGridPresentation(
         text: tokenText,
         detail: typeof tokenBalance === 'string' ? `Codex Token 余量 ${tokenBalance}` : `Codex Token 余量 ${tokenText}`
       }
-    : missingCell('token', 'Token', 'Codex Token 余量暂不可用')
+    : null
+  const grokCell = shouldShowPercentQuota(grokWeekly)
+    ? percentCell('grok', 'Grok', grokWeekly as number, `Grok 7 天剩余 ${grokWeekly}%`)
+    : null
+  const cursorModelsCell = shouldShowPercentQuota(cursorModels)
+    ? percentCell('cursor-models', cursorModelsLabel, cursorModels as number, `Cursor Models 剩余 ${cursorModels}%`)
+    : null
+  const cursorOtherCell = shouldShowPercentQuota(cursorOther)
+    ? percentCell('cursor-other', cursorOtherLabel, cursorOther as number, `Cursor Other Models 剩余 ${cursorOther}%`)
+    : null
 
-  const optionalCells: CompactQuotaGridCell[] = []
-  if (shouldShowPercentQuota(grokWeekly)) {
-    optionalCells.push(percentCell('grok', 'Grok', grokWeekly as number, `Grok 7 天剩余 ${grokWeekly}%`))
-  }
-  if (shouldShowPercentQuota(cursorModels)) {
-    optionalCells.push(
-      percentCell('cursor-models', cursorModelsLabel, cursorModels as number, `Cursor Models 剩余 ${cursorModels}%`)
-    )
-  }
-  if (shouldShowPercentQuota(cursorOther)) {
-    optionalCells.push(
-      percentCell('cursor-other', cursorOtherLabel, cursorOther as number, `Cursor Other Models 剩余 ${cursorOther}%`)
-    )
-  }
-
-  const cells = codexWeekly !== null
-    ? optionalCells
-    : [tokenCell, ...optionalCells]
+  const { cells, rows, layout } = buildQuotaGridRows(
+    [tokenCell, grokCell],
+    [cursorModelsCell, cursorOtherCell]
+  )
   const ariaParts = cells
     .filter((cell) => cell.kind !== 'placeholder')
     .map((cell) => cell.detail)
@@ -211,6 +363,8 @@ export function resolveCompactQuotaGridPresentation(
     updatedAt,
     ...(options.errorMessage ? { errorMessage: options.errorMessage } : {}),
     cells,
+    rows,
+    layout,
     ariaSuffix: ariaParts.length ? `，${ariaParts.join('；')}` : ''
   }
 }
@@ -278,8 +432,9 @@ export function buildMagpieQuotaExpandCards(
   const list = normalizeMagpieQuotaProviders(providers)
   if (!list.length) return []
   const cards: MagpieQuotaExpandCard[] = []
+  const sources = resolveMagpieQuotaSources(list)
 
-  const codex = providerEntry(list, 'codex')
+  const codex = sources.codex
   const codexWeekly = windowByName(codex, '7 days')
   const codexRemaining = finiteNumber(codexWeekly?.remaining)
   if (codexRemaining !== null) {
@@ -296,7 +451,7 @@ export function buildMagpieQuotaExpandCards(
     ))
   }
 
-  const grok = providerEntry(list, 'grok')
+  const grok = sources.grok
   const grokWeekly = windowByName(grok, '7 days')
   const grokRemaining = finiteNumber(grokWeekly?.remaining)
   if (grokRemaining !== null) {
@@ -310,7 +465,7 @@ export function buildMagpieQuotaExpandCards(
     ))
   }
 
-  const cursor = providerEntry(list, 'cursor')
+  const cursor = sources.cursor
   const cursorModels = windowByName(cursor, 'Cursor Models')
   const cursorOther = windowByName(cursor, 'Other Models')
   const modelsRemaining = finiteNumber(cursorModels?.remaining)
@@ -379,8 +534,9 @@ export function buildMagpieQuotaResetLines(
   const list = normalizeMagpieQuotaProviders(providers)
   if (!list.length) return []
   const lines: MagpieQuotaResetLine[] = []
+  const sources = resolveMagpieQuotaSources(list)
 
-  const codex = providerEntry(list, 'codex')
+  const codex = sources.codex
   const codexWeekly = windowByName(codex, '7 days')
   if (finiteNumber(codexWeekly?.remaining) !== null || parseMagpieResetAt(codexWeekly?.resetsAt)) {
     lines.push({
@@ -390,7 +546,7 @@ export function buildMagpieQuotaResetLines(
     })
   }
 
-  const grok = providerEntry(list, 'grok')
+  const grok = sources.grok
   const grokWeekly = windowByName(grok, '7 days')
   if (finiteNumber(grokWeekly?.remaining) !== null) {
     lines.push({
@@ -400,7 +556,7 @@ export function buildMagpieQuotaResetLines(
     })
   }
 
-  const cursor = providerEntry(list, 'cursor')
+  const cursor = sources.cursor
   const cursorModels = windowByName(cursor, 'Cursor Models')
   const cursorOther = windowByName(cursor, 'Other Models')
   const hasCursor = finiteNumber(cursorModels?.remaining) !== null || finiteNumber(cursorOther?.remaining) !== null
