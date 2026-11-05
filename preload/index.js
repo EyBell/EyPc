@@ -4938,6 +4938,12 @@ class CodexDesktopCompanionBridge {
     this.unreadStateStatWatcherActive = false
     this.unreadStateWatcherRetryAvailable = true
     this.lastSocketError = ''
+    this.unreadRecovery = codexDesktopShadow?.createCodexDesktopUnreadRecovery?.({
+      record: recordCompanionDiagnosticEvent, knownThread: (id) => codexActivityInventory.get(id),
+      sideRelations: codexAllSideRelations, now: Date.now,
+      isExternalThreadId: (id) => codexhostDiscovery?.isExternalThreadId?.(id) === true,
+      isMachineThreadId: (id) => codexSubagentDiscovery?.codexIsMachineRunThread?.(id) === true
+    })
   }
 
   cancelLatestTurnRefreshByKey(refreshKey) {
@@ -6030,6 +6036,7 @@ class CodexDesktopCompanionBridge {
     if (message.type !== 'broadcast' || typeof message.method !== 'string') return
     if (Array.isArray(message.targetClientIds) && !message.targetClientIds.includes(this.clientId)) return
     if (!codexDesktopIpcVersionAccepted(message.method, message.version)) {
+      if (message.method === 'thread-read-state-changed') this.handleReadState(codexRecord(message.params), message.sourceClientId, message.version)
       this.failConnection('incompatible')
       return
     }
@@ -6192,6 +6199,7 @@ class CodexDesktopCompanionBridge {
       const normalizedChange = protocolVersion === 6 && !Number.isInteger(change.revision)
         ? { ...change, revision: previousShadow?.ownerClientId === ownerClientId ? previousShadow.revision + 1 : 1 }
         : change
+      if (this.unreadRecovery?.snapshotAllowed(this, params.conversationId, normalizedChange, previousShadow, ownerClientId, protocolVersion === 6 && !Number.isInteger(change.revision)) === false) return
       if (previousShadow?.ephemeral === true && previousShadow.sideConversation
         && previousShadow.ownerClientId === ownerClientId && normalizedChange.revision < previousShadow.revision) return
       const shadow = codexDesktopShadowFromSnapshot(normalizedChange, previousShadow, waitingState)
@@ -6226,6 +6234,7 @@ class CodexDesktopCompanionBridge {
       )
       this.cancelWaitingEdgeRefresh(params.conversationId)
       shadow.ownerClientId = ownerClientId
+      this.unreadRecovery?.snapshotAccepted(this, params.conversationId, shadow, previousShadow, ownerClientId)
       const hintedParentThreadId = codexSideParentThreadId(params.conversationId)
       if (shadow.sideConversation && validCodexThreadId(hintedParentThreadId)) {
         shadow.parentThreadId = hintedParentThreadId
@@ -6436,6 +6445,7 @@ class CodexDesktopCompanionBridge {
     } else if (!isActive) {
       delete shadow.desktopActiveSince
     }
+    if (containsReadStatePatch) this.unreadRecovery?.notificationAccepted(this, params.conversationId)
     const readStateOnly = containsReadStatePatch && !containsActivityPatch
       && !change.patches.some((patch) => ['turnHistory', 'turns', 'threadGoal', 'ephemeral', 'unconfirmedTurnSubmissions'].includes(patch.path?.[0]))
     if (this.sideShadows.has(params.conversationId)) {
@@ -6620,20 +6630,22 @@ class CodexDesktopCompanionBridge {
   }
 
   handleReadState(params, ownerClientId, version) {
-    // v1 Codex editor-extension broadcasts are local-only and omit hostId;
-    // v2 Desktop broadcasts may include it. Reject only an explicit non-local
-    // host so both real producers reach the same exact read-state path.
-    if (params.hostId !== undefined && params.hostId !== 'local') return
-    if (!validCodexThreadId(params.conversationId) || typeof params.hasUnreadTurn !== 'boolean') return
-    if (version === 3) {
-      const binding = codexDesktopShadow?.codexReadStateContextBinding(params.context)
-      if (!binding || params.hostId !== 'local') return
-      this.readStateBinding = binding
-    }
+    const decision = codexDesktopShadow?.codexDesktopReadNotificationDecision?.(params, version)
+    recordCompanionDiagnosticEvent({ level: decision?.accepted ? 'debug' : 'info',
+      scope: 'task-evidence', event: 'desktop-read-notification', outcome: decision?.accepted ? 'received' : 'rejected',
+      provider: 'codex', taskRef: validCodexThreadId(params?.conversationId) ? params.conversationId : '',
+      details: { reason: decision?.reason || 'read-module-unavailable', version: Number.isSafeInteger(version) ? version : 0,
+        bindingKnown: Boolean(decision?.binding), unread: decision?.accepted ? params.hasUnreadTurn : undefined } })
+    if (!decision?.accepted) return
+    const bindingChanged = decision.binding && this.unreadRecovery?.bindingChanged(this, decision.binding)
+    this.unreadRecovery?.notificationAccepted(this, params.conversationId)
     const known = codexActivityInventory.get(params.conversationId)
     const ownShadow = this.shadows.get(params.conversationId)
     const sideShadow = this.sideShadows.get(params.conversationId)
-    if (!known && !ownShadow && !sideShadow) return
+    if (!known && !ownShadow && !sideShadow) {
+      if (bindingChanged) this.refreshPersistedUnread(true)
+      return
+    }
     if (sideShadow) {
       sideShadow.hasUnreadTurn = params.hasUnreadTurn
       this.liveUnread.set(params.conversationId, {
@@ -6641,6 +6653,7 @@ class CodexDesktopCompanionBridge {
         hasUnreadTurn: params.hasUnreadTurn,
         unreadEvidence: 'event'
       })
+      if (bindingChanged) this.refreshPersistedUnread(true)
       this.emitParentActivity(sideShadow.parentThreadId, undefined, true)
       this.reconcileLateUnread(sideShadow.parentThreadId, params.hasUnreadTurn, params.conversationId)
       return
@@ -6654,11 +6667,15 @@ class CodexDesktopCompanionBridge {
       ownShadow.hasUnreadTurn = params.hasUnreadTurn
       ownShadow.unreadEvidence = 'event'
     }
-    if (!known) return
+    if (!known) {
+      if (bindingChanged) this.refreshPersistedUnread(true)
+      return
+    }
     known.hasUnreadTurn = codexDesktopOpenedReadAcknowledgements.has(params.conversationId)
       ? false
       : params.hasUnreadTurn
     known.unreadAuthority = 'desktop-live'
+    if (bindingChanged) this.refreshPersistedUnread(true)
     emitCodexActivityDelta([{ ...known, readStateOnly: true }], false)
     this.reconcileLateUnread(params.conversationId, params.hasUnreadTurn, params.conversationId)
   }
@@ -6922,7 +6939,7 @@ class CodexDesktopCompanionBridge {
 
   refreshPersistedUnread(emit = true) {
     let unreadIds = null
-    try { unreadIds = readCodexDesktopUnreadIds() } catch {}
+    try { unreadIds = readCodexDesktopUnreadIds() } catch (error) { this.unreadRecovery?.persistenceFailed(this, error, emit) }
     if (unreadIds) {
       this.notePinMirror(unreadIds.pinMirrorLine, emit)
       const unreadLine = typeof unreadIds.unreadLine === 'string'
@@ -7068,6 +7085,7 @@ class CodexDesktopCompanionBridge {
   }
 
   closeUnreadStateWatcher() {
+    this.unreadRecovery?.clear(this)
     try { this.unreadStateWatcher?.close() } catch {}
     this.unreadStateWatcher = null
     if (this.unreadStateStatWatcherActive && this.unreadStateWatchPath && typeof fs.unwatchFile === 'function') {
@@ -7081,6 +7099,7 @@ class CodexDesktopCompanionBridge {
   }
 
   resetLiveAuthority() {
+    this.unreadRecovery?.clear(this)
     this.clearLatestTurnRefreshes()
     this.clearWaitingEdgeRefreshes()
     const retainedParents = new Set()
@@ -8697,8 +8716,8 @@ function readCodexNativeRegistry() {
 /** The desktop unread set flips whole groups when its read outcome flips, so
  * transitions (ok<->failed, size changes) are logged; steady reads are not. */
 let codexDesktopUnreadReadLastLine = ''
-function codexNoteDesktopUnreadRead(outcome, size) {
-  const line = `${outcome}:${size}`
+function codexNoteDesktopUnreadRead(outcome, size, reason = '') {
+  const line = `${outcome}:${size}:${reason}`
   if (line === codexDesktopUnreadReadLastLine) return
   codexDesktopUnreadReadLastLine = line
   runtimeDiagnostics.record({
@@ -8707,7 +8726,7 @@ function codexNoteDesktopUnreadRead(outcome, size) {
     event: 'desktop-unread-read',
     outcome,
     provider: 'codex',
-    details: { size }
+    details: { size, reason, bindingKnown: Boolean(codexDesktopBridge?.readStateBinding) }
   })
 }
 
@@ -8717,7 +8736,7 @@ function readCodexDesktopUnreadIds() {
     codexNoteDesktopUnreadRead('ok', result.size)
     return result
   } catch (error) {
-    codexNoteDesktopUnreadRead('failed', -1)
+    codexNoteDesktopUnreadRead('failed', -1, codexDesktopShadow?.codexDesktopUnreadReadFailureReason?.(error) || 'read-failed')
     throw error
   }
 }
@@ -8733,8 +8752,11 @@ function readCodexDesktopUnreadIdsInner() {
     throw codexError('protocol-error', 'Codex desktop unread state is invalid')
   }
   let local
-  try { local = codexDesktopShadow?.parseCodexDesktopUnreadState(parsed, codexDesktopBridge?.readStateBinding) } catch {
-    throw codexError('protocol-error', 'Codex desktop unread state is invalid')
+  try { local = codexDesktopShadow?.parseCodexDesktopUnreadState(parsed, codexDesktopBridge?.readStateBinding) } catch (error) {
+    const failure = codexError('protocol-error', 'Codex desktop unread state is invalid')
+    failure.unreadFailureReason = codexDesktopShadow?.codexDesktopUnreadReadFailureReason?.(error) || 'read-failed'
+    failure.unreadSourceFingerprint = codexDesktopBridge?.unreadRecovery?.fingerprint(parsed) || ''
+    throw failure
   }
   if (!Array.isArray(local) || local.length > 100_000 || local.some((threadId) => !validCodexThreadId(threadId))) {
     throw codexError('protocol-error', 'Codex desktop unread state is invalid')

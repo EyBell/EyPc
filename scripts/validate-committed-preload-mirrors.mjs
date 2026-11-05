@@ -1,3 +1,4 @@
+import { checkCodexUnreadRoute } from './check-codex-unread-route.mjs'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS } from './utools-preload-assets.mjs'
@@ -16,6 +17,7 @@ import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS } from './utools-pr
  */
 
 const root = resolve(import.meta.dirname, '..')
+checkCodexUnreadRoute(root)
 const pairs = [...UTOOLS_PRELOAD_ASSETS, ...UTOOLS_PRELOAD_MODULE_ASSETS]
 
 function git(args) {

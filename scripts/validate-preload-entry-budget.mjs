@@ -194,7 +194,8 @@ const BUDGET = Object.freeze({
   // The eligibility decision stays in desktop-activity-resolution.cjs.
   // 2026-10-25: owner/Goal wiring adds 16 lines; linear IPC frame ingestion
   // moves 7 back into its transport owner. No entry state/functions added.
-  lines: 14730,
+  // 2026-11-05: +22 unread recovery wiring lines; existing entry has 2 prior lines.
+  lines: 14754,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter

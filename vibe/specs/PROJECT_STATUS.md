@@ -1,5 +1,11 @@
 # EyPc Project Status Hub
 
+- 2026-11-05 第二版现场复核：运行进程持有的安装包与第二版 97 项代码一致，Host/Renderer 指纹均为下条候选，用户重打包时间 15:13:00。同 revision 已读恢复两次真实接纳并获 Float applied。原截图“261028-SRM-分润总体统筹”经 Codex 原生打开后，15:16:24.976 出现明确 read，revision 77 于 15:16:24.998 获 applied，证据到 ACK 22ms；开始时原生已经已读、插件为 unknown，完整未读→已读起点尚未实证。[现场结果与限度](261105/codex-unread-linkage/task-card.md#第二版现场核查2026-11-05)。
+
+- 2026-11-05 Codex 已读联动第二版：用户已替换第一版但仍无效，已加载身份与恢复事件均确认。原生保存已读关闭 stream patches，重复 follow 可返回同 revision 的新 read 值；已修正矛盾同版本误拒，并补精确 read 缓存、单飞及合并尾随重查。静态、类型、合同、独立构建和 97 项包内资源核对通过；候选 EyPc V7 / host-c36e730c7d356298f6e4 / renderer-d5d0bb8df1cb5430e783 / 2026-11-05 15:06:35。实机加载、点击与 Main/Float 应用尚未验收，未跑自动化行为测试。[现行状态与续修记录](261105/codex-unread-linkage/task-card.md#L1)。
+
+- 2026-11-05 Codex 已读联动第一版（已被用户替换验证仍无效）：按用户指定通过 `group/grok` 子 agent 分派，加入有效 v3 绑定恢复重放、缺绑定时的文件变化定向快照、迟到快照版本保护和匿名通知诊断；静态、类型、合同、97 项资源一致性及独立构建通过。旧候选 EyPc V7 / host-e814aa45c3101f1183bd / renderer-1cf6682d9a26531497cb / 09:42:17；错误的同 revision 门禁与未通过实机的结果由上条第二版续修接管。[任务、实现与验证](261105/codex-unread-linkage/task-card.md#L1)。
+
 - 2026-10-25 任务状态续修：独立连接器notLoaded/interrupted、外部Goal旧none缓存和251MB快照逐片拼接三条缺口已修；最新生产回归先红后绿，核心26项检查/463测试通过，真连接四项约290MB在4769ms收齐。产物19:47:51：host-df1d950f6de45e0c2b99 / renderer-d5a67b79e87844756e5d；20:01:51精确加载；真实待输入出现→接受回答解除，原四项齐备；收尾新增活动E后原生/UI均5进行中/0待输入，20:08自动轮次边界无stopped跳变；旧版热态失败保留；Git交付以本轮提交与origin/main版本回读为准。[任务与设计](261010/0937-gpt-input-compat/task-card.md#L3) · [状态与核验](261010/0937-gpt-input-compat/verify.md#L3)。
 
 - 2026-10-22 Orca 状态文件唤醒与按需 CLI：相位投影与 CLI 共用 `sessionState`，消除来回跳；离开进行中或未知窗格补读一次，兜底 5 秒（未被状态文件覆盖的进行中窗格 1 秒），来源关闭不调 CLI；帮助改为“正文读入即丢弃”。`orcaWake` 6/6、全量 2199/2199，构建 `host-83c5266318a1c7739b2a / renderer-9ddc96217321ca4ff4c4`（2026/10/22 16:18:43）；宿主重载复验待做。[任务与实现](260913/orca-companion/spec.md#L33)。

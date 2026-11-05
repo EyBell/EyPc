@@ -47,3 +47,7 @@
 - 实际结束：11:23当前Host/Renderer已加载，11:30:30固定轮次running直接completed，未读包57获applied；20次原生样本在90.929秒内保持completed/idle/unread，未见stopped过渡或完成后反弹。探针与一次自动化已结束。结论限该窗口的原生/日志/ACK，匿名相位是时间/发布链关联，没有结束后截图，不外推长期或全部生命周期。
 
 实现、各阶段历史验证和最终证据边界统一见[当前任务卡](../specs/261013/1946-side-terminal-reconcile/task-card.md)。工作树历史门禁与本次提交快照的范围差异及验证结果见[提交范围](../specs/261013/1946-side-terminal-reconcile/task-card.md#2026-10-14-文档收口与提交范围)。
+
+## 2026-11-05 已读联动恢复
+
+绑定恢复、未读源指纹去重、定向 owner 快照、晚到快照与新未读竞态、匿名通知拒收诊断的本轮范围和未跑项，见[任务卡](../specs/261105/codex-unread-linkage/task-card.md#L1)。按用户既有偏好不编写或运行自动化测试；静态/构建证据不能替代真实 Codex 点击与 Main/Float 联动验收。

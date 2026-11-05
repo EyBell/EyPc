@@ -328,3 +328,10 @@ Desktop 主轮结束来源（2026-10-14）：`desktop-activity-resolution.cjs` �
 [Provider契约探测](../../scripts/provider-contract-drift.mjs#L1)仅观察安装产物元数据与显式脱敏结构，版本变化是复核信号，不是运行能力白名单。Orca库存reader对成功信封仍验证required数组与可选布局类型；结构失配返回available:false/schema-mismatch，不能把未知库存投影成已确认空库存。真实供应方/宿主行为仍需独立证据。
 
 Orca状态感知（2026-10-22）：[orca/index.cjs](../../preload/orca/index.cjs#L1)以`agent-hooks/last-status.json`的stat签名唤醒，读文件后先删正文类字段，再经[inventory.cjs](../../preload/orca/inventory.cjs#L170)同一`sessionState`投影相位（OSC取缓存`oscWorking`），不跑CLI。离开working或未知窗格补一次全量CLI；已关闭残留窗格进`stalePanes`不再触发；兜底5秒，有未被文件覆盖的进行中窗格时1秒；来源关闭时整拍跳过。
+
+- Codex 已读恢复由 [desktop-unread-evidence.cjs](../../preload/codex/desktop-unread-evidence.cjs#L163) 持有进程内绑定与恢复请求：有效本地 v3 context 恢复后立即重放持久未读；绑定缺失且迁移已清理时，只用原生未读源指纹变化唤醒仍未读的已登记根/成员快照，不从跨身份集合推断 read。原生保存已读不广播 stream patches，重复 follow 可返回同 revision 的不同 read 值，不能按这一差异拒收。新精确 read patch/通知保留独立 live 证据并使旧恢复失效；同一任务单飞，期间新源边缘合并为回包后的尾随重查，首个旧回包不改该任务的 read 字段。恢复快照须来自同一 owner、同 owner 版本不落后且明确 false，才可撤销捕获时的同一条旧正向证据；5 秒过期、来源排除和进程重置保持有界。通知拒收、绑定、合并与恢复结果进入已有匿名诊断 owner。
+### Codex 已读联动固定通路
+
+- 实现唯一 owner 为 [desktop-unread-evidence.cjs](../../preload/codex/desktop-unread-evidence.cjs#L163)，入口只接线；原生通知/文件 watcher → 证据恢复 → Kernel → Main/Float applied。不得另增 Renderer 轮询或以打开分发伪造已读。
+- 同 revision 的 read 改变合法；身份隔离、新精确事件保护、单飞与尾随重查、同值零推送必须保留。变更前说明具体原因及消费者影响，修改后补对应验证；不得为消除失败直接删保护或改低验收标准。
+- [静态基线门禁](../../scripts/check-codex-unread-route.mjs#L1) 固定 owner 摘要并检查关键接线，已纳入原有镜像检查；owner 内容变化会明确失败。必要演进须在同一变更中更新本节、[任务验证记录](../specs/261105/codex-unread-linkage/task-card.md#L1)与基线，经审查后接受。该检查不替代真实宿主行为验收。

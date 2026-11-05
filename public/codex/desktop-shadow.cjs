@@ -25,7 +25,8 @@ const { COMPANION_V7_REVISIONS } = require('../companion/contracts-v7.cjs')
  * entry's own delegation.
  */
 
-const { desktopReadEvidence, persistedConnectorUnread, parseCodexDesktopUnreadState, codexReadStateContextBinding } = require('./desktop-unread-evidence.cjs')
+const { desktopReadEvidence, persistedConnectorUnread, parseCodexDesktopUnreadState, codexReadStateContextBinding,
+  codexDesktopReadNotificationDecision, codexDesktopUnreadReadFailureReason, createCodexDesktopUnreadRecovery } = require('./desktop-unread-evidence.cjs')
 let threadSourceKind = () => 'unknown'
 try {
   const classifier = require('./subagent-discovery.cjs').codexThreadSourceKind
@@ -730,7 +731,10 @@ function createCodexDesktopShadow(dependencies = {}) {
     desktopReadEvidence,
     persistedConnectorUnread,
     parseCodexDesktopUnreadState,
-    codexReadStateContextBinding
+    codexReadStateContextBinding,
+    codexDesktopReadNotificationDecision,
+    codexDesktopUnreadReadFailureReason,
+    createCodexDesktopUnreadRecovery
   }
 }
 
