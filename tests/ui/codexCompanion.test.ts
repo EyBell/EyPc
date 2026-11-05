@@ -1827,16 +1827,22 @@ describe('Codex Companion V4 UI contract', () => {
     vi.useFakeTimers()
     const expandedMount = mountFloat(true)
     await expandedMount.wrapper.get('.codex-float-root').trigger('pointerleave')
-    vi.advanceTimersByTime(219)
+    await vi.advanceTimersByTimeAsync(219)
     expect(expandedMount.setExpansion).not.toHaveBeenCalledWith(false, false)
-    vi.advanceTimersByTime(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(expandedMount.wrapper.get('.codex-float-root').classes()).not.toContain('expanded')
+    expect(expandedMount.setExpansion).not.toHaveBeenCalledWith(false, false)
+    await vi.advanceTimersByTimeAsync(200)
     expect(expandedMount.setExpansion).toHaveBeenCalledWith(false, false)
 
     const blurredMount = mountFloat(true)
     window.dispatchEvent(new Event('blur'))
-    vi.advanceTimersByTime(219)
+    await vi.advanceTimersByTimeAsync(219)
     expect(blurredMount.setExpansion).not.toHaveBeenCalledWith(false, false)
-    vi.advanceTimersByTime(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(blurredMount.wrapper.get('.codex-float-root').classes()).not.toContain('expanded')
+    expect(blurredMount.setExpansion).not.toHaveBeenCalledWith(false, false)
+    await vi.advanceTimersByTimeAsync(200)
     expect(blurredMount.setExpansion).toHaveBeenCalledWith(false, false)
   })
 
@@ -2036,7 +2042,7 @@ describe('full-width compact lower drag area', () => {
     await wrapper.vm.$nextTick()
     const zone = wrapper.get('.float-compact-drag-zone')
     const compactRect = wrapper.find('.float-compact').exists() ? vi.spyOn(wrapper.get('.float-compact').element, 'getBoundingClientRect') : null
-    const width = style === 'water' ? 104 : style === 'card' ? 166 : 40
+    const width = style === 'water' ? 94 : style === 'card' ? 166 : 40
     for (const x of [0, width / 2, width - 1]) {
       await zone.trigger('pointerdown', { button: 0, pointerId: 1, clientX: x, clientY: 103, screenX: x, screenY: 103 })
       await zone.trigger('pointermove', { pointerId: 1, screenX: x + 10, screenY: 113 })

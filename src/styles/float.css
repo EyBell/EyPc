@@ -1648,5 +1648,13 @@ button.float-search-glyph { cursor: pointer; }
 .codex-float-root .float-compact-drag-zone:active,
 .codex-float-root.dragging .float-compact-drag-zone { cursor: grabbing; }
 
-/* Crop the native water viewport at the ball edge; the ball itself stays round. */
-.codex-float-root.water:not(.expanded) { padding-top: 0; }
+/* Collapsed water fills its window. Corners outside the circle stay unpainted. */
+.codex-float-root.water:not(.expanded) { padding: 0; }
+.codex-float-root.water:not(.expanded),
+.codex-float-root.water:not(.expanded) .float-compact-shell,
+.codex-float-root.water:not(.expanded) .float-compact.water-surface,
+.codex-float-root.water:not(.expanded) .float-compact-drag-zone {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}

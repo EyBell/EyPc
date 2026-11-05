@@ -577,7 +577,7 @@ describe('Codex float preload sizing', () => {
   it('uses exact compact dimensions for the water and horizontal card skins', () => {
     const { geometry } = loadPreloadHarness()
 
-    expect({ ...geometry.codexFloatDesiredSize(snapshot({ style: 'water' }), false) }).toEqual({ width: 104, height: 99 })
+    expect({ ...geometry.codexFloatDesiredSize(snapshot({ style: 'water' }), false) }).toEqual({ width: 94, height: 94 })
     expect({ ...geometry.codexFloatDesiredSize(snapshot({ style: 'card' }), false) }).toEqual({ width: 166, height: 92 })
   })
 
@@ -643,7 +643,7 @@ describe('Codex float preload sizing', () => {
     const position = { displayId: 'right', x: 3244, y: 120, edge: 'right' }
 
     expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
-    expect(bounds()).toEqual({ x: 3261, y: 125, width: 104, height: 99 })
+    expect(bounds()).toEqual({ x: 3266, y: 125, width: 94, height: 94 })
     expect(floatWindow.setAlwaysOnTop).toHaveBeenCalledWith(true, 'floating')
     expect(floatWindow.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, { visibleOnFullScreen: true })
     expect(bridge.diagnostics()).toMatchObject({ supported: true, alwaysOnTop: true, allWorkspaces: true, visibleOnFullScreen: true })
@@ -742,7 +742,7 @@ describe('Codex float preload sizing', () => {
     await vi.advanceTimersByTimeAsync(10_001)
     setExpansion(ipcHandlers, false, false)
 
-    expect(bounds()).toEqual({ x: 3261, y: 125, width: 104, height: 99 })
+    expect(bounds()).toEqual({ x: 3266, y: 125, width: 94, height: 94 })
   })
 
   it('does not convert auto size to a manual preference when the resize handle is only clicked', () => {
@@ -774,7 +774,7 @@ describe('Codex float preload sizing', () => {
     const position = { displayId: 'right', x: 3000, y: 684, edge: 'bottom' }
 
     expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
-    expect(bounds()).toEqual({ x: 3000, y: 706, width: 104, height: 99 })
+    expect(bounds()).toEqual({ x: 3005, y: 706, width: 94, height: 94 })
 
     expect(bridge.sync({ visible: true, snapshot: snapshot({ style: 'card' }), position })).toBe(true)
     expect(bounds()).toEqual({ x: 3000, y: 713, width: 166, height: 92 })
@@ -1143,7 +1143,7 @@ it('crops only the water top padding and restores its paint anchor after cancel 
   const position = { version: 2, displayId: 'right', edge: 'top', edgeOffset: .5 }
   h.bridge.sync({ visible: true, snapshot: snapshot({ style: 'water' }), position })
   const before = h.bounds()
-  expect(before).toMatchObject({ y: -100, width: 104, height: 99 })
+  expect(before).toMatchObject({ y: -100, width: 94, height: 94 })
   h.ipcHandlers.get('eypc-float:drag-start')!({}, { screenX: before.x + 40, screenY: -40 })
   h.ipcHandlers.get('eypc-float:drag-move')!({}, { screenX: before.x + 70, screenY: 40 })
   h.ipcHandlers.get('eypc-float:interaction-cancel')!({}, {})

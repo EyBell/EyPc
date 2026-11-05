@@ -237,6 +237,8 @@ let resize: { pointerId: number; corner: CodexFloatResizeCorner } | null = null
 let railHoverTimer: ReturnType<typeof setTimeout> | null = null
 let suppressRailHover = false
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
+let waterCollapseTimer: ReturnType<typeof setTimeout> | null = null
+let waterCollapsePending = false
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 let planExecuteTimer: ReturnType<typeof setTimeout> | null = null
 let actionHintTimer: ReturnType<typeof setTimeout> | null = null
@@ -1447,11 +1449,49 @@ function action(actionId: string, args: Record<string, unknown> = {}) {
   return dispatched
 }
 
+function cancelWaterCollapseWait() {
+  waterCollapsePending = false
+  if (waterCollapseTimer) {
+    clearTimeout(waterCollapseTimer)
+    waterCollapseTimer = null
+  }
+}
+
 function requestExpansion(nextExpanded: boolean) {
   if (floatState.value.resizing || resize || drag || floatState.value.dragging) return
   if (collapseTimer) clearTimeout(collapseTimer)
+  cancelWaterCollapseWait()
   desiredExpanded = nextExpanded
-  window.eypcFloat?.setExpansion(nextExpanded, nextExpanded && floatState.value.pinned)
+  const collapseWater = nextExpanded === false && settings.value?.style === 'water' && !edgeStyle.value
+  if (!collapseWater) {
+    cancelWaterCollapseWait()
+    window.eypcFloat?.setExpansion(nextExpanded, nextExpanded && floatState.value.pinned)
+    return
+  }
+  waterCollapsePending = true
+  expanded.value = false
+  const started = Date.now()
+  let frames = 0
+  let sent = false
+  const send = () => {
+    if (sent || !waterCollapsePending || desiredExpanded !== false) return
+    sent = true
+    if (waterCollapseTimer) {
+      clearTimeout(waterCollapseTimer)
+      waterCollapseTimer = null
+    }
+    window.eypcFloat?.setExpansion(false, false)
+  }
+  const step = () => {
+    if (sent || !waterCollapsePending || desiredExpanded !== false) return
+    frames += 1
+    if (frames >= 2 || Date.now() - started >= 200) send()
+    else requestAnimationFrame(step)
+  }
+  if (waterCollapseTimer) clearTimeout(waterCollapseTimer)
+  waterCollapseTimer = setTimeout(send, 200)
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(step)
+  else send()
 }
 
 function compactSurfaceVerticalRatio(event: MouseEvent | PointerEvent, surface: HTMLElement) {
@@ -3361,16 +3401,20 @@ onMounted(() => {
       drag = null
       if (rootElement.value?.hasPointerCapture?.(pointerId)) rootElement.value.releasePointerCapture(pointerId)
     }
-    floatState.value = value
-    expanded.value = value.expanded
-    desiredExpanded = value.expanded
-    if (!value.expanded) {
+    const holdCollapsed = waterCollapsePending && value.expanded
+    floatState.value = holdCollapsed ? { ...value, expanded: false } : value
+    if (!holdCollapsed) {
+      expanded.value = value.expanded
+      desiredExpanded = value.expanded
+      if (!value.expanded) waterCollapsePending = false
+    }
+    if (!floatState.value.expanded) {
       closeShiftPreview(true)
       closeQuickJump()
       // 快速筛选是展开列表上的模式；卡片收起后它没有载体，编号也不应留在紧凑面上。
       exitQuickMode()
     }
-    if (!value.expanded && restoreCompactFocus) {
+    if (!floatState.value.expanded && restoreCompactFocus) {
       restoreCompactFocus = false
       void nextTick(() => document.querySelector<HTMLElement>('.float-compact')?.focus())
     }

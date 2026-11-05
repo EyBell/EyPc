@@ -71,7 +71,7 @@ const CODEX_FLOAT_CHANNELS = {
   recreate: 'eypc-float:recreate'
 }
 
-const CODEX_FLOAT_WATER_SIZE = { width: 104, height: 99 }
+const CODEX_FLOAT_WATER_SIZE = { width: 94, height: 94 }
 const CODEX_FLOAT_CARD_SIZE = { width: 166, height: 92 }
 const CODEX_FLOAT_EXPANDED_WIDTH = 360
 const CODEX_FLOAT_EXPANDED_MIN_WIDTH = 340
@@ -609,7 +609,8 @@ function createCodexFloatBridge(dependencies = {}) {
     }
     codexFloatRailLayout = null
     const size = codexFloatCollapsedSize(codexFloatSnapshot)
-    return { display, bounds: { x: codexFloatAnchor.x - 5, y: codexFloatAnchor.y - collapsedTopInset(), ...size }, edge: codexFloatEdge }
+    const inset = collapsedOriginInset()
+    return { display, bounds: { x: codexFloatAnchor.x - inset.x, y: codexFloatAnchor.y - inset.y, ...size }, edge: codexFloatEdge }
   }
 
   function codexFloatDevelopmentEntry() {
@@ -838,16 +839,35 @@ function createCodexFloatBridge(dependencies = {}) {
     codexFloatInteractionTimer = null
   }
 
-  // Only the card retains top padding. The water window is cropped to the
-  // ball's top edge while its 94 DIP artwork and bottom badges keep their size.
-  const collapsedTopInset = () => codexFloatSnapshot?.style === 'card' ? 5 : 0
+  // Card keeps a 5px gutter. Water matches the 94px ball, with no outer frame.
+  const collapsedOriginInset = () => codexFloatSnapshot?.style === 'card' ? { x: 5, y: 5 } : { x: 0, y: 0 }
+
+  function clearCollapsedWaterBacking() {
+    const win = codexFloatWindow
+    if (!win) return
+    try {
+      if (typeof win.setBackgroundColor === 'function') win.setBackgroundColor('#00000000')
+    } catch {}
+    try {
+      if (typeof win.setOpacity !== 'function') return
+      win.setOpacity(0.99)
+      const restore = () => {
+        try { if (codexFloatAlive() && codexFloatWindow === win) win.setOpacity(1) } catch {}
+      }
+      if (typeof setTimeout === 'function') {
+        const timer = setTimeout(restore, 0)
+        timer?.unref?.()
+      } else restore()
+    } catch {}
+  }
 
   function applyCollapsedAnchor(force = false) {
     if (isEdgeFloat()) return applyRailGeometry(false, force)
+    const inset = collapsedOriginInset()
     try {
-      codexFloatWindow.setBounds({ x: codexFloatAnchor.x - 5, y: codexFloatAnchor.y - collapsedTopInset(), ...codexFloatCollapsedSize(codexFloatSnapshot) })
+      codexFloatWindow.setBounds({ x: codexFloatAnchor.x - inset.x, y: codexFloatAnchor.y - inset.y, ...codexFloatCollapsedSize(codexFloatSnapshot) })
       const actual = codexFloatWindow.getBounds()
-      codexFloatAnchor = { ...codexFloatAnchor, x: actual.x + 5, y: actual.y + collapsedTopInset() }
+      codexFloatAnchor = { ...codexFloatAnchor, x: actual.x + inset.x, y: actual.y + inset.y }
       codexFloatExpanded = false
       return true
     } catch { return false }
@@ -1021,16 +1041,19 @@ function createCodexFloatBridge(dependencies = {}) {
       if (applyRailGeometry(expanded) && notifyState) pushCodexFloatState()
       return
     }
+    const wasExpanded = codexFloatExpanded
     const current = codexFloatWindow.getBounds()
     const display = floatDisplayForPoint({ x: current.x + current.width / 2, y: current.y + current.height / 2 })
     const edge = validCodexFloatEdge(codexFloatEdge) ? codexFloatEdge : nearestFloatEdge(current, display)
     const size = codexFloatDesiredSize(codexFloatSnapshot, expanded, display)
+    const inset = collapsedOriginInset()
     const resized = !expanded && codexFloatAnchor
-      ? { bounds: { x: codexFloatAnchor.x - 5, y: codexFloatAnchor.y - collapsedTopInset(), ...size }, edge }
+      ? { bounds: { x: codexFloatAnchor.x - inset.x, y: codexFloatAnchor.y - inset.y, ...size }, edge }
       : resizeFloatBounds(current, size, display, edge)
     if (current.x !== resized.bounds.x || current.y !== resized.bounds.y || current.width !== resized.bounds.width || current.height !== resized.bounds.height) {
       try { codexFloatWindow.setBounds(resized.bounds) } catch {}
     }
+    if (!expanded && wasExpanded && codexFloatSnapshot?.style === 'water') clearCollapsedWaterBacking()
     codexFloatEdge = resized.edge
     codexFloatExpanded = expanded
     if (!expanded) codexFloatPinned = false
