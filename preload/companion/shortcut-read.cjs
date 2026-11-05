@@ -16,8 +16,8 @@ function createShortcutReadReceipts() {
       if (!SHORTCUT_SOURCES.has(source) || task?.phase !== 'completed' || task.unread !== true) return null
       return { key: task.key, generation, instance: instances.get(task.key), fingerprint: fingerprint(task, members) }
     },
-    accept(token, task, members, outcome) {
-      if (!token || !['opened', 'dispatched'].includes(outcome) || token.generation !== generation
+    accept(token, task, members, outcome, confirmsRead) {
+      if (!token || confirmsRead !== true || !['opened', 'dispatched'].includes(outcome) || token.generation !== generation
         || instances.get(token.key) !== token.instance
         || task?.key !== token.key || task.phase !== 'completed' || task.unread !== true
         || fingerprint(task, members) !== token.fingerprint) return false

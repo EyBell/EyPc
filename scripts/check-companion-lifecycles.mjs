@@ -228,9 +228,9 @@ export async function checkCompanionLifecycles(assetRoot) {
     read.publish([main, { ...side, unread: true }], 2)
     read.expectRoot('completed', true, 2)
     await read.kernel.dispatch({ action: 'open', key: 'main', source: 'global-shortcut' })
-    read.expectRoot('completed', false, 2)
+    read.expectRoot('completed', true, 2) // A dispatched shortcut is not a read receipt.
     read.publish([main, { ...side, unread: true }], 3)
-    read.expectRoot('completed', false, 2) // Same-turn native unread does not rebound.
+    read.expectRoot('completed', true, 2)
     read.publish([main, { ...side, phase: 'running', epoch: 200 }], 4)
     read.expectRoot('running', false, 2)
     read.publish([main, { ...side, epoch: 200, unread: true }], 5)
@@ -238,6 +238,26 @@ export async function checkCompanionLifecycles(assetRoot) {
     read.publish([main, { ...side, unread: false }], 6, { unreadGeneration: 2 })
     read.expectRoot('completed', true, 2) // Old unread cannot erase the new completion.
   } finally { read.kernel.close() }
+  const confirmed = fixture(async () => ({
+    outcome: 'opened',
+    confirmsRead: true,
+    handoff: {
+      revision: 'companion-open-handoff-v1',
+      handoffId: 'coh_lifecycle_native_0001',
+      stage: 'native-confirmed',
+      sourceRelease: 'unknown',
+      nativeVisible: true,
+      controlOwner: 'target-native',
+      confirmsRead: true
+    }
+  }))
+  try {
+    confirmed.publish([main, { ...side, unread: true }], 2)
+    await confirmed.kernel.dispatch({ action: 'open', key: 'main', source: 'global-shortcut' })
+    confirmed.expectRoot('completed', false, 2)
+    confirmed.publish([main, { ...side, unread: true }], 3)
+    confirmed.expectRoot('completed', false, 2) // Same-turn native unread does not rebound after a confirmed read.
+  } finally { confirmed.kernel.close() }
   const remaining = fixture()
   try {
     remaining.publish([main, { ...side, unread: true }, { key: 'sibling', phase: 'running' }], 1)

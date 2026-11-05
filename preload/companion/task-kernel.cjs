@@ -966,7 +966,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         operationId: request?.operationId
       })
       const current = shortcutReadInputs.get(target.key)
-      if (!disposed && shortcutReads.accept(token, current?.task, current?.members, result?.outcome)) {
+      if (!disposed && shortcutReads.accept(token, current?.task, current?.members, result?.outcome, result?.confirmsRead === true)) {
         publishPrivateTopology('shortcut-open-local-read')
         record({ level: 'info', scope: 'task-kernel', event: 'shortcut-local-read',
           outcome: 'applied', provider: target.provider, taskRef: target.key,
