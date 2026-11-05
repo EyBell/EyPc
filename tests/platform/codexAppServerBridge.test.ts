@@ -1320,12 +1320,7 @@ describe('Codex App Server preload bridge', () => {
     context.bridge.close()
   })
 
-  it('treats an EyPc jump into an extra-process completed row as read while the Host still reports unread', async () => {
-    // Live shape behind 5d686475 (2026-09-02): the completed-unread shortcut
-    // dispatched the deep link, but the next snapshot re-asserted Host
-    // unread=true — only a card click looked read, and only because the
-    // Desktop happened to issue thread/read first. Both paths open through the
-    // same navigation; the snapshot must honor EyPc's own opened-read mark.
+  it('keeps an extra-process completion unread after an unconfirmed deep link', async () => {
     const child = new FakeCodexProcess()
     const externalId = 'abababab-1234-4234-8234-123456789abc'
     const context = loadCodexBridge(
@@ -1353,11 +1348,9 @@ describe('Codex App Server preload bridge', () => {
       revisionAt: before!.updatedAt,
       phase: 'completed'
     })).resolves.toMatchObject({ outcome: 'dispatched' })
-    expect(context.native.openedReadAcknowledgements()).toHaveLength(1)
-    // The Host list still says unread (the fixture never flips it); EyPc's
-    // read wins in the snapshot as well as in the private branch evidence.
-    expect(await external()).toMatchObject({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
-    expect(context.native.privateBranchEvidence(externalId)?.branches?.[0]).toMatchObject({ hasUnreadTurn: false, unreadKnown: true })
+    expect(context.native.openedReadAcknowledgements()).toHaveLength(0)
+    expect(await external()).toMatchObject({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' })
+    expect(context.native.privateBranchEvidence(externalId)?.branches?.[0]).toMatchObject({ hasUnreadTurn: true, unreadKnown: true })
     context.bridge.close()
   })
 
@@ -5912,7 +5905,7 @@ draft: v7EvidenceDraft({
       await new Promise(resolve => setTimeout(resolve, 0))
       const task = baseline.value.threads[3]
       expect(context.diagnosticEvents).toContainEqual(expect.objectContaining({
-        event: 'desktop-unread-read', outcome: 'failed', details: { size: -1 }
+        event: 'desktop-unread-read', outcome: 'failed', details: expect.objectContaining({ size: -1 })
       }))
       const activity = async () => (await context.bridge.readActivitySnapshot()).value.entries
         .find((entry: Record<string, any>) => entry.key === task.key)

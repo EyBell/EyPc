@@ -9,6 +9,29 @@ const PANE = `${TAB}:${LEAF}`
 const HANDLE = 'term_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 
 describe('Orca native unread handoff', () => {
+  it('keeps fallback unread after an unconfirmed switch request', async () => {
+    let marked = 0
+    const bridge = createOrcaBridge({
+      platform: 'test',
+      unreadBridge: {
+        ready: async () => {},
+        observe: (sessions: Array<{ unread: boolean }>) => { for (const session of sessions) session.unread = true },
+        markViewed: () => { marked++ }
+      },
+      cli: { json: async (args: string[]) => ({ ok: true, result: args[0] === 'worktree'
+        ? { worktrees: [{ repo: 'fixture', agents: [{ paneKey: PANE, agentType: 'grok', state: 'done' }] }] }
+        : args[1] === 'switch' ? { focus: { handle: HANDLE, navigated: true } }
+        : { terminals: [{ handle: HANDLE, tabId: TAB, leafId: LEAF, title: 'done', agentIdentity: 'grok', connected: true }] } }) }
+    })
+    try {
+      const initial = await bridge.readInventory()
+      expect(initial.sessions[0].unread).toBe(true)
+      expect(await bridge.openTask(PANE)).toMatchObject({ outcome: 'dispatched', confirmsRead: false })
+      expect(initial.sessions[0].unread).toBe(true)
+      expect(marked).toBe(0)
+    } finally { bridge.close() }
+  })
+
   it.each([true, false])('preserves native unread=%s across a dispatched open', async unread => {
     let nativeUnread = unread
     let marked = 0

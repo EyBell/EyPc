@@ -222,8 +222,9 @@ function createCodexhostDiscovery(dependencies = {}) {
       firstSeenAt: memoryInteger(entry.firstSeenAt) || statusChangedAt,
       statusChangedAt,
       hostUnread: typeof entry.hostUnread === 'boolean' ? entry.hostUnread : null,
-      readAt: memoryInteger(entry.readAt),
-      readStatusChangedAt: memoryInteger(entry.readStatusChangedAt),
+      readAt: entry.readConfirmed === true ? memoryInteger(entry.readAt) : 0,
+      readStatusChangedAt: entry.readConfirmed === true ? memoryInteger(entry.readStatusChangedAt) : 0,
+      readConfirmed: entry.readConfirmed === true,
       // Host-owned Desktop pin (codexhost `thread list` `pinned`); `null` when
       // the Host predates the field so the consumer keeps "no pin lane".
       pinned: typeof entry.pinned === 'boolean' ? entry.pinned : null
@@ -291,6 +292,7 @@ function createCodexhostDiscovery(dependencies = {}) {
       hostUnread: typeof thread.hasUnreadTurn === 'boolean' ? thread.hasUnreadTurn : remembered?.hostUnread ?? null,
       readAt: supersededRead ? 0 : remembered?.readAt || 0,
       readStatusChangedAt: supersededRead ? 0 : remembered?.readStatusChangedAt || 0,
+      readConfirmed: !supersededRead && remembered?.readConfirmed === true,
       pinned: typeof thread.pinned === 'boolean' ? thread.pinned : remembered?.pinned ?? null
     }
     const changed = !remembered || Object.keys(entry).some((key) => remembered[key] !== entry[key])
@@ -314,7 +316,9 @@ function createCodexhostDiscovery(dependencies = {}) {
         ? current.hasUnreadTurn
         : remembered?.hostUnread ?? null,
       readAt: now(),
-      readStatusChangedAt: current.statusChangedAt
+      readStatusChangedAt: current.statusChangedAt,
+      readConfirmed: true,
+      pinned: typeof current.pinned === 'boolean' ? current.pinned : remembered?.pinned ?? null
     })
     persistThreadMemory()
     return true
@@ -670,15 +674,8 @@ function createCodexhostDiscovery(dependencies = {}) {
     return externalKeys.has(key)
   }
 
-  /**
-   * An EyPc jump into an extra process is a read. Codex read state is owned
-   * by the Provider (this preload): the acknowledgement map plus the memory
-   * above answer every later observation, so the receipt itself is returned
-   * unchanged — `confirmsRead` stays a Kernel-side hint that Codex never uses
-   * (`PROVIDER_TRAITS.codex.readAcknowledgements === false`).
-   */
   function honorExternalOpenRead(threadId, result, markRead) {
-    if (!result || (result.outcome !== 'dispatched' && result.outcome !== 'opened')) return result
+    if (!result || result.outcome !== 'opened' || result.confirmsRead !== true) return result
     if (isExternalThreadId(threadId) !== true) return result
     if (typeof markRead === 'function') markRead(threadId)
     rememberExternalOpenRead(threadId)

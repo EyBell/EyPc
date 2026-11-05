@@ -383,7 +383,7 @@ function createOrcaBridge(dependencies = {}) {
     },
     openTask: async (paneKey, options) => {
       const result = await opener.openTask(String(paneKey || ''), options || {})
-      if (result && (result.outcome === 'dispatched' || result.outcome === 'opened')) {
+      if (result?.outcome === 'opened' && result.confirmsRead === true) {
         const key = String(paneKey || '').toLowerCase()
         const native = cache.sessions.find((session) => session.paneKey === key)?.nativeUnread === true
         if (typeof unreadBridge.ready === 'function') await unreadBridge.ready()

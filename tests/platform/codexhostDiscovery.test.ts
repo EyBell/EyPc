@@ -463,7 +463,7 @@ describe('codexhost external conversation discovery', () => {
     )).toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' })
   })
 
-  it('treats an extra-process jump into Codex APP as read and leaves native jumps unchanged', async () => {
+  it('requires a confirmed read for an extra-process jump', async () => {
     const marked: string[] = []
     const discovery = discoveryModule.createCodexhostDiscovery({
       execFile: fakeExecFile([]),
@@ -476,6 +476,9 @@ describe('codexhost external conversation discovery', () => {
     }, (id) => { marked.push(id) })
     // The receipt is untouched: Codex read state lives in the Provider, not in a Kernel hint.
     expect(extra).toEqual({ outcome: 'dispatched', confirmsRead: false })
+    expect(marked).toEqual([])
+    expect(discovery.isExternalOpenedRead(PI_ID)).toBe(false)
+    discovery.honorExternalOpenRead(PI_ID, { outcome: 'opened', confirmsRead: true }, (id) => { marked.push(id) })
     expect(marked).toEqual([PI_ID])
     expect(discovery.isExternalOpenedRead(PI_ID)).toBe(true)
     const native = discovery.honorExternalOpenRead(NATIVE_ID, {
@@ -585,12 +588,12 @@ describe('codexhost external conversation discovery', () => {
       expect(restored.turns.get(PI_ID)).toMatchObject({ status: 'completed', startedAt: seatedAt, completedAt: seatedAt })
     })
 
-    it('remembers the jump-read through a reset and a reload, until the Host status actually changes', async () => {
+    it('retains confirmed reads after reload and ignores legacy unconfirmed records', async () => {
       const harness = memoryHarness()
       const first = await harness.scan()
       const seatedAt = first.rows[0].updatedAt as number
       expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(false)
-      harness.discovery.honorExternalOpenRead(PI_ID, { outcome: 'dispatched', confirmsRead: false })
+      harness.discovery.honorExternalOpenRead(PI_ID, { outcome: 'opened', confirmsRead: true })
       expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(true)
       expect(discoveryModule.compareHostDesktopUnread({ connectorUnreadAuthority: 'desktop-persisted', connectorHasUnreadTurn: true }, { openedRead: true }))
         .toEqual({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
@@ -611,6 +614,11 @@ describe('codexhost external conversation discovery', () => {
       const stored = harness.storage.getItem(discoveryModule.CODEXHOST_THREAD_MEMORY_STORAGE_KEY) as { threads: Record<string, Record<string, unknown>> }
       expect(Object.keys(stored.threads)).toEqual([PI_ID])
       expect(JSON.stringify(stored)).not.toMatch(/gonavi|你好|TOKEN|127\.0\.0\.1/)
+      delete stored.threads[PI_ID].readConfirmed
+      harness.storage.setItem(discoveryModule.CODEXHOST_THREAD_MEMORY_STORAGE_KEY, stored)
+      harness.reload()
+      await harness.scan()
+      expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(false)
 
       // A real Host turn supersedes the read: running → completed moves statusChangedAt.
       harness.setThreads([{ ...PI_DONE, status: 'running' }])
@@ -627,7 +635,7 @@ describe('codexhost external conversation discovery', () => {
     it('drops the remembered read on a Host unread edge false → true, and forgets archived ids', async () => {
       const harness = memoryHarness()
       await harness.scan()
-      harness.discovery.honorExternalOpenRead(PI_ID, { outcome: 'opened', confirmsRead: false })
+      harness.discovery.honorExternalOpenRead(PI_ID, { outcome: 'opened', confirmsRead: true })
       // Desktop consumed the read: the Host now says false.
       harness.setThreads([{ ...PI_DONE, hasUnreadTurn: false }])
       await harness.scan()
@@ -637,7 +645,7 @@ describe('codexhost external conversation discovery', () => {
       await harness.scan()
       expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(false)
 
-      harness.discovery.honorExternalOpenRead(PI_ID, { outcome: 'opened', confirmsRead: false })
+      harness.discovery.honorExternalOpenRead(PI_ID, { outcome: 'opened', confirmsRead: true })
       expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(true)
       expect(harness.discovery.codexhostForgetThread(PI_ID)).toBe(true)
       expect(harness.discovery.isExternalOpenedRead(PI_ID)).toBe(false)
