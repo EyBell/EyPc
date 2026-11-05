@@ -277,15 +277,18 @@ describe('remote magpie quota', () => {
     expect(resolveCompactQuotaGridPresentation(unlabeled, enabled).cells[0]).toMatchObject({ key: 'token', text: '1.2W' })
   })
 
-  it('does not fall back to local rows or later remote grok and cursor rows', () => {
+  it('uses a positive local row without taking a later remote grok or cursor row', () => {
     const grokOnly = [
       { provider: 'codex', windows: [{ name: '7 days', remaining: 0 }], balance: '12000 credits' },
       { provider: 'remote-magpie/grok', windows: [{ name: '7 days', remaining: 0 }] },
       { provider: 'remote-magpie/grok', windows: [{ name: '7 days', remaining: 70 }] }
     ]
     const grokGrid = resolveCompactQuotaGridPresentation(grokOnly, enabled)
-    expect(grokGrid.cells).toEqual([])
-    expect(buildMagpieQuotaExpandCards(grokOnly)[0]).toMatchObject({ key: 'magpie-grok-weekly', valueText: '0' })
+    expect(grokGrid.cells).toEqual([expect.objectContaining({ key: 'token', text: '1.2W' })])
+    expect(buildMagpieQuotaExpandCards(grokOnly).map((card) => [card.key, card.valueText])).toEqual([
+      ['magpie-codex-weekly', '1.2W'],
+      ['magpie-grok-weekly', '0']
+    ])
 
     const cursorRows = [
       {

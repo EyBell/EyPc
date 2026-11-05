@@ -227,6 +227,37 @@ interface MagpieQuotaSources {
   cursor: MagpieQuotaProvider | null
 }
 
+function positiveCodex(entry: MagpieQuotaProvider): boolean {
+  const weekly = windowRemaining(entry, '7 days')
+  if (weekly !== null && weekly > 0) return true
+  if (weekly !== 0) return false
+  const balance = parseMagpieTokenBalance(entry.balance)
+  return balance !== null && balance > 0
+}
+
+function positiveGrok(entry: MagpieQuotaProvider): boolean {
+  const weekly = windowRemaining(entry, '7 days')
+  return weekly !== null && weekly > 0
+}
+
+function positiveCursor(entry: MagpieQuotaProvider): boolean {
+  const models = windowRemaining(entry, 'Cursor Models')
+  const other = windowRemaining(entry, 'Other Models')
+  return (models !== null && models > 0) || (other !== null && other > 0)
+}
+
+function chooseQuotaSource(
+  remoteEntries: MagpieQuotaProvider[],
+  localEntry: MagpieQuotaProvider | null,
+  isPositive: (entry: MagpieQuotaProvider) => boolean,
+  selectRemote: (entries: MagpieQuotaProvider[]) => MagpieQuotaProvider | null
+): MagpieQuotaProvider | null {
+  const remote = remoteEntries.length ? selectRemote(remoteEntries) : null
+  if (remote && isPositive(remote)) return remote
+  if (localEntry && isPositive(localEntry)) return localEntry
+  return remote ?? localEntry
+}
+
 function resolveMagpieQuotaSources(list: MagpieQuotaProvider[]): MagpieQuotaSources {
   const remoteMode = list.some((entry) => typeof entry?.provider === 'string' && isRemoteQuotaProvider(entry.provider))
   if (!remoteMode) {
@@ -237,9 +268,24 @@ function resolveMagpieQuotaSources(list: MagpieQuotaProvider[]): MagpieQuotaSour
     }
   }
   return {
-    codex: selectRemoteCodex(entriesByProvider(list, REMOTE_CODEX_PROVIDER)),
-    grok: entriesByProvider(list, REMOTE_GROK_PROVIDER)[0] ?? null,
-    cursor: entriesByProvider(list, REMOTE_CURSOR_PROVIDER)[0] ?? null
+    codex: chooseQuotaSource(
+      entriesByProvider(list, REMOTE_CODEX_PROVIDER),
+      providerEntry(list, 'codex'),
+      positiveCodex,
+      selectRemoteCodex
+    ),
+    grok: chooseQuotaSource(
+      entriesByProvider(list, REMOTE_GROK_PROVIDER),
+      providerEntry(list, 'grok'),
+      positiveGrok,
+      (entries) => entries[0] ?? null
+    ),
+    cursor: chooseQuotaSource(
+      entriesByProvider(list, REMOTE_CURSOR_PROVIDER),
+      providerEntry(list, 'cursor'),
+      positiveCursor,
+      (entries) => entries[0] ?? null
+    )
   }
 }
 
