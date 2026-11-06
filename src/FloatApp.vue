@@ -79,7 +79,7 @@ import type {
   CodexTaskCard
 } from './domain/codex'
 import { normalizeCodexQuota, orderCodexAttentionTasks, orderCodexTasksForDisplay } from './domain/codex'
-import { companionPinAppLabel, companionPinNativeLabel, companionTaskProvider, type CompanionProviderId } from './domain/companionProvider'
+import { companionPinAppLabel, companionPinNativeLabel, companionTaskProvider, COMPANION_PROVIDER_IDS, COMPANION_PROVIDER_LABELS, DEFAULT_COMPANION_ENABLEMENT, isCompanionProviderEnabled, type CompanionProviderId } from './domain/companionProvider'
 import { COMMAND_MODIFIER_LABEL, hasCommandModifier } from './ui/commandModifier'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
@@ -297,12 +297,29 @@ function projectMarker(project: CodexProjectCard): CompanionProjectMarker {
   return resolveCompanionProjectMarker(project)!
 }
 
+const enabledProjectProviders = computed(() => {
+  const enablement = snapshot.value?.companion?.providers ?? DEFAULT_COMPANION_ENABLEMENT
+  return COMPANION_PROVIDER_IDS.filter((provider) => isCompanionProviderEnabled(enablement, provider))
+})
+
+function providerEnabled(provider: CompanionProviderId) {
+  return enabledProjectProviders.value.includes(provider)
+}
+
 function taskMatchesProjectFilter(task: CodexTaskCard) {
-  return projectProviderFilter.value === 'all' || taskProvider(task) === projectProviderFilter.value
+  const provider = taskProvider(task)
+  return providerEnabled(provider) && (projectProviderFilter.value === 'all' || provider === projectProviderFilter.value)
+}
+
+function projectVisibleProviders(project: CodexProjectCard) {
+  const declared = project.providers?.length
+    ? project.providers
+    : [...new Set(project.tasks.map((task) => taskProvider(task)))]
+  return declared.filter((provider) => providerEnabled(provider) && (projectProviderFilter.value === 'all' || provider === projectProviderFilter.value))
 }
 
 function projectMatchesProvider(project: CodexProjectCard) {
-  return projectProviderFilter.value === 'all' || projectMarker(project).providers.includes(projectProviderFilter.value)
+  return projectVisibleProviders(project).length > 0
 }
 const primaryPercent = computed(() => compact.value.primary?.bucket.remainingPercent ?? 0)
 const selectedWeekly = computed(() => codexWeeklyReading(compact.value.primary, compact.value.secondary))
@@ -634,7 +651,11 @@ const renderRows = computed<RenderRow[]>(() => {
     for (const entry of section.entries) {
       if (entry.kind === 'project') {
         if (!projectMatchesProvider(entry.project)) continue
-        const filteredProject = { ...entry.project, tasks: entry.project.tasks.filter((task) => taskMatchesProjectFilter(task)) }
+        const filteredProject = {
+          ...entry.project,
+          providers: projectVisibleProviders(entry.project),
+          tasks: entry.project.tasks.filter((task) => taskMatchesProjectFilter(task))
+        }
         const shouldShowAllTasks = projectMatched(filteredProject)
         const projectTasks = displayOrderedTasks(shouldShowAllTasks || !searchQuery ? filteredProject.tasks : filteredProject.tasks.filter((task) => taskMatched(task)))
         if (projectTasks.length || shouldShowAllTasks) {
@@ -661,7 +682,11 @@ const renderRows = computed<RenderRow[]>(() => {
     rows.push({ kind: 'hidden-project-section', key: 'hidden-projects', title: '已隐藏项目' })
     const hiddenProjects = value.hiddenProjects
       .filter((project) => projectMatchesProvider(project))
-      .map((project) => ({ ...project, tasks: project.tasks.filter((task) => taskMatchesProjectFilter(task)) }))
+      .map((project) => ({
+        ...project,
+        providers: projectVisibleProviders(project),
+        tasks: project.tasks.filter((task) => taskMatchesProjectFilter(task))
+      }))
       .filter((project) => !searchQuery || projectMatched(project))
     for (const project of hiddenProjects) {
       const row = addProjectRow(project, true)
@@ -741,19 +766,17 @@ watch(() => {
   renderedTaskRevision.value = rendered.revision
   window.eypcFloat?.ackTaskSnapshot?.('applied', rendered.revision)
 }, { flush: 'post' })
-const projectFilters = computed(() => {
-  const filters: Array<{ id: CompanionProjectFilter; label: string }> = [
-    { id: 'all', label: '全部' },
-    { id: 'codex', label: '只显示 Codex' },
-    { id: 'claude', label: '只显示 Claude' }
-  ]
-  if (snapshot.value?.companion?.providers.cursor === true) {
-    filters.push({ id: 'cursor', label: '只显示 Cursor' })
-  }
-  if (snapshot.value?.companion?.providers.orca === true) {
-    filters.push({ id: 'orca', label: '只显示 Orca' })
-  }
-  return filters
+const projectFilters = computed(() => [
+  { id: 'all' as const, label: '全部' },
+  ...enabledProjectProviders.value.map((provider) => ({
+    id: provider,
+    label: `只显示 ${COMPANION_PROVIDER_LABELS[provider]}`
+  }))
+])
+
+watch(enabledProjectProviders, (providers) => {
+  const current = projectProviderFilter.value
+  if (current !== 'all' && !providers.includes(current)) projectProviderFilter.value = 'all'
 })
 
 const projectCount = computed(() => {
