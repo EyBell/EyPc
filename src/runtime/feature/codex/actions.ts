@@ -146,7 +146,14 @@ export function registerCodexActions(host: FeatureActionHostV7): void {
       void host.codexController.resumePlan(key, revisionAt)
       return true
     } })
-    register({ id: 'codex.task.executePlan', title: '执行 Codex 原 Plan', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+    register({ id: 'codex.task.continueTask', title: '继续 Codex 任务', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
+      if (!key || revisionAt === undefined) return false
+      void host.codexController.continueTask(key, revisionAt)
+      return true
+    } })
+    register({ id: 'codex.task.executePlan', title: '实施 Codex 计划', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
       const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
       if (!key || revisionAt === undefined) return false

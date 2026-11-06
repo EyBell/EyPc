@@ -5,6 +5,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writ
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import * as pathModule from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { resolve } from 'node:path'
 import vm from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
@@ -100,6 +101,7 @@ class FakeCodexProcess extends EventEmitter {
   transientGoalFailures = 0
   holdNextGoalRead = false
   heldGoalReads: RpcFrame[] = []
+  heldMethods = new Set<string>()
 
   constructor(
     private readonly failInitialize = false,
@@ -124,6 +126,7 @@ class FakeCodexProcess extends EventEmitter {
       const frame = JSON.parse(line) as RpcFrame
       this.writes.push(frame)
       if (!Number.isInteger(frame.id)) return true
+      if (this.heldMethods.has(frame.method)) return true
       if (this.failMissingNode && frame.method === 'initialize') {
         queueMicrotask(() => {
           this.stderr.emit('data', 'env: node: No such file or directory\n')
@@ -410,6 +413,7 @@ class FakeCodexDesktopSocket extends EventEmitter {
   waitingInputSnapshotThreadIds = new Set<string>([FIXED_THREAD_IDS[0]])
   waitingApprovalSnapshotThreadIds = new Set<string>()
   planImplementationSnapshotThreadIds = new Set<string>()
+  planChoiceSnapshotThreadIds = new Set<string>()
   unreadSnapshotThreadIds = new Set<string>([FIXED_THREAD_IDS[3]])
   sideConversationParents = new Map<string, string>()
   writes: Array<Record<string, any>> = []
@@ -442,7 +446,8 @@ class FakeCodexDesktopSocket extends EventEmitter {
       const waitingInput = this.waitingInputSnapshotThreadIds.has(threadId)
       const waitingApproval = this.waitingApprovalSnapshotThreadIds.has(threadId)
       const planImplementation = this.planImplementationSnapshotThreadIds.has(threadId)
-      const activeSnapshot = waitingInput || waitingApproval || planImplementation || this.activeSnapshotThreadIds.has(threadId)
+      const planChoice = this.planChoiceSnapshotThreadIds.has(threadId)
+      const activeSnapshot = waitingInput || waitingApproval || planImplementation || planChoice || this.activeSnapshotThreadIds.has(threadId)
       const sideParentThreadId = this.sideConversationParents.get(threadId)
       this.push({
         type: 'broadcast',
@@ -463,7 +468,8 @@ class FakeCodexDesktopSocket extends EventEmitter {
               requests: [
                 ...(waitingInput ? [{ type: 'userInput', method: 'requestUserInput' }] : []),
                 ...(waitingApproval ? [{ type: 'approval', method: 'requestApproval' }] : []),
-                ...(planImplementation ? [{ type: 'plan', method: 'item/plan/requestImplementation' }] : [])
+                ...(planImplementation ? [{ type: 'plan', method: 'item/plan/requestImplementation' }] : []),
+                ...(planChoice ? [{ type: 'plan', method: 'item/plan/requestChoice', requestId: 'refollow-plan-choice' }] : [])
               ],
               conversation: [{ role: 'user', content: 'private desktop snapshot content' }]
             }
@@ -868,6 +874,7 @@ function loadCodexBridge(
   const diagnosticEvents: Array<Record<string, any>> = []
   const electronIpcListeners = new Map<string, Array<(event: unknown, payload: Record<string, unknown>) => void>>()
   const floatSends: Array<{ channel: string; payload: Record<string, any>; sentAt: number }> = []
+  const floatAppliedSamples: Array<{ revision: number; at: number }> = []
   let floatAppliedAt = 0
   const ipcRenderer = {
     on(channel: string, listener: (event: unknown, payload: Record<string, unknown>) => void) {
@@ -880,6 +887,7 @@ function loadCodexBridge(
     if (!revision) return
     queueMicrotask(() => {
       floatAppliedAt = Date.now()
+      floatAppliedSamples.push({ revision, at: performance.now() })
       for (const listener of electronIpcListeners.get('eypc-float:task-package-ack') || []) {
         listener({}, { stage: 'applied', sentRevision: revision, currentRevision: revision })
       }
@@ -1061,6 +1069,7 @@ function loadCodexBridge(
   const testPlatform: Record<string, any> = { ...exposedPlatform, companionKernel: internalKernel }
 
   return {
+    taskConfiguration: () => vm.runInNewContext('companionTaskConfiguration()', sandbox) as Record<string, any>,
     bridge: (sandbox.window as {
       eypcPlatform: {
         codex: {
@@ -1110,6 +1119,7 @@ function loadCodexBridge(
     notifications,
     diagnosticEvents,
     floatSends,
+    floatAppliedSamples,
     floatAppliedAt: () => floatAppliedAt,
     dbStorageHarness,
     // Most bridge tests seed Host-private evidence directly. Keep that test
@@ -3045,6 +3055,41 @@ draft: v7EvidenceDraft({
     context.triggerPluginOut(true)
   })
 
+  it('restores a running owner turn after reload when a separate server reports it interrupted', async () => {
+    const child = new FakeCodexProcess()
+    const threadId = FIXED_THREAD_IDS[3]
+    const turnId = 'synthetic-reload-live-turn'
+    const startedAt = 1_950_000_000_000
+    child.turnOverrides.set(threadId, { id: turnId, status: 'interrupted', startedAt: startedAt / 1000 })
+    const socket = new FakeCodexDesktopSocket()
+    socket.streamOwnerConnected = false
+    const context = loadCodexBridge(child, () => nativeRegistryText(), socket)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      const parent = baseline.value.threads.find((row: Record<string, any>) => row.key === crypto.createHash('sha256').update(threadId).digest('hex').slice(0, 32))
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: threadId, change: { type: 'snapshot', revision: 9, conversationState: {
+          threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [], hasUnreadTurn: false,
+          turnHistory: { kind: 'canonical', history: {
+            islands: [{ entries: [{ value: 'current' }] }],
+            entitiesByKey: { current: { turnId, status: 'inProgress', turnStartedAtMs: startedAt, items: [] } }
+          } }
+        } } } })
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key).phase).not.toBe('running')
+      socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: threadId, change: { type: 'snapshot', revision: 10, conversationState: {
+          threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [], hasUnreadTurn: false,
+          turnHistory: { kind: 'canonical', history: {
+            islands: [{ newerBoundary: { status: 'exhausted' }, entries: [{ value: 'current' }] }],
+            entitiesByKey: { current: { turnId, status: 'inProgress', turnStartedAtMs: startedAt, items: [] } }
+          } }
+        } } } })
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)).toMatchObject({ phase: 'running' }))
+    } finally { context.bridge.close() }
+  })
+
   it('promotes a cold refollow active snapshot from the same fresh inProgress Turn without repeat publications', async () => {
     const child = new FakeCodexProcess()
     child.inProgressTurnIds.add(FIXED_THREAD_IDS[3])
@@ -3182,12 +3227,35 @@ draft: v7EvidenceDraft({
     const forwarded: Array<{ code?: string } | null> = []
     const stop = context.platform.onEnterPayload((payload: { code?: string } | null) => forwarded.push(payload))
 
+    const entryRefreshes = () => context.diagnosticEvents.filter((entry: any) => entry.scope === 'task-recovery'
+      && entry.event === 'codex-inventory-membership' && entry.details?.reason === 'plugin-enter').length
+    const refreshesBefore = entryRefreshes()
     context.triggerPluginEnter({ code: 'eypc-codex-task-next' })
 
     expect(context.platform.getEnterPayload()).toBeNull()
     expect(forwarded).toEqual([])
     await vi.waitFor(() => expect(kernel.diagnostics().navigation).toMatchObject({ maxConcurrent: 1, dispatched: { codex: 1, claude: 0 } }))
+    for (let index = 0; index < 200; index++) await Promise.resolve()
+    expect(entryRefreshes()).toBe(refreshesBefore)
+    context.triggerPluginEnter({ code: 'eypc-codex-task-previous' })
+    await vi.waitFor(() => expect(kernel.diagnostics().navigation.dispatched.codex).toBe(2))
+    for (let index = 0; index < 200; index++) await Promise.resolve()
+    expect(entryRefreshes()).toBe(refreshesBefore)
+    context.triggerPluginEnter({ code: 'eypc-main' })
+    await vi.waitFor(() => expect(entryRefreshes()).toBeGreaterThan(refreshesBefore))
     stop()
+    context.triggerPluginOut(true)
+  })
+
+  it('retains provider preflight for a cold previous/next preload entry', async () => {
+    const context = loadCodexBridge(new FakeCodexProcess())
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    expect(kernel.getLatest().complete).toBe(false)
+    context.triggerPluginEnter({ code: 'eypc-codex-task-next' })
+    await vi.waitFor(() => expect(context.diagnosticEvents.some((entry: any) => entry.scope === 'task-recovery'
+      && entry.event === 'cold-preflight-v7' && entry.outcome === 'accepted')).toBe(true))
+    expect(kernel.getLatest().complete).toBe(true)
     context.triggerPluginOut(true)
   })
 
@@ -3457,6 +3525,55 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
+  it.each(['FileChange', 'patch_apply_begin', 'patch_apply_end'])('Plan equal-clock lifecycle consumes ordered %s once and rejects old Plan replay', (kind) => {
+    const { createCodexRolloutEvidence } = nodeRequire('../../preload/codex/rollout-evidence.cjs')
+    const evidence = createCodexRolloutEvidence({ record: (v: unknown) => v && typeof v === 'object' ? v : {}, timestampMs: (v: unknown) => Number(v) || 0 })
+    const at = '2026-11-06T01:00:00.000Z'
+    const row = (payload: Record<string, unknown>, timestamp = at) => JSON.stringify({ type: 'event_msg', timestamp, payload })
+    const start = (mode: string, timestamp = at) => row({ type: 'task_started', collaboration_mode_kind: mode }, timestamp)
+    const plan = row({ type: 'item_completed', item: { type: 'Plan', id: 'plan-a' } })
+    const mutation = kind === 'FileChange' ? row({ type: 'item_completed', item: { type: kind } }) : row({ type: kind })
+    const parse = (rows: string[]) => evidence.codexRolloutPendingPlanStateText(rows.join('\n'))
+    const initial = [start('plan'), plan]
+    const ready = parse(initial)
+    const execution = [...initial, start('default'), mutation]
+    const cleared = parse(execution)
+    expect(cleared).toMatchObject({ planReady: false, planLifecycleState: 'cleared', planClearReason: 'execution-start' })
+    expect(cleared.planLifecycleRevision).toBe(ready.planLifecycleRevision + 1)
+    expect(evidence.codexRolloutPlanClearPatch(ready, cleared)).toMatchObject({ planReady: false, planLifecycleRevision: cleared.planLifecycleRevision })
+    expect(parse([...execution, mutation, plan, plan])).toEqual(cleared)
+    expect(parse([...initial, plan])).toEqual(ready)
+    expect(parse([start('default'), plan, mutation])).toMatchObject({ planReady: true })
+    expect(parse([...initial, mutation, start('default')])).toMatchObject({ planReady: true })
+    expect(parse([...initial, start('default', '2026-11-06T00:59:59.000Z'), mutation])).toMatchObject({ planReady: true })
+    const oldMutation = mutation.replace(at, '2026-11-06T00:59:59.000Z')
+    expect(parse([...initial, start('default'), oldMutation])).toMatchObject({ planReady: true })
+    expect(parse([...initial, start('default'), row({ type: 'item_completed', item: { type: 'CommandExecution' } })])).toMatchObject({ planReady: true })
+    const newPlan = row({ type: 'item_completed', item: { type: 'Plan', id: 'plan-b' } })
+    const next = parse([...execution, start('plan'), newPlan, plan])
+    expect(next).toMatchObject({ planReady: true, planLifecycleState: 'ready', planLifecycleRevision: cleared.planLifecycleRevision + 1 })
+  })
+
+  it.each(['plan_implementation', 'plan_feedback', 'composer', 'queue'])('uses exact %s attribution to consume the latest Plan without requiring file edits', (trigger) => {
+    const { createCodexRolloutEvidence } = nodeRequire('../../preload/codex/rollout-evidence.cjs')
+    const evidence = createCodexRolloutEvidence({ record: (v: unknown) => v && typeof v === 'object' ? v : {}, timestampMs: (v: unknown) => Number(v) || 0 })
+    const row = (timestamp: string, payload: Record<string, unknown>) => JSON.stringify({ timestamp, type: 'event_msg', payload })
+    const initial = [
+      row('2030-01-01T00:00:00Z', { type: 'task_started', collaboration_mode_kind: 'plan' }),
+      row('2030-01-01T00:00:01Z', { type: 'item_completed', item: { type: 'Plan', id: 'plan-a' } })
+    ]
+    const execute = row('2030-01-01T00:00:02Z', { type: 'task_started', collaboration_mode_kind: 'default', turn_attribution: { turn_trigger: trigger, parent_turn_id: null } })
+    const parse = (rows: string[]) => evidence.codexRolloutPendingPlanStateText(rows.join('\n'))
+    const result = parse([...initial, execute, row('2030-01-01T00:00:03Z', { type: 'task_complete' })])
+    expect(result.planReady).toBe(trigger !== 'plan_implementation')
+    if (trigger === 'plan_implementation') {
+      expect(evidence.codexRolloutPlanClearPatch(parse(initial), result)).toMatchObject({ planReady: false, planClearReason: 'execution-start' })
+      expect(parse([...initial, execute, execute])).toEqual(parse([...initial, execute]))
+      expect(parse([execute, ...initial]).planReady).toBe(true)
+      expect(parse([...initial, execute, row('2030-01-01T00:00:04Z', { type: 'item_completed', item: { type: 'Plan', id: 'plan-b' } })]).planReady).toBe(true)
+    }
+  })
+
   it('retains a completed Plan across supplementary/default and interrupted Turns', () => {
     const { bridge, native } = loadCodexBridge(new FakeCodexProcess())
     const started = (mode: string, timestamp = '') => JSON.stringify({
@@ -3534,13 +3651,13 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
-  it('projects a completed default Turn with structural file work as consumed instead of reviving its older Plan', async () => {
+  it.each(['structural file work', 'native implementation'])('projects a completed default Turn with %s as consumed instead of reviving its older Plan', async (evidence) => {
     const child = new FakeCodexProcess()
     child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
       JSON.stringify({ timestamp: '2030-03-17T17:48:20.000Z', type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
       JSON.stringify({ timestamp: '2030-03-17T17:48:21.000Z', type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan body' } } }),
-      JSON.stringify({ timestamp: '2030-03-17T17:49:20.000Z', type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'default' } }),
-      JSON.stringify({ timestamp: '2030-03-17T17:49:21.000Z', type: 'event_msg', payload: { type: 'item_completed', item: { type: 'FileChange', changes: [{ path: '/private/changed' }] } } })
+      JSON.stringify({ timestamp: '2030-03-17T17:49:20.000Z', type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'default', ...(evidence === 'native implementation' ? { turn_attribution: { turn_trigger: 'plan_implementation' } } : {}) } }),
+      JSON.stringify({ timestamp: '2030-03-17T17:49:21.000Z', type: 'event_msg', payload: evidence === 'native implementation' ? { type: 'task_complete' } : { type: 'item_completed', item: { type: 'FileChange', changes: [{ path: '/private/changed' }] } } })
     ].join('\n'))
     const context = loadCodexBridge(child)
     const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
@@ -3766,6 +3883,252 @@ draft: v7EvidenceDraft({
     context.triggerPluginOut(true)
   })
 
+  it.each([
+    [{ type: 'plan', method: 'item/plan/requestChoice' }, 'idle'],
+    [{ type: 'plan', method: 'item/plan/requestUserInput' }, 'idle'],
+    [{ type: 'planChoice' }, 'idle'],
+    [{ type: 'plan', method: 'item/plan/requestImplementation' }, 'idle'],
+    [{ type: 'plan', method: 'item/plan/requestChoice' }, 'active'],
+    [{ type: 'plan', method: 'item/plan/requestUserInput' }, 'active'],
+    [{ type: 'planChoice' }, 'active'],
+    [{ type: 'plan', method: 'item/plan/requestImplementation' }, 'active']
+  ])('publishes current %j Plan input before unread with runtime %s', async (requestShape, runtime) => {
+    const child = new FakeCodexProcess()
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan body' } } })
+    ].join('\n'))
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.waitingInputSnapshotThreadIds.clear()
+    desktopSocket.waitingApprovalSnapshotThreadIds.clear()
+    desktopSocket.unreadSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([FIXED_THREAD_IDS[3]]), desktopSocket)
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const taskKey = baseline.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知').key
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+    const request = { ...requestShape, requestId: 'plan-choice-fixture' }
+    const snapshot = (revision: number) => ({
+      type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], change: {
+        type: 'snapshot', revision, conversationState: {
+          threadRuntimeStatus: { type: runtime, activeFlags: [] }, resumeState: '', hasUnreadTurn: true, requests: [request]
+        }
+      } }
+    })
+
+    desktopSocket.push(snapshot(2))
+    await vi.waitFor(() => {
+      const current = kernel.getLatest()
+      expect(current.tasks.find((task: Record<string, any>) => task.key === taskKey))
+        .toMatchObject({ phase: 'waiting-input', unread: true, planImplementation: true, dynamicGroup: 'input' })
+      expect(current.views.groups.input).toContain(taskKey)
+      expect(current.views.groups.unread).not.toContain(taskKey)
+      expect(current.views.attentionKeys.input).toContain(taskKey)
+      expect(current.views.attentionKeys.completedUnread).not.toContain(taskKey)
+      expect(current.views.counts).toMatchObject({ input: 1, unread: 0 })
+    })
+
+    if (runtime === 'idle' && 'method' in requestShape && requestShape.method === 'item/plan/requestChoice') {
+      await expect(kernel.dispatch({ action: 'open-attention', kind: 'input' }))
+        .resolves.toMatchObject({ outcome: 'dispatched', key: taskKey })
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+        .toMatchObject({ phase: 'waiting-input', unread: true })
+    }
+
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'serverRequest/resolved', params: { threadId: FIXED_THREAD_IDS[3], requestId: 'plan-choice-fixture' }
+    })}\n`)
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+      .toMatchObject(runtime === 'idle'
+        ? { phase: 'completed', unread: true, dynamicGroup: 'unread' }
+        : { phase: 'running', unread: true, dynamicGroup: 'active' }))
+
+    desktopSocket.push(snapshot(3))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey)?.phase).not.toBe('waiting-input')
+    expect(JSON.stringify(kernel.getLatest())).not.toContain('plan-choice-fixture')
+    context.triggerPluginOut(true)
+  })
+
+  it('preserves a patched Plan choice across bare request removal until its exact resolution', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.waitingInputSnapshotThreadIds.clear()
+    desktopSocket.unreadSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([FIXED_THREAD_IDS[3]]), desktopSocket)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      const taskKey = baseline.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知').key
+      const kernel = context.platform.companionKernel
+      kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+      const patch = (baseRevision: number, revision: number, requests: unknown[]) => ({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], change: {
+          type: 'patches', baseRevision, revision, patches: [{ op: 'replace', path: ['requests'], value: requests }]
+        } }
+      })
+      desktopSocket.push(patch(1, 2, [{ type: 'plan', method: 'item/plan/requestChoice', requestId: 'patched-plan-choice' }]))
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+        .toMatchObject({ phase: 'waiting-input', unread: true, dynamicGroup: 'input' }))
+      desktopSocket.push(patch(2, 3, []))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+        .toMatchObject({ phase: 'waiting-input', unread: true, dynamicGroup: 'input' })
+      child.stdout.emit('data', `${JSON.stringify({ method: 'serverRequest/resolved',
+        params: { threadId: FIXED_THREAD_IDS[3], requestId: 'patched-plan-choice' } })}\n`)
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+        .toMatchObject({ phase: 'completed', unread: true, dynamicGroup: 'unread' }))
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it('publishes 100 Plan choices to the matching Float applied ACK while unrelated reads are pending', async () => {
+    const child = new FakeCodexProcess()
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan' } } })
+    ].join('\n'))
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.waitingInputSnapshotThreadIds.clear()
+    desktopSocket.waitingApprovalSnapshotThreadIds.clear()
+    desktopSocket.unreadSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([FIXED_THREAD_IDS[3]]), desktopSocket, true, true, null, true)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      const taskKey = baseline.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知').key
+      const kernel = context.platform.companionKernel
+      kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+      context.platform.float.sync({
+        visible: true,
+        snapshot: { version: 2, baseRevision: 1, style: 'water', expandedFields: ['tasks'],
+          conversationInboxEnabled: true, quota: {},
+          conversations: { ongoing: [], stopped: [], hidden: [], completedUnread: [], completed: [] } },
+        position: { displayId: 'display-1', edge: 'right' }
+      })
+      await vi.waitFor(() => expect(context.floatAppliedAt()).toBeGreaterThan(0))
+      context.triggerPluginOut(false)
+
+      const quotaBefore = child.writes.filter((frame) => frame.method === 'account/rateLimits/read').length
+      const inventoryBefore = child.writes.filter((frame) => frame.method === 'thread/list').length
+      child.heldMethods.add('account/rateLimits/read')
+      child.heldMethods.add('thread/list')
+      void context.bridge.readSnapshot({ includeQuota: true, includeConfig: false, includeThreads: false }).catch(() => undefined)
+      void context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true }).catch(() => undefined)
+      await vi.waitFor(() => {
+        expect(child.writes.filter((frame) => frame.method === 'account/rateLimits/read').length).toBeGreaterThan(quotaBefore)
+        expect(child.writes.filter((frame) => frame.method === 'thread/list').length).toBeGreaterThan(inventoryBefore)
+      })
+      const heldReads = child.writes.filter((frame) => ['account/rateLimits/read', 'thread/list'].includes(frame.method)).length
+      const inputToKernel: number[] = []
+      const inputToFloat: number[] = []
+      let startedAt = 0
+      let kernelAt = 0
+      const phases: string[] = []
+      const stop = kernel.onPackage((value: Record<string, any>) => {
+        const current = value.tasks.find((task: Record<string, any>) => task.key === taskKey)
+        if (startedAt && current) {
+          phases.push(current.phase)
+          if (current.phase === 'waiting-input' && !kernelAt) kernelAt = performance.now()
+        }
+      })
+
+      for (let index = 0; index < 100; index += 1) {
+        const requestId = `plan-latency-fixture-${index}`
+        startedAt = performance.now()
+        kernelAt = 0
+        phases.length = 0
+        desktopSocket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+          params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], change: {
+            type: 'snapshot', revision: index + 2, conversationState: {
+              threadRuntimeStatus: { type: 'idle', activeFlags: [] }, resumeState: '', hasUnreadTurn: true,
+              requests: [{ type: 'plan', method: 'item/plan/requestChoice', requestId }]
+            }
+          } } })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        const current = kernel.getLatest()
+        expect(current.tasks.find((task: Record<string, any>) => task.key === taskKey))
+          .toMatchObject({ phase: 'waiting-input', unread: true, dynamicGroup: 'input' })
+        expect(phases).not.toContain('completed')
+        const applied = context.floatAppliedSamples.findLast((sample) => sample.revision === current.packageRevision)
+        expect(kernelAt).toBeGreaterThanOrEqual(startedAt)
+        expect(applied).toBeDefined()
+        inputToKernel.push(kernelAt - startedAt)
+        inputToFloat.push(applied!.at - startedAt)
+        startedAt = 0
+        child.stdout.emit('data', `${JSON.stringify({ method: 'serverRequest/resolved',
+          params: { threadId: FIXED_THREAD_IDS[3], requestId } })}\n`)
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey))
+          .toMatchObject({ phase: 'completed', unread: true, dynamicGroup: 'unread' })
+      }
+      stop()
+      const p95 = (values: number[]) => [...values].sort((a, b) => a - b)[Math.ceil(values.length * 0.95) - 1]
+      expect(inputToKernel).toHaveLength(100)
+      expect(p95(inputToKernel)).toBeLessThanOrEqual(50)
+      expect(Math.max(...inputToKernel)).toBeLessThanOrEqual(200)
+      expect(p95(inputToFloat)).toBeLessThanOrEqual(250)
+      expect(child.writes.filter((frame) => ['account/rateLimits/read', 'thread/list'].includes(frame.method))).toHaveLength(heldReads)
+    } finally {
+      child.heldMethods.clear()
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it('recovers a Plan choice after a missed Desktop revision and applies the Float snapshot within 1.25s', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(2_100_000_000_000)
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.waitingInputSnapshotThreadIds.clear()
+    desktopSocket.unreadSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([FIXED_THREAD_IDS[3]]), desktopSocket, true, true, null, true)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(0)
+      const taskKey = baseline.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知').key
+      const kernel = context.platform.companionKernel
+      kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+      context.platform.float.sync({
+        visible: true,
+        snapshot: { version: 2, baseRevision: 1, style: 'water', expandedFields: ['tasks'],
+          conversationInboxEnabled: true, quota: {},
+          conversations: { ongoing: [], stopped: [], hidden: [], completedUnread: [], completed: [] } },
+        position: { displayId: 'display-1', edge: 'right' }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      const baselineReads = child.writes.filter((frame) => frame.method === 'thread/list').length
+      const recoveryAt = Date.now()
+      desktopSocket.planChoiceSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+      desktopSocket.streamOwnerConnected = false
+      // The request's revision 2 was lost; the following revision exposes the gap.
+      desktopSocket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], change: {
+          type: 'patches', baseRevision: 2, revision: 3,
+          patches: [{ op: 'replace', path: ['hasUnreadTurn'], value: true }]
+        } } })
+      await vi.advanceTimersByTimeAsync(999)
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === taskKey)?.phase).not.toBe('waiting-input')
+      desktopSocket.streamOwnerConnected = true
+      await vi.advanceTimersByTimeAsync(1)
+      const current = kernel.getLatest()
+      expect(current.tasks.find((task: Record<string, any>) => task.key === taskKey))
+        .toMatchObject({ phase: 'waiting-input', unread: true, dynamicGroup: 'input' })
+      expect(context.floatSends).toEqual(expect.arrayContaining([expect.objectContaining({
+        channel: 'eypc-float:task-package',
+        payload: expect.objectContaining({ sentRevision: current.packageRevision })
+      })]))
+      expect(context.floatAppliedSamples.some((sample) => sample.revision === current.packageRevision)).toBe(true)
+      expect(context.floatAppliedAt()).toBeGreaterThanOrEqual(recoveryAt + 1_000)
+      expect(context.floatAppliedAt() - recoveryAt).toBeLessThanOrEqual(1_250)
+      expect(child.writes.filter((frame) => frame.method === 'thread/list')).toHaveLength(baselineReads)
+    } finally {
+      context.triggerPluginOut(true)
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps a completed unread Plan terminal before any current interaction is observed', async () => {
     const child = new FakeCodexProcess()
     child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
@@ -3791,7 +4154,7 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
-  it('executes a completed Plan only after the second confirmation and preserves model settings', async () => {
+  it('executes a completed Plan on the first click and preserves model settings', async () => {
     const child = new FakeCodexProcess()
     child.supportsDefaultCollaborationMode = true
     child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
@@ -3803,7 +4166,7 @@ draft: v7EvidenceDraft({
     kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     await vi.waitFor(() => {
       const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
-      expect(task).toMatchObject({ phase: 'stopped', planReady: true, dynamicGroup: 'stopped', cycleTier: 'unread' })
+      expect(task).toMatchObject({ phase: 'waiting-input', planReady: true, dynamicGroup: 'input', cycleTier: 'attention' })
       expect(task.capabilities.executePlan).toBe(true)
     })
     const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
@@ -3814,9 +4177,6 @@ draft: v7EvidenceDraft({
       source: 'execute-plan-button'
     }
 
-    await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'confirmation-required' })
-    expect(child.writes.filter((frame) => frame.method === 'thread/resume')).toHaveLength(0)
-    expect(child.writes.filter((frame) => frame.method === 'turn/start' && frame.params?.collaborationMode)).toHaveLength(0)
 
     await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'executed' })
     expect(context.openExternal).toHaveBeenCalledWith(`codex://threads/${FIXED_THREAD_IDS[3]}`)
@@ -3858,7 +4218,6 @@ draft: v7EvidenceDraft({
     expect(task).toMatchObject({ planReady: true })
     expect(task.capabilities.executePlan).toBe(true)
     const intent = { action: 'execute-plan', key: task.key, planLifecycleRevision: task.planLifecycleRevision }
-    await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'confirmation-required' })
     await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'executed' })
     expect(child.writes.filter((frame) => frame.method === 'thread/resume')).toHaveLength(1)
     expect(child.writes.filter((frame) => frame.method === 'collaborationMode/list')).toHaveLength(1)
@@ -3887,7 +4246,6 @@ draft: v7EvidenceDraft({
     await vi.waitFor(() => expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')?.capabilities.executePlan).toBe(true))
     const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
     const intent = { action: 'execute-plan', key: task.key, planLifecycleRevision: task.planLifecycleRevision }
-    await kernel.dispatch(intent)
     await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'executed' })
     expect(child.writes.filter((frame) => frame.method === 'turn/start')).toHaveLength(1)
     expect(child.writes.find((frame) => frame.method === 'turn/start')?.params).toEqual({
@@ -3910,7 +4268,6 @@ draft: v7EvidenceDraft({
     await vi.waitFor(() => expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')?.capabilities.executePlan).toBe(true))
     const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
     const intent = { action: 'execute-plan', key: task.key, planLifecycleRevision: task.planLifecycleRevision }
-    await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'confirmation-required' })
     context.native.expireCompanionCodexAlias(task.key)
     await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'executed', key: task.key })
     expect(context.openExternal).toHaveBeenCalledWith(`codex://threads/${FIXED_THREAD_IDS[3]}`)
@@ -3935,7 +4292,6 @@ draft: v7EvidenceDraft({
     await vi.waitFor(() => expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')?.capabilities.executePlan).toBe(true))
     const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
     const intent = { action: 'execute-plan', key: task.key, planLifecycleRevision: task.planLifecycleRevision }
-    await kernel.dispatch(intent)
     await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'failed' })
     expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.key === task.key)).toMatchObject({ planReady: true })
     if (blockedMethod === 'open') expect(child.writes.filter((frame) => frame.method === 'thread/resume')).toHaveLength(0)
@@ -3957,7 +4313,6 @@ draft: v7EvidenceDraft({
     await vi.waitFor(() => expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')?.capabilities.executePlan).toBe(true))
     const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
     const intent = { action: 'execute-plan', key: task.key, planLifecycleRevision: task.planLifecycleRevision }
-    await kernel.dispatch(intent)
     await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'indeterminate' })
     expect(child.writes.filter((frame) => frame.method === 'turn/start' && frame.params?.collaborationMode)).toHaveLength(1)
     expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.key === task.key)).toMatchObject({ planReady: true })
@@ -6826,6 +7181,151 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
+  it.each(['interrupted', 'failed'] as const)('snapshot running recovery corrects independent server %s for the same owner Turn', async (status) => {
+    const child = new FakeCodexProcess()
+    const threadId = FIXED_THREAD_IDS[1]
+    const turnId = 'same-owner-turn'
+    child.turnOverrides.set(threadId, { id: turnId, status, startedAt: 1_900_000_000 })
+    const socket = new FakeCodexDesktopSocket()
+    const context = loadCodexBridge(child, () => nativeRegistryText(), socket)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const task = baseline.value.threads[1]
+      const kernel = context.platform.companionKernel
+      kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+      const push = (revision: number, complete: boolean) => socket.push({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: threadId, change: { type: 'snapshot', revision, conversationState: {
+          threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [],
+          turnHistory: { kind: 'canonical', history: {
+            islands: [{ entries: [{ value: 'current' }], newerBoundary: { status: complete ? 'exhausted' : 'loading' } }],
+            entitiesByKey: { current: { turnId, status: 'inProgress', turnStartedAtMs: 1_900_000_000_000, items: [] } }
+          } }
+        } } }
+      })
+      // First reproduce the independent targeted read suppressing an incomplete owner snapshot.
+      push(100, false)
+      await vi.waitFor(async () => expect((await context.bridge.readActivitySnapshot({ phaseOnly: true })).value.decisionDiagnostics.snapshotConflictSuppressed).toBeGreaterThan(0), { timeout: 3000 })
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).toBe('stopped')
+      const prior = context.native.privateBranchEvidence(threadId)?.branches?.[0]
+      expect(prior).toMatchObject({ lastTurnStatus: status, lastTurnEvidence: 'targeted-after-exit' })
+      // Same identity and same start: recovery must not depend on inventing a new Turn.
+      push(101, true)
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).toBe('running'))
+      const sequence = context.native.privateBranchEvidence(threadId)?.branches?.[0]?.activeEvidenceSequence
+      push(102, true)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(context.native.privateBranchEvidence(threadId)?.branches?.[0]?.activeEvidenceSequence).toBe(sequence)
+    } finally { context.bridge.close() }
+  })
+
+  it('snapshot running recovery isolates a Side from a newer completed parent', async () => {
+    const child = new FakeCodexProcess()
+    const parentId = FIXED_THREAD_IDS[3]
+    const sideId = 'b2345678-1234-4234-8234-123456789abc'
+    child.turnOverrides.set(parentId, { id: 'parent-terminal', status: 'completed', startedAt: 2_100_000_000, completedAt: 2_100_000_010 })
+    const socket = new FakeCodexDesktopSocket()
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), socket)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const parent = baseline.value.threads[3]
+      const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+      socket.push({ type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: sideId, change: { type: 'snapshot', revision: 100, conversationState: {
+          sideConversation: true, ephemeral: true, forkedFromId: parentId,
+          threadRuntimeStatus: { type: 'active', activeFlags: [] }, requests: [], turns: [],
+          turnHistory: { kind: 'canonical', history: {
+            islands: [{ entries: [{ value: 'current' }], newerBoundary: { status: 'exhausted' } }],
+            entitiesByKey: { current: { turnId: 'side-live', status: 'inProgress', turnStartedAtMs: 2_000_000_000_000, items: [] } }
+          } }
+        } } } })
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.phase).toBe('running'))
+      expect(context.native.privateBranchEvidence(parentId)?.branches?.some((branch: Record<string, any>) => branch.branchKind === 'side' && branch.activeEvidenceSequence > 0)).toBe(true)
+    } finally {
+      context.bridge.close()
+    }
+  })
+
+  it('snapshot running recovery requires complete dated owner evidence and exact branch boundaries', () => {
+    const { createCodexDesktopActivityResolution } = nodeRequire('../../preload/codex/desktop-activity-resolution.cjs')
+    const resolution = createCodexDesktopActivityResolution({
+      timestampMs: (value: unknown) => Number(value) || 0, validThreadId: (value: unknown) => typeof value === 'string' && value.length > 0,
+      isConfirmedTurnEvidence: () => true, waitingEvidenceVisible: () => false,
+      desktopRequestFlag: () => '', desktopIsPlanImplementationRequest: () => false
+    })
+    const witness = resolution.codexDesktopSnapshotRunningWitness
+    const shadow = { ownerClientId: 'owner', revision: 2, canonicalLatestComplete: true, runtime: { type: 'active' },
+      currentCanonicalTurn: { turnRef: 'new', status: 'inProgress', startedAt: 200 } }
+    const identity = { threadId: 'side', parentThreadId: 'parent' }
+    expect(witness(shadow, null, identity)).toBe(true)
+    for (const delta of [
+      { canonicalLatestComplete: false }, { ownerClientId: '' }, { ownerDisconnectedAt: 1 }, { revision: -1 }, { runtime: { type: 'idle' } },
+      ...[0, -1, NaN, Infinity].map((startedAt) => ({ currentCanonicalTurn: { ...shadow.currentCanonicalTurn, startedAt } }))
+    ]) expect(witness({ ...shadow, ...delta }, null, identity)).toBe(false)
+    for (const lastTurnStatus of ['completed', 'interrupted', 'failed']) {
+      expect(witness(shadow, null, { ...identity, known: { lastTurnStatus }, knownTurnRef: 'old' })).toBe(false)
+      expect(witness(shadow, null, { ...identity, known: { lastTurnStatus, lastTurnStartedAt: 100 }, knownTurnRef: 'new' })).toBe(false)
+      expect(witness(shadow, null, { ...identity, known: { lastTurnStatus, lastTurnStartedAt: 100, lastTurnCompletedAt: 250 }, knownTurnRef: 'old' })).toBe(false)
+      const branchTerminal = { parentThreadId: 'parent', branchThreadId: 'side', lastTurnStatus, turnStartedAt: 250, terminalAt: 300 }
+      expect(witness(shadow, null, { ...identity, branchTerminal })).toBe(false)
+      expect(witness(shadow, null, { ...identity, branchTerminal: { ...branchTerminal, branchThreadId: 'parent' } })).toBe(true)
+      expect(witness(shadow, { ...shadow, currentCanonicalTurn: { turnRef: 'new', status: lastTurnStatus, startedAt: 100 } }, identity)).toBe(false)
+    }
+    for (const lastTurnStatus of ['interrupted', 'failed']) {
+      for (const lastTurnEvidence of ['inventory', 'targeted-after-exit', 'snapshot-corroborated', 'turn-completed']) {
+        const source = { lastTurnStatus, lastTurnEvidence, lastTurnStartedAt: 200 }
+        const independent = ['inventory', 'targeted-after-exit'].includes(lastTurnEvidence)
+        expect(witness(shadow, null, { ...identity, known: source, knownTurnRef: 'new' })).toBe(independent)
+        expect(witness(shadow, null, { ...identity, known: source, knownTurnRef: 'different' })).toBe(false)
+        expect(witness(shadow, null, { ...identity, branchTerminal: { ...source, ...identity,
+          branchThreadId: 'side', turnStartedAt: 200, terminalAt: 200 } })).toBe(independent)
+      }
+    }
+    expect(witness(shadow, { ...shadow, revision: 2 }, identity)).toBe(false)
+    expect(witness(shadow, { ...shadow, currentCanonicalTurn: { ...shadow.currentCanonicalTurn, startedAt: 300 } }, identity)).toBe(false)
+  })
+
+  it.each(['completed', 'interrupted', 'failed'] as const)('snapshot running recovery rejects owner-terminal replay of %s and accepts only a newer Turn once', async (status) => {
+    const child = new FakeCodexProcess()
+    const threadId = FIXED_THREAD_IDS[1]
+    child.turnOverrides.set(threadId, { id: 'settled-turn', status, startedAt: 1_900_000_000, completedAt: 2_000_000_000 })
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const context = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    try {
+      const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const task = baseline.value.threads[1]
+      const kernel = context.platform.companionKernel
+      kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+      const push = (revision: number, turnId: string, startedAt: number, ownerStatus = 'inProgress') => desktopSocket.push({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: threadId, change: { type: 'snapshot', revision, conversationState: {
+          threadRuntimeStatus: { type: ownerStatus === 'inProgress' ? 'active' : 'idle', activeFlags: [] }, requests: [], turns: [],
+          turnHistory: { kind: 'canonical', history: {
+            islands: [{ entries: [{ value: 'current' }], newerBoundary: { status: 'exhausted' } }],
+            entitiesByKey: { current: { turnId, status: ownerStatus, turnStartedAtMs: startedAt * 1000, items: [] } }
+          } }
+        } } }
+      })
+      push(99, 'settled-turn', 1_900_000_000, status)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      push(100, 'settled-turn', 1_900_000_000)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).not.toBe('running')
+      push(101, 'newer-turn', 2_100_000_000)
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === task.key)?.phase).toBe('running'))
+      const sequence = context.native.privateBranchEvidence(threadId)?.branches?.[0]?.activeEvidenceSequence
+      expect(sequence).toBeGreaterThan(0)
+      push(102, 'newer-turn', 2_100_000_000)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(context.native.privateBranchEvidence(threadId)?.branches?.[0]?.activeEvidenceSequence).toBe(sequence)
+    } finally {
+      context.bridge.close()
+    }
+  })
+
   it('recovers canonical live progress after an older interrupted inventory suppressed an active snapshot', async () => {
     const child = new FakeCodexProcess()
     child.interruptedTurnIds.add(FIXED_THREAD_IDS[1])
@@ -8384,7 +8884,7 @@ draft: v7EvidenceDraft({
     }
   })
 
-  it.each(['running', 'waiting-input'])('keeps the root %s and unread when another Side completes', async (remainingPhase) => {
+  it.each(['running', 'waiting-input', 'plan-choice'])('keeps the root %s and unread when another Side completes', async (remainingPhase) => {
     vi.useFakeTimers()
     try {
       const child = new FakeCodexProcess()
@@ -8417,7 +8917,9 @@ draft: v7EvidenceDraft({
               threadRuntimeStatus: { type: 'active', activeFlags: conversationId === activeChildId && remainingPhase === 'waiting-input' ? ['waitingOnUserInput'] : [] },
               resumeState: '',
               hasUnreadTurn: false,
-              requests: []
+              requests: conversationId === activeChildId && remainingPhase === 'plan-choice'
+                ? [{ type: 'plan', method: 'item/plan/requestChoice', requestId: 'side-plan-choice' }]
+                : []
             }
           }
         }
@@ -8459,14 +8961,19 @@ draft: v7EvidenceDraft({
           context: { identity: { kind: 'chatgpt', accountId: 'synthetic-account', userId: 'synthetic-user' }, executionHostKey: 'synthetic-local-host' } }
       })
       await vi.advanceTimersByTimeAsync(0)
+      const expectedPhase = remainingPhase === 'plan-choice' ? 'waiting-input' : remainingPhase
       expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key))
-        .toMatchObject({ phase: remainingPhase, unreadKnown: true, unread: true, topology: { memberCount: 3 }, capabilities: { archive: false } })
+        .toMatchObject({ phase: expectedPhase, unreadKnown: true, unread: true, topology: { memberCount: 3 }, capabilities: { archive: false } })
       expect(kernel.getLatest().tasks.filter((task: Record<string, any>) => task.key === parent.key)).toHaveLength(1)
       expect(kernel.getLatest().tasks.some((task: Record<string, any>) => task.key.startsWith('codex-child:'))).toBe(false)
-      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key)?.dynamicGroup).toBe(remainingPhase === 'running' ? 'active' : 'input')
+      expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key)?.dynamicGroup).toBe(expectedPhase === 'running' ? 'active' : 'input')
+      if (expectedPhase === 'waiting-input') {
+        expect(kernel.getLatest().views.attentionKeys.input).toContain(parent.key)
+        expect(kernel.getLatest().views.attentionKeys.completedUnread).not.toContain(parent.key)
+      }
       await bridge.readActivitySnapshot({ phaseOnly: true })
       expect(kernel.getLatest().tasks.find((task: Record<string, any>) => task.key === parent.key))
-        .toMatchObject({ phase: remainingPhase, unread: true })
+        .toMatchObject({ phase: expectedPhase, unread: true })
       expect(publicPlatform.companionKernel.publishCodexBranchEvidence).toBeUndefined()
       bridge.close()
     } finally {
@@ -11927,5 +12434,176 @@ describe('Codex internal review member admission', () => {
       expect(activity.lastTurnStatus).toBe(remaining === 'none' ? 'completed' : 'inProgress')
       context.bridge.close()
     } finally { vi.useRealTimers() }
+  })
+})
+
+describe('Codex continue backend wiring and Plan write guards', () => {
+  async function ready(plan = false, goal?: 'paused' | 'blocked' | 'usageLimited' | 'budgetLimited') {
+    const child = new FakeCodexProcess()
+    const threadId = FIXED_THREAD_IDS[3]
+    if (goal) child.goalStates.set(threadId, { status: goal, updatedAt: 2_000_000_050 })
+    else if (!plan) child.interruptedTurnIds.add(threadId)
+    if (plan) child.rolloutTexts.set(threadId, [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan body' } } })
+    ].join('\n'))
+    const context = loadCodexBridge(child)
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    await vi.waitFor(() => expect(kernel.getLatest().complete).toBe(true))
+    const row = kernel.getLatest().tasks.find((t: any) => t.displayName === '跨端未知')
+    const command = { revision: 'companion-task-command-v1', operationId: 'backend-continue-fixture',
+      command: 'continue-task', selector: { key: row.key }, source: 'main', payload: { revisionAt: row.revisionAt } }
+    return { child, threadId, context, kernel, row, command }
+  }
+  it('connects continue-task to the exact native root and publishes running without exposing text', async () => {
+    const f = await ready()
+    expect(f.row).toMatchObject({ phase: 'stopped', capabilities: { continueTask: true } })
+    await expect(f.kernel.dispatchCommand(f.command)).resolves.toMatchObject({ outcome: 'executed' })
+    expect(f.child.writes.filter((frame) => frame.method === 'turn/start')).toEqual([
+      expect.objectContaining({ params: { threadId: f.threadId,
+        input: [{ type: 'text', text: '继续当前任务，从上次中断处接着执行。' }] } })
+    ])
+    expect(f.kernel.getLatest().tasks.find((t: any) => t.key === f.row.key)).toMatchObject({ phase: 'running' })
+    const publicData = JSON.stringify({ snapshot: f.kernel.getLatest(), events: f.context.diagnosticEvents })
+    for (const value of [f.threadId, 'private overridden turn body', '继续当前任务，从上次中断处接着执行。']) {
+      expect(publicData).not.toContain(value)
+    }
+    f.context.triggerPluginOut(true)
+  })
+  it.each(['paused', 'blocked'] as const)('connects native %s Goal activation exactly once', async (status) => {
+    const f = await ready(false, status)
+    const response = (f.child as any).responseFor.bind(f.child)
+    ;(f.child as any).responseFor = (method: string, params: any) => {
+      if (method === 'thread/goal/set') {
+        f.child.goalStates.set(f.threadId, { status: 'active', updatedAt: 2_100_000_000 })
+        return response('thread/goal/get', params)
+      }
+      return response(method, params)
+    }
+    expect(f.row.capabilities.continueTask).toBe(true)
+    await expect(f.kernel.dispatchCommand(f.command)).resolves.toMatchObject({ outcome: 'executed' })
+    expect(f.child.writes.filter((frame) => frame.method === 'thread/goal/set')).toEqual([
+      expect.objectContaining({ params: { threadId: f.threadId, status: 'active', origin: 'user' } })
+    ])
+    expect(f.child.writes.filter((frame) => frame.method === 'turn/start')).toHaveLength(0)
+    expect(f.context.native.privateBranchEvidence(f.threadId)?.branches?.[0]).toMatchObject({ goalStatus: 'active' })
+    f.context.triggerPluginOut(true)
+  })
+  it.each(['usageLimited', 'budgetLimited'] as const)('does not advertise or dispatch %s continuation', async (status) => {
+    const f = await ready(false, status)
+    expect(f.row.capabilities.continueTask).not.toBe(true)
+    await expect(f.kernel.dispatchCommand(f.command)).resolves.toMatchObject({ outcome: 'failed' })
+    expect(f.child.writes.filter((frame) => ['turn/start', 'thread/goal/set'].includes(frame.method))).toHaveLength(0)
+    f.context.triggerPluginOut(true)
+  })
+  it('maps transport method-not-found to the isolated executor fallback', async () => {
+    const f = await ready()
+    f.child.unsupportedGoalGet = true
+    await expect(f.kernel.dispatchCommand(f.command)).resolves.toMatchObject({ outcome: 'executed' })
+    expect(f.child.writes.filter((frame) => frame.method === 'turn/start')).toHaveLength(1)
+    f.context.triggerPluginOut(true)
+  })
+  it.each(['new-turn', 'same-turn-running', 'wrong-thread', 'approval', 'input'])('Plan rejects %s during resume before any start', async (mode) => {
+    const f = await ready(true)
+    expect(f.row).toMatchObject({ phase: 'waiting-input', capabilities: { executePlan: true } })
+    const response = (f.child as any).responseFor.bind(f.child)
+    ;(f.child as any).responseFor = (method: string, params: any) => {
+      const value = response(method, params)
+      if (method === 'thread/resume') {
+        if (mode === 'new-turn') f.child.turnOverrides.set(f.threadId, { id: 'private-new-turn', status: 'completed', startedAt: 2_100_000_000, completedAt: 2_100_000_001 })
+        if (mode === 'same-turn-running') f.child.inProgressTurnIds.add(f.threadId)
+        if (mode === 'wrong-thread') value.thread.id = FIXED_THREAD_IDS[1]
+        if (mode === 'approval' || mode === 'input') {
+          f.child.stdout.emit('data', `${JSON.stringify({ method: 'thread/status/changed', params: {
+            threadId: f.threadId, status: { type: 'active', activeFlags: [mode === 'approval' ? 'waitingOnApproval' : 'waitingOnUserInput'] }
+          } })}\n`)
+        }
+      }
+      return value
+    }
+    await expect(f.kernel.dispatch({ action: 'execute-plan', key: f.row.key, planLifecycleRevision: f.row.planLifecycleRevision }))
+      .resolves.toMatchObject({ outcome: 'failed', errorCode: 'state-changed' })
+    expect(f.child.writes.filter((frame) => frame.method === 'turn/start')).toHaveLength(0)
+    f.context.triggerPluginOut(true)
+  })
+  it.each(['completed', 'failed', 'missing', 'same-id'])('Plan %s start receipt cannot claim success or resend', async (mode) => {
+    const f = await ready(true)
+    const response = (f.child as any).responseFor.bind(f.child)
+    ;(f.child as any).responseFor = (method: string, params: any) => method === 'turn/start'
+      ? { turn: { id: mode === 'same-id' ? `turn-${f.threadId}` : 'private-new-turn',
+        ...(mode !== 'missing' ? { status: mode === 'same-id' ? 'inProgress' : mode } : {}) } }
+      : response(method, params)
+    await expect(f.kernel.dispatch({ action: 'execute-plan', key: f.row.key, planLifecycleRevision: f.row.planLifecycleRevision }))
+      .resolves.toMatchObject({ outcome: 'indeterminate' })
+    expect(f.child.writes.filter((frame) => frame.method === 'turn/start')).toHaveLength(1)
+    f.context.triggerPluginOut(true)
+  })
+  it('Plan malformed start receipt can be confirmed only by a new running turn', async () => {
+    const f = await ready(true)
+    const response = (f.child as any).responseFor.bind(f.child)
+    ;(f.child as any).responseFor = (method: string, params: any) => {
+      if (method === 'turn/start') {
+        f.child.turnOverrides.set(f.threadId, { id: 'private-confirmed-new-turn', status: 'inProgress', startedAt: 2_100_000_000 })
+        return {}
+      }
+      return response(method, params)
+    }
+    await expect(f.kernel.dispatch({ action: 'execute-plan', key: f.row.key, planLifecycleRevision: f.row.planLifecycleRevision }))
+      .resolves.toMatchObject({ outcome: 'executed' })
+    expect(f.child.writes.filter((frame) => frame.method === 'turn/start')).toHaveLength(1)
+    f.context.triggerPluginOut(true)
+  })
+})
+
+describe('Codex continue host capability boundary', () => {
+  it('keeps a stopped external Host root non-continuable despite the Codex manifest capability', async () => {
+    const child = new FakeCodexProcess()
+    const externalId = 'aaaaaaaa-1234-4234-8234-123456789abc'
+    const context = loadCodexBridge(child, undefined, null, false, true, null, false, null, [{
+      threadId: externalId, harnessId: 'grok', status: 'interrupted', cwd: '/tmp/project', title: 'external-continue-fixture'
+    }])
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((t: any) => t.displayName?.includes('external-continue-fixture')))
+      .toMatchObject({ phase: 'stopped' }))
+    const row = kernel.getLatest().tasks.find((t: any) => t.displayName?.includes('external-continue-fixture'))
+    expect(row.capabilities.continueTask).not.toBe(true)
+    await expect(kernel.dispatch({ action: 'continue-task', key: row.key, revisionAt: row.revisionAt }))
+      .resolves.toMatchObject({ outcome: 'failed' })
+    expect(child.writes.filter((frame) => ['thread/resume', 'turn/start', 'thread/goal/set'].includes(frame.method))).toHaveLength(0)
+    context.triggerPluginOut(true)
+  })
+})
+
+describe('stopped window host admission and defaults', () => {
+  it.each([['interrupted', 'stopped'], ['completed', 'completed']] as const)('admits old %s inventory without bypassing unrelated phase windows', async (status, phase) => {
+    const child = new FakeCodexProcess()
+    const id = FIXED_THREAD_IDS[3]
+    child.archiveThreadRecency = 1_600_000_100
+    child.turnOverrides.set(id, { id: 'old-turn-fixture', status, startedAt: 1_600_000_000, completedAt: 1_600_000_100 })
+    const response = (child as any).responseFor.bind(child)
+    ;(child as any).responseFor = (method: string, params: any) => {
+      const value = response(method, params)
+      if (method === 'thread/list') value.data = value.data.map((row: any) => row.id === id ? { ...row, recencyAt: 1_600_000_100 } : row)
+      return value
+    }
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]))
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 72 })
+    await vi.waitFor(() => expect(kernel.getLatest().complete).toBe(true))
+    const row = kernel.getLatest().tasks.find((t: any) => t.displayName === '跨端未知')
+    expect(row).toMatchObject({ phase, dynamicEligible: false, dynamicGroup: phase === 'stopped' ? 'stopped' : 'none',
+      cycleTier: phase === 'stopped' ? 'unread' : 'none' })
+    if (phase === 'stopped') expect(kernel.getLatest().views.cycleKeys).toContain(row.key)
+    else expect(kernel.getLatest().views.cycleKeys).not.toContain(row.key)
+    expect(child.writes.some((frame) => ['thread/resume', 'turn/start', 'thread/goal/set'].includes(frame.method))).toBe(false)
+    context.triggerPluginOut(true)
+  })
+  it.each([[undefined, 168], [72, 72], [1, 1], [1000, 720]])('uses saved hours %s with fallback one week and unchanged cap', (hours, expected) => {
+    const context = loadCodexBridge(new FakeCodexProcess(), undefined, null, false, true, null, false, { values: new Map() })
+    context.platform.storage.setState({ codex: { settings: { timeWindowDays: 30, dynamicTaskWindowHours: hours } } })
+    expect(context.taskConfiguration().dynamicTaskWindowHours).toBe(expected)
+    context.triggerPluginOut(true)
   })
 })

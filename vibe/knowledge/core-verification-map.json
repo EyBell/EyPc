@@ -33,6 +33,57 @@
   ],
   "guards": [
     {
+      "id": "codex-appearance",
+      "sources": [
+        "SPEC-260718-1148-CODEX-QUOTA-FLOAT::RAW-071",
+        "SPEC-261030-CODEX-APPEARANCE-EDITOR::RAW-001",
+        "SPEC-261030-CODEX-APPEARANCE-EDITOR::RAW-002"
+      ],
+      "paths": [
+        "src/pages/CodexPage.vue",
+        "src/components/CodexAppearanceStudio.vue",
+        "src/components/CodexStyleSwitch.vue",
+        "src/domain/codex.ts",
+        "src/domain/codexAppearanceSession.ts",
+        "src/styles/codex.css",
+        "tests/ui/codexAppearanceStudio.test.ts",
+        "tests/domain/codexAppearanceSession.test.ts"
+      ],
+      "checks": [
+        "codex-appearance",
+        "types"
+      ],
+      "boundary": "Codex 外观编辑、主题和显示样式的组件行为与类型；不证明真实 uTools 像素布局或页面其他配置功能。"
+    },
+    {
+      "id": "navigation-diagnostics",
+      "sources": [
+        "source-only:vibe/knowledge/ARCHITECTURE.md#Verification"
+      ],
+      "paths": [
+        "preload/freeze-trace.cjs",
+        "public/freeze-trace.cjs",
+        "preload/index.js",
+        "public/preload.js",
+        "preload/companion/task-kernel.cjs",
+        "public/companion/task-kernel.cjs",
+        "preload/companion/navigation.cjs",
+        "public/companion/navigation.cjs",
+        "scripts/summarize-freeze-trace.mjs",
+        "tests/platform/freezeTrace.test.ts",
+        "tests/platform/companionTaskKernel.test.ts",
+        "tests/platform/codexAppServerBridge.test.ts",
+        "tests/platform/companionNavigationBridge.test.ts"
+      ],
+      "checks": [
+        "navigation-diagnostics",
+        "shortcut-preload-entry",
+        "working-mirrors",
+        "runtime-identity"
+      ],
+      "boundary": "固定上一／下一入口、Command Gateway 到 Navigation 的按键合并、热态快照复用、冷启动与普通入口恢复、独立存活探测；不证明真实宿主失效根因。"
+    },
+    {
       "id": "companion-state",
       "sources": [
         "SPEC-260824-EYPC-V7-GLOBAL-REFACTOR::RAW-179#2",
@@ -303,9 +354,69 @@
         "identity-canaries"
       ],
       "boundary": "选测失败/零用例/超时/陈旧证据与静态结构漂移；版本不代表能力准入。"
+    },
+    {
+      "id": "task-state-recovery",
+      "sources": [
+        "source-only:vibe/specs/261106/task-state-recovery/task-card.md#VerificationImpactTrace",
+        "SPEC-261106-TASK-STATE-RECOVERY::RAW-002"
+      ],
+      "paths": [
+        "src/FloatApp.vue",
+        "tests/ui/codexCompanion.test.ts",
+        "scripts/check-codex-unread-route.mjs"
+      ],
+      "checks": [
+        "task-state-recovery"
+      ],
+      "boundary": "原需求恢复：本地打开键重复、透明水球收起代次及未读恢复版本顺序；不替代原生宿主因果与像素验收。 本轮新增待继续豁免动态窗及当前页搜索范围/计数，见任务账定向选择器。"
+    },
+    {
+      "id": "codex-continue-task",
+      "sources": [
+        "SPEC-261106-TASK-STATE-RECOVERY::RAW-001"
+      ],
+      "paths": [
+        "preload/codex/continue-task.cjs",
+        "public/codex/continue-task.cjs",
+        "tests/platform/codexContinueTask.test.ts"
+      ],
+      "checks": [
+        "codex-continue-task",
+        "working-mirrors"
+      ],
+      "boundary": "用户点击继续的目标身份、状态重检、原生Goal优先与超时不重发；合成RPC不代表真实任务已恢复。"
     }
   ],
   "checks": [
+    {
+      "id": "codex-appearance",
+      "kind": "vitest",
+      "files": [
+        "tests/ui/codexAppearanceStudio.test.ts",
+        "tests/domain/codexAppearanceSession.test.ts"
+      ]
+    },
+    {
+      "id": "navigation-diagnostics",
+      "kind": "vitest",
+      "files": [
+        "tests/platform/freezeTrace.test.ts",
+        "tests/platform/companionTaskKernel.test.ts",
+        "tests/platform/companionNavigationBridge.test.ts"
+      ]
+    },
+    {
+      "id": "shortcut-preload-entry",
+      "kind": "vitest",
+      "files": [
+        "tests/platform/codexAppServerBridge.test.ts"
+      ],
+      "testNames": [
+        "consumes a hot previous/next entry in preload without forwarding a duplicate Renderer payload",
+        "retains provider preflight for a cold previous/next preload entry"
+      ]
+    },
     {
       "id": "core",
       "kind": "node",
@@ -425,7 +536,9 @@
     {
       "id": "codex-side-recovery",
       "kind": "vitest",
-      "files": ["tests/platform/codexAppServerBridge.test.ts"],
+      "files": [
+        "tests/platform/codexAppServerBridge.test.ts"
+      ],
       "testNames": [
         "decodes a fragmented large Desktop snapshot with linear copy volume before publishing input",
         "uses the owner Goal after a cached no-Goal read with plan artifact=false",
@@ -623,6 +736,24 @@
       "kind": "vitest",
       "files": [
         "tests/platform/runtimeIdentity.test.ts"
+      ]
+    },
+    {
+      "id": "task-state-recovery",
+      "kind": "vitest",
+      "files": [
+        "tests/ui/codexCompanion.test.ts"
+      ],
+      "testNames": [
+        "local opening shortcut repeat regression",
+        "water collapse callback regression"
+      ]
+    },
+    {
+      "id": "codex-continue-task",
+      "kind": "vitest",
+      "files": [
+        "tests/platform/codexContinueTask.test.ts"
       ]
     }
   ]

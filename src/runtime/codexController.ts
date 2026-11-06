@@ -173,6 +173,7 @@ export interface CodexFloatSnapshotV1 {
   archivingTaskKeys?: string[]
   projectArchive: { key: string; status: 'idle' | 'archiving' | 'error'; message: string }
   timeWindowDays: number
+  dynamicTaskWindowHours?: number
   actionDefaultProjectKey?: string
   keybindings?: Array<{
     actionId: string
@@ -966,7 +967,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   /** Applies an enablement change immediately instead of waiting for a Codex tick. */
-  function syncClaudeEnablement() {
+  function syncClaudeEnablement(initial = false) {
     if (!claudeEnabled()) {
       unsubscribeClaudeEvents()
       resetClaudeLane()
@@ -978,19 +979,24 @@ export function createCodexController(options: CodexControllerOptions) {
       return
     }
     const bridge = options.platform.claude
-    if (bridge && typeof bridge.install === 'function') {
-      void Promise.resolve(bridge.install({ statusline: true })).then(async (result) => {
-        if (disposed || !claudeEnabled()) return
-        if (result?.ok) await refreshClaudeEnvironment().catch(() => false)
-        if (!disposed) options.notify()
-      }).catch(() => undefined)
+    const inspectRegistration = async () => {
+      if (disposed || !claudeEnabled()) return
+      await refreshClaudeEnvironment().catch(() => false)
+      if (!disposed && claudeEnabled()) options.notify()
     }
-    // Provider task state is observed by the Host/Kernel. This one-shot read is
-    // settings telemetry only and never participates in task classification.
-    void refreshClaude(Date.now()).then((changed) => {
-      if (disposed || !changed) return
-      options.notify()
-    }).catch(() => { /* claude lane degrades on its own */ })
+    if (bridge && typeof bridge.install === 'function') {
+      try {
+        void Promise.resolve(bridge.install({ statusline: true })).then(inspectRegistration, inspectRegistration)
+      } catch {
+        void inspectRegistration()
+      }
+    } else if (!initial) {
+      void inspectRegistration()
+    }
+    // Host/Kernel own task state. Keep app presence and quota independent,
+    // including when a provider is enabled during another in-flight refresh.
+    kickClaudeAppPresence()
+    kickClaudeQuota(Date.now(), { reason: 'cold' })
   }
 
   function cursorSessionsWithHooks(): CursorAgentObservation[] {
@@ -1232,7 +1238,7 @@ export function createCodexController(options: CodexControllerOptions) {
     }).catch(() => { /* orca lane degrades on its own */ })
   }
 
-  function syncCursorEnablement() {
+  function syncCursorEnablement(initial = false) {
     if (!cursorEnabled()) {
       const bridge = options.platform.cursor
       if (bridge && typeof bridge.uninstall === 'function') {
@@ -1243,19 +1249,21 @@ export function createCodexController(options: CodexControllerOptions) {
       return
     }
     const bridge = options.platform.cursor
-    if (bridge && typeof bridge.install === 'function') {
-      void Promise.resolve(bridge.install()).then(async (result) => {
-        if (disposed || !cursorEnabled()) return
-        if (result?.ok) await refreshCursorRegistration().catch(() => false)
-        if (!disposed) options.notify()
-      }).catch(() => undefined)
+    const inspectRegistration = async () => {
+      if (disposed || !cursorEnabled()) return
+      await refreshCursorRegistration().catch(() => false)
+      if (!disposed && cursorEnabled()) options.notify()
     }
-    // Provider task state is observed by the Host/Kernel. This one-shot read is
-    // settings telemetry only and never participates in task classification.
-    void refreshCursor().then((changed) => {
-      if (disposed) return
-      if (changed) options.notify()
-    }).catch(() => { /* cursor lane degrades on its own */ })
+    if (bridge && typeof bridge.install === 'function') {
+      try {
+        void Promise.resolve(bridge.install()).then(inspectRegistration, inspectRegistration)
+      } catch {
+        void inspectRegistration()
+      }
+    } else if (!initial) {
+      void inspectRegistration()
+    }
+    // Host/Kernel own task inventory; do not refresh it from the Renderer.
   }
 
   function resetClaudeLane() {
@@ -3375,7 +3383,7 @@ export function createCodexController(options: CodexControllerOptions) {
     if (disposed) return result.outcome === (paused ? 'paused' : 'resumed')
     const succeeded = result.outcome === (paused ? 'paused' : 'resumed')
     options.setMessage(result.message || (succeeded
-      ? paused ? 'Plan 已暂停并移入已隐藏区' : 'Plan 已恢复到待继续列表'
+      ? paused ? 'Plan 已暂停并移入已隐藏区' : 'Plan 已恢复到待输入列表'
       : 'Plan 状态更新失败'))
     options.notify()
     return succeeded
@@ -3387,6 +3395,26 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function resumePlan(key: string, recency?: number, source = 'resume-button') {
     return setPlanPaused(key, recency, false, source)
+  }
+
+  async function continueTask(key: string, recency?: number, source = 'continue-task-button') {
+    if (disposed || !Number.isFinite(recency) || !companionKernel) {
+      options.setMessage('任务继续服务尚未就绪')
+      return false
+    }
+    const task = allTasks().find((item) => item.key === key && item.revisionAt === recency)
+    if (task?.companionCapabilities?.continueTask !== true) {
+      options.setMessage('当前任务不可直接继续，请查看原始任务状态')
+      return false
+    }
+    const result = await dispatchCompanionCommand('continue-task', { key: task.key }, source, { revisionAt: task.revisionAt })
+    const accepted = result.outcome === 'executed'
+    if (disposed) return accepted
+    options.setMessage(result.message || (result.outcome === 'indeterminate'
+      ? '结果未确认，请核对原任务，未自动重发'
+      : accepted ? '已发起继续任务' : '继续任务失败'))
+    options.notify()
+    return accepted
   }
 
   async function executePlan(key: string, recency?: number, source = 'execute-plan-button') {
@@ -3405,9 +3433,11 @@ export function createCodexController(options: CodexControllerOptions) {
       source,
       { planLifecycleRevision: task.planLifecycleRevision }
     )
-    if (disposed) return result.outcome === 'executed' || result.outcome === 'confirmation-required'
-    const accepted = result.outcome === 'executed' || result.outcome === 'confirmation-required'
-    options.setMessage(result.message || (result.outcome === 'executed' ? '已按原 Plan 启动执行' : 'Plan 执行失败'))
+    if (disposed) return result.outcome === 'executed'
+    const accepted = result.outcome === 'executed'
+    options.setMessage(result.message || (result.outcome === 'indeterminate'
+      ? '结果未确认，请核对原任务，未自动重发'
+      : accepted ? '已按原 Plan 启动执行' : 'Plan 执行失败'))
     options.notify()
     return accepted
   }
@@ -3721,8 +3751,8 @@ export function createCodexController(options: CodexControllerOptions) {
       subscribeClaudeQuotaLifecycle()
       if (isFeatureEnabled()) void inspectEnvironment()
       syncActivation(true)
-      syncClaudeEnablement()
-      syncCursorEnablement()
+      syncClaudeEnablement(true)
+      syncCursorEnablement(true)
       syncOrcaEnablement()
       options.platform.float.setCrossDesktopPin?.(codexState().settings.floatCrossDesktopPin)
       refreshCompanionRegistrationTelemetry()
@@ -3819,6 +3849,7 @@ export function createCodexController(options: CodexControllerOptions) {
     pausePlan,
     resumePlan,
     executePlan,
+    continueTask,
     archive,
     archiveMany,
     archiveFocusedTask,
@@ -3934,6 +3965,7 @@ export function createCodexController(options: CodexControllerOptions) {
         archivingTaskKeys: [...archivingKeys],
         projectArchive,
         timeWindowDays: settings.timeWindowDays,
+        dynamicTaskWindowHours: settings.dynamicTaskWindowHours,
         actionDefaultProjectKey: settings.actionDefaultProjectKey || '',
         keybindings,
       companion: {

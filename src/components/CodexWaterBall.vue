@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import type { CodexColorSettings, CodexWaterAppearanceSettings } from '../domain/codex'
 import { codexWaterAppearanceCssVars } from '../domain/codexAppearance'
 import { codexWeeklyReading, type CodexQuotaReading } from '../domain/codexPresentation'
-import type { CompactQuotaGridCell } from '../domain/magpieQuota'
+import { presentCompactQuotaGridCells, type CompactQuotaGridCell } from '../domain/magpieQuota'
 
 const props = withDefaults(defineProps<{
   primary: CodexQuotaReading | null
@@ -39,6 +39,8 @@ const props = withDefaults(defineProps<{
   ringPercent?: number | null
   /** When set, the centre renders a 2×2 Magpie quota grid instead of one percentage. */
   quotaGrid?: CompactQuotaGridCell[] | null
+  partHints?: { base: string; liquid: string; track: string; ring: string; reading: string }
+  suppressGridHints?: boolean
 }>(), {
   taskCount: 0,
   signal: 'quiet',
@@ -65,15 +67,10 @@ const dualReading = computed(() => hasPercentOverride.value
   && Number.isFinite(props.scopedPercent)
   ? { scoped: props.scopedPercent as number, primary: props.percentOverride as number }
   : null)
-const gridCells = computed(() => (Array.isArray(props.quotaGrid) ? props.quotaGrid : []))
-const gridMode = computed(() => gridCells.value.length > 0)
-const gridLayout = computed(() => {
-  const count = gridCells.value.length
-  if (count <= 1) return 'one'
-  if (count === 2) return 'two'
-  if (count === 3) return 'three'
-  return 'four'
-})
+const gridPresentation = computed(() => presentCompactQuotaGridCells(props.quotaGrid))
+const gridRows = computed(() => gridPresentation.value.rows)
+const gridMode = computed(() => gridRows.value.length > 0)
+const gridLayout = computed(() => gridPresentation.value.layout)
 const weekly = computed(() => codexWeeklyReading(props.primary, props.secondary))
 const hasRingOverride = computed(() => typeof props.ringPercent === 'number' && Number.isFinite(props.ringPercent))
 const weeklyPercent = computed(() => hasRingOverride.value ? props.ringPercent as number : weekly.value?.bucket.remainingPercent ?? 0)
@@ -102,10 +99,10 @@ const style = computed(() => ({
     :aria-hidden="decorative ? 'true' : undefined"
     :aria-label="decorative ? undefined : label"
   >
-    <div class="codex-water-ball__surface" aria-hidden="true">
+    <div class="codex-water-ball__surface" aria-hidden="true" :data-operation-tooltip="partHints?.base">
       <i class="refraction refraction-a" />
       <i class="refraction refraction-b" />
-      <div v-if="liquidLevel > 0" class="codex-water-ball__liquid">
+      <div v-if="liquidLevel > 0" class="codex-water-ball__liquid" :data-operation-tooltip="partHints?.liquid">
         <i class="liquid-base" />
         <svg class="liquid-wave wave-a" viewBox="0 0 200 24" preserveAspectRatio="none"><path :d="wavePath" /></svg>
         <svg class="liquid-wave wave-b" viewBox="0 0 200 24" preserveAspectRatio="none"><path :d="wavePath" /></svg>
@@ -121,6 +118,7 @@ const style = computed(() => ({
           :key="index"
           class="segment"
           :class="{ active: index <= activeWeeklySegments }"
+          :data-operation-tooltip="index <= activeWeeklySegments ? partHints?.ring : partHints?.track"
           x1="50"
           y1="5"
           x2="50"
@@ -129,22 +127,34 @@ const style = computed(() => ({
         />
       </template>
       <template v-else>
-        <circle class="track" cx="50" cy="50" r="45" />
-        <circle class="value" cx="50" cy="50" r="45" />
+        <circle class="track" cx="50" cy="50" r="45" :data-operation-tooltip="partHints?.track" />
+        <circle class="value" cx="50" cy="50" r="45" :data-operation-tooltip="partHints?.ring" />
       </template>
     </svg>
 
-    <div v-if="!primary || appearance.inner.showPercent" class="codex-water-ball__value" :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary && !hasPercentOverride }]">
+    <div
+      v-if="!primary || appearance.inner.showPercent"
+      class="codex-water-ball__value"
+      :data-operation-tooltip="partHints?.reading"
+      :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary && !hasPercentOverride, 'has-grid': gridMode }]"
+    >
       <div v-if="gridMode" class="codex-water-ball__grid" :class="`layout-${gridLayout}`" aria-hidden="true">
         <div
-          v-for="cell in gridCells"
-          :key="cell.key"
-          class="codex-water-ball__grid-cell"
-          :class="[`kind-${cell.kind}`]"
-          :title="cell.detail"
+          v-for="row in gridRows"
+          :key="row.id"
+          class="codex-water-ball__grid-row"
+          :class="[`row-${row.id}`, row.cells.length === 1 ? 'row-single' : 'row-pair']"
         >
-          <span class="codex-water-ball__grid-label">{{ cell.label }}</span>
-          <strong class="codex-water-ball__grid-value">{{ cell.text }}</strong>
+          <div
+            v-for="cell in row.cells"
+            :key="cell.key"
+            class="codex-water-ball__grid-cell"
+            :class="[`kind-${cell.kind}`, `slot-${cell.key}`]"
+            :data-operation-tooltip="partHints || suppressGridHints ? undefined : cell.detail"
+          >
+            <span class="codex-water-ball__grid-label">{{ cell.label }}</span>
+            <strong class="codex-water-ball__grid-value">{{ cell.text }}</strong>
+          </div>
         </div>
       </div>
       <template v-else>
@@ -327,6 +337,26 @@ const style = computed(() => ({
   text-shadow: 0 1px 3px rgba(0,0,0,.9);
   transform: translate(-50%, -50%);
 }
+.codex-water-ball__value.has-grid {
+  /* Fill the ball and centre the grid box itself — translate+min-height made
+     multi-row Magpie grids look pinned above the visual midpoint. */
+  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Sphere highlight sits high; a tiny optical nudge keeps the block from
+     reading as top-pinned even when the box is geometrically centred. */
+  transform: translateY(4%);
+}
 .codex-water-ball__value strong {
   font-size: var(--water-percent-size, 22px);
   font-style: var(--water-percent-font-style, normal);
@@ -371,6 +401,24 @@ const style = computed(() => ({
   left: auto;
   transform: none;
 }
+.codex-water-ball__value.has-grid.percent-center,
+.codex-water-ball__value.has-grid.percent-auto,
+.codex-water-ball__value.has-grid.percent-bottom-left,
+.codex-water-ball__value.has-grid.percent-bottom-right {
+  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(4%);
+}
 .codex-water-ball__spark {
   margin-bottom: 3px;
   padding: 1px 5px;
@@ -400,59 +448,78 @@ const style = computed(() => ({
 .codex-water-ball__grid {
   display: grid;
   gap: 2px 4px;
-  width: min(100%, 72px);
-  min-height: 42px;
+  /* Scales with the same reading-size control as the centre percent. */
+  width: min(calc(var(--water-size, 94px) * .82), calc(var(--water-percent-size, 22px) * 3.45));
+  min-height: 0;
+  height: auto;
+  place-content: center;
+  justify-items: center;
   align-content: center;
-}
-.codex-water-ball__grid.layout-four {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.codex-water-ball__grid.layout-two {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  width: min(100%, 64px);
-  min-height: 30px;
+  margin: 0 auto;
 }
 .codex-water-ball__grid.layout-one {
+  width: min(calc(var(--water-size, 94px) * .5), calc(var(--water-percent-size, 22px) * 2.25));
+  min-height: 0;
+}
+.codex-water-ball__grid.layout-top-only,
+.codex-water-ball__grid.layout-bottom-only {
+  width: min(calc(var(--water-size, 94px) * .74), calc(var(--water-percent-size, 22px) * 3));
+  min-height: 0;
+}
+.codex-water-ball__grid.layout-rows {
+  width: min(calc(var(--water-size, 94px) * .82), calc(var(--water-percent-size, 22px) * 3.45));
+  min-height: 0;
+}
+.codex-water-ball__grid-row {
+  display: grid;
+  gap: 2px 4px;
+  align-items: center;
+  justify-items: center;
+  min-width: 0;
+}
+.codex-water-ball__grid-row.row-pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.codex-water-ball__grid-row.row-single {
   grid-template-columns: minmax(0, 1fr);
-  width: min(100%, 44px);
-  min-height: 28px;
+  justify-items: center;
 }
-.codex-water-ball__grid.layout-three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: min(100%, 78px);
-  min-height: 34px;
-}
-.codex-water-ball__grid.layout-one .codex-water-ball__grid-value {
-  font-size: min(calc(var(--water-percent-size, 22px) * .55), 14px);
+.codex-water-ball__value .codex-water-ball__grid.layout-one .codex-water-ball__grid-value {
+  font-size: min(calc(var(--water-percent-size, 22px) * .78), calc(var(--water-size, 94px) * .2));
 }
 .codex-water-ball__grid-cell {
   display: grid;
   gap: 0;
   justify-items: center;
+  align-content: center;
   min-width: 0;
-  padding: 1px 0;
-  border-radius: 6px;
-  background: color-mix(in srgb, rgba(3, 13, 24, .72) 72%, transparent);
+  min-height: calc(var(--water-percent-size, 22px) * .7);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .codex-water-ball__grid-label {
-  font-size: 7px;
+  color: #F7F4EA;
+  font-size: max(7px, calc(var(--water-percent-size, 22px) * .3));
   font-weight: 700;
   line-height: 1;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  opacity: .72;
+  letter-spacing: .02em;
+  text-transform: none;
+  opacity: .62;
 }
-.codex-water-ball__grid-value {
-  font-size: min(calc(var(--water-percent-size, 22px) * .32), 9px);
-  font-weight: 700;
+/* Outrank `.codex-water-ball__value strong`, or 2x2 cells inherit the centre
+   percent size and smash into each other (Token / Grok / Cursor). */
+.codex-water-ball__value strong.codex-water-ball__grid-value {
+  color: #F7F4EA;
+  font-size: min(calc(var(--water-percent-size, 22px) * .66), calc(var(--water-size, 94px) * .17));
+  font-weight: var(--water-percent-font-weight, 700);
+  font-style: var(--water-percent-font-style, normal);
   line-height: 1.05;
   letter-spacing: -.02em;
   white-space: nowrap;
   font-variant-numeric: tabular-nums lining-nums;
   font-feature-settings: 'tnum' 1, 'lnum' 1;
-}
-.codex-water-ball__grid-cell.kind-token .codex-water-ball__grid-value {
-  font-size: min(calc(var(--water-percent-size, 22px) * .5), 13px);
 }
 .codex-water-ball__grid-cell.kind-placeholder .codex-water-ball__grid-value {
   opacity: .42;

@@ -6264,6 +6264,17 @@ class CodexDesktopCompanionBridge {
           shadow.desktopActiveSince = previousShadow.desktopActiveSince
         }
       }
+      const canonicalOwner = codexActivityInventory.get(params.conversationId)
+      if (codexDesktopActivityResolution?.codexDesktopSnapshotRunningWitness(shadow, previousShadow, {
+        known: canonicalOwner, knownTurnRef: codexDesktopRequestCorrelation({ id: canonicalOwner?.lastTurnId }),
+        threadId: params.conversationId, parentThreadId: shadow.parentThreadId || params.conversationId,
+        branchTerminal: codexReadPrivateBranchTerminal(shadow.parentThreadId || params.conversationId, params.conversationId)
+      }) === true) {
+        shadow.activityEvidence = 'activity-event'
+        shadow.activityEventSequence = codexNextLiveEvidenceSequence()
+        shadow.desktopActiveSince = codexTimestampMs(shadow.currentCanonicalTurn.startedAt)
+        delete shadow.suppressUncorroboratedActive
+      }
       // A Desktop sideConversation snapshot is direct topology evidence and
       // must win over a stale inventory membership race. Otherwise the child
       // is briefly republished as an independent public task.
@@ -10872,8 +10883,8 @@ async function confirmCodexPlanExecutionStarted(threadId, beforeTurn) {
       sortDirection: 'desc',
       itemsView: 'notLoaded'
     }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS))
-    const newTurn = reread && (reread.id && reread.id !== beforeTurn?.id
-      || reread.startedAt > Number(beforeTurn?.startedAt || 0))
+    const newTurn = reread?.id && reread.id !== beforeTurn?.id
+      && reread.startedAt >= Number(beforeTurn?.startedAt || 0)
     if (!newTurn || reread.status !== 'inProgress') return false
     markCodexPlanExecutionStarted(threadId, reread)
     return true
@@ -10881,6 +10892,39 @@ async function confirmCodexPlanExecutionStarted(threadId, beforeTurn) {
     return false
   }
 }
+
+let continueCompanionCodexTask = null
+try {
+  const { createCodexContinueTask } = require('./codex/continue-task.cjs')
+  continueCompanionCodexTask = createCodexContinueTask({
+    resolveTarget: async (target) => {
+      if (!/^[a-f0-9]{32}$/.test(target?.key || '')) return null
+      const resolved = companionCodexActionForHint(target.key, target.actionAlias)
+        || await resolveCompanionCodexOpenTarget(target.key, target.actionAlias)
+      if (!resolved || codexhostDiscovery?.isExternalThreadId?.(resolved.entry.threadId) === true) return null
+      publishCompanionCodexAlias(target.key, resolved.alias, target, resolved.metadata)
+      return { threadId: resolved.entry.threadId, alias: resolved.alias }
+    },
+    currentTask: (key) => companionTaskKernel?.getLatest?.().tasks?.find((task) => task.key === key),
+    getKnown: (threadId) => codexActivityInventory.get(threadId),
+    rpc: async (method, params) => {
+      try { return await requestCodexRpc(method, params) } catch (error) {
+        // App Server transport keeps JSON-RPC codes separate from its public error code.
+        if (error?.rpcCode === -32601) throw Object.assign(new Error('method unavailable'), { code: -32601 })
+        throw error
+      }
+    },
+    open: (target) => companionOpenReadiness
+      ? companionOpenReadiness.wrapOpen('codex', openCompanionCodexTarget)(target)
+      : openCompanionCodexTarget(target),
+    markStarted: markCodexPlanExecutionStarted,
+    markGoalActive: (threadId, goal) => {
+      const evidence = sanitizeCodexThreadGoal(goal)
+      if (evidence) codexSetThreadGoalEvidence(threadId, evidence, { publish: true })
+    },
+    sanitizeTurnPage: sanitizeCodexTurnStatusPage
+  })
+} catch { /* Missing module fails closed until the complete preload bundle is installed. */ }
 
 async function executeCompanionCodexPlan(target, request = {}) {
   const key = typeof target?.key === 'string' ? target.key : ''
@@ -10895,14 +10939,23 @@ async function executeCompanionCodexPlan(target, request = {}) {
     return { outcome: 'failed', errorCode: 'target-missing', message: '未找到同一任务，未执行其它任务' }
   }
   publishCompanionCodexAlias(key, resolved.alias, target, resolved.metadata)
-  const latestPackageTask = companionTaskKernel?.getLatest?.().tasks?.find((task) => task.key === target.key)
+  const currentPlanTask = () => companionTaskKernel?.getLatest?.().tasks?.find((task) => task.key === target.key)
     || companionTaskKernel?.getPackage?.().tasks?.find((task) => task.key === target.key)
-  if (!latestPackageTask
-    || latestPackageTask.planReady !== true
-    || latestPackageTask.planLifecycleRevision !== target.planLifecycleRevision
-    || latestPackageTask.capabilities?.executePlan !== true
-    || !isSettledTaskPhase(latestPackageTask.phase)) {
+  const planTaskAllowed = (task) => task?.planReady === true
+    && task.planLifecycleRevision === target.planLifecycleRevision
+    && task.capabilities?.executePlan === true
+    && !task.topology?.attentionCount && !task.topology?.liveCount
+    && (isSettledTaskPhase(task.phase) || task.phase === 'waiting-input')
+  const initialTask = currentPlanTask()
+  if (!planTaskAllowed(initialTask)) {
     return { outcome: 'failed', errorCode: 'state-changed', message: 'Plan 生命周期已变化，未启动执行' }
+  }
+  const expectedRevision = initialTask.revisionAt
+  const activityBlocked = (thread, turn) => {
+    const known = codexActivityInventory.get(resolved.entry.threadId)
+    const flags = [...(known?.activeFlags || []), ...(thread?.status?.activeFlags || [])]
+    return turn?.status === 'inProgress' || flags.length > 0
+      || known?.status === 'active' || thread?.status?.type === 'active'
   }
 
   let stage = 'preflight'
@@ -10921,12 +10974,8 @@ async function executeCompanionCodexPlan(target, request = {}) {
     ])
     const thread = codexRecord(codexRecord(threadResult).thread)
     beforeTurn = sanitizeCodexTurnStatusPage(turnPage)
-    const known = codexActivityInventory.get(threadId)
-    const hasOtherPending = known?.activeFlags?.includes('waitingOnApproval')
-      || known?.activeFlags?.includes('waitingOnUserInput') && known.planImplementationOnly !== true
-    const realWorkActive = beforeTurn?.status === 'inProgress'
-      || known?.status === 'active' && (!known.activeFlags?.length || hasOtherPending)
-    if (thread.id !== threadId || !beforeTurn || realWorkActive || hasOtherPending) {
+    if (thread.id !== threadId || !beforeTurn || activityBlocked(thread, beforeTurn)
+      || beforeTurn.startedAt > target.planLifecycleRevision) {
       return { outcome: 'failed', errorCode: 'state-changed', message: '目标任务已有更新活动或其它待决请求' }
     }
 
@@ -10943,6 +10992,15 @@ async function executeCompanionCodexPlan(target, request = {}) {
     }))
     const settings = codexPrivateThreadSettings(resumed, threadResult)
     const capability = await capabilityPromise
+    const latestTurn = sanitizeCodexTurnStatusPage(await requestCodexRpc('thread/turns/list', {
+      threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded'
+    }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS))
+    const latestTask = currentPlanTask()
+    if (resumed.thread?.id !== threadId || !planTaskAllowed(latestTask) || latestTask.revisionAt !== expectedRevision
+      || !latestTurn || latestTurn.id !== beforeTurn.id || latestTurn.status !== beforeTurn.status
+      || latestTurn.startedAt !== beforeTurn.startedAt || activityBlocked(resumed.thread, latestTurn)) {
+      return { outcome: 'failed', errorCode: 'state-changed', message: '恢复期间任务已有新活动，未启动执行' }
+    }
     const useNativeDefaultMode = capability.available === true && Boolean(settings.model)
 
     stage = 'turn-start'
@@ -10960,7 +11018,7 @@ async function executeCompanionCodexPlan(target, request = {}) {
     }
     const started = codexRecord(await requestCodexRpc('turn/start', turnStartParams))
     const turn = codexRecord(started.turn)
-    if (typeof turn.id !== 'string' || !turn.id) {
+    if (typeof turn.id !== 'string' || !turn.id || turn.id === beforeTurn.id || turn.status !== 'inProgress') {
       if (await confirmCodexPlanExecutionStarted(threadId, beforeTurn)) {
         return { outcome: 'executed', operationId: request.operationId, message: '已通过定向复读确认 Plan 正在执行' }
       }
@@ -10977,10 +11035,10 @@ async function executeCompanionCodexPlan(target, request = {}) {
     if (code !== 'timeout' && code !== 'process-exited') {
       return { outcome: 'failed', errorCode: `${stage}-${code}`.slice(0, 80), message: `Plan 执行在 ${stage} 阶段失败` }
     }
-    if (await confirmCodexPlanExecutionStarted(threadId, beforeTurn)) {
+    if (stage === 'turn-start' && await confirmCodexPlanExecutionStarted(threadId, beforeTurn)) {
       return { outcome: 'executed', operationId: request.operationId, message: '已通过定向复读确认 Plan 正在执行' }
     }
-    return { outcome: 'indeterminate', errorCode: `${stage}-indeterminate`, message: '执行结果未能确认；未自动重发，可核验状态后重新确认' }
+    return { outcome: stage === 'turn-start' ? 'indeterminate' : 'failed', errorCode: `${stage}-indeterminate`, message: '执行结果未能确认；未自动重发，可核验状态后重新确认' }
   }
 }
 
@@ -10995,7 +11053,7 @@ function companionTaskConfiguration() {
     enabled: feature?.enabled !== false && settings.conversationInboxEnabled !== false,
     dynamicTaskWindowHours: Number.isFinite(settings.dynamicTaskWindowHours)
       ? Math.max(1, Math.min(24 * 30, Math.trunc(settings.dynamicTaskWindowHours)))
-      : 48,
+      : 168,
     providers: {
       codex: providerSource.codex === undefined ? true : providerSource.codex === true,
       claude: providerSource.claude === true,
@@ -11404,8 +11462,8 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
   const persisted = input.persisted || companionPersistedTaskState()
   const match = companionCodexInventoryMatchV7(key)
   const privateEvidence = match ? codexPrivateBranchEvidence(match.threadId, match.known) : null
-  const hostExternal = match?.threadId
-    && codexhostDiscovery?.isExternalThreadId?.(match.threadId) === true
+  const hostExternal = thread.codexhostExternal === true || match?.known?.codexhostExternal === true
+    || Boolean(match?.threadId && codexhostDiscovery?.isExternalThreadId?.(match.threadId) === true)
   const branches = (Array.isArray(privateEvidence?.branches) && privateEvidence.branches.length
     ? privateEvidence.branches
     : [companionCodexFallbackBranchV7({ ...(match?.known || {}), ...thread })])
@@ -11531,6 +11589,8 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
           ...(rootActionAlias ? ['open'] : []),
           ...(terminalCandidate ? ['archive'] : []),
           ...(observation.planState === 'available' ? ['pause', 'resume', 'execute-plan'] : []),
+          ...(rootActionAlias && !hostExternal && observation.planState !== 'available'
+            && !['usageLimited', 'budgetLimited'].includes(branch.goalStatus) ? ['continue-task'] : []),
           ...(rootActionAlias && (rootSource.nativePinLane === 'app-server' || rootSource.nativePinLane === 'codexhost') ? ['pin'] : [])
         ]
       : []
@@ -12410,6 +12470,9 @@ const companionHostRegistry = createCompanionHostRegistry?.({
     inspect: inspectCodexEnvironment,
     open: companionOpenReadiness ? companionOpenReadiness.wrapOpen('codex', openCompanionCodexTarget) : openCompanionCodexTarget,
     executePlan: executeCompanionCodexPlan,
+    continueTask: (target, request) => continueCompanionCodexTask
+      ? continueCompanionCodexTask(target, request)
+      : Promise.resolve({ outcome: 'failed', errorCode: 'continue-unavailable' }),
     // `codexArchiveBridge` is constructed further below, after the Kernel --
     // a genuine bidirectional dependency (the bridge's own
     // `commitVerifiedCodexArchive` calls back into
@@ -12481,6 +12544,7 @@ companionTaskKernel = typeof createCompanionTaskKernel === 'function' && compani
       applyPreference: persistCompanionPreference,
       preflight: preflightCompanionTaskPackageV7,
       hostRegistry: companionHostRegistry,
+      diagnosticTaskRef: companionDiagnosticTaskRef,
       notify: (message) => {
         try { globalThis.utools?.showNotification?.(String(message || '')) } catch {}
       },
@@ -12770,7 +12834,7 @@ function companionTaskEvidenceNodeV3(task) {
     },
     capabilities: Object.entries(capabilities)
       .filter(([, enabled]) => enabled === true)
-      .map(([name]) => name === 'executePlan' ? 'execute-plan' : name),
+      .map(([name]) => name === 'executePlan' ? 'execute-plan' : name === 'continueTask' ? 'continue-task' : name),
     standaloneEligible: source.standaloneEligible !== false,
     error: source.error === true
   }

@@ -15,6 +15,8 @@ Link-only route for GUI launch environments、preload/runtime identity、packagi
 
 ## Primary Error Records
 
+- [Renderer interval 延迟误报主线程卡死](../freeze-recorder-renderer-interval-false-stall.md#L1)
+
 - [大快照逐片拼接阻塞实时状态](../codex-ipc-large-frame-quadratic-buffering.md#L1)
 
 - [Float bridge mock contract drift](../codex-float-bridge-mock-contract-drift.md#L1)

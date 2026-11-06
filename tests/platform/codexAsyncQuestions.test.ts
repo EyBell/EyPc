@@ -29,6 +29,41 @@ function harness(shadowFactory = createCodexDesktopShadow) {
   return { shadow, projection, question, reply, snapshot }
 }
 
+describe('Desktop Plan request classification', () => {
+  it.each([
+    [{ type: 'plan', method: 'item/plan/requestChoice' }, 'plan-choice'],
+    [{ type: 'plan', method: 'item/plan/requestUserInput' }, 'plan-choice'],
+    [{ type: 'planChoice' }, 'plan-choice'],
+    [{ type: 'plan', method: 'item/plan/requestImplementation' }, 'plan-implementation']
+  ])('projects a current %j request into the interaction lane', (input, kind) => {
+    const { projection } = harness()
+    const request = projection.codexDesktopProjectedRequest({ ...input, requestId: 'plan-request-fixture' }, 100)
+    expect(projection.codexDesktopRequestKind(request)).toBe(kind)
+    expect(projection.codexDesktopRequestFlag(request)).toBe('waitingOnUserInput')
+
+    const bridge = {
+      shadows: new Map([['parent', {
+        requests: [request], requestSetRevision: 1, requestSetComplete: true,
+        requestSetAuthority: 'provider-live', runtime: { type: 'idle', activeFlags: [] }
+      }]]),
+      sideShadows: new Map()
+    }
+    const evidence = projection.codexDesktopCompanionInteractionsForParent(
+      bridge, 'parent', { key: 'codex-fixture' }, () => 'side-ref', () => true
+    )
+    expect(evidence.interactions).toEqual([expect.objectContaining({
+      taskKey: 'codex-fixture', kind, state: 'opened', exact: true
+    })])
+    expect(JSON.stringify(evidence)).not.toContain('plan-request-fixture')
+  })
+
+  it('does not turn an unrelated Plan artifact into a waiting request', () => {
+    const { projection } = harness()
+    expect(projection.codexDesktopRequestFlag({ type: 'plan', method: 'item/plan/completed' })).toBe('')
+    expect(projection.codexDesktopRequestKind({ type: 'plan', method: 'item/plan/completed' })).toBe('')
+  })
+})
+
 describe('Desktop root Goal source evidence', () => {
   function goalSnapshot(shadow: any, goal: any, previous?: any) {
     const state = shadow.codexDesktopShadowFromSnapshot({ revision: 1, conversationState: {

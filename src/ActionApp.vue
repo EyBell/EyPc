@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Archive, ArchiveRestore, Box, ChevronDown, ChevronRight, Clock3, Folder, Pin, Play, Settings, Square, X } from '@lucide/vue'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
+import OperationTooltipLayer from './components/OperationTooltipLayer.vue'
 import { moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import { codexActionRunCanArchive, formatCodexActionRunTimestamp, type CodexActionLogDeltaV1, type CodexActionRunRecordV1, type CodexActionRunnerActionV1, type CodexActionRunnerSnapshotV1 } from './domain/codexActionRunner'
 import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, type QuickJumpDomTargetV7 } from './ui/quickJumpRegistry'
@@ -415,5 +416,6 @@ onUnmounted(() => {
     </footer>
     <button v-for="corner in resizeCorners" :key="corner" type="button" class="resize-handle" :class="corner" :aria-label="`从${corner}调整窗口大小`" tabindex="-1" @pointerdown="resizePointerDown(corner, $event)" />
     <QuickJumpLayer v-if="quickJump.open" :targets="quickJump.targets" :active-target-id="quickJump.activeTargetId" />
+    <OperationTooltipLayer scope-selector=".action-runner" :suspended="quickJump.open" />
   </main>
 </template>

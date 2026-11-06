@@ -140,6 +140,52 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
         || known?.lastTurnStatus !== 'inProgress')
   }
 
+  // A full owner snapshot is weaker than observed progress: require a dated,
+  // latest canonical Turn and compare only this conversation's boundaries.
+  function codexDesktopSnapshotRunningWitness(shadow, previous, input = {}) {
+    const { known, knownTurnRef, branchTerminal, threadId, parentThreadId } = input
+    const turn = shadow?.currentCanonicalTurn
+    const startedAt = timestampMs(turn?.startedAt)
+    if (!validThreadId(threadId) || !shadow?.ownerClientId || shadow.ownerDisconnectedAt
+      || !Number.isInteger(shadow.revision) || shadow.revision < 0
+      || shadow.canonicalLatestComplete !== true || !turn?.turnRef
+      || turn.status !== 'inProgress' || shadow.runtime?.type !== 'active'
+      || !Number.isFinite(startedAt) || startedAt <= 0) return false
+    const terminal = (status) => ['completed', 'interrupted', 'failed'].includes(status)
+    // Independent server reads can report interrupted/failed while the owner
+    // is still executing that exact Turn. They are not owner terminal events.
+    // A complete fresh owner snapshot may correct only an identity+start match;
+    // completed, event-confirmed and owner-canonical terminals remain barriers.
+    const independentStop = (source) => ['interrupted', 'failed'].includes(source?.lastTurnStatus)
+      && ['inventory', 'targeted-after-exit'].includes(source?.lastTurnEvidence)
+    const correctsKnownStop = independentStop(known) && turn.turnRef === knownTurnRef
+      && startedAt === timestampMs(known?.lastTurnStartedAt)
+    // The caller passes the exact thread inventory, never the parent's row.
+    const knownStart = timestampMs(known?.lastTurnStartedAt)
+    if (knownStart > startedAt) return false
+    if (terminal(known?.lastTurnStatus) && !correctsKnownStop
+      && (turn.turnRef === knownTurnRef || !knownStart
+        || startedAt <= Math.max(knownStart, timestampMs(known.lastTurnCompletedAt)))) return false
+    if (branchTerminal?.branchThreadId === threadId && branchTerminal.parentThreadId === parentThreadId
+      && terminal(branchTerminal.lastTurnStatus)) {
+      const boundary = Math.max(timestampMs(branchTerminal.turnStartedAt), timestampMs(branchTerminal.terminalAt))
+      const correctsBranchStop = independentStop(branchTerminal)
+        && startedAt === timestampMs(branchTerminal.turnStartedAt)
+      if (!correctsBranchStop && (!boundary || startedAt <= boundary)) return false
+    }
+    const priorTurn = previous?.currentCanonicalTurn
+    const priorStart = timestampMs(priorTurn?.startedAt)
+    if (priorStart > startedAt || terminal(priorTurn?.status)
+      && (priorTurn.turnRef === turn.turnRef || !priorStart || startedAt <= priorStart)) return false
+    // Re-follow is not a new activity event. The snapshot caller has already
+    // retained the previous sequence when the live semantics are unchanged.
+    if (previous?.ownerClientId === shadow.ownerClientId
+      && priorTurn?.turnRef === turn.turnRef && priorStart === startedAt
+      && shadow.activityEvidence === 'activity-event' && shadow.activityEventSequence > 0) return false
+    if (previous?.ownerClientId === shadow.ownerClientId && shadow.revision <= previous.revision) return false
+    return true
+  }
+
   function codexDesktopHasResolvedCanonicalRun(shadow, sequence, activity, known, knownTurnRef) {
     return sequence > 0 && !canonicalTurnAlreadyCompleted(shadow, known, knownTurnRef)
       && shadow?.currentCanonicalTurn?.status === 'inProgress'
@@ -430,6 +476,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     codexReduceWaitingEdge,
     codexDesktopShadowActivity,
     codexDesktopCanonicalRunningWitness,
+    codexDesktopSnapshotRunningWitness,
     codexDesktopHasResolvedCanonicalRun,
     codexDesktopHasStickyPendingRequest,
     codexHasConfirmedTerminalEvidence,

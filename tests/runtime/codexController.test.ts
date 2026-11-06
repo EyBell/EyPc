@@ -1,16 +1,27 @@
 import { createRequire } from 'node:module'
 import { describe, expect, it, vi } from 'vitest'
+import { registerCodexActions } from '../../src/runtime/feature/codex/actions'
 import { createInitialState } from '../../src/domain/state'
 import { CODEX_TASK_STATE_REVISION, type CodexHostThread, type CodexThreadOpenResult } from '../../src/domain/codex'
+import { emptyClaudeEnvironment } from '../../src/domain/claude'
 import { CODEX_ACTION_HOST_RUNTIME_REVISION } from '../../src/domain/codexEnvironment'
 import { codexActionLaneId } from '../../src/domain/codexActionRunner'
 import { projectCodexDynamicStatus } from '../../src/domain/codexPresentation'
 import type { EypcPlatformApi } from '../../src/platform/eypcPlatform'
-import { createCodexController } from '../../src/runtime/codexController'
+import { createCodexController as createRuntimeCodexController } from '../../src/runtime/codexController'
 
 const require = createRequire(import.meta.url)
 const companionTaskKernelModule = require('../../preload/companion/task-kernel.cjs') as {
   createCompanionTaskKernel(options?: Record<string, unknown>): any
+}
+
+function createCodexController(options: Parameters<typeof createRuntimeCodexController>[0]) {
+  // The platform contract always supplies a float port, even when the host
+  // does not support pinning. Most tests only need that no-op capability.
+  return createRuntimeCodexController({
+    ...options,
+    platform: { ...options.platform, float: options.platform.float ?? { setCrossDesktopPin: () => false } } as EypcPlatformApi
+  })
 }
 
 function hostTask(key: string, now: number, overrides: Record<string, unknown> = {}) {
@@ -168,6 +179,170 @@ function hostDraft(
 }
 
 describe('Codex controller', () => {
+  it('registers one-click task actions with finite revision guards', () => {
+    type Host = Parameters<typeof registerCodexActions>[0]
+    type Action = Parameters<Host['register']>[0]
+    const actions = new Map<string, Action>()
+    const continueTask = vi.fn()
+    const executePlan = vi.fn()
+    registerCodexActions({ register: (action: Action) => actions.set(action.id, action), registerHandler: vi.fn(),
+      codexController: { continueTask, executePlan } } as unknown as Host)
+    for (const [id, spy] of [['codex.task.continueTask', continueTask], ['codex.task.executePlan', executePlan]] as const) {
+      const action = actions.get(id)!
+      const ctx = {} as Parameters<Action['run']>[0]
+      expect(action.run(ctx, { key: 'fixture', revisionAt: NaN })).toBe(false)
+      expect(action.run(ctx, { key: 'fixture' })).toBe(false)
+      expect(action.run(ctx, { key: '', revisionAt: 123 })).toBe(false)
+      expect(spy).not.toHaveBeenCalled()
+      expect(action.run(ctx, { key: 'fixture', revisionAt: 123 })).toBe(true)
+      expect(spy).toHaveBeenCalledExactlyOnceWith('fixture', 123)
+    }
+  })
+
+  it.each(['executed', 'confirmation-required', 'unavailable', 'indeterminate'])('one-click task commands accept only executed: %s', async (outcome) => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const now = Date.now()
+    const key = 'abababababababab'
+    const kernel = companionTaskKernelModule.createCompanionTaskKernel({ coalesceMs: 0,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: false } } })
+    kernel.publishEvidence(hostDraft([hostTask(key, now, { phase: 'stopped', displayName: '离线中断夹具' })], now))
+    const snapshot = kernel.getLatest()
+    snapshot.tasks[0].capabilities.continueTask = true
+    snapshot.tasks[0].capabilities.executePlan = true
+    snapshot.tasks[0].planReady = true
+    snapshot.tasks[0].planLifecycleRevision = 123
+    vi.spyOn(kernel, 'getLatest').mockReturnValue(snapshot)
+    vi.spyOn(kernel, 'attach').mockReturnValue({ lease: 'test-lease', package: snapshot })
+    const dispatch = vi.spyOn(kernel, 'dispatchCommand').mockResolvedValue({ outcome })
+    const setMessage = vi.fn()
+    const controller = createCodexController({
+      platform: { companionKernel: kernel, codex: {
+        readSnapshot: async () => ({ ok: false, receivedAt: now, error: { code: 'unavailable', message: '离线夹具' } }),
+        close: () => undefined
+      } } as unknown as EypcPlatformApi,
+      getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage
+    })
+    try {
+      controller.start()
+      const task = controller.view().taskState.conversations.all.find((item) => item.key === key)!
+      expect(task.companionCapabilities?.continueTask).toBe(true)
+      dispatch.mockClear()
+      expect(await controller.continueTask(key, task.revisionAt - 1)).toBe(false)
+      expect(dispatch).not.toHaveBeenCalled()
+      expect(await controller.continueTask(key, task.revisionAt)).toBe(outcome === 'executed')
+      expect(dispatch).toHaveBeenCalledTimes(1)
+      if (outcome === 'indeterminate') expect(setMessage).toHaveBeenLastCalledWith('结果未确认，请核对原任务，未自动重发')
+      expect(dispatch).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'continue-task', selector: { key },
+        source: 'continue-task-button', payload: { revisionAt: task.revisionAt } }))
+      dispatch.mockClear()
+      expect(await controller.executePlan(key, task.revisionAt)).toBe(outcome === 'executed')
+      expect(dispatch).toHaveBeenCalledTimes(1)
+      if (outcome === 'indeterminate') expect(setMessage).toHaveBeenLastCalledWith('结果未确认，请核对原任务，未自动重发')
+      expect(dispatch).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'execute-plan', selector: { key },
+        payload: { planLifecycleRevision: 123 } }))
+      task.companionCapabilities!.resume = true
+      dispatch.mockResolvedValue({ outcome: 'resumed' })
+      expect(await controller.resumePlan(key, task.revisionAt)).toBe(true)
+      expect(setMessage).toHaveBeenLastCalledWith('Plan 已恢复到待输入列表')
+      task.companionCapabilities!.continueTask = false
+      dispatch.mockClear()
+      expect(await controller.continueTask(key, task.revisionAt)).toBe(false)
+      expect(dispatch).not.toHaveBeenCalled()
+    } finally { controller.dispose() }
+  })
+
+  it('applies the cross-desktop pin on startup and only when its setting changes', () => {
+    const state = createInitialState(1)
+    state.settings.featureConfigs = state.settings.featureConfigs.map((item) => item.id === 'codex' ? { ...item, enabled: false } : item)
+    const setCrossDesktopPin = vi.fn(() => true)
+    const controller = createCodexController({
+      platform: { codex: { close: () => undefined }, float: { setCrossDesktopPin } } as unknown as EypcPlatformApi,
+      getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined
+    })
+    controller.start()
+    expect(setCrossDesktopPin).toHaveBeenCalledTimes(1)
+    expect(setCrossDesktopPin).toHaveBeenLastCalledWith(true)
+    controller.updateSettings({ floatCrossDesktopPin: false })
+    expect(setCrossDesktopPin).toHaveBeenCalledTimes(2)
+    expect(setCrossDesktopPin).toHaveBeenLastCalledWith(false)
+    controller.updateSettings({ floatCrossDesktopPin: false })
+    expect(setCrossDesktopPin).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
+
+  it('syncs provider hooks on source toggles without reading task inventory in the Renderer', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.providers = { codex: true, claude: false, cursor: false }
+    const installClaude = vi.fn(async () => ({ ok: true }))
+    const uninstallClaude = vi.fn(async () => true)
+    const installCursor = vi.fn(async () => ({ ok: true }))
+    const uninstallCursor = vi.fn(async () => true)
+    const readClaudeInventory = vi.fn(async () => ({ version: 2, revision: 'test', sessions: [], available: true, truncated: false, readAt: Date.now(), generation: 1 }))
+    const readClaudeUnread = vi.fn(async () => ({ version: 2, revision: 'test', ids: [], readAt: Date.now(), generation: 1, sourceFingerprint: 'a'.repeat(64) }))
+    const readClaudeQuota = vi.fn(async () => ({ version: 1, revision: 'test', sessions: [], truncated: false, quota: null, readAt: Date.now() }))
+    const readClaudePresence = vi.fn(async () => ({}))
+    const readCursorInventory = vi.fn(async () => ({ revision: 'test', available: true, reason: 'ready', sessions: [], truncated: false, readAt: Date.now() }))
+    const controller = createCodexController({
+      platform: {
+        codex: { readSnapshot: async () => ({ ok: false, receivedAt: Date.now(), error: { code: 'unavailable', message: '未运行' } }), close: () => undefined },
+        claude: { install: installClaude, uninstall: uninstallClaude, readCodeSnapshot: readClaudeInventory, readCodeUnread: readClaudeUnread,
+          readSnapshot: readClaudeQuota, readAppPresence: readClaudePresence,
+          inspect: async () => ({ version: 1, installed: true, homeReady: true, authenticated: true, cliVersion: '', hooks: 'installed', statusline: 'installed', checkedAt: Date.now() }), close: () => undefined },
+        cursor: { install: installCursor, uninstall: uninstallCursor, readInventory: readCursorInventory,
+          inspect: async () => ({ available: true, reason: 'ready', sessionCount: 0, readAt: Date.now(), hooks: 'installed' }), close: () => undefined }
+      } as unknown as EypcPlatformApi,
+      getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined
+    })
+    controller.start()
+    uninstallClaude.mockClear()
+    uninstallCursor.mockClear()
+    controller.updateSettings({ providers: { ...state.codex.settings.providers, claude: true, cursor: true } })
+    // Start registration before returning from the switch, so a rapid disable
+    // cannot run its uninstall before the corresponding install is even issued.
+    expect(installClaude).toHaveBeenCalledWith({ statusline: true })
+    expect(installCursor).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(installClaude).toHaveBeenCalledWith({ statusline: true })
+      expect(installCursor).toHaveBeenCalledTimes(1)
+      expect(readClaudeQuota).toHaveBeenCalledTimes(1)
+      expect(readClaudePresence).toHaveBeenCalledTimes(1)
+    })
+    expect(readClaudeInventory).not.toHaveBeenCalled()
+    expect(readClaudeUnread).not.toHaveBeenCalled()
+    expect(readCursorInventory).not.toHaveBeenCalled()
+    controller.updateSettings({ providers: { ...state.codex.settings.providers, claude: false, cursor: false } })
+    expect(uninstallClaude).toHaveBeenCalledTimes(1)
+    expect(uninstallCursor).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
+
+  it('inspects registration after an unsuccessful automatic hook install', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.providers = { codex: true, claude: false, cursor: false }
+    const inspectClaude = vi.fn(async () => ({ ...emptyClaudeEnvironment(), installed: true, hooks: 'missing' as const }))
+    const inspectCursor = vi.fn(async () => ({ hooks: 'missing' as const }))
+    const controller = createCodexController({
+      platform: {
+        codex: { readSnapshot: async () => ({ ok: false, receivedAt: Date.now(), error: { code: 'unavailable', message: '未运行' } }), close: () => undefined },
+        claude: { install: async () => ({ ok: false }), uninstall: async () => true, inspect: inspectClaude, close: () => undefined },
+        cursor: { install: async () => { throw new Error('install failed') }, uninstall: async () => true, inspect: inspectCursor, close: () => undefined }
+      } as unknown as EypcPlatformApi,
+      getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined
+    })
+    controller.start()
+    controller.updateSettings({ providers: { ...state.codex.settings.providers, claude: true, cursor: true } })
+    await vi.waitFor(() => {
+      expect(controller.view().claudeEnvironment.hooks).toBe('missing')
+      expect(controller.view().cursorHooks).toBe('missing')
+    })
+    expect(inspectClaude).toHaveBeenCalled()
+    expect(inspectCursor).toHaveBeenCalled()
+    controller.dispose()
+  })
+
   it('fails closed instead of reconstructing task actions when the V7 Kernel is missing', () => {
     const state = createInitialState(1)
     const messages: string[] = []
@@ -1597,6 +1772,27 @@ describe('Codex controller', () => {
     expect(controller.updateSettings({ colors: { ...original, water: '#FFFFFF', card: '#20252A', cardForeground: 'broken' } })).toBe(true)
     expect(state.codex.settings.colors).toMatchObject({ water: '#FFFFFF', card: '#20252A', cardForeground: 'broken' })
     expect(save).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
+
+  it('publishes the configured dynamic range to Float and invalidates it after settings change', () => {
+    const state = createInitialState(1)
+    state.codex.settings.timeWindowDays = 30
+    state.codex.settings.dynamicTaskWindowHours = 72
+    const controller = createCodexController({
+      platform: { codex: { close: () => undefined } } as unknown as EypcPlatformApi,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+    const before = controller.floatSnapshot()
+    expect(before).toMatchObject({ timeWindowDays: 30, dynamicTaskWindowHours: 72 })
+    expect(controller.updateSettings({ dynamicTaskWindowHours: 168 })).toBe(true)
+    const after = controller.floatSnapshot()
+    expect(after).toMatchObject({ timeWindowDays: 30, dynamicTaskWindowHours: 168 })
+    expect(after.baseRevision).toBe((before.baseRevision ?? 0) + 1)
+    expect(controller.floatSnapshot()).toBe(after)
     controller.dispose()
   })
 

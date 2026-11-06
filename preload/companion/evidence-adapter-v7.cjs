@@ -290,11 +290,12 @@ function cursorSessionObservationV7(value = {}, hookValue = {}) {
   const liveFork = subagents.some((child) => integer(child.unfinishedRunAt) > 0)
   const liveSession = integer(session.unfinishedRunAt) > 0
   const hookTerminal = hook.phase === 'completed' || hook.phase === 'stopped'
-  // An open Hook Turn still beats aborted/empty disk. Disk `completed` with
-  // no live cold run must not stay running on a stale turnOpen.
+  // An open Hook Turn beats disk, including `completed`. Cursor 3.27 keeps
+  // composerData.status=completed until the next persist, so that value is
+  // not a stale-turn proof. A stale turn is one the hook fold already closed.
   // A hook terminal fold beats leftover session unfinishedRunAt; a live fork
   // still keeps the parent running.
-  if (liveFork || (!hookTerminal && liveSession) || (hook.turnOpen === true && session.diskStatus !== 'completed')) kind = 'turn-running'
+  if (liveFork || (!hookTerminal && liveSession) || hook.turnOpen === true) kind = 'turn-running'
   else if (hook.phase === 'completed' || session.hasUnreadMessages === true || session.diskStatus === 'completed') kind = 'turn-completed'
   else if (hook.phase === 'stopped' || session.diskStatus === 'aborted') kind = 'turn-interrupted'
   else if (session.hasPendingPlan === true) kind = 'turn-completed'

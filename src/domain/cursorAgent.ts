@@ -127,9 +127,11 @@ export function cursorSubagentsRunning(observation: CursorAgentObservation): boo
 }
 
 /**
- * Live cold markers beat disk. An open Hook Turn still beats aborted/empty
- * disk, but disk `completed` with no live cold run does not stay running on a
- * stale `hookTurnOpen` / hookPhase running. Never invents `waiting-approval`.
+ * Live cold markers beat disk. An open Hook Turn also beats disk `completed`:
+ * Cursor 3.27 leaves `composerData.status=completed` for the whole next Turn
+ * and only rewrites it at persist time. A stale open Turn is one whose hook
+ * fold already closed (`hookPhase` completed/stopped, so `hookTurnOpen` is
+ * false). Never invents `waiting-approval`.
  * A live fork outranks the parent's own terminal hook phase but not its waiting-input.
  * Session leftover `unfinishedRunAt` does not outrank hookPhase completed/stopped.
  */
@@ -138,11 +140,10 @@ export function resolveCursorAgentPhase(observation: CursorAgentObservation): Cl
   // approval) is 待输入 and outranks an open Turn, like Claude's waiting-input.
   if (observation.hasBlockingPendingActions) return 'waiting-input'
   const coldLive = observation.unfinishedRunAt > 0 || cursorSubagentsRunning(observation)
-  const diskSettledCompleted = observation.diskStatus === 'completed'
-  if (observation.hookTurnOpen && (coldLive || !diskSettledCompleted)) return 'running'
+  if (observation.hookTurnOpen) return 'running'
   if (observation.hasPendingPlan) return 'waiting-input'
   if (cursorSubagentsRunning(observation)) return 'running'
-  if (observation.hookPhase === 'running' && (coldLive || !diskSettledCompleted)) return 'running'
+  if (observation.hookPhase === 'running') return 'running'
   if (observation.hookPhase === 'completed' || observation.hookPhase === 'stopped') {
     return observation.hookPhase
   }

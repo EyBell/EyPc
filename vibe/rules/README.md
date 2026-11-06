@@ -6,6 +6,8 @@ design-preference-gate: accepted
 
 ## Project gates and routes
 
+Local build route: [project runtime adapter](project-runtime.md#L1).
+
 For code, UI, data, build, deployment or runtime work, read the relevant [local context](local-context.md) and its linked owner before acting. It retains this project's SQL, environment, browser identity, preview and real-acceptance constraints. Commands do not grant permission to start services or mutate data. Simple questions need no process preflight.
 
 - durable documentation or recovery: [documentation.md](documentation.md).

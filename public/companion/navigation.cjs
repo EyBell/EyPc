@@ -2,6 +2,7 @@
 
 const { PROVIDERS } = require('./provider-registry.cjs')
 const { normalizeOpenResult } = require('./open-handoff.cjs')
+const { trace: freezeTrace } = require('../freeze-trace.cjs')
 const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v6'
 const GROUP_ORDER = ['pinned', 'input', 'active', 'stopped', 'unread', 'completed']
 // Kept as an exported compatibility marker for diagnostics/tests. Generic
@@ -401,6 +402,7 @@ function createCompanionNavigation(dependencies = {}) {
 
   async function dispatch(request) {
     const startedAt = Date.now()
+    const freezeSpan = freezeTrace.begin('navigation.dispatch')
     currentConcurrent += 1
     maxConcurrent = Math.max(maxConcurrent, currentConcurrent)
     try {
@@ -471,6 +473,7 @@ function createCompanionNavigation(dependencies = {}) {
         key: request.target.key
       })
     } finally {
+      freezeTrace.end(freezeSpan)
       currentConcurrent = Math.max(0, currentConcurrent - 1)
     }
   }

@@ -91,13 +91,30 @@ describe('core verification selection and evidence', () => {
   it('routes shared production entries and test configuration to every registered affected domain', () => {
     const map = JSON.parse(readFileSync('vibe/knowledge/core-verification-map.json', 'utf8')) as CoreMap
     expect(selectChecks(map, ['preload/index.js']).guards.map(guard => guard.id).sort()).toEqual([
-      'companion-state', 'favorites', 'interaction', 'ports', 'provider-evidence', 'settings', 'windows'
+      'companion-state', 'favorites', 'interaction', 'navigation-diagnostics', 'ports', 'provider-evidence', 'settings', 'windows'
     ])
     expect(selectChecks(map, ['vite.config.ts']).guards).toHaveLength(map.guards.length)
     expect(selectChecks(map, ['vibe/rules/local-context.md']).guards).toHaveLength(map.guards.length)
     expect(selectChecks(map, ['preload/orca/inventory.cjs']).checks.map(check => check.id)).toEqual(expect.arrayContaining(['mirrors', 'working-mirrors']))
     for (const id of ['keybindings', 'settings-state']) {
       expect(map.checks.find(check => check.id === id)?.testNames).not.toEqual(expect.arrayContaining([expect.stringMatching(/MQTT/)]))
+    }
+  })
+  it('routes Codex appearance files to the appearance and type checks', () => {
+    const map = JSON.parse(readFileSync('vibe/knowledge/core-verification-map.json', 'utf8')) as CoreMap
+    for (const file of [
+      'src/pages/CodexPage.vue',
+      'src/components/CodexAppearanceStudio.vue',
+      'src/components/CodexStyleSwitch.vue',
+      'src/domain/codex.ts',
+      'src/domain/codexAppearanceSession.ts',
+      'src/styles/codex.css',
+      'tests/ui/codexAppearanceStudio.test.ts',
+      'tests/domain/codexAppearanceSession.test.ts'
+    ]) {
+      const plan = selectChecks(map, [file])
+      expect(plan.guards.map(guard => guard.id)).toContain('codex-appearance')
+      expect(plan.checks.map(check => check.id)).toEqual(expect.arrayContaining(['codex-appearance', 'types']))
     }
   })
   it('requires the JSON test report and never calls empty plans passed', async () => {

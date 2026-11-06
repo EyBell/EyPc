@@ -25,6 +25,7 @@
 | [Claude Companion](modules/claude-companion.md#L1) | Claude inventory、App phase、原生 unread、open 与 archive authority |
 | [CodexHost External Processes](modules/codexhost-external-processes.md#L1) | CodexHost 额外进程发现、Host 未读与跳转已读记忆、roster 生命周期、Host 委派写入 |
 | [Companion Actions And Presentation](modules/companion-actions-and-presentation.md#L1) | task actions、archive guard、标签、选中、主题与外部写入 |
+| [任务循环与固定入口](modules/companion-navigation.md#L1) | 上一／下一入口、命令合并、候选资格、顺序与环内可达性 |
 | [Window Jump And Native Host](modules/window-jump-and-native-host.md#L1) | 原生窗口身份、Space、root/member、槽位与激活 |
 | [Interaction And Favorites](modules/interaction-and-favorites.md#L1) | command target、focus、keyboard、tooltip 与 favorites |
 | [Runtime And Packaging](modules/runtime-and-packaging.md#L1) | GUI 环境、preload、runtime identity、打包、native addon 与宿主生命周期 |

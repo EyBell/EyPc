@@ -1,17 +1,22 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { placeFloatActionHint } from '../ui/tooltipPlacement'
 
 const props = withDefaults(defineProps<{
   suspended?: boolean
   scopeSelector?: string
+  automatic?: boolean
 }>(), {
   suspended: false,
-  scopeSelector: '.app-shell'
+  scopeSelector: '.app-shell',
+  automatic: true
 })
 
 const TOOLTIP_ID = 'eypc-operation-tooltip'
 const TARGET_SELECTOR = [
   '[data-operation-tooltip]',
+  '[data-operation-native-title]',
+  '[title]',
   'button',
   'summary',
   'input[type="checkbox"]',
@@ -42,33 +47,40 @@ const left = ref(0)
 const top = ref(0)
 const arrowLeft = ref(0)
 const placement = ref<'above' | 'below'>('above')
+const manualKind = ref<'float' | 'compact' | null>(null)
+const sticky = ref(false)
+const maxWidth = ref('')
 const tooltip = ref<HTMLElement | null>(null)
 
-let focusedTarget: HTMLElement | null = null
-let hoveredTarget: HTMLElement | null = null
-let activeTarget: HTMLElement | null = null
+let focusedTarget: Element | null = null
+let hoveredTarget: Element | null = null
+let activeTarget: Element | null = null
+let pendingManualKind: 'float' | 'compact' | null = null
+let manualBoundary: Element | null = null
+let pointerFocus = false
 let hoverTimer: ReturnType<typeof setTimeout> | null = null
 let mutationObserver: MutationObserver | null = null
-const suppressedTitles = new Map<HTMLElement, string>()
-const describedByBefore = new Map<HTMLElement, string | null>()
+const suppressedTitles = new Map<Element, string>()
+const describedByBefore = new Map<Element, string | null>()
 
 function normalizedText(value: string | null | undefined) {
   return (value || '').replace(/\s+/g, ' ').trim()
 }
 
 function operationTarget(value: Element | null) {
+  if (!(value instanceof Element)) return null
+  const target = value?.closest(TARGET_SELECTOR) || null
+  if (target?.closest(props.scopeSelector) && !target.closest('[data-operation-tooltip-ignore]')) return target
   const label = value?.closest<HTMLLabelElement>('label') || null
   const labeledControl = label?.control instanceof HTMLElement && label.control.matches(TARGET_SELECTOR)
     ? label.control
     : null
   if (labeledControl?.closest(props.scopeSelector) && !labeledControl.closest('[data-operation-tooltip-ignore]')) return labeledControl
-  const target = value?.closest<HTMLElement>(TARGET_SELECTOR) || null
-  if (!target?.closest(props.scopeSelector) || target.closest('[data-operation-tooltip-ignore]')) return null
-  return target
+  return null
 }
 
-function titleValue(target: HTMLElement) {
-  return normalizedText(target.dataset.operationNativeTitle || target.getAttribute('title'))
+function titleValue(target: Element) {
+  return normalizedText(target.getAttribute('data-operation-native-title') || target.getAttribute('title'))
 }
 
 function isShortcutHint(value: string) {
@@ -78,7 +90,7 @@ function isShortcutHint(value: string) {
     || /^[⌘⌥⌃⇧]+[a-z0-9]$/i.test(candidate)
 }
 
-function parsedTitle(target: HTMLElement) {
+function parsedTitle(target: Element) {
   const title = titleValue(target)
   const trailingHint = title.match(/^(.*?)\s*\(([^()]+)\)\s*$/)
   if (!trailingHint || !isShortcutHint(trailingHint[2])) return { label: title, shortcut: '' }
@@ -88,8 +100,8 @@ function parsedTitle(target: HTMLElement) {
   }
 }
 
-function targetLabel(target: HTMLElement) {
-  return normalizedText(target.dataset.operationTooltip)
+function targetLabel(target: Element) {
+  return normalizedText(target.getAttribute('data-operation-tooltip'))
     || normalizedText(target.getAttribute('aria-label'))
     || parsedTitle(target).label
     || normalizedText(
@@ -102,36 +114,46 @@ function targetLabel(target: HTMLElement) {
     || '操作'
 }
 
-function targetDetail(target: HTMLElement) {
+function targetDetail(target: Element) {
   if (target.matches(':disabled, [aria-disabled="true"]')) {
-    return normalizedText(target.dataset.disabledReason) || '当前条件下不可用'
+    return normalizedText(target.getAttribute('data-disabled-reason')) || '当前条件下不可用'
   }
-  return normalizedText(target.dataset.operationDescription)
-    || normalizedText(target.dataset.tip)
+  const ownTitle = parsedTitle(target).label
+  const parentLabel = target.closest('label')
+  const inheritedTitle = parentLabel && parentLabel !== target ? titleValue(parentLabel) : ''
+  return normalizedText(target.getAttribute('data-operation-description'))
+    || normalizedText(target.getAttribute('data-tip'))
+    || (ownTitle && ownTitle !== targetLabel(target) ? ownTitle : '')
+    || (inheritedTitle && inheritedTitle !== targetLabel(target) ? inheritedTitle : '')
     || (target.matches('[role="option"], [role="treeitem"]') ? '单击聚焦；可使用双击、右键或快捷键执行相关操作' : '')
     || (target.matches('[draggable="true"]') ? '可拖拽调整位置；也可使用行内操作' : '')
 }
 
-function targetShortcut(target: HTMLElement) {
-  const explicit = normalizedText(target.dataset.operationShortcut || target.dataset.mqttShortcutHint)
+function targetShortcut(target: Element) {
+  const explicit = normalizedText(target.getAttribute('data-operation-shortcut') || target.getAttribute('data-mqtt-shortcut-hint'))
   if (explicit) return explicit
   return parsedTitle(target).shortcut
 }
 
-function suppressNativeTitle(target: HTMLElement) {
+function suppressNativeTitle(target: Element) {
+  if (!target.closest(props.scopeSelector) || target.closest('[data-operation-tooltip-ignore]')) return
   const value = target.getAttribute('title')
-  if (!value) return
+  if (!value) {
+    const existing = target.getAttribute('data-operation-native-title')
+    if (existing) suppressedTitles.set(target, existing)
+    return
+  }
   suppressedTitles.set(target, value)
-  target.dataset.operationNativeTitle = value
+  target.setAttribute('data-operation-native-title', value)
   target.removeAttribute('title')
 }
 
 function suppressTitles(root: ParentNode) {
-  if (root instanceof HTMLElement && root.matches(TARGET_SELECTOR)) suppressNativeTitle(root)
-  root.querySelectorAll<HTMLElement>(TARGET_SELECTOR).forEach(suppressNativeTitle)
+  if (root instanceof Element && root.matches('[title], [data-operation-native-title]')) suppressNativeTitle(root)
+  root.querySelectorAll('[title], [data-operation-native-title]').forEach(suppressNativeTitle)
 }
 
-function restoreDescribedBy(target: HTMLElement | null) {
+function restoreDescribedBy(target: Element | null) {
   if (!target || !describedByBefore.has(target)) return
   const previous = describedByBefore.get(target)
   if (previous) target.setAttribute('aria-describedby', previous)
@@ -139,7 +161,7 @@ function restoreDescribedBy(target: HTMLElement | null) {
   describedByBefore.delete(target)
 }
 
-function describeTarget(target: HTMLElement) {
+function describeTarget(target: Element) {
   if (!describedByBefore.has(target)) describedByBefore.set(target, target.getAttribute('aria-describedby'))
   const ids = new Set(normalizedText(target.getAttribute('aria-describedby')).split(' ').filter(Boolean))
   ids.add(TOOLTIP_ID)
@@ -147,23 +169,51 @@ function describeTarget(target: HTMLElement) {
 }
 
 function clearHoverTimer() {
-  if (!hoverTimer) return
-  clearTimeout(hoverTimer)
+  if (hoverTimer) clearTimeout(hoverTimer)
   hoverTimer = null
+  pendingManualKind = null
 }
 
 function hideTooltip() {
   clearHoverTimer()
   restoreDescribedBy(activeTarget)
   activeTarget = null
+  manualKind.value = null
+  manualBoundary = null
+  sticky.value = false
+  maxWidth.value = ''
   visible.value = false
 }
 
-async function positionTooltip(target: HTMLElement) {
+async function positionTooltip(target: Element) {
   await nextTick()
   if (activeTarget !== target || !tooltip.value) return
   const targetRect = target.getBoundingClientRect()
   const tooltipRect = tooltip.value.getBoundingClientRect()
+  if (manualKind.value === 'compact') {
+    const bounds = manualBoundary?.getBoundingClientRect() || targetRect
+    maxWidth.value = `${Math.max(1, bounds.width - 10)}px`
+    left.value = bounds.left + bounds.width / 2 - Math.min(tooltipRect.width, Math.max(1, bounds.width - 10)) / 2
+    top.value = bounds.top + (bounds.height - tooltipRect.height) / 2
+    return
+  }
+  if (manualKind.value === 'float') {
+    const bounds = manualBoundary?.getBoundingClientRect()
+    const result = placeFloatActionHint({
+      anchorLeft: targetRect.left, anchorTop: targetRect.top,
+      anchorWidth: targetRect.width, anchorHeight: targetRect.height,
+      cardLeft: bounds?.left ?? 0, cardTop: bounds?.top ?? 0,
+      cardWidth: bounds?.width ?? 0, cardHeight: bounds?.height ?? 0,
+      hintWidth: tooltipRect.width || Math.min(240, Math.max(72, label.value.length * 7 + 16)),
+      hintHeight: tooltipRect.height || 28
+    })
+    left.value = result.left
+    top.value = result.top
+    arrowLeft.value = result.arrowLeft
+    placement.value = result.placement === 'top' ? 'above' : 'below'
+    maxWidth.value = `${Math.min(240, result.maxWidth)}px`
+    return
+  }
   const preferredLeft = targetRect.left + targetRect.width / 2 - tooltipRect.width / 2
   const resolvedLeft = Math.min(
     Math.max(preferredLeft, VIEWPORT_MARGIN),
@@ -187,11 +237,13 @@ async function positionTooltip(target: HTMLElement) {
   }
 }
 
-function showTooltip(target: HTMLElement) {
+function showTooltip(target: Element) {
   if (props.suspended || !target.isConnected) return
   clearHoverTimer()
   if (activeTarget !== target) restoreDescribedBy(activeTarget)
   activeTarget = target
+  manualKind.value = null
+  maxWidth.value = ''
   label.value = targetLabel(target)
   detail.value = targetDetail(target)
   shortcut.value = targetShortcut(target)
@@ -200,8 +252,9 @@ function showTooltip(target: HTMLElement) {
   void positionTooltip(target)
 }
 
-function scheduleHover(target: HTMLElement | null) {
+function scheduleHover(target: Element | null) {
   clearHoverTimer()
+  if (target?.closest('.appearance-studio-stage') && activeTarget !== target) hideTooltip()
   if (!target || props.suspended) {
     if (!focusedTarget) hideTooltip()
     return
@@ -213,24 +266,38 @@ function scheduleHover(target: HTMLElement | null) {
 }
 
 function onPointerMove(event: PointerEvent) {
+  if (event.pointerType === 'touch' || event.buttons) return
   const target = operationTarget(document.elementFromPoint(event.clientX, event.clientY))
   if (target === hoveredTarget) return
+  const wasPreview = Boolean(hoveredTarget?.closest('.appearance-studio-stage'))
   hoveredTarget = target
-  if (!focusedTarget) scheduleHover(target)
+  if (!focusedTarget || target?.closest('.appearance-studio-stage')) scheduleHover(target)
+  else if (wasPreview) showTooltip(focusedTarget)
 }
 
 function onPointerLeave() {
   hoveredTarget = null
-  if (!focusedTarget) hideTooltip()
+  if (focusedTarget) showTooltip(focusedTarget)
+  else hideTooltip()
 }
 
 function onFocusIn(event: FocusEvent) {
   focusedTarget = operationTarget(event.target as Element | null)
+  if (pointerFocus && focusedTarget?.closest('.appearance-studio-stage')) {
+    focusedTarget = null
+    return
+  }
   if (focusedTarget) showTooltip(focusedTarget)
 }
 
 function onFocusOut(event: FocusEvent) {
   const next = operationTarget(event.relatedTarget as Element | null)
+  if (pointerFocus && next?.closest('.appearance-studio-stage')) {
+    focusedTarget = null
+    if (hoveredTarget) scheduleHover(hoveredTarget)
+    else hideTooltip()
+    return
+  }
   focusedTarget = next
   if (next) showTooltip(next)
   else if (hoveredTarget) scheduleHover(hoveredTarget)
@@ -242,6 +309,8 @@ function onViewportChange() {
 }
 
 function onPointerDown() {
+  pointerFocus = true
+  hoveredTarget = null
   hideTooltip()
 }
 
@@ -252,11 +321,55 @@ function onWindowBlur() {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  pointerFocus = false
   if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') hideTooltip()
 }
 
+function showManual(target: Element | null, text: string, options: {
+  kind: 'float' | 'compact'
+  boundary?: Element | null
+  delay?: number
+  sticky?: boolean
+}) {
+  if (!target || !text || (sticky.value && !options.sticky)) return
+  clearHoverTimer()
+  pendingManualKind = options.kind
+  const show = () => {
+    pendingManualKind = null
+    if (!target.isConnected || props.suspended) return
+    if (activeTarget !== target) restoreDescribedBy(activeTarget)
+    activeTarget = target
+    manualKind.value = options.kind
+    manualBoundary = options.boundary || null
+    sticky.value = Boolean(options.sticky)
+    label.value = text
+    detail.value = ''
+    shortcut.value = ''
+    const boundaryWidth = manualBoundary?.getBoundingClientRect().width || 0
+    maxWidth.value = options.kind === 'compact'
+      ? `${Math.max(1, boundaryWidth - 10)}px`
+      : `${boundaryWidth > 0 ? Math.min(240, Math.max(16, boundaryWidth - 16)) : 240}px`
+    describeTarget(target)
+    visible.value = true
+    void positionTooltip(target)
+  }
+  if (options.delay) hoverTimer = setTimeout(show, options.delay)
+  else show()
+}
+
+function hideManual(force = false, kind?: 'float' | 'compact') {
+  if (kind && manualKind.value !== kind && pendingManualKind !== kind) return
+  if (sticky.value && !force) return
+  hideTooltip()
+}
+
+function hasStickyHint() { return sticky.value }
+
 defineExpose({
-  handleSurfaceKeydown: onKeydown
+  handleSurfaceKeydown: onKeydown,
+  showManual,
+  hideManual,
+  hasStickyHint
 })
 
 watch(() => props.suspended, (suspended) => {
@@ -267,13 +380,18 @@ onMounted(() => {
   suppressTitles(document)
   mutationObserver = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
-      if (mutation.type === 'attributes' && mutation.target instanceof HTMLElement) {
+      if (mutation.type === 'attributes' && mutation.target instanceof Element) {
         if (mutation.attributeName === 'title') suppressNativeTitle(mutation.target)
-        if (mutation.target === activeTarget) showTooltip(mutation.target)
+        if (props.automatic && mutation.target === activeTarget) showTooltip(mutation.target)
         return
       }
       mutation.addedNodes.forEach((node) => {
-        if (node instanceof HTMLElement) suppressTitles(node)
+        if (node instanceof Element) suppressTitles(node)
+      })
+      mutation.removedNodes.forEach((node) => {
+        if (!(node instanceof Element) || node.isConnected) return
+        suppressedTitles.delete(node)
+        node.querySelectorAll('[data-operation-native-title]').forEach((target) => suppressedTitles.delete(target))
       })
     })
     if (activeTarget && !activeTarget.isConnected) hideTooltip()
@@ -295,11 +413,14 @@ onMounted(() => {
       'disabled'
     ]
   })
-  window.addEventListener('pointermove', onPointerMove, { passive: true, capture: true })
-  window.addEventListener('pointerdown', onPointerDown, true)
-  document.addEventListener('pointerleave', onPointerLeave)
-  document.addEventListener('focusin', onFocusIn)
-  document.addEventListener('focusout', onFocusOut)
+  if (props.automatic) {
+    window.addEventListener('pointermove', onPointerMove, { passive: true, capture: true })
+    window.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('pointerleave', onPointerLeave)
+    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusout', onFocusOut)
+    window.addEventListener('keydown', onKeydown, true)
+  }
   window.addEventListener('resize', onViewportChange)
   window.addEventListener('scroll', onViewportChange, true)
   window.addEventListener('blur', onWindowBlur)
@@ -310,7 +431,7 @@ onUnmounted(() => {
   mutationObserver?.disconnect()
   suppressedTitles.forEach((value, target) => {
     if (target.isConnected && !target.hasAttribute('title')) target.setAttribute('title', value)
-    delete target.dataset.operationNativeTitle
+    target.removeAttribute('data-operation-native-title')
   })
   suppressedTitles.clear()
   window.removeEventListener('pointermove', onPointerMove, true)
@@ -318,6 +439,7 @@ onUnmounted(() => {
   document.removeEventListener('pointerleave', onPointerLeave)
   document.removeEventListener('focusin', onFocusIn)
   document.removeEventListener('focusout', onFocusOut)
+  window.removeEventListener('keydown', onKeydown, true)
   window.removeEventListener('resize', onViewportChange)
   window.removeEventListener('scroll', onViewportChange, true)
   window.removeEventListener('blur', onWindowBlur)
@@ -331,8 +453,8 @@ onUnmounted(() => {
       :id="TOOLTIP_ID"
       ref="tooltip"
       class="operation-tooltip"
-      :class="`operation-tooltip--${placement}`"
-      :style="{ left: `${left}px`, top: `${top}px`, '--operation-tooltip-arrow-left': `${arrowLeft}px` }"
+      :class="[`operation-tooltip--${placement}`, manualKind ? `operation-tooltip--${manualKind}` : '', { 'operation-tooltip--sticky': sticky }]"
+      :style="{ left: `${left}px`, top: `${top}px`, maxWidth: maxWidth || undefined, '--operation-tooltip-arrow-left': `${arrowLeft}px` }"
       role="tooltip"
     >
       <span class="operation-tooltip-label">{{ label }}</span>

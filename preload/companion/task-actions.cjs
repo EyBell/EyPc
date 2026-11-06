@@ -53,6 +53,7 @@ function normalizeTarget(value, enabledProviders) {
     canPause: value.canPause === true,
     canResume: value.canResume === true,
     canExecutePlan: value.canExecutePlan === true,
+    canContinueTask: value.canContinueTask === true && phase === 'stopped' && value.planReady !== true,
     archiveRequest
   }
 }
@@ -113,6 +114,7 @@ function createCompanionTaskActions(dependencies = {}) {
   const archiveInFlight = new Map()
   const pinInFlight = new Map()
   const executeInFlight = new Map()
+  const continueInFlight = new Map()
   let lastSyncFingerprint = ''
   let syncNoopCount = 0
   let operationSequence = 0
@@ -153,14 +155,14 @@ function createCompanionTaskActions(dependencies = {}) {
   function clearConfirmation(reason = 'cleared') {
     if (confirmation) {
       const target = targets.get(confirmation.key)
-      const prefix = confirmation.kind === 'execute-plan' ? 'execute-plan' : 'archive'
+      const prefix = 'archive'
       const event = reason === 'confirmed'
         ? `${prefix}-confirmation-confirmed`
         : reason === 'expired' ? `${prefix}-confirmation-expired` : `${prefix}-confirmation-cleared`
       trace(event, reason, target, now(), {
         operationId: confirmation.operationId,
         level: reason === 'expired' ? 'error' : reason === 'confirmed' ? 'info' : 'debug',
-        source: confirmation.kind === 'execute-plan' ? 'execute-plan-button' : 'archive-shortcut'
+        source: 'archive-shortcut'
       })
     }
     confirmation = null
@@ -210,7 +212,8 @@ function createCompanionTaskActions(dependencies = {}) {
         paused: target.paused,
         canPause: target.canPause,
         canResume: target.canResume,
-        canExecutePlan: target.canExecutePlan
+        canExecutePlan: target.canExecutePlan,
+        canContinueTask: target.canContinueTask
       }))
     })
     if (fingerprint === lastSyncFingerprint) {
@@ -225,10 +228,8 @@ function createCompanionTaskActions(dependencies = {}) {
     if (!enabled || !ready) clearConfirmation('not-ready')
     else if (confirmation) {
       const target = targets.get(confirmation.key)
-      const identity = target
-        ? confirmation.kind === 'execute-plan' ? executeTargetIdentity(target) : archiveTargetIdentity(target)
-        : ''
-      const allowed = confirmation.kind === 'execute-plan' ? target?.canExecutePlan : target?.canArchive
+      const identity = target ? archiveTargetIdentity(target) : ''
+      const allowed = target?.canArchive
       if (!target || !allowed || identity !== confirmation.identity) clearConfirmation('identity-changed')
     }
     trace('target-sync', 'accepted', null, startedAt, {
@@ -257,7 +258,8 @@ function createCompanionTaskActions(dependencies = {}) {
       || supplied.planReady !== current.planReady
       || supplied.planLifecycleRevision !== current.planLifecycleRevision
       || supplied.paused !== current.paused
-      || supplied.canExecutePlan !== current.canExecutePlan)) return null
+      || supplied.canExecutePlan !== current.canExecutePlan
+      || supplied.canContinueTask !== current.canContinueTask)) return null
     return current
   }
 
@@ -452,10 +454,6 @@ function createCompanionTaskActions(dependencies = {}) {
     return `${target.provider}|${target.key}|${target.phase}|${terminalEpoch}`
   }
 
-  function executeTargetIdentity(target) {
-    return `${target.provider}|${target.key}|${target.planLifecycleRevision}|${target.actionAlias}|${target.phase}|${target.paused ? 1 : 0}`
-  }
-
   function executePlan(input = {}) {
     const startedAt = now()
     const target = resolveTarget(input)
@@ -468,32 +466,7 @@ function createCompanionTaskActions(dependencies = {}) {
     const inFlightKey = `${target.provider}:${target.key}:${target.planLifecycleRevision}`
     const existing = executeInFlight.get(inFlightKey)
     if (existing) return existing
-    const identity = executeTargetIdentity(target)
-    const at = now()
-    if (confirmation?.until < at) clearConfirmation('expired')
-    if (!confirmation || confirmation.kind !== 'execute-plan' || confirmation.identity !== identity || confirmation.until < at) {
-      confirmation = {
-        kind: 'execute-plan',
-        key: target.key,
-        identity,
-        operationId: operationId(input, 'exec-confirm'),
-        until: at + CONFIRM_WINDOW_MS
-      }
-      trace('execute-plan-confirmation-created', 'created', target, at, {
-        operationId: confirmation.operationId,
-        source: input.source || 'execute-plan-button',
-        details: { expiresAt: confirmation.until, planLifecycleRevision: target.planLifecycleRevision }
-      })
-      return Promise.resolve({
-        outcome: 'confirmation-required',
-        provider: target.provider,
-        key: target.key,
-        operationId: confirmation.operationId,
-        message: '5 秒内再次点击“确”以执行原 Plan'
-      })
-    }
-    const currentOperationId = confirmation.operationId
-    clearConfirmation('confirmed')
+    const currentOperationId = operationId(input, 'exec')
     const adapter = adapters[target.provider]
     if (!adapter || typeof adapter.executePlan !== 'function') {
       const result = { outcome: 'failed', provider: target.provider, key: target.key, errorCode: 'unsupported', message: 'Plan 执行服务尚未就绪' }
@@ -517,6 +490,38 @@ function createCompanionTaskActions(dependencies = {}) {
         if (executeInFlight.get(inFlightKey) === operation) executeInFlight.delete(inFlightKey)
       })
     executeInFlight.set(inFlightKey, operation)
+    return operation
+  }
+
+  function continueTask(input = {}) {
+    const startedAt = now()
+    const target = resolveTarget(input)
+    if (disposed || !enabled || !ready || !target || !target.canContinueTask
+      || Number(input.revisionAt) !== target.revisionAt) {
+      return Promise.resolve({ outcome: 'failed', errorCode: 'state-changed', message: '任务状态已变化，当前不能继续' })
+    }
+    const inFlightKey = `${target.provider}:${target.key}`
+    const existing = continueInFlight.get(inFlightKey)
+    if (existing) return existing
+    const adapter = adapters[target.provider]
+    if (typeof adapter?.continueTask !== 'function') {
+      return Promise.resolve({ outcome: 'failed', errorCode: 'unsupported', message: '继续任务服务尚未就绪' })
+    }
+    const currentOperationId = operationId(input, 'continue')
+    const operation = Promise.resolve()
+      .then(() => adapter.continueTask(target, { operationId: currentOperationId }))
+      .then((value) => {
+        const normalized = normalizeExecuteResult(value, target)
+        trace('continue-task-result', normalized.outcome, target, startedAt, {
+          operationId: currentOperationId, source: input.source, errorCode: normalized.errorCode
+        })
+        return { ...normalized, operationId: currentOperationId }
+      })
+      .catch(() => ({ outcome: 'indeterminate', errorCode: 'continue-result-unknown', operationId: currentOperationId }))
+      .finally(() => {
+        if (continueInFlight.get(inFlightKey) === operation) continueInFlight.delete(inFlightKey)
+      })
+    continueInFlight.set(inFlightKey, operation)
     return operation
   }
 
@@ -596,7 +601,7 @@ function createCompanionTaskActions(dependencies = {}) {
     }
   }
 
-  return { revision: COMPANION_TASK_ACTIONS_REVISION, sync, inspect, open, archive, setPin, executePlan, shortcutArchive, handleEnter, diagnostics, close }
+  return { revision: COMPANION_TASK_ACTIONS_REVISION, sync, inspect, open, archive, setPin, executePlan, continueTask, shortcutArchive, handleEnter, diagnostics, close }
 }
 
 module.exports = {

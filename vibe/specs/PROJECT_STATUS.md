@@ -1,10 +1,30 @@
 # EyPc Project Status Hub
 
+- 2026-11-06 15:59:04候选：修复动态页搜索提示误用总体30天/总库存数量，补动态配置到Float快照；待继续豁免动态窗、循环一致。默认一周但保留当前72小时，总体30天独立配置。整合17项定向、类型/合同/隔离build与核心门禁通过。host-b6175cbd81243ace4b9e / renderer-cd33fd9d59935efe0aa6，EyPc V7 / 0.1.0；dist已准备，未实机验收；提交与远端以本次 Git 回读为准。[任务及验证](261106/task-state-recovery/task-card.md#L1) · [明确需求](requirements/task-recovery-visibility-raw-002.md#L1)。
+
+- 2026-11-06 15:39:58已确认实际加载15:24:45候选。AG两条内部stopped但活动锚点10月29日，超过实测72小时窗口；未隐藏/暂停、未置顶，最终dynamicGroup=none，缺席原因已闭合。未更改窗口规则或恢复业务任务；按钮实点运行仍待验收。[重启核验](261106/task-state-recovery/stopped-evidence-audit.md#L1)。
+
+- 2026-11-06 15:24:45：继续任务/单击实施计划与AG匿名可见性诊断已完成隔离构建；host-7672017359787d10498c / renderer-36fd4d65ecf12307291e，EyPc V7 / 0.1.0。整合49项定向、类型、合同、源/包核心门禁通过，工作区dist准备；尚未实机加载，未恢复业务任务、未提交推送。AG两条内部stopped，双核心completed，动态缺席仍待新日志闭合。[任务与验证](261106/task-state-recovery/task-card.md#L1) · [状态审计](261106/task-state-recovery/stopped-evidence-audit.md#L1)。
+
+- 2026-11-06 14:39:56续修：用户已加载13:46版；改按内部日志核验，三词Plan实际已消费并完成，剪贴板现已原生归档，不能以消失替代Plan实机验收。按本轮明确决定实现最新未实施Plan待输入；Kernel171项及新增匿名成员诊断1项通过，隔离build/validate通过。新候选dist准备但尚未加载；CN根完成而聚合stopped的具体成员因现有日志缺字段仍待新诊断，未清真实中断、未改原生读态。[完整审计与候选](261106/task-state-recovery/stopped-evidence-audit.md)。
+
+- 2026-11-06 13:46:19续修：已确认用户加载13:17版。八项待继续中两条实际有原生Plan实施触发，已修漏读并完成真实结构回放/11项定向测试及隔离build/validate；候选dist准备但未安装。四条真实中断保留、一条核验期间原生归档并获插件确认、一条CN子任务聚合仍待查。[逐项证据与交付](261106/task-state-recovery/stopped-evidence-audit.md)。
+
+- 2026-11-06 13:17:16续修候选：Float画布固定normal色彩方案及透明外壳，明确Plan执行同时间清除修复；定向回归、build/validate与镜像通过。候选dist已准备、旧dist备份；原生UI输入目标失效，尚未安装，不能宣称矩形已消失；两项Plan消费关联仍待查。[交付与限制](261106/task-state-recovery/task-card.md#本轮验证与交付状态)。
+
+- 2026-11-06 12:26:19任务状态续修：已修复终态中断成员压过真实完成未读的问题；新包已安装，实机确认“261105-CN-主控迁移自动交接”从待继续回到已完成未读，原生未读未消耗。Kernel158、Topology6、源/包生命周期各60及build/validate通过；生命周期单测2项旧失败已基线复核。Plan消费关联与物理聚焦仍待验收；未提交推送。[任务、归因与实机验证](261106/task-state-recovery/task-card.md)。
+
 - 2026-11-05 第二版现场复核：运行进程持有的安装包与第二版 97 项代码一致，Host/Renderer 指纹均为下条候选，用户重打包时间 15:13:00。同 revision 已读恢复两次真实接纳并获 Float applied。原截图“261028-SRM-分润总体统筹”经 Codex 原生打开后，15:16:24.976 出现明确 read，revision 77 于 15:16:24.998 获 applied，证据到 ACK 22ms；开始时原生已经已读、插件为 unknown，完整未读→已读起点尚未实证。[现场结果与限度](261105/codex-unread-linkage/task-card.md#第二版现场核查2026-11-05)。
 
-- 2026-11-05 Codex 已读联动第二版：用户已替换第一版但仍无效，已加载身份与恢复事件均确认。原生保存已读关闭 stream patches，重复 follow 可返回同 revision 的新 read 值；已修正矛盾同版本误拒，并补精确 read 缓存、单飞及合并尾随重查。静态、类型、合同、独立构建和 97 项包内资源核对通过；候选 EyPc V7 / host-c36e730c7d356298f6e4 / renderer-d5d0bb8df1cb5430e783 / 2026-11-05 15:06:35。实机加载、点击与 Main/Float 应用尚未验收，未跑自动化行为测试。[现行状态与续修记录](261105/codex-unread-linkage/task-card.md#L1)。
+- 2026-11-05 Codex 已读联动第二版：用户已替换第一版但仍无效，已加载身份与恢复事件均确认。原生保存已读关闭 stream patches，重复 follow 可返回同 revision 的新 read 值；已修正矛盾同版本误拒，并补精确 read 缓存、单飞及合并尾随重查。静态、类型、合同、独立构建和 97 项包内资源核对通过；候选 EyPc V7 / host-c36e730c7d356298f6e4 / renderer-d5d0bb8df1cb5430e783 / 2026-11-05 15:06:35。实机加载、点击与 Main/Float 应用尚未验收，未跑自动化行为测试。[现行状态与续修记录](261105/codex-unread-linkage/task-card.md#L1) · [第二版插件入口](../../output/codex-unread-261105-150635/dist/plugin.json#L1)。
 
 - 2026-11-05 Codex 已读联动第一版（已被用户替换验证仍无效）：按用户指定通过 `group/grok` 子 agent 分派，加入有效 v3 绑定恢复重放、缺绑定时的文件变化定向快照、迟到快照版本保护和匿名通知诊断；静态、类型、合同、97 项资源一致性及独立构建通过。旧候选 EyPc V7 / host-e814aa45c3101f1183bd / renderer-1cf6682d9a26531497cb / 09:42:17；错误的同 revision 门禁与未通过实机的结果由上条第二版续修接管。[任务、实现与验证](261105/codex-unread-linkage/task-card.md#L1)。
+
+- 2026-10-30 Codex 外观编辑：紧凑间距、套框精简、选择栏宽度与部件悬浮提示已形成候选；隔离预览及构建通过，产物 EyPc V7 / host-bb5c3e6592029901e20d / renderer-0a02df218514f520de85 / 16:03:32。检出运行身份落后；用户暂不进行 uTools 实机验收，后续需明确同名包的目标和加载身份。[需求、实现与验证](261030/codex-appearance-editor/spec.md#L1)。
+
+- 2026-10-30 Codex Plan 待输入续修：计划请求与未读并存时优先显示待输入；消费者原 30 项失败已核查，夹具补全后修复 Claude／Cursor 重复读取库存，并对齐已精简运行页。控制器及 UI 全文件 129 项通过，相关状态、浮窗、Plan 桥接、诊断与帮助共 452 项通过。最新隔离候选 EyPc V7 / host-bb5c3e6592029901e20d / renderer-df7c331f52f070d6703e / 14:39:36，包含构建时其他未提交源码；候选身份、合同及 uTools 校验通过。检出同期 14:34:17 构建保留，Renderer 指纹落后于最后源码；实机验收按用户要求暂缓。[任务、验证与待办](261030/codex-plan-input-priority/task-card.md#L1)。
+
+- 2026-10-26 固定上一／下一触发链修复：Gateway 外层排队阻断合并、热态入口重复强刷均已修；双向跨来源 50 次回放从 50 次打开降为首个＋末次 2 次，打开并发一及普通命令串行保留，热冷／普通入口 7 个聚焦用例通过；构建完成。新包 EyPc V7 / host-75da8ededb2235654830 / renderer-3c79a9de1e6ee9d72820 / 19:09:04。整个 uTools 无响应是否消除仍待宿主复验；最终核心结果及前轮采证边界见[任务与验证](261026/task-cycle-freeze/task-card.md#L1)。
 
 - 2026-10-25 任务状态续修：独立连接器notLoaded/interrupted、外部Goal旧none缓存和251MB快照逐片拼接三条缺口已修；最新生产回归先红后绿，核心26项检查/463测试通过，真连接四项约290MB在4769ms收齐。产物19:47:51：host-df1d950f6de45e0c2b99 / renderer-d5a67b79e87844756e5d；20:01:51精确加载；真实待输入出现→接受回答解除，原四项齐备；收尾新增活动E后原生/UI均5进行中/0待输入，20:08自动轮次边界无stopped跳变；旧版热态失败保留；Git交付以本轮提交与origin/main版本回读为准。[任务与设计](261010/0937-gpt-input-compat/task-card.md#L3) · [状态与核验](261010/0937-gpt-input-compat/verify.md#L3)。
 

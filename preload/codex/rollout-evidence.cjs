@@ -28,7 +28,7 @@ const CODEX_ROLLOUT_EVIDENCE_REVISION = COMPANION_V7_REVISIONS.rolloutEvidence
 const MAX_ROLLOUT_LINE_BYTES = 1_000_000
 /** Correlation ids come from the same untrusted stream. */
 const MAX_CALL_ID_LENGTH = 200
-/** A later default Turn consumes a Plan only on structural mutation evidence. */
+/** Structural mutation also proves execution when native attribution is absent. */
 const PLAN_EXECUTION_ITEM_TYPES = new Set(['filechange'])
 const PLAN_EXECUTION_EVENT_TYPES = new Set(['patch_apply_begin', 'patch_apply_end'])
 const PLAN_CLEAR_REASONS = new Set(['cancel', 'execution-start', 'archive', 'removal'])
@@ -134,15 +134,24 @@ function createCodexRolloutEvidence(dependencies = {}) {
     let planClearReason = ''
     let turnMode = 'unknown'
     let currentTurnStartedAt = 0
+    let turnOrdinal = 0
+    let planTurnOrdinal = 0
+    let planEstablishedAt = 0
+    const completedPlanIds = new Set()
     const clearExecutedPlan = (source, payload) => {
-      if (!planReady || turnMode !== 'default') return
+      const executionAt = codexRolloutTimestampMs(source.timestamp, payload.started_at, payload.completed_at)
+      // Append order must establish a later default Turn, even when clocks tie.
+      // A replayed older Turn/mutation cannot consume the current artifact.
+      if (!planReady || turnMode !== 'default' || turnOrdinal <= planTurnOrdinal
+        || currentTurnStartedAt && planEstablishedAt && currentTurnStartedAt < planEstablishedAt
+        || executionAt && executionAt < Math.max(currentTurnStartedAt, planEstablishedAt)) return
       planReady = false
       planLifecycleState = 'cleared'
       planClearReason = 'execution-start'
       planLifecycleRevision = Math.max(
-        planLifecycleRevision,
+        planLifecycleRevision + 1,
         currentTurnStartedAt,
-        codexRolloutTimestampMs(source.timestamp, payload.started_at, payload.completed_at)
+        executionAt
       )
     }
     for (const line of text.split(/\r?\n/)) {
@@ -153,9 +162,16 @@ function createCodexRolloutEvidence(dependencies = {}) {
       const payload = record(source.payload)
       if (source.type !== 'event_msg') continue
       if (payload.type === 'task_started') {
+        turnOrdinal += 1
         const mode = String(payload.collaboration_mode_kind || payload.collaborationModeKind || '').toLowerCase()
         turnMode = mode === 'plan' ? 'plan' : mode === 'default' ? 'default' : 'unknown'
         currentTurnStartedAt = codexRolloutTimestampMs(source.timestamp, payload.started_at)
+        // Native implementation attribution consumes the latest same-thread
+        // Plan even when implementation uses commands/MCP rather than patches.
+        // Ordinary composer/queue/feedback turns remain non-consuming.
+        if (record(payload.turn_attribution).turn_trigger === 'plan_implementation') {
+          clearExecutedPlan(source, payload)
+        }
         continue
       }
       if (payload.type === 'turn_aborted') {
@@ -173,13 +189,21 @@ function createCodexRolloutEvidence(dependencies = {}) {
       const item = record(payload.item)
       const itemType = String(item.type || '').toLowerCase().replace(/[^a-z0-9]/g, '')
       if (itemType === 'plan') {
+        // Repeated completion of one exact artifact is not a new Plan, including
+        // replay after execution. Do not inspect/hash Plan prose for identity.
+        const planId = typeof item.id === 'string' && item.id.length <= MAX_CALL_ID_LENGTH ? item.id : ''
+        if (planId && completedPlanIds.has(planId)) continue
+        if (planId) completedPlanIds.add(planId)
+        planTurnOrdinal = turnOrdinal
+        planEstablishedAt = codexRolloutTimestampMs(source.timestamp, payload.completed_at) || currentTurnStartedAt
         sawPlanCompletion = true
         planReady = true
         planLifecycleState = 'ready'
         planClearReason = ''
-        planLifecycleRevision = currentTurnStartedAt
-          || codexRolloutTimestampMs(source.timestamp, payload.completed_at)
-          || planLifecycleRevision
+        planLifecycleRevision = Math.max(
+          planLifecycleRevision ? planLifecycleRevision + 1 : 0,
+          currentTurnStartedAt || planEstablishedAt
+        )
       } else if (PLAN_EXECUTION_ITEM_TYPES.has(itemType)) {
         clearExecutedPlan(source, payload)
       }
@@ -187,7 +211,8 @@ function createCodexRolloutEvidence(dependencies = {}) {
     return {
       // A later generic/default Turn can be a supplementary user message, so
       // task_started or AgentMessage alone cannot destroy the independent Plan
-      // lifecycle. A structural file mutation is exact execution evidence.
+      // lifecycle. Native implementation attribution or a structural file
+      // mutation is exact execution evidence.
       known: sawPlanCompletion,
       // A completed Plan establishes an actionable artifact. It does not
       // prove that a current input interaction is still open.

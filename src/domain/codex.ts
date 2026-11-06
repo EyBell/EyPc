@@ -11,7 +11,7 @@ export type CodexDisplayStyle = 'water' | 'card' | 'edge'
 export const CODEX_DEFAULT_QUOTA_REFRESH_SECONDS = 5 * 60
 export const CODEX_MIN_QUOTA_REFRESH_SECONDS = 1
 export const CODEX_MAX_QUOTA_REFRESH_SECONDS = 24 * 60 * 60
-export const CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS = 24
+export const CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS = 7 * 24
 export const CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS = 1
 export const CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS = 365 * 24
 export type CodexFloatEdge = 'left' | 'right' | 'top' | 'bottom'
@@ -693,6 +693,9 @@ export interface CodexSavedThemePreset {
   expandedCardAppearance: CodexExpandedCardAppearanceSettings
   /** Older presets omit counter colors and keep the current counter settings. */
   counterColors?: CodexCounterColors
+  /** Older presets keep the current Magpie grid labels when applied. */
+  magpieQuotaGridCursorPrimaryLabel?: string
+  magpieQuotaGridCursorSecondaryLabel?: string
   alternate?: boolean
   createdAt: number
   updatedAt: number
@@ -892,6 +895,7 @@ export interface CodexTaskCard {
     pause: boolean
     resume: boolean
     executePlan: boolean
+    continueTask?: boolean
     /** The provider accepts an EyPc pin/unpin write (Codex, Claude App, Cursor). */
     pin?: boolean
   }
@@ -1245,7 +1249,9 @@ function normalizeSavedThemePresets(value: unknown, fallbackColors: CodexColorSe
     const updatedAt = numberValue(source.updatedAt, createdAt || Date.now())
     const existing = presets.get(id)
     if (!existing || updatedAt >= existing.updatedAt) {
-      presets.set(id, { id, name, colors, waterAppearance, expandedCardAppearance, ...(source.counterColors && typeof source.counterColors === 'object' ? { counterColors: normalizeCounterColors(source.counterColors, defaultCodexCounterColors()) } : {}), ...(source.alternate === true ? { alternate: true } : {}), createdAt: createdAt || updatedAt, updatedAt })
+      const primaryLabel = sanitizeMagpieQuotaGridLabel(source.magpieQuotaGridCursorPrimaryLabel, '')
+      const secondaryLabel = sanitizeMagpieQuotaGridLabel(source.magpieQuotaGridCursorSecondaryLabel, '')
+      presets.set(id, { id, name, colors, waterAppearance, expandedCardAppearance, ...(source.counterColors && typeof source.counterColors === 'object' ? { counterColors: normalizeCounterColors(source.counterColors, defaultCodexCounterColors()) } : {}), ...(primaryLabel ? { magpieQuotaGridCursorPrimaryLabel: primaryLabel } : {}), ...(secondaryLabel ? { magpieQuotaGridCursorSecondaryLabel: secondaryLabel } : {}), ...(source.alternate === true ? { alternate: true } : {}), createdAt: createdAt || updatedAt, updatedAt })
     }
   }
   return [...presets.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SAVED_THEME_PRESETS)

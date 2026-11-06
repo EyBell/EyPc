@@ -41,46 +41,46 @@ const emit = defineEmits<{
 <style>
 .codex-style-switch {
   display: grid;
-  width: 246px;
-  height: 34px;
+  width: 210px;
+  height: 30px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
   padding: 3px;
   border: 1px solid var(--switch-border, #c8d4d7);
-  border-radius: 10px;
+  border-radius: 9px;
   background: var(--switch-track, #e7edef);
 }
 
 .codex-style-switch.compact {
-  width: 184px;
-  height: 30px;
-  border-radius: 9px;
+  width: 156px;
+  height: 26px;
+  border-radius: 8px;
 }
 
 .codex-style-switch button {
   display: inline-flex;
   min-width: 0;
-  min-height: 26px;
+  min-height: 22px;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 0 8px;
+  gap: 4px;
+  padding: 0 6px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--switch-muted, #536873);
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
 }
 
 .codex-style-switch.compact button {
-  min-height: 22px;
-  gap: 3px;
-  padding: 0 4px;
-  font-size: 10px;
+  min-height: 20px;
+  gap: 2px;
+  padding: 0 3px;
+  font-size: 9px;
 }
 
 .codex-style-switch button.active {

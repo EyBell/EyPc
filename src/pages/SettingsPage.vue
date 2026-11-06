@@ -105,8 +105,6 @@ const whenCommandId = ref<string | null>(null)
 const whenDraft = ref('')
 const shortcutSearchInput = ref<HTMLInputElement | null>(null)
 const shortcutModifierHinting = ref(false)
-const commandTooltipX = ref(0)
-const commandTooltipY = ref(0)
 const draftShortcutProfiles = ref<ShortcutProfileMap>(cloneShortcutProfiles(props.shortcutProfiles || props.settings.shortcutProfiles))
 const draftFeatureConfigs = ref<FeatureConfig[]>(cloneFeatureConfigs(props.featureConfigs))
 const draggingFeatureId = ref<AppTabId | null>(null)
@@ -508,11 +506,6 @@ function shortcutCommandTooltipTitle(row: ShortcutCommandRow) {
   return row.title || row.commandId
 }
 
-function updateCommandTooltipPosition(event: MouseEvent) {
-  commandTooltipX.value = event.clientX
-  commandTooltipY.value = event.clientY - 10
-}
-
 function focusShortcutSearch() {
   requestAnimationFrame(() => {
     shortcutSearchInput.value?.focus()
@@ -876,7 +869,6 @@ function isRecordableShortcutId(shortcutId: string) {
 <template>
   <section
     class="settings-page"
-    :style="{ '--shortcut-tooltip-x': `${commandTooltipX}px`, '--shortcut-tooltip-y': `${commandTooltipY}px` }"
     @keydown.capture="handleSettingsSurfaceKeydown"
     @keyup.capture="handleSettingsKeyup"
     @blur.capture="clearSettingsShortcutHints"
@@ -943,21 +935,15 @@ function isRecordableShortcutId(shortcutId: string) {
           @keydown.enter.prevent="selectedCommandId = row.commandId"
           @contextmenu.prevent="openContextPanel('actions', row, $event.currentTarget as HTMLElement)"
         >
-          <span class="command-cell" :aria-label="commandTooltip(row)" @mousemove="updateCommandTooltipPosition">
+          <span class="command-cell" :aria-label="commandTooltip(row)" :data-operation-tooltip="shortcutCommandTooltipTitle(row)" :data-operation-description="commandTooltipLines(row).slice(1).join(' · ')">
             <strong class="command-tooltip-trigger">{{ row.commandId }}</strong>
-            <span class="shortcut-command-tooltip" role="tooltip">
-              <strong>{{ shortcutCommandTooltipTitle(row) }}</strong>
-              <small v-for="line in commandTooltipLines(row).slice(1)" :key="line">{{ line }}</small>
-            </span>
           </span>
-          <span class="scope-cell" :title="scopeDisplay(row).title" @mousemove="updateCommandTooltipPosition">
+          <span class="scope-cell" :title="scopeDisplay(row).title">
             <em class="status-badge shortcut-label" :title="scopeDisplay(row).profileTitle">
               {{ scopeDisplay(row).profile }}
-              <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ scopeDisplay(row).profileTitle }}</span>
             </em>
             <em class="layer-chip shortcut-label" :title="scopeDisplay(row).layerTitle">
               {{ scopeDisplay(row).layer }}
-              <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ scopeDisplay(row).layerTitle }}</span>
             </em>
           </span>
           <span class="shortcut-cell" :title="shortcutTooltip(row)">
@@ -969,10 +955,9 @@ function isRecordableShortcutId(shortcutId: string) {
           <span class="when-cell" :title="row.when || 'always'">
             <small>{{ row.when || 'always' }}</small>
           </span>
-          <span class="state-cell" :title="stateDisplay(row).title" @mousemove="updateCommandTooltipPosition">
+          <span class="state-cell" :title="stateDisplay(row).title">
             <em v-for="item in stateDisplay(row).parts" :key="item.label" class="status-badge shortcut-label" :class="item.className" :title="item.title">
               {{ item.label }}
-              <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ item.title }}</span>
             </em>
           </span>
           <span class="row-actions">
@@ -1193,21 +1178,15 @@ function isRecordableShortcutId(shortcutId: string) {
               @keydown.enter.prevent="selectedCommandId = row.commandId"
               @contextmenu.prevent="openContextPanel('actions', row, $event.currentTarget as HTMLElement)"
             >
-              <span class="command-cell" :aria-label="commandTooltip(row)" @mousemove="updateCommandTooltipPosition">
+              <span class="command-cell" :aria-label="commandTooltip(row)" :data-operation-tooltip="shortcutCommandTooltipTitle(row)" :data-operation-description="commandTooltipLines(row).slice(1).join(' · ')">
                 <strong class="command-tooltip-trigger">{{ row.commandId }}</strong>
-                <span class="shortcut-command-tooltip" role="tooltip">
-                  <strong>{{ shortcutCommandTooltipTitle(row) }}</strong>
-                  <small v-for="line in commandTooltipLines(row).slice(1)" :key="line">{{ line }}</small>
-                </span>
               </span>
-              <span class="scope-cell" :title="scopeDisplay(row).title" @mousemove="updateCommandTooltipPosition">
+              <span class="scope-cell" :title="scopeDisplay(row).title">
                 <em class="status-badge shortcut-label" :title="scopeDisplay(row).profileTitle">
                   {{ scopeDisplay(row).profile }}
-                  <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ scopeDisplay(row).profileTitle }}</span>
                 </em>
                 <em class="layer-chip shortcut-label" :title="scopeDisplay(row).layerTitle">
                   {{ scopeDisplay(row).layer }}
-                  <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ scopeDisplay(row).layerTitle }}</span>
                 </em>
               </span>
               <span class="shortcut-cell" :title="shortcutTooltip(row)">
@@ -1219,10 +1198,9 @@ function isRecordableShortcutId(shortcutId: string) {
               <span class="when-cell" :title="row.when || 'always'">
                 <small>{{ row.when || 'always' }}</small>
               </span>
-              <span class="state-cell" :title="stateDisplay(row).title" @mousemove="updateCommandTooltipPosition">
+              <span class="state-cell" :title="stateDisplay(row).title">
                 <em v-for="item in stateDisplay(row).parts" :key="item.label" class="status-badge shortcut-label" :class="item.className" :title="item.title">
                   {{ item.label }}
-                  <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ item.title }}</span>
                 </em>
               </span>
               <span class="row-actions">

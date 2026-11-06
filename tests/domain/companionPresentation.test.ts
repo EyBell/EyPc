@@ -834,6 +834,14 @@ describe('companion search chrome', () => {
     expect(companionSearchAlertText({ conversationStatus: 'ok' })).toBe('')
   })
 
+  it('formats the current tab range and count without borrowing inventory totals', () => {
+    expect(companionSearchMetaText({ hasInventory: true, tab: 'dynamic', dynamicTaskWindowHours: 72, timeWindowDays: 30, count: 17 })).toBe('近期 3 天 · 17 条')
+    expect(companionSearchMetaText({ hasInventory: true, tab: 'dynamic', dynamicTaskWindowHours: 25, count: 2, filtered: true })).toBe('近期 25 小时 · 匹配 2 条')
+    expect(companionSearchMetaText({ hasInventory: true, tab: 'completed', timeWindowDays: 30, count: 68 })).toBe('已完成 · 68 条')
+    expect(companionSearchMetaText({ hasInventory: true, tab: 'hidden', count: 0 })).toBe('已隐藏 · 0 条')
+    expect(companionSearchMetaText({ hasInventory: true, tab: 'projects', count: 65 })).toBe('项目 · 65 个')
+  })
+
   it('hides the left hint only when it would overlap the right-aligned count', () => {
     expect(companionSearchHintOverlaps(180, 72, 96)).toBe(false)
     expect(companionSearchHintOverlaps(160, 72, 96)).toBe(true)

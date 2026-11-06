@@ -1,5 +1,8 @@
 :root {
   font-family: var(--eypc-font-sans);
+  /* Native transparent canvas is not a theme surface. A supported light/dark
+     scheme can make Chromium paint its canvas even with transparent elements. */
+  color-scheme: normal !important;
 }
 
 * { box-sizing: border-box; }
@@ -11,6 +14,7 @@ button { font: inherit; }
   width: 100%;
   height: 100%;
   padding: 5px;
+  background: transparent !important;
   color: var(--codex-fg);
   touch-action: auto;
 }
@@ -371,38 +375,6 @@ button { font: inherit; }
   transition: border-color 120ms ease, color 120ms ease, background 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
 
-.codex-tip::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: 50%;
-  top: calc(100% + 6px);
-  z-index: 4;
-  max-width: 260px;
-  padding: 6px 8px;
-  border: 1px solid color-mix(in srgb, var(--codex-border) 58%, transparent);
-  border-radius: 7px;
-  background: var(--codex-surface);
-  color: var(--codex-fg);
-  font-size: 10px;
-  line-height: 1.45;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateX(-50%) translateY(-4px);
-  box-shadow: 0 8px 20px rgba(2, 14, 23, .18);
-  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
-  pointer-events: none;
-}
-
-.codex-tip:hover::after,
-.codex-tip:focus-visible::after,
-.codex-tip:focus::after {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) translateY(0);
-}
-
 .codex-tip:hover,
 .codex-tip:focus-visible,
 .codex-tip:focus {
@@ -473,38 +445,6 @@ button { font: inherit; }
   line-height: 1;
   cursor: help;
   box-shadow: 0 0 0 0 rgba(8, 125, 115, 0.08);
-}
-
-.float-side-panel .codex-tip::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: 50%;
-  top: calc(100% + 6px);
-  z-index: 4;
-  max-width: 260px;
-  padding: 6px 8px;
-  border: 1px solid color-mix(in srgb, var(--codex-border) 58%, transparent);
-  border-radius: 7px;
-  background: var(--codex-surface);
-  color: var(--codex-fg);
-  font-size: 10px;
-  line-height: 1.45;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateX(-50%) translateY(-4px);
-  box-shadow: 0 8px 20px rgba(2, 14, 23, .18);
-  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
-  pointer-events: none;
-}
-
-.float-side-panel .codex-tip:hover::after,
-.float-side-panel .codex-tip:focus-visible::after,
-.float-side-panel .codex-tip:focus::after {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(-50%) translateY(0);
 }
 
 .float-side-panel .codex-tip:hover,
@@ -948,9 +888,9 @@ button.float-search-glyph { cursor: pointer; }
   flex: 0 0 var(--eypc-control-compact);
   padding: 0;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--codex-border) 78%, transparent);
+  border: 1px solid transparent;
   border-radius: 7px;
-  background: var(--codex-surface);
+  background: transparent;
   color: var(--codex-fg);
   font: inherit;
   line-height: 1;
@@ -973,8 +913,8 @@ button.float-search-glyph { cursor: pointer; }
 .inline-icon-button.action-pin[aria-disabled="true"] { cursor: not-allowed; }
 .inline-icon-button.action-pin[aria-disabled="true"]:hover { border-color: var(--codex-focus); }
 .inline-icon-button.action-archive[aria-disabled="true"] { cursor: not-allowed; opacity: .4; }
-.inline-icon-button.action-archive { border-color: color-mix(in srgb, var(--codex-critical) 62%, var(--codex-border)); color: var(--codex-critical); }
-.inline-icon-button.action-remove { border-color: color-mix(in srgb, var(--codex-warning) 68%, var(--codex-border)); color: var(--codex-warning); }
+.inline-icon-button.action-archive { border-color: transparent; color: var(--codex-muted); }
+.inline-icon-button.action-remove { border-color: transparent; color: var(--codex-muted); }
 .inline-icon-button.action-archive.confirming { border-color: var(--codex-critical); background: var(--codex-critical); color: var(--codex-on-accent, var(--eypc-color-on-accent)); }
 .inline-icon-button.action-remove.confirming { border-color: var(--codex-warning); background: var(--codex-warning); color: var(--codex-on-pending, var(--eypc-color-on-accent)); }
 .task-state-icon { flex: none; color: var(--task-tone, var(--codex-muted)); }
@@ -988,42 +928,6 @@ button.float-search-glyph { cursor: pointer; }
 .float-empty { padding: 16px 8px; border: 1px dashed color-mix(in srgb, var(--codex-border) 55%, transparent); border-radius: 9px; text-align: center; }
 .hidden-project-section { padding-top: 7px; border-top: 1px dashed color-mix(in srgb, var(--codex-border) 65%, transparent); }
 .float-project-row.hidden-project { border-style: dashed; }
-
-.float-action-hint {
-  position: fixed;
-  z-index: 140;
-  max-width: min(240px, calc(100vw - 16px));
-  padding: 6px 8px;
-  border: 1px solid rgba(255, 255, 255, .86);
-  border-radius: 7px;
-  background: #111827;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, .42);
-  color: #fff;
-  font-size: 9px;
-  font-weight: 750;
-  line-height: 1.35;
-  text-align: center;
-  pointer-events: none;
-}
-.float-action-hint.sticky { font-weight: 800; }
-.float-action-hint::after {
-  content: "";
-  position: absolute;
-  left: var(--float-hint-arrow-left, 50%);
-  width: 7px;
-  height: 7px;
-  border: solid rgba(255, 255, 255, .86);
-  background: #111827;
-  transform: translateX(-50%) rotate(45deg);
-}
-.float-action-hint.top::after {
-  bottom: -4px;
-  border-width: 0 1px 1px 0;
-}
-.float-action-hint.bottom::after {
-  top: -4px;
-  border-width: 1px 0 0 1px;
-}
 
 .float-batch-toolbar {
   position: absolute;
@@ -1104,7 +1008,7 @@ button.float-search-glyph { cursor: pointer; }
   .float-quota-provider { display: inline; }
   .float-quota-group.divided { border-left-color: CanvasText; }
   .inline-icon-button,
-  .float-action-hint { border: 1px solid ButtonText; }
+  .operation-tooltip--float { border: 1px solid ButtonText; }
 }
 
 /* Codex Companion V4: live input priority, single highlight and explicit hints. */
@@ -1138,27 +1042,6 @@ button.float-search-glyph { cursor: pointer; }
 .card-shell .float-counter.active { top: auto; right: -2px; bottom: 21px; }
 .card-shell .float-counter.unread { top: auto; right: -2px; bottom: -2px; }
 .float-counter:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 1px; }
-.float-compact-counter-hint {
-  position: absolute;
-  z-index: 30;
-  top: 50%;
-  left: 50%;
-  max-width: calc(100% - 10px);
-  padding: 5px 7px;
-  transform: translate(-50%, -50%);
-  border: 1px solid rgba(255, 255, 255, .86);
-  border-radius: 7px;
-  background: #111827;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, .42);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1.2;
-  text-align: center;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
 .float-expanded-card > .float-task-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
 .float-status-section {
@@ -1182,7 +1065,8 @@ button.float-search-glyph { cursor: pointer; }
 .float-status-section.unknown { color: var(--codex-muted); }
 .float-status-section.unread { color: var(--codex-pending); }
 .float-status-section.completed { color: var(--codex-accent); }
-.float-status-section em { display: grid; min-width: 16px; height: 16px; margin-left: auto; padding: 0 4px; place-items: center; border-radius: 999px; background: color-mix(in srgb, currentColor 15%, var(--codex-surface)); font-size: 9px; font-style: normal; }
+.float-status-section em { display: inline; min-width: 0; height: auto; margin: 0 0 0 4px; padding: 0; border-radius: 0; background: none; color: inherit; font-size: inherit; font-style: normal; font-weight: 650; }
+.float-status-section em::before { content: '· '; }
 .float-status-section.collapsible { gap: 2px; }
 .status-section-toggle {
   display: flex;
@@ -1204,60 +1088,59 @@ button.float-search-glyph { cursor: pointer; }
 
 .task-state-button {
   display: grid;
-  width: 38px;
-  min-width: 38px;
+  width: 18px;
+  min-width: 18px;
   height: auto;
   align-self: stretch;
-  flex: 0 0 38px;
+  flex: 0 0 18px;
   padding: 0;
   place-items: center;
   border: 0;
-  border-right: 1px solid color-mix(in srgb, var(--task-tone, var(--codex-muted)) 34%, var(--codex-border));
   border-radius: 7px 0 0 7px;
-  background: color-mix(in srgb, var(--task-tone, var(--codex-muted)) 12%, var(--codex-surface-raised));
+  background: transparent;
   color: var(--task-tone, var(--codex-muted));
   cursor: pointer;
-  transition: background 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
 }
-.task-state-button[aria-pressed="true"] {
-  border-right-color: color-mix(in srgb, var(--codex-accent) 86%, var(--codex-border));
-  background: color-mix(in srgb, var(--codex-accent) 72%, var(--codex-surface));
-  color: var(--codex-on-accent);
-  box-shadow: inset -2px 0 0 color-mix(in srgb, var(--codex-pending) 72%, var(--codex-accent)), 0 0 12px color-mix(in srgb, var(--codex-accent) 42%, transparent);
-}
-.task-state-button:active { box-shadow: inset 0 2px 5px rgba(3, 18, 29, .3); }
-.task-state-button:hover {
-  border-color: color-mix(in srgb, var(--task-tone, var(--codex-muted)) 56%, var(--codex-border));
-  background: color-mix(in srgb, var(--task-tone, var(--codex-muted)) 18%, var(--codex-surface-raised));
+.task-state-button[aria-pressed="true"],
+.task-state-button:hover,
+.task-state-button:active {
+  border: 0;
+  background: transparent;
+  color: var(--task-tone, var(--codex-muted));
+  box-shadow: none;
 }
 .task-state-button:focus-visible {
   outline: 2px solid var(--codex-focus);
   outline-offset: 1px;
 }
 
-/* 快速编号不接管指针；任务编号是覆盖层，折叠分组编号是唯一的可执行入口。 */
+/* 快速编号不接管指针；它跟在标题左侧，不盖住状态条。 */
+.task-title-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+.task-title-line > .task-title-button { flex: 1 1 auto; width: auto; min-width: 0; }
 .task-quick-index,
 .status-quick-index {
   z-index: 3;
   display: grid;
+  width: 14px;
   min-width: 14px;
   height: 14px;
-  padding: 0 3px;
+  padding: 0;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--codex-accent) 70%, var(--codex-border));
+  border: 1px solid color-mix(in srgb, var(--codex-border) 70%, transparent);
   border-radius: 4px;
-  background: color-mix(in srgb, var(--codex-accent) 82%, var(--codex-surface));
-  color: var(--codex-on-accent);
+  background: var(--codex-surface);
+  color: var(--codex-muted);
   font-size: 9px;
   font-weight: 800;
   line-height: 1;
   pointer-events: none;
 }
-.task-quick-index {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-}
+.task-quick-index { position: static; flex: none; }
 @media (forced-colors: active) {
   .task-quick-index,
   .status-quick-index {
@@ -1643,7 +1526,7 @@ button.float-search-glyph { cursor: pointer; }
   left: 0;
   cursor: grab;
   touch-action: none;
-  background: rgba(0, 0, 0, .004);
+  background: transparent;
 }
 .codex-float-root .float-compact-drag-zone:active,
 .codex-float-root.dragging .float-compact-drag-zone { cursor: grabbing; }
@@ -1654,7 +1537,20 @@ button.float-search-glyph { cursor: pointer; }
 .codex-float-root.water:not(.expanded) .float-compact-shell,
 .codex-float-root.water:not(.expanded) .float-compact.water-surface,
 .codex-float-root.water:not(.expanded) .float-compact-drag-zone {
-  background: transparent;
+  background: transparent !important;
   border: 0;
   box-shadow: none;
+}
+.float-task-row,
+.float-task-row:hover,
+.float-task-row:focus-visible,
+.float-task-row:focus-within,
+.float-task-row.highlighted,
+.float-task-row.selected,
+.float-task-row.selected:hover,
+.float-task-row.selected:focus-visible,
+.float-task-row.selected.highlighted {
+  border-left-width: 3px;
+  border-left-style: solid;
+  border-left-color: var(--task-tone, var(--codex-muted));
 }

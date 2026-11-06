@@ -129,6 +129,7 @@ export type CompanionTaskCommandNameV1 =
   | 'pause'
   | 'resume'
   | 'execute-plan'
+  | 'continue-task'
   | 'focus'
   | 'set-alias'
   | 'set-visibility'

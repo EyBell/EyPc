@@ -6,6 +6,9 @@ domain: companion-shared
 authority: user-stated
 parent_requirement: eypc-req-invariants-raw-179
 scoped_relations:
+  - kind: refined-by
+    target: eypc-req-task-recovery-actions-raw-001
+    scope: "最新尚未实施Plan显示待输入的展示规则；保留独立artifact与interaction证据"
   - kind: refines
     target: eypc-req-shared-raw-160-clause-005
     scope: "仅当前未决 interaction 产生 waiting；artifact-only 为 stopped/待继续"
@@ -25,3 +28,5 @@ scoped_relations:
 > 正文由来源任务保存，此处只登记身份、状态与关系：[原始记录](../260824/eypc-v7-global-refactor/raw-requirement.md#L5)。父条款 [RAW-179](invariants-raw-179.md#L1)。
 
 只有当前未决 interaction 产生等待；Plan artifact 独立投影为待继续，回复、取消和 execution-start 以原子 tombstone 阻止旧证据反弹。
+
+最新未实施Plan的展示已由[2026-11-06明确决定](task-recovery-actions-raw-001.md#L1)局部精化为待输入；历史条款不再覆盖这一展示规则。

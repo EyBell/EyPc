@@ -3,6 +3,94 @@ import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { checkCompanionNativeUnread } from '../../scripts/check-companion-native-unread.mjs'
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const { createCodexDesktopUnreadRecovery } = require('../../preload/codex/desktop-unread-evidence.cjs')
+
+function recoveryHarness() {
+  let time = 1000
+  const unread = new Set(['a', 'b'])
+  const requests: string[] = []
+  const bridge: any = {
+    state: 'connected', inventory: new Set(unread), sideShadows: new Map(),
+    shadows: new Map([...unread].map(id => [id, { ownerClientId: 'owner', revision: 7, hasUnreadTurn: true, unreadEvidence: 'snapshot' }])),
+    liveUnread: new Map(), persistedUnread: new Map(),
+    followAny(id: string) { requests.push(id); return true }
+  }
+  const recovery = createCodexDesktopUnreadRecovery({ now: () => time, knownThread: (id: string) => ({ hasUnreadTurn: unread.has(id) }) })
+  const fail = (fingerprint = 'a') => recovery.persistenceFailed(bridge, {
+    unreadFailureReason: 'binding-unavailable', unreadSourceFingerprint: fingerprint.repeat(64)
+  }, true)
+  const receive = (id: string, revision: number, value?: boolean) => {
+    const previous = bridge.shadows.get(id)
+    if (!recovery.snapshotAllowed(bridge, id, { revision }, previous, 'owner')) return false
+    const shadow = { ownerClientId: 'owner', revision, hasUnreadTurn: value, unreadEvidence: 'snapshot' }
+    recovery.snapshotAccepted(bridge, id, shadow, previous, 'owner')
+    bridge.shadows.set(id, shadow)
+    return true
+  }
+  return { recovery, bridge, unread, requests, fail, receive, advance: () => { time += 6000 } }
+}
+
+describe('Codex unread recovery isolation', () => {
+  it('refollows several unread tasks without opening or changing their native unread set', () => {
+    const h = recoveryHarness()
+    h.fail(); h.fail()
+    expect(h.requests).toEqual(['a', 'b'])
+    h.receive('a', 7, true); h.receive('b', 7, true)
+    expect([...h.unread]).toEqual(['a', 'b'])
+    expect([...h.bridge.shadows.values()].every((s: any) => s.hasUnreadTurn === true)).toBe(true)
+  })
+  it('accepts an explicit same-revision read for only its own task', () => {
+    const h = recoveryHarness()
+    h.fail()
+    h.unread.delete('a') // synthetic native open, not caused by followAny
+    h.receive('a', 7, false); h.receive('b', 7, true)
+    expect(h.bridge.shadows.get('a').hasUnreadTurn).toBe(false)
+    expect(h.bridge.shadows.get('b').hasUnreadTurn).toBe(true)
+    expect([...h.unread]).toEqual(['b'])
+  })
+  it('never interprets a missing unread field as read', () => {
+    const h = recoveryHarness()
+    h.fail(); h.receive('a', 7)
+    expect(h.bridge.shadows.get('a').hasUnreadTurn).not.toBe(false)
+    expect([...h.unread]).toEqual(['a', 'b'])
+  })
+  it.each(['settled', 'expired', 'cleared'])('rejects an older snapshot after recovery is %s', mode => {
+    const h = recoveryHarness()
+    h.fail()
+    if (mode === 'settled') h.receive('a', 8, true)
+    if (mode === 'expired') h.advance()
+    if (mode === 'cleared') h.recovery.clear(h.bridge)
+    expect(h.receive('a', 6, false)).toBe(false)
+    expect(h.bridge.shadows.get('a').hasUnreadTurn).toBe(true)
+  })
+  it('keeps a new exact unread event ahead of an in-flight read snapshot', () => {
+    const h = recoveryHarness()
+    h.fail()
+    h.bridge.shadows.get('a').unreadEvidence = 'event'
+    h.recovery.notificationAccepted(h.bridge, 'a')
+    h.receive('a', 8, false)
+    expect(h.bridge.shadows.get('a').hasUnreadTurn).toBe(true)
+    expect(h.bridge.liveUnread.get('a').hasUnreadTurn).toBe(true)
+  })
+  it('does not compare revisions across owners or reject equal revisions', () => {
+    const h = recoveryHarness()
+    const previous = h.bridge.shadows.get('a')
+    expect(h.recovery.snapshotAllowed(h.bridge, 'a', { revision: 1 }, previous, 'new-owner')).toBe(true)
+    expect(h.recovery.snapshotAllowed(h.bridge, 'a', { revision: 7 }, previous, 'owner')).toBe(true)
+  })
+  it('coalesces source edges to one trailing recovery per task', async () => {
+    const h = recoveryHarness()
+    h.fail(); h.fail('b'); h.fail('c')
+    expect(h.requests).toEqual(['a', 'b'])
+    h.receive('a', 8, false); h.receive('b', 8, true)
+    await Promise.resolve()
+    expect(h.requests).toEqual(['a', 'b', 'a', 'b'])
+    expect(h.bridge.shadows.get('a').hasUnreadTurn).toBe(true)
+  })
+})
 
 describe('Native Codex identity-scoped unread gate', () => {
   it('executes native/legacy source selection, identity isolation and live protocol acceptance', () => {

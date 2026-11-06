@@ -4,7 +4,7 @@
 
 ## Scope
 
-Link-only route for task actions、archive guards、labels、selection、themes and companion-owned external mutations. Canonical phase judgement remains in the task-state module.
+任务动作、归档保护、标签、展示与主题、外部写入的链接入口；任务循环与固定入口见 [Companion Navigation](companion-navigation.md#L1)，相位判断仍由 Task State 模块拥有。
 
 ## Current Authorities And Routes
 
@@ -30,13 +30,9 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Cursor user hooks loop_limit:0 rejects entire file](../cursor-hooks-loop-limit-zero-rejects-entire-user-config.md#L1)
 - [Cursor deeplink jump conclusion is version- and key-specific](../cursor-agent-deeplink-jump-conclusion-is-version-and-key-specific.md#L1)
 - [Provider version whitelist must not gate generic capability](../provider-version-whitelist-must-not-gate-generic-capability.md#L1)
-- [New companion source must register with navigation authority](../new-companion-source-must-register-with-navigation-authority.md#L1)
 - [Selector readiness must not treat verifying phase as stale](../selector-readiness-must-not-treat-verifying-phase-as-stale.md#L1)
 - [Settings telemetry must inspect on start](../settings-telemetry-must-inspect-on-start.md#L1)
 - [Local preference inert in one consumer view](../local-preference-inert-in-one-consumer-view.md#L1)
-- [Ring reachability outlives list visibility](../ring-reachability-outlives-list-visibility.md#L1)
-- [Parked item inherits fresh-item invalidation](../parked-item-inherits-fresh-item-invalidation.md#L1)
-- [Membership predicate restated at every consumer](../membership-predicate-restated-at-every-consumer.md#L1)
 - [Cursor sqlite pin write is not sidebar pin](../cursor-sqlite-pin-write-is-not-sidebar-pin.md#L1)
 - [Cursor workspace pin cache ignores WAL unpin](../cursor-workspace-pin-cache-ignores-wal.md#L1)
 - [Cursor disk completed stale hook turnOpen](../cursor-disk-completed-stale-hook-turnopen.md#L1)

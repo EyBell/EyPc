@@ -137,6 +137,7 @@ export interface CompanionCanonicalTaskV4 {
     pause: boolean
     resume: boolean
     executePlan: boolean
+    continueTask?: boolean
     /** The provider accepts an EyPc pin/unpin write (Codex, Claude App, Cursor). */
     pin?: boolean
   }

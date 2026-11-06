@@ -11,6 +11,7 @@ Quick Jump 标记与跳转、全局快捷键、命令面板与跨 Tab 交互外�
 
 ## Primary Requirements
 
+- [统一悬浮提示 RAW-001](../tooltip-unification-raw-001.md#L1) — `active`
 - [RAW-001](../quickjump-raw-001.md#L1) — `active`
 - [RAW-002](../quickjump-raw-002.md#L1) — `active`
 - [RAW-003](../quickjump-raw-003.md#L1) — `active`

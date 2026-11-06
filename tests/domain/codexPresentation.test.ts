@@ -181,6 +181,23 @@ describe('Codex dynamic status projection', () => {
     expect(value.groups.active.map((item) => item.key)).not.toContain('hidden-active')
   })
 
+  it.each([1, 24, 72])('keeps old stopped tasks outside the %s-hour window without scheduling their expiry', (hours) => {
+    const old = { lastTurnStartedAt: NOW - 90 * 24 * 60 * 60 * 1000 }
+    const stopped = task('old-stopped', { ...old, bucket: 'stopped', activityState: 'stopped', state: 'stopped' })
+    const hidden = { ...stopped, key: 'hidden-stopped', isHidden: true }
+    const paused = { ...stopped, key: 'paused-stopped', planPaused: true }
+    const pinnedPaused = { ...paused, key: 'pinned-paused', pinSource: 'local' as const }
+    const source = { ongoing: [task('old-active', old)], stopped: [stopped, hidden, paused, pinnedPaused],
+      completed: [task('old-completed', { ...old, bucket: 'completed' })], completedUnread: [], hidden: [hidden], inputRequired: [] }
+    const value = projectCodexDynamicStatus(source, NOW, hours)
+    expect(value.groups.stopped.map((item) => item.key)).toEqual(['old-stopped'])
+    expect(value.tasks.map((item) => item.key)).toEqual(['old-stopped'])
+    expect(value.nextTransitionAt).toBeNull()
+    const active = task('recent-active')
+    const mixed = projectCodexDynamicStatus({ ...source, ongoing: [active] }, NOW, hours)
+    expect(mixed.nextTransitionAt).toBe(active.lastTurnStartedAt! + hours * 60 * 60 * 1000 + 1)
+  })
+
   it('uses the configured dynamic task window for cards, counters and the next transition', () => {
     const activityAt = NOW - 18 * 60 * 60 * 1000
     const active = task('configured-window', { lastTurnStartedAt: activityAt })

@@ -292,15 +292,11 @@ describe('companion task action dispatcher', () => {
     )
   })
 
-  it('executes a Plan only after the second stable click and joins an in-flight execution', async () => {
+  it('executes a Plan on the first click and joins an in-flight execution', async () => {
     let resolveExecution!: (value: unknown) => void
     const executePlan = vi.fn(() => new Promise((resolvePromise) => { resolveExecution = resolvePromise }))
     const actions = createCompanionTaskActions({ adapters: { codex: { executePlan } } })
     syncReady(actions, [planTarget()], 'plan-one')
-
-    await expect(actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200, source: 'execute-plan-button' }))
-      .resolves.toMatchObject({ outcome: 'confirmation-required' })
-    expect(executePlan).not.toHaveBeenCalled()
 
     const started = actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200, source: 'execute-plan-button' })
     const joined = actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200, source: 'execute-plan-button' })
@@ -311,20 +307,15 @@ describe('companion task action dispatcher', () => {
     await expect(joined).resolves.toMatchObject({ outcome: 'executed', key: 'plan-one' })
   })
 
-  it('cancels Plan confirmation when alias, phase or lifecycle revision changes', async () => {
+  it('rejects stale Plan lifecycle before first-click execution', async () => {
     const executePlan = vi.fn(async () => ({ outcome: 'executed' }))
     const actions = createCompanionTaskActions({ adapters: { codex: { executePlan } } })
-    syncReady(actions, [planTarget()], 'plan-one')
-    await actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200 })
-
-    syncReady(actions, [{ ...planTarget(), actionAlias: 'new-private-alias' }], 'plan-one')
-    await expect(actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200 }))
-      .resolves.toMatchObject({ outcome: 'confirmation-required' })
-    expect(executePlan).not.toHaveBeenCalled()
-
     syncReady(actions, [planTarget('plan-one', 201)], 'plan-one')
-    await expect(actions.executePlan({ key: 'plan-one', planLifecycleRevision: 201 }))
-      .resolves.toMatchObject({ outcome: 'confirmation-required' })
+    await expect(actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200 }))
+      .resolves.toMatchObject({ outcome: 'failed' })
     expect(executePlan).not.toHaveBeenCalled()
+    await expect(actions.executePlan({ key: 'plan-one', planLifecycleRevision: 201 }))
+      .resolves.toMatchObject({ outcome: 'executed' })
+    expect(executePlan).toHaveBeenCalledOnce()
   })
 })

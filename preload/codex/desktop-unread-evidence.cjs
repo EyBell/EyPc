@@ -443,6 +443,18 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
   function snapshotAllowed(bridge, threadId, change, previousShadow, ownerClientId, unrevisioned = false) {
     const state = recoveryState(bridge, false)
     const pending = state?.pending.get(threadId)
+    // Stream ordering outlives a recovery request. A late reply must not
+    // replace a newer shadow after settlement, expiry or recovery reset.
+    // A different owner has its own revision domain; legacy snapshots have
+    // no native ordering and keep the pending-event guard below.
+    if (!unrevisioned && previousShadow?.ownerClientId === ownerClientId
+      && Number.isInteger(change?.revision) && Number.isInteger(previousShadow?.revision)
+      && change.revision < previousShadow.revision) {
+      safeRecord({ level: 'info', scope: 'codex-read-recovery', provider: 'codex',
+        event: 'desktop-read-recovery-snapshot', outcome: 'superseded', taskRef: threadId,
+        details: { reason: 'older-stream-revision', revision: change.revision, previousRevision: previousShadow.revision } })
+      return false
+    }
     if (!pending) return true
     if (clock() - pending.time > CODEX_DESKTOP_UNREAD_RECOVERY_MS) {
       settlePending(bridge, state, threadId, pending)

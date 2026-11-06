@@ -15,7 +15,7 @@
       "taskKind": "codex-thread",
       "relationMode": "exact",
       "topologySources": ["app-server"],
-      "capabilities": ["open", "archive", "pause", "resume", "execute-plan", "topology"],
+      "capabilities": ["open", "archive", "pause", "resume", "execute-plan", "continue-task", "topology"],
       "pin": { "inbound": true, "outbound": true, "appLabel": "Codex", "pinNoun": "置顶" }
     },
     "claude": {

@@ -4,6 +4,8 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { runInNewContext } from 'node:vm'
 const require_ = createRequire(import.meta.url)
 const { createFreezeTrace, metrics } = require_(resolve('preload/freeze-trace.cjs'))
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -47,6 +49,62 @@ describe('independent freeze recorder', () => {
       expect(events.some(row => row.type === 'end' && row.op === 'test.blocked-call' && row.durationMs >= 290)).toBe(true)
       expect(events.some(row => row.op === 'test.fast-call')).toBe(false)
       expect(text).not.toContain('SECRET-CONTENT')
+    } finally { child.kill(); rmSync(directory, { recursive: true, force: true }) }
+  })
+
+  it('does not report a stall when renderer intervals are suspended but IPC remains responsive', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'eypc-freeze-test-'))
+    const modulePath = resolve('preload/freeze-trace.cjs')
+    const child = spawn(process.execPath, ['-e', `
+      // Model a hidden Renderer whose interval callbacks do not run. The
+      // independent writer and the plugin's Node IPC callbacks remain live.
+      global.setInterval = () => ({ unref() {} });
+      const trace = require(${JSON.stringify(modulePath)}).createFreezeTrace({ directory: ${JSON.stringify(directory)}, intervalMs: 20, stallMs: 100, aliveMs: 40 });
+      trace.begin('test.async-wait');
+      setTimeout(() => trace.stop(), 500);
+    `], { stdio: 'ignore' })
+    try {
+      const exit = await new Promise<number | null>((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) })
+      expect(exit).toBe(0)
+      const events = readdirSync(directory).flatMap(name => readFileSync(join(directory, name), 'utf8').trim().split('\n').map(line => JSON.parse(line)))
+      expect(events.some(row => row.type === 'heartbeat')).toBe(true)
+      expect(events.filter(row => row.type === 'main-stall')).toEqual([])
+      expect(events.filter(row => row.type === 'stall-end')).toEqual([])
+    } finally { child.kill(); rmSync(directory, { recursive: true, force: true }) }
+  })
+
+  it('identifies a blocked task opener without writing its task identity', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'eypc-freeze-test-'))
+    const modulePath = resolve('preload/freeze-trace.cjs')
+    const navigationPath = resolve('preload/companion/navigation.cjs')
+    const child = spawn(process.execPath, ['-e', `
+      const trace = require(${JSON.stringify(modulePath)}).trace;
+      trace.start({ directory: ${JSON.stringify(directory)}, intervalMs: 20, stallMs: 80 });
+      const navigation = require(${JSON.stringify(navigationPath)}).createCompanionNavigation({
+        openTarget: async () => {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+          return { outcome: 'dispatched' };
+        }
+      });
+      const providers = { codex: true };
+      const { lease } = navigation.begin({ enabled: true, providers });
+      navigation.sync({ lease, enabled: true, providers, ready: true,
+        targets: [{ key: 'PRIVATE-TASK-IDENTITY', provider: 'codex', actionAlias: 'PRIVATE-ACTION-ALIAS', revisionAt: 1, phase: 'running' }],
+        cycleKeys: ['PRIVATE-TASK-IDENTITY'] });
+      setTimeout(async () => {
+        await navigation.cycle(1);
+        setTimeout(() => { navigation.dispose(); trace.stop(); }, 100);
+      }, 150);
+    `], { stdio: 'ignore' })
+    try {
+      const exit = await new Promise<number | null>((resolve, reject) => { child.once('exit', resolve); child.once('error', reject) })
+      expect(exit).toBe(0)
+      const text = readdirSync(directory).map(name => readFileSync(join(directory, name), 'utf8')).join('')
+      const events = text.trim().split('\n').map(line => JSON.parse(line))
+      expect(events.some(row => row.type === 'main-stall' && row.pending.some((span: any) => span.op === 'navigation.dispatch'))).toBe(true)
+      expect(events.some(row => row.type === 'end' && row.op === 'navigation.dispatch' && row.durationMs >= 290)).toBe(true)
+      expect(text).not.toContain('PRIVATE-TASK-IDENTITY')
+      expect(text).not.toContain('PRIVATE-ACTION-ALIAS')
     } finally { child.kill(); rmSync(directory, { recursive: true, force: true }) }
   })
 
@@ -107,6 +165,34 @@ it('bounds outstanding messages when the writer cannot acknowledge yet', async (
     expect(trace.snapshot().outstanding).toBeLessThanOrEqual(256)
     expect(trace.snapshot().dropped).toBeGreaterThan(0)
   } finally { trace.stop(); await sleep(200); rmSync(directory, { recursive: true, force: true }) }
+})
+
+it('replies to a deferred liveness probe as soon as a full send queue has space', () => {
+  const sent: any[] = []
+  const worker = Object.assign(new EventEmitter(), {
+    connected: true,
+    send: (event: any) => { sent.push(event) },
+    unref() {},
+    channel: { unref() {} }
+  })
+  const module = { exports: {} as any }
+  runInNewContext(readFileSync(resolve('preload/freeze-trace.cjs'), 'utf8'), {
+    module, process, performance,
+    require: (id: string) => id === 'node:child_process' ? { spawn: () => worker } : require_(id)
+  })
+  const trace = module.exports.createFreezeTrace()
+  try {
+    for (let i = 0; i < 256; i++) trace.begin('test.pressure')
+    expect(trace.snapshot().outstanding).toBe(256)
+    worker.emit('message', 'probe')
+    expect(sent.filter(event => event.type === 'pulse')).toHaveLength(0)
+    worker.emit('message', 'ack')
+    expect(sent.filter(event => event.type === 'pulse')).toHaveLength(1)
+    expect(trace.snapshot().outstanding).toBe(256)
+    worker.emit('message', 'ack')
+    expect(sent.filter(event => event.type === 'pulse')).toHaveLength(1)
+    expect(trace.snapshot().outstanding).toBe(255)
+  } finally { trace.stop() }
 })
 
 it('summarizes missing ends and truncated tails without treating either as causation', async () => {

@@ -18,10 +18,10 @@ const validOp = value => typeof value === 'string' && /^[a-z][a-z0-9.-]{0,79}$/.
 
 function createFreezeTrace(options = {}) {
   let worker = null
-  let timer = null
   let stopped = false
   let sequence = 0
   let outstanding = 0
+  let probeRequested = false
   let dropped = 0
   let ready = false
   let status = options.enabled === false ? 'disabled' : typeof spawn === 'function' ? 'starting' : 'unsupported'
@@ -35,13 +35,17 @@ function createFreezeTrace(options = {}) {
   function stop() {
     if (stopped) return
     stopped = true
-    clearInterval(timer)
     try { if (worker?.connected) worker.send({ type: 'stop' }) } catch {}
   }
   function send(event) {
     if (stopped || !worker?.connected) return false
     if (outstanding >= 256) { dropped++; return false }
     try { worker.send(event); outstanding++; return true } catch { return false }
+  }
+  function replyProbe() {
+    // A full span queue must delay the reply only until its next ACK, rather
+    // than lose the sole pending probe and report a permanent false stall.
+    if (probeRequested && send({ type: 'pulse', at: Date.now(), dropped })) probeRequested = false
   }
   function begin(op, details) {
     if (!validOp(op)) return null
@@ -83,16 +87,17 @@ function createFreezeTrace(options = {}) {
         windowsHide: true
       })
       worker.on('message', message => {
-        if (message === 'ack') outstanding = Math.max(0, outstanding - 1)
+        if (message === 'ack') { outstanding = Math.max(0, outstanding - 1); if (probeRequested) replyProbe() }
+        // The writer owns the clock: hidden Renderers can throttle interval
+        // callbacks while their Node IPC callbacks remain responsive.
+        if (message === 'probe') { probeRequested = true; replyProbe() }
         if (message === 'ready') { ready = true; if (status === 'starting') status = 'ready' }
         if (message?.type === 'error') { fail(message.code); stop() }
       })
       worker.on('error', error => { fail(error?.code); stop() })
-      worker.on('exit', code => { if (code) fail('WORKER_EXIT'); stopped = true; clearInterval(timer) })
+      worker.on('exit', code => { if (code) fail('WORKER_EXIT'); stopped = true })
       worker.unref()
       worker.channel?.unref?.()
-      timer = setInterval(() => send({ type: 'pulse', at: Date.now(), dropped }), options.intervalMs ?? 1000)
-      timer.unref?.()
     }
   } catch (error) { fail(error?.code || 'WORKER_CONSTRUCT'); stopped = true }
   return { begin, end, run, stop, directory, snapshot: () => ({ stopped, ready, supported: typeof spawn === 'function', status, errorCode, outstanding, dropped }) }
@@ -103,6 +108,7 @@ function runWriter() {
   const data = JSON.parse(process.env.EYPC_FREEZE_TRACE_CONFIG)
   let bytes = 0
   let lastPulse = Date.now()
+  let probePending = false
   let lastAlive = 0
   let lastStamp = 0
   let dropped = 0
@@ -156,7 +162,7 @@ function runWriter() {
   process.on('message', event => {
     if (closed) return
     if (event.type === 'stop') { endStall(Date.now()); write({ type: 'stop', at: Date.now() }); close(); return }
-    if (event.type === 'pulse') { lastPulse = Date.now(); dropped = event.dropped || 0; endStall(lastPulse) }
+    if (event.type === 'pulse') { probePending = false; lastPulse = Date.now(); dropped = event.dropped || 0; endStall(lastPulse) }
     else if (event.type === 'begin' && validOp(event.op)) {
       if (pending.size < 128) pending.set(event.id, { id: event.id, op: event.op, at: event.at })
     } else if (event.type === 'end' && validOp(event.op)) {
@@ -168,6 +174,8 @@ function runWriter() {
   })
   tick = setInterval(() => {
     const now = Date.now()
+    // Keep at most one unanswered probe when the plugin is actually blocked.
+    if (!probePending && process.connected) { probePending = true; process.send('probe') }
     if (now - lastPulse > data.stallMs) {
       const joined = [...pending.keys()].some(id => !stalledIds.has(id))
       for (const id of pending.keys()) stalledIds.add(id)

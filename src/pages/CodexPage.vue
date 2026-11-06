@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   BellRing,
   Check,
@@ -8,10 +8,8 @@ import {
   Activity,
   HeartPulse,
   Keyboard,
-  LayoutDashboard,
   LoaderCircle,
   Network,
-  Palette,
   Package,
   Pin,
   RefreshCw,
@@ -21,6 +19,9 @@ import {
 import CodexStyleSwitch from '../components/CodexStyleSwitch.vue'
 import CodexAppearanceStudio from '../components/CodexAppearanceStudio.vue'
 import CodexWaterBall from '../components/CodexWaterBall.vue'
+import DialogShell from '../components/DialogShell.vue'
+import { CodexAppearanceSession } from '../domain/codexAppearanceSession'
+import { blockHandledShortcutEvent } from '../runtime/keyboardEvent'
 import {
   CODEX_THEME_PRESETS,
   codexThemeCssVars,
@@ -58,7 +59,11 @@ const THEME_PRESET_CUSTOM = 'custom'
 const MAX_SAVED_THEME_PRESETS = 20
 const THEME_PRESET_CURRENT = 'preference'
 const visibleThemePresets = CODEX_THEME_PRESETS.filter(preset => ['graphite', 'amber-mist', 'jade-pulse', 'ice-prism'].includes(preset.id))
-const currentPreference = { colors: { ...props.snapshot.settings.colors }, waterAppearance: cloneWaterAppearance(props.snapshot.settings.waterAppearance), expandedCardAppearance: cloneExpandedCardAppearance(props.snapshot.settings.expandedCardAppearance), counterColors: { ...props.snapshot.settings.counterColors } }
+function captureCurrentPreference() {
+  const settings = props.snapshot.settings
+  return { colors: { ...settings.colors }, waterAppearance: cloneWaterAppearance(settings.waterAppearance), expandedCardAppearance: cloneExpandedCardAppearance(settings.expandedCardAppearance), counterColors: { ...settings.counterColors }, magpieQuotaGridCursorPrimaryLabel: settings.magpieQuotaGridCursorPrimaryLabel, magpieQuotaGridCursorSecondaryLabel: settings.magpieQuotaGridCursorSecondaryLabel }
+}
+const currentPreference = ref(captureCurrentPreference())
 const editingThemeId = ref<string | null>(null)
 const themeChoiceLocked = ref(false)
 
@@ -72,6 +77,33 @@ const configTabs: Array<{ id: CodexConfigTabId; label: string }> = [
 ]
 const activeConfigTab = ref<CodexConfigTabId>('shortcuts')
 const appearanceMode = ref<'water' | 'card'>('water')
+const APPEARANCE_ADVANCED_STORAGE_KEY = 'eypc.codex.appearance-advanced-open'
+function readAppearanceAdvancedOpen() {
+  try { return localStorage.getItem(APPEARANCE_ADVANCED_STORAGE_KEY) === '1' } catch { return false }
+}
+const appearanceAdvancedOpen = ref(readAppearanceAdvancedOpen())
+const themeNamingAction = ref<'save' | 'saveAs' | 'rename' | null>(null)
+const themeNamingInitial = ref('')
+const themeMenuOpen = ref(false)
+const themeMenuPinned = ref(false)
+const themeNameInput = ref<HTMLInputElement | null>(null)
+const themeActionTrigger = ref<HTMLButtonElement | null>(null)
+const themeActionRoot = ref<HTMLElement | null>(null)
+const themeSelect = ref<HTMLSelectElement | null>(null)
+const appearanceStudio = ref<{ clearSelection: () => void } | null>(null)
+const selectedAppearancePart = ref('')
+const appearanceSession = new CodexAppearanceSession()
+const appearanceDirty = ref(false)
+const appearanceGuard = ref<'name' | 'exit' | 'switch' | null>(null)
+const pendingThemeOption = ref<string | null>(null)
+const afterThemeSave = ref<'exit' | 'switch' | null>(null)
+let themeMenuCloseTimer: ReturnType<typeof setTimeout> | null = null
+watch(activeConfigTab, (current, previous) => {
+  if (current === 'water' && previous !== 'water' && !appearanceDirty.value) currentPreference.value = captureCurrentPreference()
+})
+watch(appearanceAdvancedOpen, (open) => {
+  try { localStorage.setItem(APPEARANCE_ADVANCED_STORAGE_KEY, open ? '1' : '0') } catch {}
+})
 
 interface CodexHotkeyRow {
   title: string
@@ -148,6 +180,11 @@ function cloneExpandedCardAppearance(value: CodexExpandedCardAppearanceSettings)
 const waterDraft = ref<CodexWaterAppearanceSettings>(cloneWaterAppearance(props.snapshot.settings.waterAppearance))
 const savedThemeName = ref('')
 const savedThemeOption = ref(THEME_PRESET_CUSTOM)
+const displayedThemePresets = computed(() => {
+  const selectedId = savedThemeOption.value.startsWith(THEME_PRESET_BUILTIN_PREFIX)
+    ? savedThemeOption.value.slice(THEME_PRESET_BUILTIN_PREFIX.length) : ''
+  return CODEX_THEME_PRESETS.filter(preset => visibleThemePresets.includes(preset) || preset.id === selectedId)
+})
 const taskState = computed(() => props.snapshot.taskState)
 const waterPreviewProjection = computed(() => taskState.value.dynamic)
 
@@ -209,13 +246,16 @@ const compactOptions: Array<{ id: CodexCompactField; label: string }> = [
   { id: 'tasks', label: '任务数字' }
 ]
 function matchesThemePreset(
-  theme: Pick<CodexSavedThemePreset, 'colors' | 'waterAppearance' | 'expandedCardAppearance'>,
+  theme: Pick<CodexSavedThemePreset, 'colors' | 'waterAppearance' | 'expandedCardAppearance'> & Partial<Pick<CodexSavedThemePreset, 'counterColors' | 'magpieQuotaGridCursorPrimaryLabel' | 'magpieQuotaGridCursorSecondaryLabel'>>,
   colors: CodexColorSettings,
   waterAppearance: CodexWaterAppearanceSettings,
   expandedCardAppearance: CodexExpandedCardAppearanceSettings,
-  counterColors: CodexSettings['counterColors']
+  counterColors: CodexSettings['counterColors'],
+  labels: Pick<CodexSettings, 'magpieQuotaGridCursorPrimaryLabel' | 'magpieQuotaGridCursorSecondaryLabel'>
 ) {
-  return (!('counterColors' in theme) || !theme.counterColors || JSON.stringify(theme.counterColors) === JSON.stringify(counterColors))
+  return (!theme.counterColors || JSON.stringify(theme.counterColors) === JSON.stringify(counterColors))
+    && (!theme.magpieQuotaGridCursorPrimaryLabel || theme.magpieQuotaGridCursorPrimaryLabel === labels.magpieQuotaGridCursorPrimaryLabel)
+    && (!theme.magpieQuotaGridCursorSecondaryLabel || theme.magpieQuotaGridCursorSecondaryLabel === labels.magpieQuotaGridCursorSecondaryLabel)
     && JSON.stringify(theme.colors) === JSON.stringify(colors)
     && JSON.stringify(theme.waterAppearance) === JSON.stringify(waterAppearance)
     && JSON.stringify(theme.expandedCardAppearance) === JSON.stringify(expandedCardAppearance)
@@ -225,7 +265,7 @@ const activeThemeOption = computed(() => {
   const colors = props.snapshot.settings.colors
   const waterAppearance = props.snapshot.settings.waterAppearance
   const expandedCardAppearance = props.snapshot.settings.expandedCardAppearance
-  const savedId = props.snapshot.settings.savedThemePresets.find((item) => matchesThemePreset(item, colors, waterAppearance, expandedCardAppearance, props.snapshot.settings.counterColors))?.id
+  const savedId = props.snapshot.settings.savedThemePresets.find((item) => matchesThemePreset(item, colors, waterAppearance, expandedCardAppearance, props.snapshot.settings.counterColors, props.snapshot.settings))?.id
   if (savedId) return `${THEME_PRESET_SAVED_PREFIX}${savedId}`
   const builtinId = matchCodexThemePreset(colors, waterAppearance, expandedCardAppearance)
   return builtinId ? `${THEME_PRESET_BUILTIN_PREFIX}${builtinId}` : THEME_PRESET_CUSTOM
@@ -233,7 +273,7 @@ const activeThemeOption = computed(() => {
 watch(() => props.snapshot.settings.waterAppearance, (value) => {
   waterDraft.value = cloneWaterAppearance(value)
 }, { deep: true })
-watch([() => props.snapshot.settings.colors, () => props.snapshot.settings.counterColors, () => props.snapshot.settings.waterAppearance, () => props.snapshot.settings.expandedCardAppearance, () => props.snapshot.settings.savedThemePresets], () => {
+watch([() => props.snapshot.settings.colors, () => props.snapshot.settings.counterColors, () => props.snapshot.settings.waterAppearance, () => props.snapshot.settings.expandedCardAppearance, () => props.snapshot.settings.magpieQuotaGridCursorPrimaryLabel, () => props.snapshot.settings.magpieQuotaGridCursorSecondaryLabel, () => props.snapshot.settings.savedThemePresets], () => {
   const previousOption = savedThemeOption.value
   savedThemeOption.value = activeThemeOption.value
   const activeSavedId = activeThemeOption.value.startsWith(THEME_PRESET_SAVED_PREFIX)
@@ -243,10 +283,36 @@ watch([() => props.snapshot.settings.colors, () => props.snapshot.settings.count
   const match = editingThemeId.value ? props.snapshot.settings.savedThemePresets.find((entry) => entry.id === editingThemeId.value) : null
   if (match) savedThemeOption.value = `${THEME_PRESET_SAVED_PREFIX}${match.id}`
   else if (themeChoiceLocked.value) savedThemeOption.value = previousOption
-  else if (!activeThemeOption.value.startsWith(THEME_PRESET_BUILTIN_PREFIX) || visibleThemePresets.some(preset => `${THEME_PRESET_BUILTIN_PREFIX}${preset.id}` === activeThemeOption.value)) savedThemeOption.value = activeThemeOption.value
-  else savedThemeOption.value = THEME_PRESET_CUSTOM
-  if (!savedThemeName.value || match) savedThemeName.value = match?.name || ''
+  else savedThemeOption.value = activeThemeOption.value
+  if (!themeNamingAction.value && (!savedThemeName.value || match)) savedThemeName.value = match?.name || ''
 }, { deep: true, immediate: true })
+const selectedThemeModified = computed(() => {
+  const value = savedThemeOption.value
+  const reference = value.startsWith(THEME_PRESET_SAVED_PREFIX)
+    ? props.snapshot.settings.savedThemePresets.find(item => item.id === value.slice(THEME_PRESET_SAVED_PREFIX.length))
+    : value.startsWith(THEME_PRESET_BUILTIN_PREFIX)
+      ? CODEX_THEME_PRESETS.find(item => item.id === value.slice(THEME_PRESET_BUILTIN_PREFIX.length))
+      : currentPreference.value
+  if (!reference) return appearanceDirty.value
+  const settings = props.snapshot.settings
+  return appearanceDirty.value || !matchesThemePreset(reference, settings.colors, settings.waterAppearance, settings.expandedCardAppearance, settings.counterColors, settings)
+})
+const themeNameDirty = computed(() => themeNamingAction.value !== null && savedThemeName.value !== themeNamingInitial.value)
+const canEditTheme = computed(() => props.snapshot.settings.savedThemePresets.some(item => item.id === editingThemeId.value))
+function themeOptionLabel(label: string, value: string) {
+  return savedThemeOption.value === value && selectedThemeModified.value ? `${label} · 已修改` : label
+}
+const selectedThemeTitle = computed(() => {
+  const value = savedThemeOption.value
+  let label = '当前配置'
+  if (value === THEME_PRESET_CURRENT) label = '当前偏好'
+  else if (value.startsWith(THEME_PRESET_BUILTIN_PREFIX)) label = CODEX_THEME_PRESETS.find(item => item.id === value.slice(THEME_PRESET_BUILTIN_PREFIX.length))?.label || label
+  else if (value.startsWith(THEME_PRESET_SAVED_PREFIX)) {
+    const preset = props.snapshot.settings.savedThemePresets.find(item => item.id === value.slice(THEME_PRESET_SAVED_PREFIX.length))
+    if (preset) label = `${preset.alternate ? '备选 · ' : ''}${preset.name}`
+  }
+  return themeOptionLabel(label, value)
+})
 const statusLabel = computed(() => codexConnectionStatusLabel({
   refreshing: props.snapshot.refreshing,
   quotaStatus: props.snapshot.quota.status,
@@ -376,7 +442,20 @@ function formatDiagnosticTime(value: number): string {
 }
 
 function update(patch: Partial<CodexSettings>) {
+  if (activeConfigTab.value === 'water') {
+    appearanceSession.record(props.snapshot.settings, patch)
+    appearanceDirty.value = appearanceSession.dirty
+    if (appearanceDirty.value) themeChoiceLocked.value = true
+  }
   emit('dispatch', 'codex.settings.update', { settings: patch })
+}
+
+function dispatchAppearance(actionId: string, args?: Record<string, unknown>) {
+  if (actionId === 'codex.settings.update' && args?.settings && typeof args.settings === 'object') {
+    update(args.settings as Partial<CodexSettings>)
+    return
+  }
+  emit('dispatch', actionId, args)
 }
 
 function toggleClaude(enabled: boolean) {
@@ -400,40 +479,59 @@ function toggleField<T extends string>(fields: T[], field: T, checked: boolean, 
   update({ [key]: next } as Partial<CodexSettings>)
 }
 
-function applyThemePreset(preset: { colors: CodexColorSettings, waterAppearance: CodexWaterAppearanceSettings, expandedCardAppearance: CodexExpandedCardAppearanceSettings, counterColors?: CodexSettings['counterColors'] }, source: string) {
+function applyThemePreset(preset: { colors: CodexColorSettings, waterAppearance: CodexWaterAppearanceSettings, expandedCardAppearance: CodexExpandedCardAppearanceSettings, counterColors?: CodexSettings['counterColors'], magpieQuotaGridCursorPrimaryLabel?: string, magpieQuotaGridCursorSecondaryLabel?: string }, source: string) {
   waterDraft.value = cloneWaterAppearance(preset.waterAppearance)
-  update({
+  emit('dispatch', 'codex.settings.update', { settings: {
     colors: { ...preset.colors },
     waterAppearance: cloneWaterAppearance(preset.waterAppearance),
     expandedCardAppearance: cloneExpandedCardAppearance(preset.expandedCardAppearance),
-    ...(preset.counterColors ? { counterColors: { ...preset.counterColors } } : {})
-  })
+    ...(preset.counterColors ? { counterColors: { ...preset.counterColors } } : {}),
+    ...(preset.magpieQuotaGridCursorPrimaryLabel ? { magpieQuotaGridCursorPrimaryLabel: preset.magpieQuotaGridCursorPrimaryLabel } : {}),
+    ...(preset.magpieQuotaGridCursorSecondaryLabel ? { magpieQuotaGridCursorSecondaryLabel: preset.magpieQuotaGridCursorSecondaryLabel } : {})
+  } })
   savedThemeOption.value = source
 }
 
-function applyThemePresetBySelect(event: Event) {
-  const value = (event.target as HTMLSelectElement).value
+function applyThemeOption(value: string) {
+  const preset = value === THEME_PRESET_CURRENT ? currentPreference.value
+    : value.startsWith(THEME_PRESET_BUILTIN_PREFIX) ? CODEX_THEME_PRESETS.find(item => item.id === value.slice(THEME_PRESET_BUILTIN_PREFIX.length))
+      : value.startsWith(THEME_PRESET_SAVED_PREFIX) ? props.snapshot.settings.savedThemePresets.find(item => item.id === value.slice(THEME_PRESET_SAVED_PREFIX.length))
+        : undefined
+  if (!preset) { themePresetError.value = '主题已不存在，请重新选择'; return false }
   themePresetError.value = ''
-  if (!value || value === THEME_PRESET_CUSTOM) return
+  themeNamingAction.value = null
+  appearanceSession.clear()
+  appearanceDirty.value = false
   savedThemeOption.value = value
   themeChoiceLocked.value = true
   editingThemeId.value = value.startsWith(THEME_PRESET_SAVED_PREFIX) ? value.slice(THEME_PRESET_SAVED_PREFIX.length) : null
-  if (value === THEME_PRESET_CURRENT) { savedThemeName.value = ''; applyThemePreset(currentPreference, value); return }
-  if (value.startsWith(THEME_PRESET_BUILTIN_PREFIX)) {
-    const presetId = value.slice(THEME_PRESET_BUILTIN_PREFIX.length)
-    const preset = CODEX_THEME_PRESETS.find((item) => item.id === presetId)
-    if (!preset) return
-    savedThemeName.value = ''
-    applyThemePreset(preset, value)
+  savedThemeName.value = props.snapshot.settings.savedThemePresets.find(item => item.id === editingThemeId.value)?.name || ''
+  applyThemePreset(preset, value)
+  return true
+}
+
+function continueThemeSwitch(value: string) {
+  if (appearanceDirty.value) {
+    pendingThemeOption.value = value
+    appearanceGuard.value = 'switch'
+  } else {
+    pendingThemeOption.value = null
+    applyThemeOption(value)
+  }
+}
+
+function applyThemePresetBySelect(event: Event) {
+  const select = event.target as HTMLSelectElement
+  const value = select.value
+  select.value = savedThemeOption.value
+  if (!value || value === THEME_PRESET_CUSTOM || value === savedThemeOption.value) return
+  if (themeNameDirty.value) {
+    pendingThemeOption.value = value
+    appearanceGuard.value = 'name'
     return
   }
-  if (value.startsWith(THEME_PRESET_SAVED_PREFIX)) {
-    const presetId = value.slice(THEME_PRESET_SAVED_PREFIX.length)
-    const preset = props.snapshot.settings.savedThemePresets.find((item) => item.id === presetId)
-    if (!preset) return
-    savedThemeName.value = preset.name
-    applyThemePreset(preset, value)
-  }
+  if (themeNamingAction.value) cancelThemeNaming()
+  continueThemeSwitch(value)
 }
 
 function sanitizeThemeName(value: string) {
@@ -444,32 +542,229 @@ function generateThemePresetId() {
   return `theme-${Date.now().toString(36)}-${Math.floor(Math.random() * 100000).toString(16)}`
 }
 
-function saveThemePreset(action: 'save' | 'saveAs' | 'backup' | 'rename') {
+function saveThemePreset(action: 'save' | 'saveAs' | 'rename') {
   const name = sanitizeThemeName(savedThemeName.value)
   const next = [...props.snapshot.settings.savedThemePresets]
   const index = editingThemeId.value ? next.findIndex(item => item.id === editingThemeId.value) : -1
   if (action === 'rename') {
-    if (index < 0) { themePresetError.value = '请先选择已保存的方案'; return }
-    if (!name) { themePresetError.value = '请填写新名称'; return }
-    if (next.some((item, i) => i !== index && item.name === name)) { themePresetError.value = '方案名称已存在'; return }
+    if (index < 0) { themePresetError.value = '请先选择已保存的方案'; return false }
+    if (!name) { themePresetError.value = '请填写新名称'; return false }
+    if (next.some((item, i) => i !== index && item.name === name)) { themePresetError.value = '方案名称已存在'; return false }
     next[index] = { ...next[index], name, updatedAt: Date.now() }
-    update({ savedThemePresets: next }); themePresetError.value = ''; return
+    update({ savedThemePresets: next }); themePresetError.value = ''; return true
   }
   if (action !== 'save' || index < 0) {
-    if (!name) { themePresetError.value = '请填写主题名称'; return }
-    if (next.some(item => item.name === name)) { themePresetError.value = '方案名称已存在，请使用其他名称'; return }
-    if (next.length >= MAX_SAVED_THEME_PRESETS) { themePresetError.value = '最多保存 20 个方案'; return }
+    if (!name) { themePresetError.value = '请填写主题名称'; return false }
+    if (next.some(item => item.name === name)) { themePresetError.value = '方案名称已存在，请使用其他名称'; return false }
+    if (next.length >= MAX_SAVED_THEME_PRESETS) { themePresetError.value = '最多保存 20 个方案'; return false }
   }
   const now = Date.now()
-  const values = { colors: { ...props.snapshot.settings.colors }, waterAppearance: cloneWaterAppearance(props.snapshot.settings.waterAppearance), expandedCardAppearance: cloneExpandedCardAppearance(props.snapshot.settings.expandedCardAppearance), counterColors: { ...props.snapshot.settings.counterColors } }
+  const values = captureCurrentPreference()
   if (action === 'save' && index >= 0) next[index] = { ...next[index], ...values, updatedAt: now }
   else {
-    const entry: CodexSavedThemePreset = { id: generateThemePresetId(), name, ...values, ...(action === 'backup' ? { alternate: true } : {}), createdAt: now, updatedAt: now }
+    const entry: CodexSavedThemePreset = { id: generateThemePresetId(), name, ...values, createdAt: now, updatedAt: now }
     next.unshift(entry)
-    if (action !== 'backup') { editingThemeId.value = entry.id; themeChoiceLocked.value = true; savedThemeOption.value = `${THEME_PRESET_SAVED_PREFIX}${entry.id}` }
+    editingThemeId.value = entry.id; themeChoiceLocked.value = true; savedThemeOption.value = `${THEME_PRESET_SAVED_PREFIX}${entry.id}`
   }
-  if (action === 'backup') themeChoiceLocked.value = true
   update({ savedThemePresets: next }); themePresetError.value = ''
+  appearanceSession.clear()
+  appearanceDirty.value = false
+  return true
+}
+
+function completeAfterThemeSave() {
+  const intent = afterThemeSave.value
+  afterThemeSave.value = null
+  if (intent === 'switch' && pendingThemeOption.value) {
+    const value = pendingThemeOption.value
+    pendingThemeOption.value = null
+    applyThemeOption(value)
+  } else if (intent === 'exit') {
+    appearanceStudio.value?.clearSelection()
+    selectedAppearancePart.value = ''
+  }
+}
+
+function beginThemeNaming(action: 'save' | 'saveAs' | 'rename', focus: boolean) {
+  if (themeNamingAction.value === action) {
+    if (focus) void nextTick(() => themeNameInput.value?.focus())
+    return
+  }
+  if (themeNameDirty.value) { themePresetError.value = '请先保存或放弃当前名称'; return }
+  themeNamingAction.value = action
+  savedThemeName.value = action === 'rename'
+    ? props.snapshot.settings.savedThemePresets.find(item => item.id === editingThemeId.value)?.name || '' : ''
+  themeNamingInitial.value = savedThemeName.value
+  if (focus) void nextTick(() => themeNameInput.value?.focus())
+}
+
+function requestThemeAction(action: 'save' | 'saveAs' | 'rename', intent: 'exit' | 'switch' | null = null, focus = true) {
+  themePresetError.value = ''
+  const selectedSaved = props.snapshot.settings.savedThemePresets.some(item => item.id === editingThemeId.value)
+  if (action === 'rename' && !selectedSaved) {
+    themePresetError.value = '请先选择已保存的方案'
+    return
+  }
+  if (themeNameDirty.value) { themePresetError.value = '请先保存或放弃当前名称'; return }
+  afterThemeSave.value = intent
+  if (action === 'save' && selectedSaved) {
+    themeNamingAction.value = null
+    if (saveThemePreset('save')) { completeAfterThemeSave(); closeThemeMenu() }
+    return
+  }
+  themeMenuOpen.value = true
+  if (focus) themeMenuPinned.value = true
+  beginThemeNaming(action, focus)
+}
+
+function openThemeMenu() {
+  if (themeMenuCloseTimer) clearTimeout(themeMenuCloseTimer)
+  themeMenuCloseTimer = null
+  themeMenuOpen.value = true
+}
+
+function closeThemeMenu() {
+  if (themeMenuCloseTimer) clearTimeout(themeMenuCloseTimer)
+  themeMenuCloseTimer = null
+  themeMenuOpen.value = false
+  themeMenuPinned.value = false
+}
+
+function toggleThemeMenu() {
+  if (themeMenuOpen.value && themeMenuPinned.value && !themeNamingAction.value) closeThemeMenu()
+  else { openThemeMenu(); themeMenuPinned.value = true }
+}
+
+function scheduleThemeMenuClose() {
+  if (themeMenuPinned.value || themeNameDirty.value) return
+  if (themeMenuCloseTimer) clearTimeout(themeMenuCloseTimer)
+  themeMenuCloseTimer = setTimeout(() => {
+    if (themeMenuPinned.value || themeNameDirty.value || themeNameInput.value === document.activeElement) return
+    cancelThemeNaming()
+    closeThemeMenu()
+  }, 180)
+}
+
+function confirmThemeNaming() {
+  if (!themeNamingAction.value) return false
+  const action = themeNamingAction.value
+  if (!saveThemePreset(action)) return false
+  themeNamingAction.value = null
+  themeNamingInitial.value = ''
+  if (action !== 'rename') completeAfterThemeSave()
+  closeThemeMenu()
+  return true
+}
+
+function onThemeNameEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  confirmThemeNaming()
+}
+
+function cancelThemeNaming() {
+  if (afterThemeSave.value === 'switch') pendingThemeOption.value = null
+  savedThemeName.value = themeNamingInitial.value
+  themeNamingAction.value = null
+  themeNamingInitial.value = ''
+  afterThemeSave.value = null
+  themePresetError.value = ''
+}
+
+function requestCancelThemeNaming() {
+  if (themeNameDirty.value) appearanceGuard.value = 'name'
+  else cancelThemeNaming()
+}
+
+function restoreAppearanceChanges() {
+  const result = appearanceSession.restore(props.snapshot.settings)
+  if (Object.keys(result.patch).length) emit('dispatch', 'codex.settings.update', { settings: result.patch })
+  appearanceSession.clear()
+  appearanceDirty.value = false
+  if (result.conflicts.length) themePresetError.value = '部分配置已由其他入口修改，已保留这些外部值。'
+  return result.conflicts.length === 0
+}
+
+function cancelAppearanceGuard() {
+  const previous = appearanceGuard.value
+  appearanceGuard.value = null
+  if (previous === 'switch' || (previous === 'name' && pendingThemeOption.value && afterThemeSave.value !== 'switch')) pendingThemeOption.value = null
+  if (previous === 'name') void nextTick(() => themeNameInput.value?.focus())
+}
+
+function saveAppearanceGuard() {
+  const guard = appearanceGuard.value
+  appearanceGuard.value = null
+  if (guard === 'name') {
+    if (!confirmThemeNaming()) { void nextTick(() => themeNameInput.value?.focus()); return }
+    if (pendingThemeOption.value) continueThemeSwitch(pendingThemeOption.value)
+  } else if (guard === 'exit' || guard === 'switch') requestThemeAction('save', guard)
+}
+
+function discardAppearanceGuard() {
+  const guard = appearanceGuard.value
+  appearanceGuard.value = null
+  if (guard === 'name') {
+    cancelThemeNaming()
+    if (pendingThemeOption.value) continueThemeSwitch(pendingThemeOption.value)
+    return
+  }
+  const restored = restoreAppearanceChanges()
+  if (guard === 'switch' && pendingThemeOption.value) {
+    const value = pendingThemeOption.value
+    pendingThemeOption.value = null
+    if (restored) applyThemeOption(value)
+  } else if (guard === 'exit') {
+    appearanceStudio.value?.clearSelection()
+    selectedAppearancePart.value = ''
+  }
+}
+
+function handleAppearanceEscape(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.key !== 'Escape' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || activeConfigTab.value !== 'water') return
+  if (document.querySelector('.quick-jump-top-layer')) return
+  if (appearanceGuard.value) cancelAppearanceGuard()
+  else if (themeNamingAction.value) {
+    if (themeNameDirty.value) appearanceGuard.value = 'name'
+    else { cancelThemeNaming(); void nextTick(() => themeActionTrigger.value?.focus()) }
+  } else if (themeMenuOpen.value) {
+    closeThemeMenu()
+    void nextTick(() => themeActionTrigger.value?.focus())
+  } else if (appearanceDirty.value) appearanceGuard.value = 'exit'
+  else if (selectedAppearancePart.value) {
+    appearanceStudio.value?.clearSelection()
+    selectedAppearancePart.value = ''
+  } else return
+  blockHandledShortcutEvent(event)
+}
+
+function handleThemeOutsidePointer(event: PointerEvent) {
+  if (!themeMenuOpen.value || appearanceGuard.value || themeNameDirty.value || themeActionRoot.value?.contains(event.target as Node)) return
+  cancelThemeNaming()
+  closeThemeMenu()
+}
+
+function moveThemeActionFocus(event: KeyboardEvent, direction: 1 | -1) {
+  const menu = (event.currentTarget as HTMLElement)
+  const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'))
+  if (!items.length) return
+  const current = items.indexOf(document.activeElement as HTMLButtonElement)
+  const next = current < 0 ? (direction > 0 ? 0 : items.length - 1) : (current + direction + items.length) % items.length
+  items[next]?.focus()
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleAppearanceEscape, true)
+  document.addEventListener('pointerdown', handleThemeOutsidePointer, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleAppearanceEscape, true)
+  document.removeEventListener('pointerdown', handleThemeOutsidePointer, true)
+  if (themeMenuCloseTimer) clearTimeout(themeMenuCloseTimer)
+})
+
+function onAppearanceAdvancedToggle(event: Event) {
+  appearanceAdvancedOpen.value = (event.target as HTMLDetailsElement).open
 }
 
 function updateColor(key: keyof CodexColorSettings, value: string) {
@@ -498,12 +793,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
     :data-companion-package-revision="snapshot.taskSnapshot.packageRevision || undefined"
   >
   <header class="codex-config-hero" aria-label="额度任务悬浮球配置总览">
-    <div class="codex-hero-main">
-      <div class="codex-hero-copy">
-        <p class="codex-hero-eyebrow">Codex Companion</p>
-        <h1 class="codex-hero-title">运行控制台</h1>
-        <p class="codex-hero-subtitle">连接、悬浮入口与展示样式集中在一处，便于快速调整。</p>
-      </div>
+    <div class="codex-hero-toolbar" aria-label="运行状态与控制">
       <div class="codex-hero-status-strip" aria-label="运行状态">
         <button
           v-for="item in statusIconBarLeft"
@@ -516,7 +806,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           :aria-pressed="item.toggle ? item.pressed : undefined"
           @click="item.toggle ? onStatusIconClick(item) : undefined"
         >
-          <component :is="item.icon" :size="14" aria-hidden="true" />
+          <component :is="item.icon" :size="12" aria-hidden="true" />
           <span>{{ item.label }}</span>
         </button>
         <button
@@ -530,13 +820,11 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           :aria-pressed="item.pressed"
           @click="onStatusIconClick(item)"
         >
-          <component :is="item.icon" :size="14" aria-hidden="true" />
+          <component :is="item.icon" :size="12" aria-hidden="true" />
           <span>{{ item.label }}</span>
         </button>
       </div>
-    </div>
-    <div class="codex-hero-actions">
-      <div class="codex-hero-action-group" aria-label="悬浮入口">
+      <div class="codex-hero-actions">
         <button
           type="button"
           class="codex-float-toggle"
@@ -548,13 +836,10 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           data-operation-description="显示或隐藏 Codex 浮窗主入口；隐藏后仅保留主界面入口。"
           @click="update({ floatEnabled: !snapshot.settings.floatEnabled })"
         >
-          <EyeOff v-if="snapshot.settings.floatEnabled" :size="13" aria-hidden="true" />
-          <Eye v-else :size="13" aria-hidden="true" />
-          <span class="codex-float-toggle-label">{{ snapshot.settings.floatEnabled ? '隐藏悬浮' : '显示悬浮' }}</span>
+          <EyeOff v-if="snapshot.settings.floatEnabled" :size="12" aria-hidden="true" />
+          <Eye v-else :size="12" aria-hidden="true" />
+          <span class="codex-float-toggle-label">{{ snapshot.settings.floatEnabled ? '隐藏' : '显示' }}</span>
         </button>
-      </div>
-      <div class="codex-hero-action-group codex-hero-action-group--style" aria-label="展示样式">
-        <CodexStyleSwitch compact :model-value="snapshot.settings.displayStyle" @update:model-value="changeStyle" />
       </div>
     </div>
   </header>
@@ -583,21 +868,12 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
     >
     <div class="codex-workbench">
       <article v-if="activeConfigTab === 'shortcuts'" class="codex-panel codex-settings-section codex-shortcuts-panel">
-        <div class="codex-panel-title">
-          <div><LayoutDashboard :size="13" /><strong>快捷方式</strong></div>
-          <button
-            type="button"
-            class="codex-tip"
-            aria-label="快捷方式说明"
-            data-operation-tooltip="快捷方式说明"
-            data-operation-description="只跳转 uTools 绑定或执行入口，不回显宿主快捷键。"
-          >i</button>
-        </div>
         <div class="codex-shortcut-stack">
           <div
             v-for="row in hotkeyRows"
             :key="row.configureAction"
             class="codex-hotkey-row"
+            :title="row.summary"
           >
             <Keyboard :size="12" aria-hidden="true" />
             <span>
@@ -692,7 +968,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               :value="snapshot.settings.dynamicTaskWindowHours"
               @change="update({ dynamicTaskWindowHours: Number(($event.target as HTMLInputElement).value) })"
               data-operation-tooltip="动态时间筛选（小时）"
-              data-operation-description="控制悬浮卡片「动态」Tab、进行中角标和前后任务循环使用的最近活动范围；默认 24 小时。"
+              data-operation-description="控制悬浮卡片「动态」Tab、进行中角标和前后任务循环使用的最近活动范围；默认一周；已保存的小时配置保持不变。"
             />
           </label>
           <label>
@@ -728,26 +1004,45 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
       </article>
 
       <article v-if="activeConfigTab === 'water'" class="codex-panel codex-settings-section codex-appearance-panel">
-        <div class="codex-panel-title">
-          <div><Palette :size="13" /><strong>{{ appearanceMode === 'water' ? '悬浮水球' : '展开卡片' }}</strong></div>
-          <button type="button" class="codex-tip" aria-label="外观配置说明" data-operation-tooltip="外观配置说明" data-operation-description="主题预设会同时保存水球与展开卡片；当前页只展示所选目标的预览与控件。" data-tip="主题预设会同时保存水球与展开卡片；当前页只展示所选目标的预览与控件。">i</button>
-        </div>
-        <div class="codex-theme-toolbar">
-          <label>
-            <span>整套主题</span>
-            <select class="codex-select" :value="savedThemeOption" @change="applyThemePresetBySelect">
-              <option :value="THEME_PRESET_CUSTOM">当前配置（未匹配）</option>
-              <optgroup label="默认主题"><option :value="THEME_PRESET_CURRENT">当前偏好</option><option v-for="preset in visibleThemePresets" :key="preset.id" :value="`${THEME_PRESET_BUILTIN_PREFIX}${preset.id}`">{{ preset.label }}</option></optgroup>
-              <optgroup v-if="snapshot.settings.savedThemePresets.length" label="已保存"><option v-for="preset in snapshot.settings.savedThemePresets" :key="preset.id" :value="`${THEME_PRESET_SAVED_PREFIX}${preset.id}`">{{ preset.alternate ? '备选 · ' : '' }}{{ preset.name }}</option></optgroup>
-            </select>
-          </label>
-          <label class="codex-theme-name"><span>保存当前外观</span><input v-model="savedThemeName" type="text" class="codex-input" maxlength="40" placeholder="主题名称" /></label>
-          <button type="button" class="secondary" @click="saveThemePreset('save')">保存</button><details class="codex-theme-actions"><summary aria-label="更多方案操作">•••</summary><div><button type="button" @click="saveThemePreset('saveAs')">另存为</button><button type="button" @click="saveThemePreset('backup')">保存备选</button><button type="button" @click="saveThemePreset('rename')">重命名</button></div></details>
-        </div>
-        <p v-if="themePresetError" class="codex-color-error" role="alert">{{ themePresetError }}</p>
-
-        <CodexAppearanceStudio :snapshot="snapshot" :mode="appearanceMode" @update:mode="appearanceMode = $event" @dispatch="(action, args) => emit('dispatch', action, args)" />
-        <details class="codex-appearance-advanced"><summary>更多外观参数</summary>
+        <CodexAppearanceStudio ref="appearanceStudio" :snapshot="snapshot" :mode="appearanceMode" @update:mode="appearanceMode = $event" @update:selected-part="selectedAppearancePart = $event" @dispatch="dispatchAppearance">
+          <template #theme-controls>
+            <label class="appearance-theme-select">
+              <select ref="themeSelect" class="codex-select" aria-label="选择主题" :data-operation-tooltip="selectedThemeTitle" :value="savedThemeOption" @change="applyThemePresetBySelect">
+                <option :value="THEME_PRESET_CUSTOM">{{ themeOptionLabel('当前配置', THEME_PRESET_CUSTOM) }}</option>
+                <optgroup label="默认主题"><option :value="THEME_PRESET_CURRENT">{{ themeOptionLabel('当前偏好', THEME_PRESET_CURRENT) }}</option><option v-for="preset in displayedThemePresets" :key="preset.id" :value="`${THEME_PRESET_BUILTIN_PREFIX}${preset.id}`">{{ themeOptionLabel(preset.label, `${THEME_PRESET_BUILTIN_PREFIX}${preset.id}`) }}</option></optgroup>
+                <optgroup v-if="snapshot.settings.savedThemePresets.length" label="已保存"><option v-for="preset in snapshot.settings.savedThemePresets" :key="preset.id" :value="`${THEME_PRESET_SAVED_PREFIX}${preset.id}`">{{ themeOptionLabel(`${preset.alternate ? '备选 · ' : ''}${preset.name}`, `${THEME_PRESET_SAVED_PREFIX}${preset.id}`) }}</option></optgroup>
+              </select>
+            </label>
+            <div ref="themeActionRoot" class="appearance-theme-actions" @pointerenter="openThemeMenu" @pointerleave="scheduleThemeMenuClose">
+              <button ref="themeActionTrigger" type="button" class="appearance-theme-action-trigger" aria-label="主题操作" aria-haspopup="menu" :aria-expanded="themeMenuOpen" @click="toggleThemeMenu">操作</button>
+              <div v-if="themeMenuOpen" class="appearance-theme-menu" role="menu" aria-label="主题操作选项" @keydown.down.prevent="moveThemeActionFocus($event, 1)" @keydown.up.prevent="moveThemeActionFocus($event, -1)">
+                <button type="button" role="menuitem" data-theme-action="rename" :disabled="!canEditTheme" @click="requestThemeAction('rename')" @keydown.enter.prevent="requestThemeAction('rename')">编辑</button>
+                <button type="button" role="menuitem" data-theme-action="save" @click="requestThemeAction('save')" @keydown.enter.prevent="requestThemeAction('save')">保存</button>
+                <button type="button" role="menuitem" data-theme-action="saveAs" @pointerenter="requestThemeAction('saveAs', null, false)" @click="requestThemeAction('saveAs')" @keydown.enter.prevent="requestThemeAction('saveAs')">另存</button>
+              </div>
+              <form v-if="themeNamingAction" class="appearance-theme-naming" role="group" :aria-label="themeNamingAction === 'rename' ? '编辑主题名称' : '保存主题'" @submit.prevent="confirmThemeNaming">
+                <label class="codex-theme-name">
+                  <span>{{ themeNamingAction === 'rename' ? '新名称' : '主题名称' }}</span>
+                  <input ref="themeNameInput" v-model="savedThemeName" type="text" class="codex-input" maxlength="40" :placeholder="themeNamingAction === 'rename' ? '输入新名称' : '输入主题名称'" @keydown.enter="onThemeNameEnter" />
+                </label>
+                <div class="appearance-theme-naming-actions">
+                  <button type="submit" class="secondary">{{ themeNamingAction === 'rename' ? '保存名称' : themeNamingAction === 'save' ? '保存' : '另存' }}</button>
+                  <button type="button" class="ghost" @click="requestCancelThemeNaming">取消</button>
+                </div>
+              </form>
+            </div>
+          </template>
+          <template #theme-error>
+            <p v-if="themePresetError" class="codex-color-error" role="alert">{{ themePresetError }}</p>
+          </template>
+        </CodexAppearanceStudio>
+        <details class="codex-appearance-advanced" :open="appearanceAdvancedOpen" @toggle="onAppearanceAdvancedToggle">
+          <summary>
+            <span class="codex-appearance-advanced-title"><span>更多选择</span><button type="button" class="codex-tip" aria-label="外观配置说明" data-operation-tooltip="外观配置说明" data-operation-description="更多选择展开后可调高级参数；右侧水球 / 卡片 / 贴边线只切换悬浮展示形态，不改左侧编辑对象。" data-tip="更多选择展开后可调高级参数；右侧水球 / 卡片 / 贴边线只切换悬浮展示形态，不改左侧编辑对象。" @click.stop>i</button></span>
+            <div class="codex-appearance-advanced-actions" @click.stop>
+              <CodexStyleSwitch :model-value="snapshot.settings.displayStyle" @update:model-value="changeStyle" />
+            </div>
+          </summary>
         <div class="codex-appearance-zones" :class="{ 'card-only': appearanceMode === 'card' }">
           <section v-if="appearanceMode === 'water'" class="codex-appearance-zone codex-appearance-zone--water" aria-labelledby="water-appearance-title">
             <div class="codex-appearance-zone-head"><div><span>01 · 悬浮水球</span><h3 id="water-appearance-title">水球外观</h3></div><button type="button" class="codex-tip" aria-label="水球外观说明" data-operation-tooltip="水球外观说明" data-operation-description="预览与桌面水球共用渲染；可分别控制球体背景、液体、Weekly 进度环、百分比读数和三类数字角标。" data-tip="预览与桌面水球共用渲染；可分别控制球体背景、液体、Weekly 进度环、百分比读数和三类数字角标。">i</button></div>
@@ -785,12 +1080,12 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               <label class="codex-color-control"><input type="color" :value="waterDraft.outer.progressColor" @input="updateWaterDraft('outer', 'colorMode', 'custom'); updateWaterDraft('outer', 'progressColor', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>Weekly 进度色</strong><small>选择即改为自定义</small></span></label>
               <label class="codex-color-control"><input type="color" :value="waterDraft.outer.trackColor" @input="updateWaterDraft('outer', 'trackColor', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>Weekly 轨道色</strong><small>未完成部分</small></span></label>
             </div>
-            <div class="codex-water-reading-controls" aria-label="百分比读数配置">
-              <header><strong>百分比读数</strong><button type="button" class="codex-tip" aria-label="百分比读数说明" data-operation-tooltip="百分比读数说明" data-operation-description="独立设置水球百分比的位置、字号、字形和颜色。" data-tip="独立设置水球百分比的位置、字号、字形和颜色。">i</button></header>
+            <div class="codex-water-reading-controls" aria-label="球心读数配置">
+              <header><strong>球心读数</strong><button type="button" class="codex-tip" aria-label="球心读数说明" data-operation-tooltip="球心读数说明" data-operation-description="同时作用于单百分比读数与 Magpie 四方格：位置、字号、字形、颜色共用同一套设置。" data-tip="同时作用于单百分比读数与 Magpie 四方格：位置、字号、字形、颜色共用同一套设置。">i</button></header>
               <label><span>显示位置</span><select class="codex-select" :value="waterDraft.inner.percentPosition" @change="updateWaterDraft('inner', 'percentPosition', ($event.target as HTMLSelectElement).value)"><option value="auto">自动（居中）</option><option value="center">居中</option><option value="bottom-left">左下</option><option value="bottom-right">右下</option></select></label>
               <label class="water-reading-range"><span>文字大小 <strong>{{ waterDraft.inner.percentSize }}px</strong></span><input type="range" min="12" max="32" step="1" :value="waterDraft.inner.percentSize" @input="updateWaterDraft('inner', 'percentSize', Number(($event.target as HTMLInputElement).value))" /></label>
               <label><span>文字样式</span><select class="codex-select" :value="waterDraft.inner.percentTextStyle" @change="updateWaterDraft('inner', 'percentTextStyle', ($event.target as HTMLSelectElement).value)"><option value="regular">常规</option><option value="bold">加粗</option><option value="italic">斜体</option><option value="bold-italic">粗斜体</option></select></label>
-              <label class="codex-color-control"><input type="color" :value="waterDraft.inner.percentColor" @input="updateWaterDraft('inner', 'percentColor', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>文字颜色</strong><small>只影响水球百分比</small></span></label>
+              <label class="codex-color-control"><input type="color" :value="waterDraft.inner.percentColor" @input="updateWaterDraft('inner', 'percentColor', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>文字颜色</strong><small>影响百分比与 Magpie 四方格</small></span></label>
             </div>
             <div class="codex-counter-colors"><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.input" @input="update({ counterColors: { ...snapshot.settings.counterColors, input: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>待输入角标</strong><small>左下数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.active" @input="update({ counterColors: { ...snapshot.settings.counterColors, active: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>进行中角标</strong><small>右下上方数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.unread" @input="update({ counterColors: { ...snapshot.settings.counterColors, unread: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>已未读角标</strong><small>右下角数字</small></span></label></div>
           </section>
@@ -847,14 +1142,22 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 <small>已启用 {{ enabledProviderCount }} / 3</small>
               </div>
             </div>
-            <button type="button" class="codex-tip" aria-label="接入来源说明" data-operation-tooltip="接入来源" data-operation-description="各来源独立开关。开启 Claude / Cursor 时会自动注册事件钩子，关闭时自动移除。" data-tip="各来源独立开关。开启 Claude / Cursor 时会自动注册事件钩子，关闭时自动移除。">i</button>
+            <div class="codex-runtime-panel-actions">
+              <label
+                class="codex-switch-row codex-switch-row--runtime codex-switch-row--runtime-compact"
+                :class="{ 'is-active': snapshot.settings.openLaunchesTarget }"
+                title="跳转前启动目标应用：打开任务前先启动对应应用"
+                data-operation-tooltip="跳转前确认启动"
+                data-operation-description="跳转前启动目标应用。打开任务前先启动对应应用；关闭后只发深链，不再先确认目标应用已打开。"
+              >
+                <span><strong>跳转前确认启动</strong></span>
+                <input type="checkbox" :checked="snapshot.settings.openLaunchesTarget" @change="update({ openLaunchesTarget: ($event.target as HTMLInputElement).checked })" />
+                <i />
+              </label>
+              <button type="button" class="codex-tip" aria-label="接入来源说明" data-operation-tooltip="接入来源" data-operation-description="各来源独立开关。开启 Claude / Cursor 时会自动注册事件钩子，关闭时自动移除。" data-tip="各来源独立开关。开启 Claude / Cursor 时会自动注册事件钩子，关闭时自动移除。">i</button>
+            </div>
           </div>
           <div class="codex-runtime-switch-grid">
-            <label class="codex-switch-row codex-switch-row--runtime">
-              <span><strong>跳转前启动目标应用</strong><small>打开任务前先启动对应应用</small></span>
-              <input type="checkbox" :checked="snapshot.settings.openLaunchesTarget" @change="update({ openLaunchesTarget: ($event.target as HTMLInputElement).checked })" />
-              <i />
-            </label>
             <label class="codex-switch-row codex-switch-row--runtime" :class="{ 'is-active': snapshot.settings.providers.claude }">
               <span><strong>Claude Code</strong><small>{{ snapshot.settings.providers.claude ? '已启用 · 自动注册钩子' : '未启用' }}</small></span>
               <input type="checkbox" :checked="snapshot.settings.providers.claude" @change="toggleClaude(($event.target as HTMLInputElement).checked)" />
@@ -896,33 +1199,11 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 <em>秒</em>
               </div>
             </label>
-            <label class="codex-switch-row codex-switch-row--runtime codex-switch-row--runtime-inline" :class="{ 'is-active': snapshot.settings.magpieQuotaAccess }">
+            <label class="codex-switch-row codex-switch-row--runtime codex-switch-row--runtime-inline" :class="{ 'is-active': snapshot.settings.magpieQuotaAccess }" title="开启后接入 Magpie 读数；关闭后仅保留本地额度。Cursor 格标签请到外观主题中编辑。">
               <span><strong>Magpie 额度</strong><small>{{ snapshot.settings.magpieQuotaAccess ? '已接入 Magpie 读数' : '关闭后仅保留本地额度' }}</small></span>
               <input type="checkbox" :checked="snapshot.settings.magpieQuotaAccess" @change="update({ magpieQuotaAccess: ($event.target as HTMLInputElement).checked })" />
               <i />
             </label>
-            <div v-if="snapshot.settings.magpieQuotaAccess" class="codex-runtime-magpie-labels" aria-label="水球 Cursor 格标签">
-              <label class="codex-runtime-metric codex-runtime-metric--mini">
-                <span>Cursor 主格</span>
-                <input
-                  class="codex-text codex-text--compact"
-                  type="text"
-                  maxlength="4"
-                  :value="snapshot.settings.magpieQuotaGridCursorPrimaryLabel"
-                  @change="update({ magpieQuotaGridCursorPrimaryLabel: ($event.target as HTMLInputElement).value })"
-                />
-              </label>
-              <label class="codex-runtime-metric codex-runtime-metric--mini">
-                <span>Cursor 次格</span>
-                <input
-                  class="codex-text codex-text--compact"
-                  type="text"
-                  maxlength="4"
-                  :value="snapshot.settings.magpieQuotaGridCursorSecondaryLabel"
-                  @change="update({ magpieQuotaGridCursorSecondaryLabel: ($event.target as HTMLInputElement).value })"
-                />
-              </label>
-            </div>
           </div>
         </article>
 
@@ -960,5 +1241,14 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
       </div>
     </div>
     </section>
+    <DialogShell v-if="appearanceGuard" panel-class="confirm-layer appearance-unsaved-dialog" data-role="appearance-unsaved-confirm" label="外观修改确认" @close="cancelAppearanceGuard">
+      <h2>{{ appearanceGuard === 'name' ? '主题名称有未保存修改' : appearanceGuard === 'switch' ? '切换前处理当前外观' : '本次外观有修改' }}</h2>
+      <p>{{ appearanceGuard === 'name' ? '可以保存名称、放弃本次名称修改，或继续编辑。' : '外观已即时生效；可以保存到主题、恢复本次修改，或继续编辑。' }}</p>
+      <div class="confirm-actions appearance-unsaved-actions">
+        <button type="button" @click="cancelAppearanceGuard">继续编辑</button>
+        <button type="button" @click="discardAppearanceGuard">{{ appearanceGuard === 'name' ? '放弃名称' : appearanceGuard === 'switch' ? '放弃并切换' : '恢复修改' }}</button>
+        <button type="button" class="primary" @click="saveAppearanceGuard">保存</button>
+      </div>
+    </DialogShell>
   </section>
 </template>

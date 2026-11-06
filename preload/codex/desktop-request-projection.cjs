@@ -305,13 +305,17 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     return String(request?.method || '').toLowerCase() === 'item/plan/requestimplementation'
   }
 
-  function codexDesktopRequestKind(request) {
+  function codexDesktopIsPlanChoiceRequest(request) {
     const type = String(request?.type || '').toLowerCase()
     const method = String(request?.method || '').toLowerCase()
-    if (codexDesktopIsPlanImplementationRequest(request)) return 'plan-implementation'
-    if (method === 'item/plan/requestuserinput'
+    return method === 'item/plan/requestuserinput'
       || method === 'item/plan/requestchoice'
-      || type === 'planchoice') return 'plan-choice'
+      || type === 'planchoice'
+  }
+
+  function codexDesktopRequestKind(request) {
+    if (codexDesktopIsPlanImplementationRequest(request)) return 'plan-implementation'
+    if (codexDesktopIsPlanChoiceRequest(request)) return 'plan-choice'
     if (codexDesktopRequestFlag(request) === 'waitingOnApproval') return 'approval'
     if (codexDesktopRequestFlag(request) === 'waitingOnUserInput') return 'user-input'
     return ''
@@ -321,6 +325,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     const type = String(request?.type || '').toLowerCase()
     const method = String(request?.method || '').toLowerCase()
     if (codexDesktopIsPlanImplementationRequest(request)
+      || codexDesktopIsPlanChoiceRequest(request)
       || method === 'item/tool/requestuserinput'
       || method === 'requestuserinput'
       || type === 'userinput'

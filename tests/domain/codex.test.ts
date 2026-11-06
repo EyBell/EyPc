@@ -135,11 +135,12 @@ describe('Codex domain', () => {
     expect(normalizeCodexSettings({ codexhostLaunch: true }).codexhostLaunch).toBe('auto')
   })
 
-  it('defaults the dynamic task window to 24 hours and bounds persisted edits', () => {
-    expect(defaultCodexSettings().dynamicTaskWindowHours).toBe(24)
+  it('defaults the dynamic task window to one week and preserves saved hourly settings', () => {
+    expect(defaultCodexSettings().dynamicTaskWindowHours).toBe(168)
     expect(normalizeCodexSettings({ dynamicTaskWindowHours: 0 }).dynamicTaskWindowHours).toBe(1)
     expect(normalizeCodexSettings({ dynamicTaskWindowHours: 999_999 }).dynamicTaskWindowHours).toBe(365 * 24)
-    expect(normalizeCodexSettings({ dynamicTaskWindowHours: 'invalid' }).dynamicTaskWindowHours).toBe(24)
+    expect(normalizeCodexSettings({ dynamicTaskWindowHours: 'invalid' }).dynamicTaskWindowHours).toBe(168)
+    expect(normalizeCodexSettings({ dynamicTaskWindowHours: 72 }).dynamicTaskWindowHours).toBe(72)
   })
 
   it('preserves explicit empty field selections and drops obsolete cap/retention settings', () => {

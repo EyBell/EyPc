@@ -9,8 +9,14 @@ import CompanionEdgeRail from '../../src/components/CompanionEdgeRail.vue'
 import type { CodexFloatWindowState } from '../../src/float-env'
 import CodexPage from '../../src/pages/CodexPage.vue'
 import {
+  CODEX_MAX_QUOTA_REFRESH_SECONDS,
+  CODEX_MIN_QUOTA_REFRESH_SECONDS,
   CODEX_TASK_STATE_REVISION,
   defaultCodexSettings,
+  emptyCodexConfig,
+  emptyCodexEnvironment,
+  emptyCodexModelCatalog,
+  emptyCodexQuota,
   projectConversations,
   type CodexHostProject,
   type CodexHostThread,
@@ -19,6 +25,7 @@ import {
   type ConversationSnapshotV1
 } from '../../src/domain/codex'
 import { buildCodexCompactPresentation, buildCodexTaskStatePackage, type CodexTaskStatePackageV1 } from '../../src/domain/codexPresentation'
+import { buildCodexEnvironmentPresentation } from '../../src/domain/codexEnvironmentPresentation'
 import {
   emptyCompanionTaskPackage,
   type CompanionCanonicalTaskV4,
@@ -26,9 +33,9 @@ import {
 } from '../../src/domain/companionTaskPackage'
 import { companionTaskProvider } from '../../src/domain/companionProvider'
 import { contrastRatio } from '../../src/domain/codexAppearance'
-import { emptyClaudeEnvironment, normalizeClaudeQuota } from '../../src/domain/claude'
+import { emptyClaudeEnvironment, emptyClaudeQuota, normalizeClaudeQuota } from '../../src/domain/claude'
 import { mergeCompanionConversations } from '../../src/domain/companionAggregate'
-import type { CodexFloatSnapshotV1 } from '../../src/runtime/codexController'
+import type { CodexFloatSnapshotV1, CodexRuntimeView } from '../../src/runtime/codexController'
 
 const NOW = 1_784_364_000_000
 const PROJECT_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -350,6 +357,34 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+async function mountRuntimePage(options: { claudeHooks?: 'outdated' | 'installed'; claudeEnabled?: boolean } = {}) {
+  const settings = defaultCodexSettings()
+  settings.providers.claude = options.claudeEnabled ?? false
+  settings.providers.cursor = false
+  const snapshot = {
+    settings,
+    quota: emptyCodexQuota(),
+    claudeQuota: emptyClaudeQuota(),
+    claudeEnvironment: { ...emptyClaudeEnvironment(), hooks: options.claudeHooks || 'installed' },
+    taskState: { dynamic: { compactCounts: { input: 0, active: 0, unread: 0 } } },
+    environment: emptyCodexEnvironment(),
+    floatHost: {},
+    taskSnapshot: { packageRevision: 0 },
+    config: emptyCodexConfig(),
+    modelCatalog: emptyCodexModelCatalog(),
+    refreshing: false,
+    runtimeIdentity: { status: 'host-loaded', packageVersion: '1.0.0', builtAtLocal: '2026-10-30 12:34', builtAt: '2026-10-30T04:34:00Z' },
+    runtimeDiagnostics: {
+      status: 'ok', settings: { enabled: true, level: 'debug' }, activeFile: '/diagnostic/current.log',
+      totals: { events: 12, slow: 2 }, storage: { fileCount: 3 }
+    }
+  } as unknown as CodexRuntimeView
+  const wrapper = mount(CodexPage, { props: { snapshot } })
+  mounted.push(wrapper)
+  await wrapper.get('#codex-config-tab-runtime').trigger('click')
+  return { wrapper, snapshot }
+}
+
 describe('Codex Companion V4 UI contract', () => {
   it('waits for the first host snapshot without recreating, then rejects an actual identity mismatch', async () => {
     const requestRecreate = vi.fn(() => true)
@@ -387,7 +422,54 @@ describe('Codex Companion V4 UI contract', () => {
     expect(requestRecreate).toHaveBeenCalledExactlyOnceWith('identity-mismatch')
   })
 
-  it('renders Plan-ready four-slot actions, two-click execute confirmation and complete drawer/batch actions', async () => {
+  it.each([true, false, undefined])('gates one-click continue by explicit root capability %s and preserves Plus', async (continueTask) => {
+    const source = floatSnapshot('all')
+    const task = source.conversations.all.find((candidate) => candidate.key === TASK_FAILED)!
+    task.companionCapabilities = { open: true, archive: true, pause: false, resume: false, executePlan: false, continueTask }
+    refreshTaskState(source)
+    const { wrapper, action } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+    const row = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
+    expect(row.get('.action-create').find('svg').exists()).toBe(true)
+    expect(row.find('.action-continue').exists()).toBe(continueTask === true)
+    action.mockClear()
+    if (continueTask === true) {
+      expect(row.get('.action-continue').attributes('aria-label')).toContain('继续任务')
+      await row.get('.action-continue').trigger('click')
+      expect(action.mock.calls.filter(([id]) => id === 'codex.task.continueTask')).toHaveLength(1)
+      expect(action).toHaveBeenCalledWith('codex.task.continueTask', { key: task.key, revisionAt: task.revisionAt })
+    }
+    action.mockClear()
+    await row.trigger('contextmenu')
+    expect(wrapper.find('[data-drawer-action-id="task-continue"]').exists()).toBe(continueTask === true)
+    if (continueTask === true) {
+      await wrapper.get('[data-drawer-action-id="task-continue"]').trigger('click')
+      expect(action.mock.calls.filter(([id]) => id === 'codex.task.continueTask')).toHaveLength(1)
+      expect(action).toHaveBeenCalledWith('codex.task.continueTask', { key: task.key, revisionAt: task.revisionAt })
+    } else expect(action).not.toHaveBeenCalledWith('codex.task.continueTask', expect.anything())
+  })
+
+  it('retains two-click archive dispatch beside one-click continue', async () => {
+    const source = floatSnapshot('all')
+    const task = source.conversations.all.find((candidate) => candidate.key === TASK_FAILED)!
+    task.companionCapabilities = { open: true, archive: true, pause: false, resume: false, executePlan: false, continueTask: true }
+    refreshTaskState(source)
+    const { wrapper, action } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+    const row = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
+    action.mockClear()
+    await row.get('.action-archive').trigger('click')
+    expect(action).not.toHaveBeenCalledWith('codex.tasks.archive', expect.anything())
+    expect(row.get('.action-archive').attributes('aria-label')).toContain('确认归档')
+    await row.get('.action-archive').trigger('click')
+    expect(action.mock.calls.filter(([id]) => id === 'codex.tasks.archive')).toHaveLength(1)
+    expect(action).toHaveBeenCalledWith('codex.tasks.archive', expect.objectContaining({
+      items: [{ key: task.key, revisionAt: task.revisionAt }], confirmationRecorded: true
+    }))
+    expect(action).not.toHaveBeenCalledWith('codex.task.continueTask', expect.anything())
+  })
+
+  it('renders Plan-ready four-slot actions, single-click implementation and complete drawer/batch actions', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
     const source = floatSnapshot('all')
@@ -406,26 +488,29 @@ describe('Codex Companion V4 UI contract', () => {
       expect.stringContaining('置顶'),
       expect.stringContaining('暂停 Plan'),
       expect.stringContaining('归档'),
-      expect.stringContaining('执行')
+      expect.stringContaining('实施计划')
     ])
     expect(row.get('.action-hide').attributes('aria-label')).toContain('暂停 Plan')
-    expect(row.get('.action-create').attributes('aria-label')).toContain('执行')
+    expect(row.get('.action-create').attributes('aria-label')).toContain('实施计划')
 
     await row.get('.action-hide').trigger('click')
     expect(action).toHaveBeenCalledWith('codex.task.pausePlan', { key: TASK_FAILED, revisionAt: task.revisionAt })
     action.mockClear()
     await row.get('.action-create').trigger('click')
-    expect(row.get('.action-create').attributes('aria-label')).toContain('确认执行')
+    expect(row.get('.action-create').attributes('aria-label')).not.toContain('确认')
     expect(action).toHaveBeenCalledWith('codex.task.executePlan', { key: TASK_FAILED, revisionAt: task.revisionAt })
-    await row.get('.action-create').trigger('click')
-    expect(action).toHaveBeenCalledTimes(2)
-    expect(row.get('.action-create').attributes('aria-label')).toContain('执行')
+    expect(action).toHaveBeenCalledTimes(1)
+    expect(row.get('.action-create').attributes('aria-label')).toContain('实施计划')
 
     await row.trigger('contextmenu')
     expect(wrapper.get('[data-drawer-action-id="task-new-thread"]').text()).toContain('在当前项目新建会话')
     expect(wrapper.get('[data-drawer-action-id="task-new-thread-model"]').text()).toContain('选择模型新建会话')
     expect(wrapper.get('[data-drawer-action-id="task-pause-plan"]').attributes('aria-label')).toBe('暂停 Plan')
-    expect(wrapper.get('[data-drawer-action-id="task-execute-plan"]').text()).toContain('执行原 Plan')
+    expect(wrapper.get('[data-drawer-action-id="task-execute-plan"]').text()).toContain('实施计划')
+    action.mockClear()
+    await wrapper.get('[data-drawer-action-id="task-execute-plan"]').trigger('click')
+    expect(action).toHaveBeenCalledTimes(1)
+    expect(action).toHaveBeenCalledWith('codex.task.executePlan', { key: TASK_FAILED, revisionAt: task.revisionAt })
     await wrapper.get('.float-side-panel [aria-label="关闭"]').trigger('click')
     await wrapper.vm.$nextTick()
 
@@ -491,90 +576,83 @@ describe('Codex Companion V4 UI contract', () => {
     expect(source).toContain('动态时间筛选（小时）')
     expect(source).toContain(':value="snapshot.settings.dynamicTaskWindowHours"')
     expect(source).toContain('update({ dynamicTaskWindowHours:')
-    expect(source).toContain('默认 24 小时')
+    expect(source).toContain('默认一周')
   })
 
-  it('keeps only the automatic quota interval and removes broad manual/full reconciliation refresh', () => {
+  it('configures the automatic quota interval without exposing full task reconciliation', async () => {
+    const { wrapper } = await mountRuntimePage()
+    const input = wrapper.get('.codex-runtime-panel--quota input[type="number"]')
+    expect((input.element as HTMLInputElement).value).toBe('300')
+    expect(input.attributes('min')).toBe(String(CODEX_MIN_QUOTA_REFRESH_SECONDS))
+    expect(input.attributes('max')).toBe(String(CODEX_MAX_QUOTA_REFRESH_SECONDS))
+    await input.setValue('600')
+    expect(wrapper.emitted('dispatch')).toContainEqual(['codex.settings.update', { settings: { quotaRefreshSeconds: 600 } }])
     const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
-    expect(source).toContain('额度刷新（秒）')
-    expect(source).toContain(':value="snapshot.settings.quotaRefreshSeconds"')
-    expect(source).toContain('update({ quotaRefreshSeconds:')
-    expect(source).toContain('默认 300 秒，最大 86400 秒')
     expect(source).not.toContain('完整校对频率（秒）')
     expect(source).not.toContain('snapshot.settings.taskRefreshSeconds')
     expect(source).not.toContain("'codex.refresh'")
     expect(source).not.toContain('snapshot.settings.quotaRefreshMinutes')
   })
 
-  it('uses the approved title and exposes full operational runtime log statistics', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
-    expect(source).toContain('CODEX · CLAUDE COMPANION')
-    expect(source).toContain('<h1>额度任务悬浮球</h1>')
-    expect(source).toContain('全局安装诊断日志')
-    expect(source).toContain('当前宿主产物：')
-    expect(source).toContain('snapshot.runtimeIdentity')
-    expect(source).toContain('dist/runtime-identity.cjs')
-    expect(source).toContain('runtimeBuildPresentation.builtAtLocal')
-    expect(source).toContain('运行身份不一致，需要重载')
-    expect(source).toContain('慢操作 ≥250ms')
-    expect(source).toContain('精确记录运行 ID、Provider 状态、水位、缓存、路径、动作结果与耗时')
-    expect(source).toContain('不写入提示词、对话正文、命令参数、stdout/stderr、凭据或隐藏推理')
-    expect(source).toContain('snapshot.runtimeDiagnostics.storage.maxTotalBytes')
-    expect(source).toContain('aria-label="启用安装诊断日志"')
-    expect(source).toContain('aria-label="安装诊断日志记录级别"')
-    expect(source).toContain("emit('dispatch', 'runtime.logs.configure'")
-    expect(source).toContain("emit('dispatch', 'runtime.logs.openFile'")
-    expect(source).toContain("emit('dispatch', 'runtime.logs.openDirectory'")
-    expect(source).toContain("emit('dispatch', 'runtime.logs.clear'")
-    expect(source).toContain(':disabled="!snapshot.runtimeDiagnostics.activeFile"')
-    expect(source).toContain(':disabled="snapshot.runtimeDiagnostics.storage.fileCount === 0"')
-    expect(source).toContain('<option value="debug">debug · 完整诊断</option>')
+  it('shows the loaded build and exposes compact runtime log controls', async () => {
+    const { wrapper, snapshot } = await mountRuntimePage()
+    const build = wrapper.get('[aria-label^="产物："]')
+    expect(build.attributes('title')).toContain('宿主已加载此构建')
+    expect(build.attributes('title')).toContain('2026-10-30 12:34')
+    expect(wrapper.get('.codex-runtime-log-panel').text()).toContain('事件 12 · 慢 2 · 落盘 3 文件')
+    await wrapper.get('[aria-label="启用诊断日志"]').setValue(false)
+    await wrapper.get('#codex-runtime-diagnostics-level').setValue('error')
+    expect(wrapper.emitted('dispatch')).toContainEqual(['runtime.logs.configure', { enabled: false, level: 'debug' }])
+    expect(wrapper.emitted('dispatch')).toContainEqual(['runtime.logs.configure', { enabled: true, level: 'error' }])
+    const buttons = wrapper.findAll('.codex-runtime-log-actions button')
+    for (const button of buttons) await button.trigger('click')
+    expect(wrapper.emitted('dispatch')).toContainEqual(['runtime.logs.openFile'])
+    expect(wrapper.emitted('dispatch')).toContainEqual(['runtime.logs.openDirectory'])
+    expect(wrapper.emitted('dispatch')).toContainEqual(['runtime.logs.clear'])
+    expect(wrapper.text()).not.toContain('/diagnostic/current.log')
+    await wrapper.setProps({ snapshot: {
+      ...snapshot, runtimeIdentity: { ...snapshot.runtimeIdentity!, status: 'reload-required' },
+      runtimeDiagnostics: { ...snapshot.runtimeDiagnostics!, activeFile: '', storage: { ...snapshot.runtimeDiagnostics!.storage, fileCount: 0 } }
+    } })
+    expect(wrapper.get('[aria-label^="产物："]').attributes('title')).toContain('运行身份不一致，需要重载')
+    expect(wrapper.findAll('.codex-runtime-log-actions button')[0].attributes()).toHaveProperty('disabled')
+    expect(wrapper.findAll('.codex-runtime-log-actions button')[2].attributes()).toHaveProperty('disabled')
   })
 
-  it('surfaces aggregate activity decision diagnostics without an identity field', () => {
-    const pageSource = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
-    const presentationSource = readFileSync(resolve(process.cwd(), 'src/domain/codexEnvironmentPresentation.ts'), 'utf8')
-    expect(presentationSource).toContain("label: '状态裁决'")
-    expect(presentationSource).toContain('丢弃旧读')
-    expect(presentationSource).toContain('延后分支终态')
-    expect(presentationSource).toContain('`保护 ${protectionCount} · 周期 ${decisions.liveEpochOpened}`')
-    expect(presentationSource).not.toContain('decisions.task')
-    expect(pageSource).toContain('buildCodexEnvironmentPresentation(')
-    expect(pageSource).toContain(':data-tip="row.detail"')
-    expect(pageSource).toContain(':data-operation-description="row.detail"')
-    expect(pageSource).toContain('codexConnectionStatusLabel(')
-    expect(pageSource).toContain("environmentPresentation.diagnostic.role === 'alert' ? 'polite' : undefined")
-    expect(pageSource).toContain('<p v-if="showEnvironmentDetail">{{ environmentPresentation.diagnostic.detail }}</p>')
-    expect(pageSource).toContain('visibleCodexEnvironmentRows(')
-    expect(pageSource).toContain('shouldInlineCodexEnvironmentDetail(')
-    expect(pageSource).toContain('v-for="row in visibleEnvironmentRows"')
-    expect(pageSource).toContain('class="codex-launch-row"')
-    expect(pageSource).toContain('placeholder="手动指定 Codex CLI 路径（可选）"')
-    expect(pageSource).not.toContain('<strong>连接位置</strong>')
-    expect(pageSource).not.toContain('<span>手动指定 Codex CLI 路径（可选）</span>')
-    expect(pageSource).not.toContain('aria-live="polite" aria-atomic="true"')
-    expect(pageSource).not.toContain("label: '状态裁决'")
-    expect(pageSource).not.toContain('role="button"')
-    expect(pageSource).not.toContain('tabindex="0" aria-label=')
+  it('keeps the compact connection status and aggregate decisions free of task identities', async () => {
+    const { wrapper } = await mountRuntimePage()
+    expect(wrapper.get('[aria-label^="连接："]').attributes('title')).toBe('等待首次读取')
+    const presentation = buildCodexEnvironmentPresentation(emptyCodexEnvironment(), {
+      liveEpochOpened: 2, hydrationActiveDeferred: 0, staleTurnDiscarded: 3, branchTerminalDeferred: 5,
+      snapshotConflictSuppressed: 7, missingMappingRetained: 11, waitingEdgeResubscribe: 0, waitingEdgeRecoveryExpired: 0,
+      task: 'private-task-id'
+    } as Parameters<typeof buildCodexEnvironmentPresentation>[1])
+    const row = presentation.rows.find((candidate) => candidate.label === '状态裁决')!
+    expect(row.value).toBe('保护 26 · 周期 2')
+    expect(row.detail).toContain('丢弃旧读 3')
+    expect(row.detail).toContain('延后分支终态 5')
+    expect(JSON.stringify(row)).not.toContain('private-task-id')
   })
 
-  it('renders Claude registration state as checkable rows with focusable detail', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
-    // The rows reuse the diagnostic grid's row language rather than inventing a
-    // second status vocabulary, and every explanation stays behind a real
-    // focusable button (RAW-087: no permanently visible instructional copy).
-    expect(source).toContain('class="codex-diagnostic-grid codex-claude-grid"')
-    expect(source).toContain('v-for="row in claudeRegistrationGrid"')
-    expect(source).toContain('claudeRegistrationRows(props.snapshot.claudeEnvironment, Date.now())')
-    expect(source).toContain(':class="`is-${row.tone}`"')
-    expect(source).not.toContain('role="button"')
+  it('lets Claude and Cursor source switches request automatic hook registration', async () => {
+    const { wrapper, snapshot } = await mountRuntimePage()
+    const rows = wrapper.findAll('.codex-runtime-switch-grid label')
+    const claude = rows.find((row) => row.text().includes('Claude Code'))!
+    const cursor = rows.find((row) => row.text().includes('Cursor Agent'))!
+    await claude.get('input').setValue(true)
+    await cursor.get('input').setValue(true)
+    expect(wrapper.emitted('dispatch')).toContainEqual(['codex.settings.update', { settings: { providers: { ...snapshot.settings.providers, claude: true } } }])
+    expect(wrapper.emitted('dispatch')).toContainEqual(['codex.settings.update', { settings: { providers: { ...snapshot.settings.providers, cursor: true } } }])
+    expect(wrapper.text()).not.toContain('重新注册钩子')
+    expect(wrapper.text()).not.toContain('移除钩子')
   })
 
-  it('treats outdated hooks as registered so re-register and remove both stay reachable', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
-    expect(source).toContain("hooks === 'installed' || hooks === 'outdated'")
-    expect(source).toContain("claudeRegistered ? '重新注册钩子' : '注册事件钩子'")
-    expect(source).toContain('v-if="claudeRegistered"')
+  it('keeps the Claude source switch usable when installed hooks are outdated', async () => {
+    const { wrapper, snapshot } = await mountRuntimePage({ claudeHooks: 'outdated', claudeEnabled: true })
+    const claude = wrapper.findAll('.codex-runtime-switch-grid label').find((row) => row.text().includes('Claude Code'))!
+    expect(claude.text()).toContain('自动注册钩子')
+    await claude.get('input').setValue(false)
+    expect(wrapper.emitted('dispatch')).toContainEqual(['codex.settings.update', { settings: { providers: { ...snapshot.settings.providers, claude: false } } }])
   })
 
   it('shows Weekly-only 23% with a complete Weekly ring and no false 5h label', () => {
@@ -660,6 +738,82 @@ describe('Codex Companion V4 UI contract', () => {
     mounted.push(single)
     expect(single.find('.codex-water-ball__pair').exists()).toBe(false)
     expect(single.get('.codex-water-ball__value strong').text()).toBe('45%')
+  })
+
+  it('keeps a 4-cell Magpie quota grid compact so Token/Grok/Cursor do not collide', () => {
+    const compact = buildCodexCompactPresentation({
+      quota: quota(false, true),
+      compactFields: [],
+      conversationInboxEnabled: true,
+      taskCounts: { input: 0, active: 0, unread: 0 }
+    })
+    const wrapper = mount(CodexWaterBall, {
+      props: {
+        primary: compact.primary,
+        secondary: compact.secondary,
+        stateLabel: '',
+        label: compact.ariaLabel,
+        appearance: defaults.waterAppearance,
+        colors: defaults.colors,
+        quotaGrid: [
+          { key: 'token', label: 'Token', kind: 'token', percent: null, text: '3.6W', detail: 'Codex Token 余量 36000 credits' },
+          { key: 'grok', label: 'Grok', kind: 'percent', percent: 81, text: '81', detail: 'Grok 7 天剩余 81%' },
+          { key: 'cursor-models', label: 'G', kind: 'percent', percent: 73, text: '73', detail: 'Cursor Models 剩余 73%' },
+          { key: 'cursor-other', label: 'A', kind: 'percent', percent: 20, text: '20', detail: 'Cursor Other Models 剩余 20%' }
+        ]
+      }
+    })
+    mounted.push(wrapper)
+    expect(wrapper.get('.codex-water-ball__grid').classes()).toContain('layout-rows')
+    expect(wrapper.findAll('.codex-water-ball__grid-row')).toHaveLength(2)
+    expect(wrapper.get('.codex-water-ball__grid-row.row-top').classes()).toContain('row-pair')
+    expect(wrapper.get('.codex-water-ball__grid-row.row-bottom').classes()).toContain('row-pair')
+    expect(wrapper.findAll('.codex-water-ball__grid-cell')).toHaveLength(4)
+    expect(wrapper.get('.codex-water-ball__grid-cell.kind-token .codex-water-ball__grid-value').text()).toBe('3.6W')
+    expect(wrapper.get('.codex-water-ball__grid').text()).toContain('Grok')
+    expect(wrapper.get('.codex-water-ball__grid').text()).toContain('81')
+    const source = readFileSync(resolve(process.cwd(), 'src/components/CodexWaterBall.vue'), 'utf8')
+    expect(source).toContain('.codex-water-ball__value strong.codex-water-ball__grid-value {')
+    expect(source).toContain("font-size: min(calc(var(--water-percent-size, 22px) * .66), calc(var(--water-size, 94px) * .17));")
+    expect(source).toContain('place-content: center;')
+    expect(source).toContain('.codex-water-ball__value.has-grid')
+    expect(source).toContain('transform: translateY(4%);')
+    expect(wrapper.get('.codex-water-ball__value').classes()).toContain('has-grid')
+    expect(source).not.toContain('.codex-water-ball__grid-cell.kind-token .codex-water-ball__grid-value')
+    expect(source).not.toContain('layout-three')
+    expect(source).toMatch(/\.codex-water-ball__grid-label \{[^}]*color: #F7F4EA;[^}]*text-transform: none;/)
+    expect(source).toMatch(/\.codex-water-ball__value strong\.codex-water-ball__grid-value \{[^}]*color: #F7F4EA;/)
+    expect(source).toContain('color: var(--water-percent-color, #fff);')
+    expect(source).not.toContain('rgba(3, 13, 24, .72)')
+  })
+
+  it('centres a lone Magpie quota cell in its surviving row', () => {
+    const compact = buildCodexCompactPresentation({
+      quota: quota(false, true),
+      compactFields: [],
+      conversationInboxEnabled: true,
+      taskCounts: { input: 0, active: 0, unread: 0 }
+    })
+    const wrapper = mount(CodexWaterBall, {
+      props: {
+        primary: compact.primary,
+        secondary: compact.secondary,
+        stateLabel: '',
+        label: compact.ariaLabel,
+        appearance: defaults.waterAppearance,
+        colors: defaults.colors,
+        quotaGrid: [
+          { key: 'token', label: 'Token', kind: 'token', percent: null, text: '3.6W', detail: 'Codex Token 余量 36000 credits' },
+          { key: 'cursor-models', label: 'G', kind: 'percent', percent: 73, text: '73', detail: 'Cursor Models 剩余 73%' }
+        ]
+      }
+    })
+    mounted.push(wrapper)
+    expect(wrapper.get('.codex-water-ball__grid').classes()).toContain('layout-rows')
+    expect(wrapper.findAll('.codex-water-ball__grid-row')).toHaveLength(2)
+    expect(wrapper.get('.codex-water-ball__grid-row.row-top').classes()).toContain('row-single')
+    expect(wrapper.get('.codex-water-ball__grid-row.row-bottom').classes()).toContain('row-single')
+    expect(wrapper.findAll('.codex-water-ball__grid-cell')).toHaveLength(2)
   })
 
   it('fills the empty codex channels from the centre provider overrides', () => {
@@ -1305,6 +1459,112 @@ describe('Codex Companion V4 UI contract', () => {
     expect(wrapper.text()).not.toContain('再次操作确认')
   })
 
+  describe('local opening shortcut repeat regression', () => {
+    it.each(['codex.task.openFocused', 'codex.task.openIndex.1', 'codex.quick.open.1'].flatMap(
+      (command) => ['root', 'window', 'search'].map((target) => ({ command, target }))
+    ))('opens once for $command at $target while a key is held', async ({ command, target }) => {
+      const source = floatSnapshot('ongoing')
+      source.keybindings = [{ actionId: command, shortcutId: 'Ctrl+J', layer: 'codex', when: 'true', weight: 100, executionOwner: 'float-local' }]
+      const { wrapper, action } = mountFloat(true, source)
+      await wrapper.vm.$nextTick()
+      await wrapper.get(`[data-focus-key="task:${TASK_ACTIVE}"]`).trigger('pointermove', { clientX: 10, clientY: 10 })
+      const destination = target === 'window' ? window : target === 'search'
+        ? wrapper.get('input[aria-label="搜索当前 Codex 页签"]').element
+        : wrapper.get('.codex-float-root').element
+      for (const repeat of [false, true, true]) {
+        destination.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', code: 'KeyJ', ctrlKey: true, repeat, bubbles: true, cancelable: true }))
+        await wrapper.vm.$nextTick()
+      }
+      expect(action.mock.calls.filter(([id]) => id === 'codex.task.open')).toHaveLength(1)
+    })
+
+    it('still moves focus on repeated arrow navigation', async () => {
+      const { wrapper } = mountFloat(true, floatSnapshot('all'))
+      await wrapper.vm.$nextTick()
+      await wrapper.get(`[data-focus-key="task:${TASK_INPUT}"]`).trigger('pointermove', { clientX: 10, clientY: 10 })
+      await wrapper.get('.codex-float-root').trigger('keydown', { key: 'ArrowDown', code: 'ArrowDown', repeat: true })
+      expect(wrapper.get(`[data-focus-key="task:${TASK_ACTIVE}"]`).classes()).toContain('highlighted')
+    })
+  })
+
+  describe('water collapse callback regression', () => {
+    afterEach(() => { vi.restoreAllMocks() })
+
+    function controlledCollapse() {
+      vi.useFakeTimers()
+      const frames: FrameRequestCallback[] = []
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => frames.push(callback))
+      const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+      const timers = vi.spyOn(globalThis, 'setTimeout')
+      let activate!: Parameters<NonNullable<NonNullable<Window['eypcFloat']>['onActivate']>>[0]
+      let state!: Parameters<NonNullable<Window['eypcFloat']>['onState']>[0]
+      const fixture = mountFloat(true, floatSnapshot(), {
+        onActivate: (listener) => { activate = listener; return () => undefined },
+        onState: (listener) => { state = listener; return () => undefined }
+      })
+      const collapse = async () => {
+        await fixture.wrapper.get('.codex-float-root').trigger('keydown', { key: 'Escape', code: 'Escape' })
+        const timeout = timers.mock.calls.filter(([, delay]) => delay === 200).at(-1)![0] as () => void
+        return timeout
+      }
+      const reopen = async () => {
+        activate({})
+        state({ expanded: true, pinned: false, resizing: false, resizeCorner: 'bottom-right', expandedSize: null })
+        await fixture.wrapper.vm.$nextTick()
+      }
+      return { ...fixture, frames, cancelFrame, collapse, reopen }
+    }
+
+    it.each(['frames', 'timeout'])('sends once after the normal %s boundary', async (mode) => {
+      const { collapse, frames, setExpansion } = controlledCollapse()
+      await collapse()
+      expect(setExpansion).not.toHaveBeenCalled()
+      if (mode === 'frames') {
+        frames[0]!(0)
+        expect(setExpansion).not.toHaveBeenCalled()
+        frames[1]!(16)
+      } else {
+        await vi.advanceTimersByTimeAsync(199)
+        expect(setExpansion).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+      }
+      await vi.advanceTimersByTimeAsync(200)
+      frames.forEach((callback) => callback(400))
+      expect(setExpansion.mock.calls).toEqual([[false, false]])
+    })
+
+    it.each(['restart', 'reopen', 'unmount'].flatMap(
+      (transition) => ['frame', 'timeout'].map((callback) => ({ transition, callback }))
+    ))('ignores already queued $callback after $transition', async ({ transition, callback }) => {
+      const { wrapper, collapse, reopen, frames, setExpansion, cancelFrame } = controlledCollapse()
+      const staleTimeout = await collapse()
+      frames[0]!(0)
+      const staleFrame = frames[1]!
+      if (transition === 'unmount') {
+        wrapper.unmount()
+        mounted.splice(mounted.indexOf(wrapper), 1)
+      } else {
+        await reopen()
+        if (transition === 'restart') await collapse()
+      }
+      setExpansion.mockClear()
+      if (callback === 'frame') staleFrame(16)
+      else staleTimeout()
+      expect(setExpansion).not.toHaveBeenCalled()
+      expect(cancelFrame).toHaveBeenCalled()
+      if (transition === 'restart') {
+        // 旧回调不能抢发，也不能清除新一轮的 200ms 兜底。
+        await vi.advanceTimersByTimeAsync(199)
+        expect(setExpansion).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+        expect(setExpansion.mock.calls).toEqual([[false, false]])
+      } else {
+        await vi.advanceTimersByTimeAsync(200)
+        expect(setExpansion).not.toHaveBeenCalled()
+      }
+    })
+  })
+
   it('honors resolved Codex shortcut bindings and suppresses list commands in the search input', async () => {
     const source = floatSnapshot('all')
     source.keybindings = [{ actionId: 'codex.search.focus', shortcutId: 'Ctrl+K', layer: 'codex', when: "tab == 'codex' && !textInputFocused", weight: 100, executionOwner: 'float-local' }]
@@ -1389,11 +1649,13 @@ describe('Codex Companion V4 UI contract', () => {
     const visibleKeys = () => wrapper.findAll('.float-task-row').map((row) => row.attributes('data-focus-key'))
     expect(visibleKeys().slice(0, 2)).toEqual([`task:${TASK_DONE}`, `task:${TASK_FAILED}`])
 
+    const initialSearchCount = wrapper.get('.float-search-meta').text()
     const pinnedHeader = wrapper.get('.float-status-section.pinned')
     await pinnedHeader.get('.status-section-toggle').trigger('click')
     await wrapper.vm.$nextTick()
     expect(wrapper.find(`[data-focus-key="task:${TASK_DONE}"]`).exists()).toBe(false)
     expect(wrapper.find(`[data-focus-key="task:${TASK_FAILED}"]`).exists()).toBe(false)
+    expect(wrapper.get('.float-search-meta').text()).toBe(initialSearchCount)
     expect(wrapper.findAll('.status-quick-index').map((badge) => badge.text())).toEqual(['1'])
     expect(wrapper.findAll('.task-quick-index')[0]?.text()).toBe('2')
 
@@ -1418,6 +1680,7 @@ describe('Codex Companion V4 UI contract', () => {
     // 编号常驻：`Alt+数字` 在展开卡片里始终可用，所以进入筛选模式前编号就该在。
     const restingRows = wrapper.findAll('.float-task-row').filter((row) => row.find('.task-quick-index').exists())
     expect(restingRows.length).toBeGreaterThan(0)
+    expect(restingRows[0].find('.task-title-line .task-quick-index').exists()).toBe(true)
     expect(restingRows[0].attributes('aria-label')).toContain('快捷键 Alt+1 打开')
     expect(restingRows[0].attributes('aria-label')).not.toContain('Ctrl+1')
 
@@ -2011,11 +2274,37 @@ describe('Codex Companion V4 UI contract', () => {
     expect(wrapper.text()).not.toContain('水纹配色')
   })
 
+  it('shows tab-specific search counts and the saved dynamic range without counting collapsed rows away', async () => {
+    vi.useFakeTimers()
+    const source = floatSnapshot('all')
+    Object.assign(source, { dynamicTaskWindowHours: 72 })
+    const { wrapper } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+    const tabs = wrapper.findAll('.float-task-tabs button')
+    const count = (index: number) => tabs[index].find('span').text()
+    expect(wrapper.get('.float-search-meta').text()).toBe(`近期 3 天 · ${count(0)} 条`)
+    expect(wrapper.get('.float-search-meta').attributes('aria-label')).toContain('待继续不受时间限制')
+    await wrapper.get('.float-search-field').trigger('pointerenter')
+    await vi.advanceTimersByTimeAsync(200)
+    expect(document.querySelector('.operation-tooltip')?.textContent).toContain('待继续不受时间限制')
+    await wrapper.get('.float-search-field').trigger('pointerleave')
+    await wrapper.get('input[data-input-role="codex-search"]').setValue('执行失败')
+    expect(wrapper.get('.float-search-meta').text()).toBe('近期 3 天 · 匹配 1 条')
+    await wrapper.get('input[data-input-role="codex-search"]').setValue('')
+    await tabs[1].trigger('click')
+    expect(wrapper.get('.float-search-meta').text()).toBe(`已完成 · ${count(1)} 条`)
+    await tabs[2].trigger('click')
+    expect(wrapper.get('.float-search-meta').text()).toBe(`已隐藏 · ${count(2)} 条`)
+    await tabs[3].trigger('click')
+    expect(wrapper.get('.float-search-meta').text()).toBe(`项目 · ${count(3)} 个`)
+    expect(wrapper.get('.float-search-meta').text()).not.toContain('30 天')
+  })
+
   it('moves inventory count into the search field and uses a hover ! for stale snapshots', async () => {
     const verified = mountFloat(true, floatSnapshot('all'))
     await verified.wrapper.vm.$nextTick()
     expect(verified.wrapper.get('input[data-input-role="codex-search"]').attributes('placeholder')).toBe('别名|任务|项目')
-    expect(verified.wrapper.get('.float-search-meta').text()).toMatch(/^最近 30 天的 \d+ 条$/)
+    expect(verified.wrapper.get('.float-search-meta').text()).toMatch(/^动态 · \d+ 条$/)
     expect(verified.wrapper.find('.float-source-status').exists()).toBe(false)
     expect(verified.wrapper.find('.float-search-glyph.alert').exists()).toBe(false)
 
@@ -2026,7 +2315,7 @@ describe('Codex Companion V4 UI contract', () => {
     await stale.wrapper.vm.$nextTick()
     expect(stale.wrapper.get('.float-search-glyph.alert').text()).toBe('!')
     expect(stale.wrapper.get('.float-search-glyph.alert').attributes('aria-label')).toContain('数据已过期 · 展示上一份已验证快照')
-    expect(stale.wrapper.get('.float-search-meta').text()).toMatch(/^最近 30 天的 \d+ 条$/)
+    expect(stale.wrapper.get('.float-search-meta').text()).toMatch(/^动态 · \d+ 条$/)
     expect(stale.wrapper.find('.float-source-status').exists()).toBe(false)
     expect(stale.wrapper.find('.float-search-meta').text()).not.toContain('数据已过期')
   })
@@ -2057,6 +2346,34 @@ describe('full-width compact lower drag area', () => {
     const starts = vi.mocked(window.eypcFloat!.dragStart).mock.calls.length
     for (const badge of wrapper.findAll('.float-counter, .edge-counters button')) await badge.trigger('pointerdown', { button: 0, pointerId: 2 })
     expect(window.eypcFloat!.dragStart).toHaveBeenCalledTimes(starts)
+  })
+  it('keeps the collapsed water shell clear and the list markers quiet', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
+    const app = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
+    expect(css).toContain('.codex-float-root.water:not(.expanded) .float-compact.water-surface')
+    expect(css).toContain('.float-compact.card-surface')
+    expect(css).not.toContain('rgba(0, 0, 0, .004)')
+    expect(css).not.toContain('#e4163d')
+    expect(css).toContain(".float-status-section em::before { content: '· '; }")
+    expect(css).toContain('width: 18px;')
+    expect(css).not.toContain('background: color-mix(in srgb, var(--task-tone, var(--codex-muted)) 12%')
+    expect(app).toContain('index === QUICK_INDEX_LIMIT ? 0 : index')
+    expect(app).toContain('class="task-title-line"')
+  })
+  it('isolates the transparent Float canvas from the shared color scheme', () => {
+    const shared = document.createElement('style')
+    const float = document.createElement('style')
+    shared.textContent = readFileSync(resolve(process.cwd(), 'src/styles/design-system-v7.css'), 'utf8')
+    float.textContent = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
+    document.head.append(shared, float)
+    try {
+      expect(getComputedStyle(document.documentElement).colorScheme).toBe('normal')
+      expect(getComputedStyle(document.documentElement).backgroundColor).toBe('transparent')
+      expect(getComputedStyle(document.body).backgroundColor).toBe('transparent')
+    } finally {
+      shared.remove()
+      float.remove()
+    }
   })
   it('paints one full-width lower-half grab surface below the counter buttons', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')

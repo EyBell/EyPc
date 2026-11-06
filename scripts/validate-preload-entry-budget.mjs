@@ -194,8 +194,15 @@ const BUDGET = Object.freeze({
   // The eligibility decision stays in desktop-activity-resolution.cjs.
   // 2026-10-25: owner/Goal wiring adds 16 lines; linear IPC frame ingestion
   // moves 7 back into its transport owner. No entry state/functions added.
-  // 2026-11-05: +22 unread recovery wiring lines; existing entry has 2 prior lines.
-  lines: 14754,
+  // 2026-10-26: +2 guard lines keep hot previous/next on the complete Snapshot;
+  // cold recovery and ordinary entry retain their membership reconciliation.
+  // 2026-11-05: +22 wiring lines for read-notification diagnostics and
+  // binding/source-change recovery. The recovery state machine stays in the
+  // existing desktop-unread-evidence owner; no top-level entry state added.
+  // 2026-11-06: +11 snapshot witness wiring lines; policy stays in the activity owner.
+  // 2026-11-06: +53 lines for isolated continue-task dependency wiring and
+  // post-resume Plan identity/activity revalidation; continuation policy stays in its module.
+  lines: 14818,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
@@ -212,7 +219,8 @@ const BUDGET = Object.freeze({
   // 2026-09-13 (RAW-219): +5 -- orcaBridge, loadError, observation helper,
   // provider order, inventory disposer.
   // 2026-10-02: +1 for codexChatgptProjectIndex.
-  mutableBindings: 162
+  // One cached continue executor; per-target locks remain module-owned.
+  mutableBindings: 163
 })
 
 const root = resolve(import.meta.dirname, '..')

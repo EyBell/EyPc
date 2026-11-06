@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 // codex-unread-linkage task card and architecture owner, reviewed with the diff.
 export function checkCodexUnreadRoute(root = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
   const owner = readFileSync(resolve(root, 'preload/codex/desktop-unread-evidence.cjs'))
-  const expected = '7a91d1098ca2fded39aabf9867095d7002dbcf7bce03332bef92ec85441a05f1'
+  const expected = 'e2e3946d0543af9e48649ac0ea765fee62ca8c308eb350271ae4bafe9d7b0c3b'
   if (createHash('sha256').update(owner).digest('hex') !== expected) {
     throw new Error('Codex 未读通路基线改变：须审查原因、更新架构与验证记录后显式更新基线')
   }

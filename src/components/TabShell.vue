@@ -29,10 +29,9 @@ defineEmits<{ select: [tab: AppTabId] }>()
         <kbd v-if="showShortcutHints" class="tab-shortcut-hint">{{ commandShortcutLabels[feature.shortcutCommandId] || formatShortcutLabel(feature.shortcutId) }}</kbd>
       </button>
       <div class="tab-help">
-        <button type="button" class="tab-help-trigger" aria-label="快捷键帮助">?</button>
-        <div class="tab-help-popover" role="tooltip">
-          <CommandHints :snapshot="snapshot" />
-        </div>
+        <CommandHints v-slot="{ hintText }" :snapshot="snapshot">
+          <button type="button" class="tab-help-trigger" aria-label="快捷键帮助" :data-operation-description="hintText">?</button>
+        </CommandHints>
       </div>
     </nav>
     <section class="tab-content">

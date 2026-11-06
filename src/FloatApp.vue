@@ -27,6 +27,7 @@ import {
 } from '@lucide/vue'
 import CodexWaterBall from './components/CodexWaterBall.vue'
 import CompanionEdgeRail from './components/CompanionEdgeRail.vue'
+import OperationTooltipLayer from './components/OperationTooltipLayer.vue'
 import {
   buildCompanionQuotaStrip,
   buildCompanionTaskMetaLine,
@@ -40,7 +41,6 @@ import {
   companionSearchIconHint,
   companionSearchMetaText,
   companionSearchPlaceholder,
-  placeFloatActionHint,
   resolveCompanionProjectMarker,
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation,
@@ -129,15 +129,6 @@ type ComposerState = {
   projectPickerOptions: ComposerProjectPickerOption[]
 }
 type ShiftPreview = { task: CodexTaskCard; left: number; top: number } | null
-type ActionHint = {
-  label: string
-  left: number
-  top: number
-  placement: 'top' | 'bottom'
-  arrowLeft: number
-  maxWidth: number
-  sticky?: boolean
-} | null
 type QuickJumpDomTarget = QuickJumpDomTargetV7
 
 const COMPOSER_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
@@ -181,7 +172,6 @@ const pendingConfirm = ref<{
   operationId: string
   source: 'archive-button' | 'batch-archive' | 'project-archive' | 'manual-row-open'
 } | null>(null)
-const pendingPlanExecute = ref<{ key: string; identity: string; until: number } | null>(null)
 const liveMessage = ref('')
 const drawerActiveIndex = ref(0)
 const highlightOwner = ref<'mouse' | 'keyboard'>('mouse')
@@ -190,9 +180,7 @@ const previewKeyboardKey = ref('')
 const shiftPreview = ref<ShiftPreview>(null)
 const shiftHeld = ref(false)
 const shiftPreviewSuppressed = ref(false)
-const actionHint = ref<ActionHint>(null)
-const actionHintEl = ref<HTMLElement | null>(null)
-const compactCounterHintText = ref('')
+const tooltipLayer = ref<InstanceType<typeof OperationTooltipLayer> | null>(null)
 const optimisticProjectCollapsed = ref<Record<string, boolean>>({})
 
 const runtimeReloadRequired = computed(() => (
@@ -239,11 +227,10 @@ let suppressRailHover = false
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let waterCollapseTimer: ReturnType<typeof setTimeout> | null = null
 let waterCollapsePending = false
+let waterCollapseGeneration = 0
+let waterCollapseFrame: number | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
-let planExecuteTimer: ReturnType<typeof setTimeout> | null = null
-let actionHintTimer: ReturnType<typeof setTimeout> | null = null
 let lastHintAnchor: HTMLElement | null = null
-let compactCounterHintTimer: ReturnType<typeof setTimeout> | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
 let searchLayoutObserver: ResizeObserver | null = null
 let desiredExpanded = false
@@ -463,11 +450,24 @@ const searchAlertText = computed(() => companionSearchAlertText({
   conversationErrorMessage: conversations.value?.errorMessage,
   claudeGapNote: claudeRealtimeGapNote(companionSlice.value)
 }))
+const searchResultCount = computed(() => {
+  if (!normalizedSearch()) return tabs.value.find((tab) => tab.id === selectedUiTab.value)?.count || 0
+  if (selectedUiTab.value === 'dynamic') return dynamicStatus.value.tasks.filter((task) => taskMatches(task)).length
+  if (selectedUiTab.value === 'completed') return [...(conversations.value?.completed || []), ...(conversations.value?.completedUnread || [])].filter((task) => taskMatches(task)).length
+  if (selectedUiTab.value === 'hidden') return conversations.value?.hidden.filter((task) => taskMatches(task)).length || 0
+  return new Set(renderRows.value.filter((row) => row.kind === 'project').map((row) => row.project.key)).size
+})
 const searchMetaText = computed(() => companionSearchMetaText({
-  timeWindowDays: settings.value?.timeWindowDays || 30,
-  count: conversations.value?.all.length,
+  tab: selectedUiTab.value,
+  dynamicTaskWindowHours: settings.value && 'dynamicTaskWindowHours' in settings.value
+    && typeof settings.value.dynamicTaskWindowHours === 'number' ? settings.value.dynamicTaskWindowHours : undefined,
+  count: searchResultCount.value,
+  filtered: Boolean(normalizedSearch()),
   hasInventory: conversations.value?.completeness === 'verified' || conversations.value?.status === 'stale'
 }))
+const searchMetaHint = computed(() => selectedUiTab.value === 'dynamic'
+  ? `${searchMetaText.value}；时间范围用于普通近期任务，待继续不受时间限制；置顶、待输入和已完成未读也不受限。已隐藏和已暂停任务不计入；折叠分组不减少条数。`
+  : `${searchMetaText.value}；数量对应当前页签及搜索筛选，折叠分组不减少条数。`)
 const searchIconHint = computed(() => companionSearchIconHint(
   searchAlertText.value,
   searchPlaceholderHidden.value,
@@ -872,13 +872,6 @@ function mapUiTab(input?: CodexTaskTab) {
 watch(() => conversations.value?.activeTab, (value) => {
   selectedUiTab.value = mapUiTab(value)
 }, { immediate: true })
-
-watch(() => conversations.value?.all, (tasks) => {
-  const pending = pendingPlanExecute.value
-  if (!pending) return
-  const task = tasks?.find((candidate) => candidate.key === pending.key)
-  if (!task || planActionIdentity(task) !== pending.identity) clearPlanExecuteConfirmation()
-})
 
 function fallbackFocus() {
   void nextTick(() => {
@@ -1397,7 +1390,7 @@ const drawerActions = computed<DrawerAction[]>(() => {
           },
           {
             id: 'task-execute-plan',
-            label: planExecuteConfirming(item.task) ? '确认执行原 Plan' : '执行原 Plan',
+            label: '实施计划',
             disabled: item.task.companionCapabilities?.executePlan !== true,
             disabledReason: planActionBlockedReason(item.task, '执行'),
             run: () => requestPlanExecute(item.task)
@@ -1426,6 +1419,9 @@ const drawerActions = computed<DrawerAction[]>(() => {
       { id: 'task-pin', label: pinMenuLabel(item), disabled: pinIsReadOnly(item), disabledReason: pinSourceHint(item), run: () => togglePin(item) },
       ...manualPhaseActions,
       ...planActions,
+      ...(item.task.companionCapabilities?.continueTask === true
+        ? [{ id: 'task-continue', label: '继续任务', run: () => requestTaskContinue(item.task) }]
+        : []),
       { id: 'task-archive', label: '真实归档', danger: true, disabled: !item.task.canArchive, disabledReason: taskArchiveBlockedReason(item.task), run: requestTaskArchive }
     ]
   }
@@ -1451,6 +1447,11 @@ function action(actionId: string, args: Record<string, unknown> = {}) {
 
 function cancelWaterCollapseWait() {
   waterCollapsePending = false
+  waterCollapseGeneration += 1
+  if (waterCollapseFrame !== null) {
+    cancelAnimationFrame(waterCollapseFrame)
+    waterCollapseFrame = null
+  }
   if (waterCollapseTimer) {
     clearTimeout(waterCollapseTimer)
     waterCollapseTimer = null
@@ -1469,13 +1470,18 @@ function requestExpansion(nextExpanded: boolean) {
     return
   }
   waterCollapsePending = true
+  const generation = waterCollapseGeneration
   expanded.value = false
   const started = Date.now()
   let frames = 0
   let sent = false
   const send = () => {
-    if (sent || !waterCollapsePending || desiredExpanded !== false) return
+    if (sent || generation !== waterCollapseGeneration || !waterCollapsePending || desiredExpanded !== false) return
     sent = true
+    if (waterCollapseFrame !== null) {
+      cancelAnimationFrame(waterCollapseFrame)
+      waterCollapseFrame = null
+    }
     if (waterCollapseTimer) {
       clearTimeout(waterCollapseTimer)
       waterCollapseTimer = null
@@ -1483,14 +1489,15 @@ function requestExpansion(nextExpanded: boolean) {
     window.eypcFloat?.setExpansion(false, false)
   }
   const step = () => {
-    if (sent || !waterCollapsePending || desiredExpanded !== false) return
+    if (sent || generation !== waterCollapseGeneration || !waterCollapsePending || desiredExpanded !== false) return
+    waterCollapseFrame = null
     frames += 1
     if (frames >= 2 || Date.now() - started >= 200) send()
-    else requestAnimationFrame(step)
+    else waterCollapseFrame = requestAnimationFrame(step)
   }
   if (waterCollapseTimer) clearTimeout(waterCollapseTimer)
   waterCollapseTimer = setTimeout(send, 200)
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(step)
+  if (typeof requestAnimationFrame === 'function') waterCollapseFrame = requestAnimationFrame(step)
   else send()
 }
 
@@ -1537,15 +1544,11 @@ function queueCompactCounterHint(event: Event, kind: 'input' | 'active' | 'unrea
   clearCompactCounterHint()
   const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   if (!target) return
-  compactCounterHintTimer = setTimeout(() => {
-    if (target.isConnected) compactCounterHintText.value = compactCounterHint(kind)
-  }, 200)
+  tooltipLayer.value?.showManual(target, compactCounterHint(kind), { kind: 'compact', boundary: target.closest('.float-compact-shell'), delay: 200 })
 }
 
 function clearCompactCounterHint() {
-  if (compactCounterHintTimer) clearTimeout(compactCounterHintTimer)
-  compactCounterHintTimer = null
-  compactCounterHintText.value = ''
+  tooltipLayer.value?.hideManual(false, 'compact')
 }
 
 function openCompactStatus(kind: 'input' | 'active' | 'unread') {
@@ -1613,33 +1616,12 @@ function restoreTask(task: CodexTaskCard) {
   if (task.hiddenKind) action('codex.task.restore', { key: task.key, revisionAt: task.revisionAt, kind: task.hiddenKind })
 }
 
-function planActionIdentity(task: CodexTaskCard) {
-  return [
-    task.key,
-    task.planLifecycleRevision || 0,
-    task.companionPhase || 'unknown',
-    task.unreadState || 'unknown',
-    task.planPaused ? 1 : 0
-  ].join('|')
-}
-
-function clearPlanExecuteConfirmation() {
-  if (planExecuteTimer) clearTimeout(planExecuteTimer)
-  planExecuteTimer = null
-  pendingPlanExecute.value = null
-}
-
-function planExecuteConfirming(task: CodexTaskCard) {
-  return pendingPlanExecute.value?.identity === planActionIdentity(task)
-    && pendingPlanExecute.value.until >= Date.now()
-}
-
 function planActionBlockedReason(task: CodexTaskCard, actionName: '暂停' | '恢复' | '执行') {
   if (!task.planReady) return '当前任务没有可继续的已完成 Plan'
   if (actionName === '暂停' && task.companionCapabilities?.pause !== true) return '当前 Plan 状态不可暂停'
   if (actionName === '恢复' && task.companionCapabilities?.resume !== true) return '当前 Plan 状态不可恢复'
   if (actionName === '执行' && task.companionCapabilities?.executePlan !== true) return '当前 Plan 尚未完成，或任务已有其它待决状态'
-  return `${actionName} Plan`
+  return actionName === '执行' ? '实施计划' : `${actionName} Plan`
 }
 
 function togglePlanPause(task: CodexTaskCard) {
@@ -1655,19 +1637,15 @@ function togglePlanPause(task: CodexTaskCard) {
   })
 }
 
+function requestTaskContinue(task: CodexTaskCard) {
+  if (task.companionCapabilities?.continueTask !== true) return
+  action('codex.task.continueTask', { key: task.key, revisionAt: task.revisionAt })
+}
+
 function requestPlanExecute(task: CodexTaskCard) {
   if (task.companionCapabilities?.executePlan !== true) {
     liveMessage.value = planActionBlockedReason(task, '执行')
     return
-  }
-  const identity = planActionIdentity(task)
-  const confirmed = pendingPlanExecute.value?.identity === identity
-    && pendingPlanExecute.value.until >= Date.now()
-  if (confirmed) clearPlanExecuteConfirmation()
-  else {
-    clearPlanExecuteConfirmation()
-    pendingPlanExecute.value = { key: task.key, identity, until: Date.now() + 5_000 }
-    planExecuteTimer = setTimeout(clearPlanExecuteConfirmation, 5_000)
   }
   action('codex.task.executePlan', { key: task.key, revisionAt: task.revisionAt })
 }
@@ -2756,6 +2734,9 @@ function onRootKeydown(event: KeyboardEvent) {
   if (!command) return
   event.preventDefault()
   event.stopPropagation()
+  if (event.repeat && (command === 'codex.task.openFocused'
+    || command.startsWith('codex.quick.open.')
+    || command.startsWith('codex.task.openIndex.'))) return
   const executionOwner = floatExecutionOwner(command)
   if (executionOwner !== 'float-local') {
     if (executionOwner === 'runtime-action') {
@@ -3117,74 +3098,24 @@ function resolveHintAnchor(): HTMLElement | null {
   )
 }
 
-function estimateHintSize(label: string) {
-  return { width: Math.min(240, Math.max(72, label.length * 7 + 16)), height: 28 }
-}
-
 function showActionHint(target: HTMLElement | null, label: string, options?: { delay?: number; sticky?: boolean }) {
-  if (actionHintTimer) {
-    clearTimeout(actionHintTimer)
-    actionHintTimer = null
-  }
-  if (!label) return
-  const apply = () => {
-    const anchor = target?.isConnected ? target : resolveHintAnchor()
-    if (!anchor) return
-    const card = rootElement.value?.querySelector('.float-expanded-card') || rootElement.value
-    const cardRect = card?.getBoundingClientRect()
-    const bounds = anchor.getBoundingClientRect()
-    const estimated = estimateHintSize(label)
-    const placed = placeFloatActionHint({
-      anchorLeft: bounds.left,
-      anchorTop: bounds.top,
-      anchorWidth: bounds.width,
-      anchorHeight: bounds.height,
-      cardLeft: cardRect?.left ?? 0,
-      cardTop: cardRect?.top ?? 0,
-      cardWidth: cardRect?.width ?? 0,
-      cardHeight: cardRect?.height ?? 0,
-      hintWidth: estimated.width,
-      hintHeight: estimated.height
-    })
-    actionHint.value = { label, ...placed, sticky: options?.sticky }
-    void nextTick(() => {
-      const el = actionHintEl.value
-      if (!el || !anchor.isConnected) return
-      const measured = el.getBoundingClientRect()
-      if (!(measured.width > 0) || !(measured.height > 0)) return
-      const refined = placeFloatActionHint({
-        anchorLeft: bounds.left,
-        anchorTop: bounds.top,
-        anchorWidth: bounds.width,
-        anchorHeight: bounds.height,
-        cardLeft: cardRect?.left ?? 0,
-        cardTop: cardRect?.top ?? 0,
-        cardWidth: cardRect?.width ?? 0,
-        cardHeight: cardRect?.height ?? 0,
-        hintWidth: measured.width,
-        hintHeight: measured.height
-      })
-      actionHint.value = { label, ...refined, sticky: options?.sticky }
-    })
-  }
-  if (options?.delay) {
-    actionHintTimer = setTimeout(apply, options.delay)
-    return
-  }
-  apply()
+  const anchor = target?.isConnected ? target : resolveHintAnchor()
+  tooltipLayer.value?.showManual(anchor, label, {
+    kind: 'float',
+    boundary: rootElement.value?.querySelector('.float-expanded-card') || rootElement.value,
+    delay: options?.delay,
+    sticky: options?.sticky
+  })
 }
 
 function clearActionHint(force: boolean | Event = false) {
-  if (actionHint.value?.sticky && force !== true) return
-  if (actionHintTimer) clearTimeout(actionHintTimer)
-  actionHintTimer = null
-  actionHint.value = null
+  tooltipLayer.value?.hideManual(force === true, 'float')
 }
 
 function queueActionHint(event: Event, label: string) {
   const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   if (!target || !label) return
-  if (actionHint.value?.sticky) return
+  if (tooltipLayer.value?.hasStickyHint()) return
   showActionHint(target, label, { delay: 200 })
 }
 
@@ -3440,6 +3371,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cancelWaterCollapseWait()
   if (quotaResetTimer) clearInterval(quotaResetTimer)
   clearRailHover()
   window.eypcFloat?.cancelInteraction?.()
@@ -3454,7 +3386,6 @@ onUnmounted(() => {
   composer.value = null
   closeQuickJump()
   clearConfirm()
-  clearPlanExecuteConfirmation()
   taskScrollResizeObserver?.disconnect()
   searchLayoutObserver?.disconnect()
   window.removeEventListener('keydown', onWindowKeydown, true)
@@ -3493,7 +3424,8 @@ onUnmounted(() => {
       v-if="runtimeReloadRequired"
       class="float-runtime-reload"
       role="alert"
-      :title="runtimeReloadMessage"
+      @pointerenter="queueActionHint($event, runtimeReloadMessage)"
+      @pointerleave="clearActionHint"
       @pointerdown.stop
       @click.stop
     >
@@ -3560,7 +3492,6 @@ onUnmounted(() => {
       >{{ codexBadgeText(compactCounts.input) }}</button>
       <button v-if="compactCounts.active" type="button" class="float-counter companion-counter-geometry active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'active')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('active')">{{ codexBadgeText(compactCounts.active) }}</button>
       <button v-if="compactCounts.unread" type="button" class="float-counter companion-counter-geometry unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'unread')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('unread')">{{ codexBadgeText(compactCounts.unread) }}</button>
-      <div v-if="compactCounterHintText" class="float-compact-counter-hint" role="tooltip">{{ compactCounterHintText }}</div>
     </div>
 
     <section v-if="expanded" class="float-expanded-card" :style="edgeStyle ? edgePanelStyle : undefined" aria-label="Codex Companion" @pointerenter="onMouseEnter" @pointerleave="onMouseLeave">
@@ -3625,7 +3556,7 @@ onUnmounted(() => {
           <Search v-else :size="14" aria-hidden="true" />
         </button>
         <span v-else class="float-search-glyph" aria-hidden="true"><Search :size="14" /></span>
-        <span ref="searchField" class="float-search-field">
+        <span ref="searchField" class="float-search-field" @pointerenter="queueActionHint($event, searchMetaHint)" @pointerleave="clearActionHint" @focusin="queueActionHint($event, searchMetaHint)" @focusout="clearActionHint">
           <span ref="searchMeasure" class="float-search-measure" aria-hidden="true">{{ searchPlaceholder }}</span>
           <input
             ref="searchInput"
@@ -3638,7 +3569,7 @@ onUnmounted(() => {
             data-quick-jump-target
             data-quick-jump-label="搜索当前 Codex 页签"
           />
-          <span v-if="searchMetaText" ref="searchMetaEl" class="float-search-meta">{{ searchMetaText }}</span>
+          <span v-if="searchMetaText" ref="searchMetaEl" class="float-search-meta" :aria-label="searchMetaHint">{{ searchMetaText }}</span>
         </span>
         <button v-if="searchText" type="button" class="float-search-clear" aria-label="清空搜索" data-quick-jump-target @click.stop="searchText = ''"><X :size="13" /></button>
         <span class="sr-only" role="status" aria-live="polite">{{ searchLiveText }}</span>
@@ -3772,7 +3703,7 @@ onUnmounted(() => {
               </button>
               <div class="project-inline-actions" role="toolbar" :aria-label="`${row.project.name} 项目操作`">
                 <button type="button" class="inline-icon-button action-pin" :data-pin-source="pinSourceValue(row)" :aria-disabled="pinIsReadOnly(row)" :aria-pressed="Boolean(row.project.pinSource)" :aria-label="`${row.project.name}，${pinSourceHint(row)}`" data-quick-jump-target :data-quick-jump-label="pinSourceHint(row)" @pointerenter="queueActionHint($event, pinSourceHint(row))" @pointerleave="clearActionHint" @focus="queueActionHint($event, pinSourceHint(row))" @blur="clearActionHint" @click.stop="focusedKey = row.key; togglePin(row)"><span class="action-pin-glyph" :class="{ 'is-pinned': pinGlyphPinned(row) }" :style="pinGlyphStyle(row)" aria-hidden="true"><Pin :size="13" /></span></button>
-                <button type="button" class="inline-icon-button action-remove" :class="{ confirming: projectRemoveConfirming(row.project) }" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly || !row.project.actionAlias || !conversations?.sourceFingerprint" :title="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : '从 Codex 侧栏移除；需先完全退出 Codex'" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? `确认从 Codex 侧栏移除 ${row.project.name}` : `从 Codex 侧栏移除 ${row.project.name}`" data-confirm-slot data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : `从 Codex 移除 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @blur="clearActionHint" @click.stop="focusedKey = row.key; requestProjectRemove(row.project, $event)"><Check v-if="projectRemoveConfirming(row.project)" :size="13" aria-hidden="true" /><Trash2 v-else :size="13" aria-hidden="true" /></button>
+                <button type="button" class="inline-icon-button action-remove" :class="{ confirming: projectRemoveConfirming(row.project) }" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly || !row.project.actionAlias || !conversations?.sourceFingerprint" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? `确认从 Codex 侧栏移除 ${row.project.name}` : `从 Codex 侧栏移除 ${row.project.name}`" data-confirm-slot data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : `从 Codex 移除 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @blur="clearActionHint" @click.stop="focusedKey = row.key; requestProjectRemove(row.project, $event)"><Check v-if="projectRemoveConfirming(row.project)" :size="13" aria-hidden="true" /><Trash2 v-else :size="13" aria-hidden="true" /></button>
                 <button type="button" class="inline-icon-button action-hide" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly" :aria-pressed="isProjectHidden(row.project)" :aria-label="isProjectHidden(row.project) ? `恢复项目分组 ${row.project.name}` : `隐藏项目分组 ${row.project.name}`" data-quick-jump-target :data-quick-jump-label="isProjectHidden(row.project) ? `恢复项目 ${row.project.name}` : `隐藏项目 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @blur="clearActionHint" @click.stop="focusedKey = row.key; toggleProjectHidden(row.project)"><Eye v-if="isProjectHidden(row.project)" :size="13" aria-hidden="true" /><EyeOff v-else :size="13" aria-hidden="true" /></button>
                 <button type="button" class="inline-icon-button action-create" :disabled="row.marker.claudeOnly || !row.project.actionAlias" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : row.project.actionAlias ? `在 ${row.project.name} 新建会话` : '项目动作已失效'" data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : `在 ${row.project.name} 新建会话`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @blur="clearActionHint" @click.stop="focusedKey = row.key; openComposer(row.project)"><Plus :size="14" aria-hidden="true" /></button>
               </div>
@@ -3814,20 +3745,20 @@ onUnmounted(() => {
               >
                 <component :is="taskIcon(row.task)" :size="14" class="task-state-icon" aria-hidden="true" />
               </button>
-              <!-- 绝对定位 + pointer-events:none：编号是瞬时提示，不得改变行高、列表顶边或行坐标。
-                   完整语义已在行的 aria-label 里，所以这里对读屏隐藏。 -->
-              <span v-if="quickIndexDigit(row.key)" class="task-quick-index" aria-hidden="true">{{ quickIndexDigit(row.key) }}</span>
               <div
                 class="task-open"
                 @click.stop="activateTaskCore(row.task, $event)"
               >
                 <div class="task-copy">
-                  <button
-                    type="button"
-                    class="task-title-button"
-                    :aria-label="`打开会话 ${taskDisplayLabel(row.task)}`"
-                    @click.stop="activateTaskTitle(row.task, $event)"
-                  >{{ taskDisplayLabel(row.task) }}</button>
+                  <div class="task-title-line">
+                    <span v-if="quickIndexDigit(row.key)" class="task-quick-index" aria-hidden="true">{{ quickIndexDigit(row.key) }}</span>
+                    <button
+                      type="button"
+                      class="task-title-button"
+                      :aria-label="`打开会话 ${taskDisplayLabel(row.task)}`"
+                      @click.stop="activateTaskTitle(row.task, $event)"
+                    >{{ taskDisplayLabel(row.task) }}</button>
+                  </div>
                   <div
                     class="task-meta-line"
                     @pointerenter="queueActionHint($event, taskMetaLine(row.task).detail)"
@@ -3899,20 +3830,31 @@ onUnmounted(() => {
                     <Archive v-else :size="13" aria-hidden="true" />
                   </button>
                 <button
+                  v-if="row.task.companionCapabilities?.continueTask === true"
+                  type="button"
+                  class="inline-icon-button action-continue"
+                  :aria-label="`继续任务 ${taskDisplayLabel(row.task)}`"
+                  data-quick-jump-target
+                  data-quick-jump-label="继续任务"
+                  @pointerenter="queueActionHint($event, '继续任务')"
+                  @pointerleave="clearActionHint"
+                  @focus="queueActionHint($event, '继续任务')"
+                  @blur="clearActionHint"
+                  @click.stop="focusedKey = row.key; requestTaskContinue(row.task)"
+                ><CirclePlay :size="13" aria-hidden="true" /></button>
+                <button
                   type="button"
                   class="inline-icon-button action-create"
-                    :class="{ confirming: row.task.planReady && planExecuteConfirming(row.task) }"
-                    :aria-label="row.task.planReady ? (planExecuteConfirming(row.task) ? `确认执行 ${taskDisplayLabel(row.task)} 的原 Plan` : `执行 ${taskDisplayLabel(row.task)} 的原 Plan`) : taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
-                    :title="row.task.planReady ? planActionBlockedReason(row.task, '执行') : taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
+                    :aria-label="row.task.planReady ? `实施计划 ${taskDisplayLabel(row.task)}` : taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
                     data-quick-jump-target
                     :data-quick-jump-label="row.task.planReady ? planActionBlockedReason(row.task, '执行') : taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
                     :disabled="row.task.planReady ? row.task.companionCapabilities?.executePlan !== true : !taskCanCreateInProject(row.task, taskProject(row.task))"
-                    @pointerenter="queueActionHint($event, row.task.planReady ? (planExecuteConfirming(row.task) ? '再次点击确认执行原 Plan' : planActionBlockedReason(row.task, '执行')) : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
+                    @pointerenter="queueActionHint($event, row.task.planReady ? planActionBlockedReason(row.task, '执行') : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
                   @pointerleave="clearActionHint"
-                  @focus="queueActionHint($event, row.task.planReady ? (planExecuteConfirming(row.task) ? '再次点击确认执行原 Plan' : planActionBlockedReason(row.task, '执行')) : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
+                  @focus="queueActionHint($event, row.task.planReady ? planActionBlockedReason(row.task, '执行') : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; row.task.planReady ? requestPlanExecute(row.task) : taskProject(row.task) && openComposer(taskProject(row.task)!)"
-                ><Check v-if="row.task.planReady && planExecuteConfirming(row.task)" :size="13" aria-hidden="true" /><CirclePlay v-else-if="row.task.planReady" :size="13" aria-hidden="true" /><Plus v-else :size="14" aria-hidden="true" /></button>
+                ><CirclePlay v-if="row.task.planReady" :size="13" aria-hidden="true" /><Plus v-else :size="14" aria-hidden="true" /></button>
               </div>
             </div>
             </div>
@@ -3970,7 +3912,10 @@ onUnmounted(() => {
                   role="button"
                   tabindex="0"
                   aria-label="查看完整标题"
-                  :data-tip="taskTooltip(panel.item.task)"
+                  @pointerenter="queueActionHint($event, taskTooltip(panel.item.task))"
+                  @pointerleave="clearActionHint"
+                  @focus="queueActionHint($event, taskTooltip(panel.item.task))"
+                  @blur="clearActionHint"
                 >i</span>
               </dd>
             </div>
@@ -4054,7 +3999,10 @@ onUnmounted(() => {
               :disabled="option.disabled"
               :class="{ active: composer.projectPickerIndex === index }"
               :data-composer-project-index="index"
-              :title="option.disabledReason || option.label"
+              @pointerenter="queueActionHint($event, option.disabledReason || option.label)"
+              @pointerleave="clearActionHint"
+              @focus="queueActionHint($event, option.disabledReason || option.label)"
+              @blur="clearActionHint"
               @click.stop="selectComposerProject(index)"
             >
               <span>{{ option.label }}</span>
@@ -4149,19 +4097,7 @@ onUnmounted(() => {
       />
     </section>
 
-    <div
-      v-if="actionHint"
-      ref="actionHintEl"
-      class="float-action-hint"
-      :class="[actionHint.placement, { sticky: actionHint.sticky }]"
-      :style="{
-        left: `${actionHint.left}px`,
-        top: `${actionHint.top}px`,
-        maxWidth: `${actionHint.maxWidth}px`,
-        '--float-hint-arrow-left': `${actionHint.arrowLeft}px`
-      }"
-      role="tooltip"
-    >{{ actionHint.label }}</div>
+    <OperationTooltipLayer ref="tooltipLayer" :automatic="false" scope-selector=".codex-float-root" />
   </main>
 </template>
 

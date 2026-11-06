@@ -4,7 +4,11 @@
 
 ## 变更触发与执行入口
 
-[机器映射](core-verification-map.json#L1)是需求→语义owner/消费者→检查的唯一可执行关系；本页解释边界。当前登记8组：Companion状态、来源证据、统一交互、收藏、窗口、端口、设置、验证治理。它不宣称全部现行需求已自动覆盖；端口/设置仍以产品章节作source-only，不伪造RAW身份。
+[机器映射](core-verification-map.json#L1)是需求→语义owner/消费者→检查的唯一可执行关系；本页解释边界。当前登记10组：Codex外观、导航诊断、Companion状态、来源证据、统一交互、收藏、窗口、端口、设置、验证治理。它不宣称全部现行需求已自动覆盖；端口/设置仍以产品章节作source-only，不伪造RAW身份。
+
+Codex外观映射选择外观组件、编辑会话回归与类型检查；映射覆盖外观相关变更，不代表页面其他配置功能或真实 uTools 布局已通过。
+
+导航入口与诊断覆盖固定上一／下一 → Command Gateway → Navigation 的双向连续按键合并、混合方向、operationId 去重、失败后尾随、普通任务命令串行；Preload 热态不强刷、冷启动及普通主入口仍恢复。`companionTaskKernel`、`companionNavigationBridge` 与 Bridge 两个明确入口用例共同执行。独立追踪另由 `freezeTrace` 检查 Renderer 定时器暂停、真实同步阻塞、断连/轮转/限流；仅记录固定操作名和数值，异步 pending 不自动归为阻塞根因。
 
 - `pnpm run verify` / `verify:changed`：[选测器](../../scripts/verify-core-changes.mjs#L1)读取HEAD到工作树的已暂存/未暂存和未跟踪路径；`--staged`仅选择暂存差异，但执行当前工作树；`--base REF`选择REF到HEAD的提交差异。重命名两侧与删除均纳入。需要提交内容专属证明时，在对应干净checkout执行，不能拿混合工作树结果代替。
 - `pnpm run verify:plan`只展示需求、原因、检查与未验边界，状态为planned-not-run；`verify:core`显式执行已登记核心清单。未知受保护代码路径直接失败，要求补映射，不自动跑全库。

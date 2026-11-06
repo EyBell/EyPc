@@ -293,6 +293,7 @@ function normalizeTask(value, enabledProviders) {
       pause: capabilities.pause === true,
       resume: capabilities.resume === true,
       executePlan: capabilities.executePlan === true,
+      ...(typeof capabilities.continueTask === 'boolean' ? { continueTask: capabilities.continueTask } : {}),
       pin: capabilities.pin === true
     },
     providerCapabilities: {
@@ -301,6 +302,7 @@ function normalizeTask(value, enabledProviders) {
       pause: capabilities.pause === true,
       resume: capabilities.resume === true,
       executePlan: capabilities.executePlan === true,
+      ...(typeof capabilities.continueTask === 'boolean' ? { continueTask: capabilities.continueTask } : {}),
       pin: capabilities.pin === true
     },
     family: typeof value.family === 'string' && value.family
@@ -459,6 +461,7 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
       pause: capabilityNames.has('pause'),
       resume: capabilityNames.has('resume'),
       executePlan: capabilityNames.has('execute-plan') || capabilityNames.has('executePlan'),
+      ...(capabilityNames.has('continue-task') || capabilityNames.has('continueTask') ? { continueTask: true } : {}),
       pin: capabilityNames.has('pin')
     }
   }, enabledProviders)
@@ -547,6 +550,7 @@ function targetFromTask(task) {
     canPause: task.capabilities.pause,
     canResume: task.capabilities.resume,
     canExecutePlan: task.capabilities.executePlan,
+    canContinueTask: task.capabilities.continueTask === true,
     ...(task.archiveRequest ? { archiveRequest: task.archiveRequest } : {})
   }
 }
@@ -651,7 +655,7 @@ function derivedCycleTier(task) {
   // Completed-unread keeps its existing activity-window exemption. Continuable
   // tasks join this cycle tier without changing their phase or display group.
   if (attention === 'unread') return 'unread'
-  if (task.phase === 'stopped' && (task.dynamicEligible || taskPinned(task) || task.planReady)) return 'unread'
+  if (task.phase === 'stopped') return 'unread'
   if (task.phase === 'completed' && taskPinned(task)) return 'fallback'
   return 'none'
 }
@@ -666,10 +670,10 @@ function derivedDynamicGroup(task) {
   if (isAttentionTaskPhase(task.phase)) return 'input'
   if (task.phase === 'completed' && task.unread) return 'unread'
   if (task.phase === 'running' && (pinned || task.dynamicEligible)) return 'active'
-  if (task.phase === 'stopped' && (pinned || task.dynamicEligible || task.planReady)) return 'stopped'
+  if (task.phase === 'stopped') return 'stopped'
   if (pinned) return 'pinned'
   // The activity window retires only unpinned work.
-  if (!task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
+  if (!task.dynamicEligible) return 'none'
   if (task.phase === 'unknown') return 'none'
   if (task.phase === 'completed') return 'completed'
   return 'none'
@@ -731,7 +735,9 @@ function finalizeTask(task) {
     ...next.capabilities,
     pause: planActionable && !next.paused,
     resume: planActionable && next.paused,
-    executePlan: planActionable && providerCapabilities.executePlan === true
+    executePlan: planActionable && providerCapabilities.executePlan === true,
+    ...(typeof providerCapabilities.continueTask === 'boolean' ? { continueTask: providerCapabilities.continueTask
+      && next.provider === 'codex' && next.role !== 'child' && next.phase === 'stopped' && !next.planReady } : {})
   }
   // Order matters: a pin's ring tier is decided by the group the list will show
   // it in, so the group has to exist first.
@@ -873,6 +879,9 @@ function createCompanionTaskKernel(dependencies = {}) {
   const clearTimer = typeof dependencies.clearTimeout === 'function' ? dependencies.clearTimeout : clearTimeout
   const notify = typeof dependencies.notify === 'function' ? dependencies.notify : () => {}
   const record = typeof dependencies.record === 'function' ? dependencies.record : () => {}
+  const diagnosticTaskRef = typeof dependencies.diagnosticTaskRef === 'function' ? dependencies.diagnosticTaskRef : () => ''
+  const diagnosticMemberSignatures = new Map()
+  const diagnosticStateSignatures = new Map()
   const preflight = typeof dependencies.preflight === 'function' ? dependencies.preflight : null
   const persistPlanPause = typeof dependencies.persistPlanPause === 'function' ? dependencies.persistPlanPause : () => true
   const persistInteractionTombstones = typeof dependencies.persistInteractionTombstones === 'function'
@@ -885,7 +894,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     : {}
   let enabled = initial.enabled === true
   let providers = providerShape(initial.providers || {})
-  let dynamicWindowMs = Math.max(1, Math.min(24 * 30, finiteInteger(initial.dynamicTaskWindowHours, 48))) * 60 * 60 * 1_000
+  let dynamicWindowMs = Math.max(1, Math.min(24 * 30, finiteInteger(initial.dynamicTaskWindowHours, 168))) * 60 * 60 * 1_000
   let activeLease = 0
   let leaseSequence = 0
   let packageSequence = 0
@@ -1335,7 +1344,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     for (const task of currentPackage.tasks) {
       // A pin is exempt from the window, so the moment it would have expired is
       // no longer a visibility transition worth waking up for.
-      if (!task.dynamicEligible || task.hidden || task.paused || taskPinned(task) || (task.phase === 'stopped' && task.planReady)) continue
+      if (!task.dynamicEligible || task.hidden || task.paused || taskPinned(task) || (task.planReady && (task.phase === 'stopped' || isAttentionTaskPhase(task.phase)))) continue
       const candidate = visibilityAnchor(task) + dynamicWindowMs
       if (candidate <= currentTime || (dueAt && candidate >= dueAt)) continue
       dueAt = candidate
@@ -1633,21 +1642,39 @@ function createCompanionTaskKernel(dependencies = {}) {
     const planInteractionWaiting = phaseMembers.some((node) => (
       isAttentionTaskPhase(node.phase) && node.planImplementation === true
     ))
-    // Plan availability is an artifact lane, not an interaction. A completed
-    // unread terminal stays completed-unread only when no exact interaction is
-    // currently open. Once read, an artifact-only task is stopped/ready-to-
-    // continue. Any current input/approval owns presentation before unread.
-    const phase = unread.known && unread.value && isAttentionTaskPhase(activityPhase) && !currentInteractionWaiting
+    // An available Plan on a completed family asks for the next decision without
+    // fabricating an interaction. Running, exact input/approval and a genuine
+    // interrupted member retain their activity phase. Unread remains independent.
+    const planRevision = finiteInteger(root.planLifecycleRevision)
+    const latestTurnStart = finiteInteger(root.turnStartedAt)
+    // Rollout Plan revision is anchored to its Turn start, not its completion.
+    // A later completion in that same Turn is valid. Without a start boundary,
+    // a newer terminal cannot safely be attributed to the Plan's Turn.
+    const planHasNoNewerTurn = planRevision > 0 && (latestTurnStart > 0
+      ? latestTurnStart <= planRevision
+      : finiteInteger(root.terminalAt) <= planRevision)
+    const artifactWaiting = planReady && planHasNoNewerTurn && activityPhase === 'completed'
+    const completedUnreadWithStoppedMember = activityPhase === 'stopped'
+      && members.some((node) => node.phase === 'completed' && node.unreadKnown === true && node.unread === true)
+    const phase = artifactWaiting ? 'waiting-input'
+      : unread.known && unread.value && !currentInteractionWaiting
+      && (isAttentionTaskPhase(activityPhase) || completedUnreadWithStoppedMember)
       ? 'completed'
-      : planReady && (isTerminalTaskPhase(activityPhase) || activityPhase === 'unknown')
-        && !(unread.known && unread.value)
-        ? 'stopped'
-        : activityPhase
-    const statusEnteredAt = phase === 'stopped' && phase !== activityPhase
+      : activityPhase
+    const statusEnteredAt = completedUnreadWithStoppedMember
+      ? Math.max(...members.filter((node) => node.phase === 'completed' && node.unreadKnown === true && node.unread === true)
+        .map((node) => finiteInteger(node.statusEnteredAt)), 0)
+      : artifactWaiting
       ? Math.max(finiteInteger(root.planLifecycleRevision), finiteInteger(root.statusEnteredAt), finiteInteger(root.terminalAt))
       : Math.max(...phaseMembers.filter((node) => node.phase === activityPhase).map((node) => finiteInteger(node.statusEnteredAt)), 0)
     const capabilities = { ...(root.capabilities || {}) }
     if (liveCount > 0 || isLiveTaskPhase(phase)) capabilities.archive = false
+    const canContinue = root.role === 'root' && root.phase === 'stopped' && phase === 'stopped'
+      && !planReady && !currentInteractionWaiting && liveCount === 0
+    if (typeof capabilities.continueTask === 'boolean') capabilities.continueTask &&= canContinue
+    // finalizeTask must not restore the provider declaration after aggregation.
+    const providerCapabilities = { ...(root.providerCapabilities || root.capabilities) }
+    if (typeof providerCapabilities.continueTask === 'boolean') providerCapabilities.continueTask &&= canContinue
     return {
       ...root,
       phase,
@@ -1659,6 +1686,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       turnStartedAt: Math.max(...members.map((node) => finiteInteger(node.turnStartedAt)), 0),
       terminalAt: isLiveTaskPhase(phase) ? 0 : Math.max(...members.map((node) => finiteInteger(node.terminalAt)), 0),
       capabilities,
+      providerCapabilities,
       topology: {
         mode: members.length > 1 ? 'aggregate' : 'independent',
         memberCount: members.length,
@@ -1679,13 +1707,62 @@ function createCompanionTaskKernel(dependencies = {}) {
       relations: [...relationStore.values()]
     })
     const nextShortcutInputs = new Map()
+    const admittedDiagnosticRelations = new Map(topology.acceptedRelations.map((relation) => [relation.childKey, relation]))
     const tasks = topology.rootGroups.map(({ root, members }) => {
       const canonical = finalizeCanonicalTask(aggregateKernelRoot(root, members))
       nextShortcutInputs.set(root.key, { task: canonical, members })
       const finalized = publicRootTask(finalizeTask(shortcutReads.project(canonical, members)))
-      return assignSemanticRevision(previousPublicByKey.get(finalized.key), finalized).task
+      const previous = previousPublicByKey.get(finalized.key)
+      // Diagnose the actual admitted topology, not discovery candidates. Never
+      // send private keys to the sink; the host supplies its salted ref mapper.
+      const memberSignature = JSON.stringify(members.map((member) => {
+        const relation = admittedDiagnosticRelations.get(member.key)
+        return [member.key, member.phase, member.phaseRevision, relation?.parentKey, relation?.generation]
+      }))
+      const membersChanged = diagnosticMemberSignatures.get(root.key) !== memberSignature
+      diagnosticMemberSignatures.set(root.key, memberSignature)
+      if (members.length > 1 && membersChanged) {
+        record({ level: 'info', scope: 'task-evidence', event: 'root-member-resolution',
+          provider: root.provider, taskRef: diagnosticTaskRef(root.provider, root.key), outcome: finalized.phase,
+          details: { rootPhase: root.phase, memberCount: members.length, omittedCount: Math.max(0, members.length - 32),
+            members: members.slice(0, 32).map((member) => {
+              const relation = admittedDiagnosticRelations.get(member.key)
+              return { ref: diagnosticTaskRef(member.provider, member.key), phase: member.phase,
+                root: member.key === root.key, phaseRevision: finiteInteger(member.phaseRevision),
+                turnStartedAt: finiteInteger(member.turnStartedAt), terminalAt: finiteInteger(member.terminalAt),
+                parentRef: relation ? diagnosticTaskRef(member.provider, relation.parentKey) : '',
+                relation: relation?.relation || '', exact: relation?.exact === true,
+                relationGeneration: finiteInteger(relation?.generation) }
+            }) } })
+      }
+      const visibility = {
+        dynamicWindowHours: dynamicWindowMs / (60 * 60 * 1_000),
+        hidden: finalized.hidden === true, paused: finalized.paused === true,
+        localPin: finalized.localPin === true, providerPin: finalized.providerPin ?? null,
+        visibilityAnchor: visibilityAnchor(finalized),
+        dynamicEligible: finalized.dynamicEligible === true, dynamicGroup: finalized.dynamicGroup
+      }
+      const stateSignature = JSON.stringify([
+        ...['phase', 'unread', 'unreadKnown', 'planReady', 'planLifecycleRevision'].map((field) => finalized[field]),
+        visibility
+      ])
+      if (diagnosticStateSignatures.get(root.key) !== stateSignature) {
+        diagnosticStateSignatures.set(root.key, stateSignature)
+        record({ level: 'info', scope: 'task-evidence', event: 'root-state-resolution',
+          provider: root.provider, taskRef: diagnosticTaskRef(root.provider, root.key), outcome: finalized.phase,
+          details: { ...visibility, previousPhase: previous?.phase || 'unknown', rootPhase: root.phase,
+            phase: finalized.phase, unreadKnown: finalized.unreadKnown === true, unread: finalized.unread === true,
+            planReady: root.planReady === true, planLifecycleRevision: finiteInteger(root.planLifecycleRevision),
+            planState: root.planArtifactState || 'unknown', turnStartedAt: finiteInteger(root.turnStartedAt),
+            terminalAt: finiteInteger(root.terminalAt), memberCount: members.length,
+            runningMembers: members.filter((member) => member.phase === 'running').length,
+            interactionCount: members.reduce((count, member) => count + taskOpenInteractions(member).length, 0) } })
+      }
+      return assignSemanticRevision(previous, finalized).task
     }).sort(compareByLatestQuestion)
     shortcutReadInputs = nextShortcutInputs
+    for (const key of diagnosticMemberSignatures.keys()) if (!nextShortcutInputs.has(key)) diagnosticMemberSignatures.delete(key)
+    for (const key of diagnosticStateSignatures.keys()) if (!nextShortcutInputs.has(key)) diagnosticStateSignatures.delete(key)
     shortcutReads.retain(new Set(nextShortcutInputs.keys()))
     let topologyRevision = currentPackage.topologyRevision
     const firstTopology = currentPackage.topologyRevision === 0
@@ -2740,14 +2817,14 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (disposed || !enabled) return { outcome: 'unavailable', errorCode: 'disabled', message: '任务功能未启用' }
     const dispatchStartedAt = now()
     try {
-      const targetKey = ['open', 'archive', 'pause', 'resume', 'execute-plan'].includes(input.action)
+      const targetKey = ['open', 'archive', 'pause', 'resume', 'execute-plan', 'continue-task'].includes(input.action)
         && typeof input.key === 'string'
         ? input.key
         : ''
       // Navigation commands consume one already-published immutable snapshot.
       // A previous/next/open operation must never trigger a Provider refresh
       // that also changes phase, unread or topology as a side effect.
-      if (['archive', 'pause', 'resume', 'execute-plan', 'archive-focused'].includes(input.action)) {
+      if (['archive', 'pause', 'resume', 'execute-plan', 'continue-task', 'archive-focused'].includes(input.action)) {
         await ensureReady(targetKey, {
           action: input.action
         })
@@ -2846,8 +2923,24 @@ function createCompanionTaskKernel(dependencies = {}) {
         outcome: pausing ? 'paused' : 'resumed',
         provider: task.provider,
         key: task.key,
-        message: pausing ? 'Plan 已暂停并移入已隐藏区' : 'Plan 已恢复到待继续列表'
+        message: pausing ? 'Plan 已暂停并移入已隐藏区' : 'Plan 已恢复到待输入列表'
       }
+    }
+    if (input.action === 'continue-task') {
+      const task = taskForKey(input.key)
+      if (!task?.capabilities.continueTask || task.phase !== 'stopped' || task.planReady
+        || finiteInteger(input.revisionAt) !== task.revisionAt) {
+        return { outcome: 'failed', errorCode: 'state-changed', message: '任务状态已变化，当前不能继续' }
+      }
+      const result = await actions.continueTask({
+        key: task.key, revisionAt: task.revisionAt, source: input.source || 'continue-task-button',
+        operationId: input.operationId, target: actionTargetForTask(task)
+      })
+      if (result?.outcome === 'executed') {
+        commitLocalTaskState(task, { phase: 'running', freshness: 'fresh', statusEnteredAt: now(),
+          terminalAt: 0, idleConfirmed: false }, 'continue-started')
+      }
+      return result
     }
     if (input.action === 'execute-plan') {
       const task = taskForKey(input.key)
@@ -2935,6 +3028,10 @@ function createCompanionTaskKernel(dependencies = {}) {
       planLifecycleRevision: finiteInteger(payload.planLifecycleRevision),
       source: command.source,
       operationId: command.operationId
+    }
+    if (command.command === 'continue-task') return {
+      action: 'continue-task', key: selector.key, revisionAt: finiteInteger(payload.revisionAt),
+      source: command.source, operationId: command.operationId
     }
     if (command.command === 'execute-plan') return {
       action: 'execute-plan',
@@ -3127,9 +3224,13 @@ function createCompanionTaskKernel(dependencies = {}) {
       payload: input.payload && typeof input.payload === 'object' ? { ...input.payload } : {}
     }
     const key = commandKey(command)
-    const previous = commandQueues.get(key) || Promise.resolve()
+    // Navigation owns cycle selection/coalescing as well as the single open
+    // lane. Queuing cycle commands here until each open finishes would turn
+    // a burst into one native open per press before Navigation can merge it.
+    const serialize = command.command !== 'cycle'
+    const previous = (serialize && commandQueues.get(key)) || Promise.resolve()
     const operation = previous.catch(() => undefined).then(() => executeCommand(command))
-    commandQueues.set(key, operation)
+    if (serialize) commandQueues.set(key, operation)
     commandResults.set(operationId, operation)
     if (commandResults.size > 500) commandResults.delete(commandResults.keys().next().value)
     void operation.finally(() => {
@@ -3175,6 +3276,7 @@ function createCompanionTaskKernel(dependencies = {}) {
           : code === 'eypc-companion-archive'
             ? { action: 'archive-focused', source: 'archive-shortcut' }
             : { action: 'open-attention', kind: 'input', source: 'global-shortcut' }
+    intent.operationId = `shortcut_${now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
     // The feature code is the only way a log reader can tell which silent
     // uTools entry was pressed; it is a fixed plugin identifier, never content.
     record({
@@ -3182,6 +3284,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       scope: 'task-kernel',
       event: 'shortcut-enter',
       outcome: intent.action,
+      operationId: intent.operationId,
       source: intent.source,
       packageRevision: currentPackage.packageRevision,
       details: {
@@ -3198,6 +3301,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       scope: 'task-kernel',
       event: 'shortcut-enter',
       outcome: 'failed',
+      operationId: intent.operationId,
       code: errorCode,
       source: intent.source,
       packageRevision: currentPackage.packageRevision,

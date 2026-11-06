@@ -14,6 +14,12 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 
 ## Primary Requirements
 
+- [待继续可见性与搜索提示 RAW-002](../task-recovery-visibility-raw-002.md#L1) — `active`
+
+- [任务继续与计划实施 RAW-001](../task-recovery-actions-raw-001.md#L1) — `active`
+
+- [外观编辑 RAW-001](../codex-appearance-editor-raw-001.md#L1) — `active`
+- [外观编辑 RAW-002](../codex-appearance-editor-raw-002.md#L1) — `active`
 - [RAW-001](../codex-raw-001.md#L1) — `active`
 - [RAW-002](../codex-raw-002.md#L1) — `active`
 - [RAW-003](../codex-raw-003.md#L1) — `active`

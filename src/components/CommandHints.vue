@@ -28,7 +28,5 @@ const hintText = computed(() => featureModuleV7(props.snapshot.state.activeTab).
 </script>
 
 <template>
-  <div class="command-hints">
-    <span>{{ hintText }}</span>
-  </div>
+  <slot :hint-text="hintText" />
 </template>

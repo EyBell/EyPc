@@ -1,10 +1,10 @@
 ---
 id: eypc-cursor-disk-completed-stale-hook-turnopen
-status: verified
+status: superseded
 scope: project
 fingerprint: cursor-disk-completed-stale-hook-turnopen-must-not-stay-running
 first_seen: 2026-09-05
-last_verified: 2026-09-05
+last_verified: 2026-10-27
 review_after: 2027-03-05
 evidence:
   - user-corrected
@@ -40,7 +40,9 @@ V7 Cursor 适配器把 `turnOpen` 与冷路径 `unfinishedRunAt` 并列写成进
 
 ## Prevention Rule
 
-`diskStatus === 'completed'` 且没有会话/分叉冷路径进行中证据时，不得让 `hook.turnOpen` 或 `hookPhase === 'running'` 单独保持进行中。`aborted` 与空/`none` 磁盘上的开 Turn 仍是进行中。不要把 `hasPendingPlan` 并进这条。
+2026-10-27 起这条「磁盘 completed 压过开着的 turnOpen」作废。Cursor 3.27.14 实测：下一轮从 `beforeSubmitPrompt` 到工具事件期间，`composerData.status` 仍是上一轮的 `completed`，`unfinishedRunAt` 仍是 0，直到再次落盘才改写。开着的钩子轮次（`turnOpen`，或尚未收到 completed/stopped 的 `hookPhase=running`）必须保持进行中。
+
+仍然有效的是：钩子折叠已经是 `completed`/`stopped`（此时 `turnOpen` 为 false）之后，残留的会话 `unfinishedRunAt` 不得单独保持进行中。那一条在 [钩子终态压过残留 unfinishedRunAt](cursor-hook-terminal-beats-stale-unfinished-run.md#L1)。队列旋转漏掉 `stop` 时，开着的轮次会停在进行中，直到下一次 `stop`；这是钩子边沿的限度，不用磁盘 completed 去补。
 
 ## Latest Applicable Implementation
 
@@ -62,3 +64,4 @@ V7 Cursor 适配器把 `turnOpen` 与冷路径 `unfinishedRunAt` 并列写成进
 | 日期 | 触发 | 失败路线 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- |
 | 2026-09-05 | 磁盘已完成仍进行中 | turnOpen 无条件压过磁盘 | 仅非 completed 磁盘允许 turnOpen 单独定 running | 聚焦测试绿 |
+| 2026-10-27 | 3.27 进行中被显示成已完成 | 磁盘 completed 压过未结束的钩子轮次 | 开着的 turnOpen 压过磁盘 completed；钩子终态仍压过残留 unfinishedRunAt | 本机只读采样 + 聚焦测试 |

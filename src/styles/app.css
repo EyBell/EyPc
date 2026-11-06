@@ -16,98 +16,6 @@
   --z-shortcut-top-layer: var(--eypc-z-shortcut-layer);
 }
 
-.operation-tooltip {
-  position: fixed;
-  z-index: var(--z-operation-tooltip);
-  display: grid;
-  grid-template-columns: minmax(0, auto) auto;
-  align-items: center;
-  gap: 2px 8px;
-  width: max-content;
-  max-width: min(420px, calc(100vw - 16px));
-  padding: 6px 8px;
-  border: 1px solid var(--eypc-color-border);
-  border-radius: 5px;
-  background: var(--eypc-color-surface-raised);
-  box-shadow: var(--eypc-shadow-popover);
-  color: var(--eypc-color-text);
-  font-size: 12px;
-  line-height: 1.3;
-  pointer-events: none;
-  animation: operation-tooltip-enter var(--eypc-motion-instant) ease-out;
-}
-
-.operation-tooltip::after {
-  content: "";
-  position: absolute;
-  left: var(--operation-tooltip-arrow-left, 50%);
-  width: 7px;
-  height: 7px;
-  border: solid var(--eypc-color-border);
-  background: var(--eypc-color-surface-raised);
-  transform: translateX(-50%) rotate(45deg);
-}
-
-.operation-tooltip--above::after {
-  bottom: -5px;
-  border-width: 0 1px 1px 0;
-}
-
-.operation-tooltip--below::after {
-  top: -5px;
-  border-width: 1px 0 0 1px;
-}
-
-/* The main app uses the shared tooltip layer; the Float child keeps its own stylesheet-owned hints. */
-.app-shell .codex-tip.codex-tip::after {
-  content: none;
-  display: none;
-}
-
-@keyframes operation-tooltip-enter {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .operation-tooltip {
-    animation: none;
-  }
-}
-
-.operation-tooltip-label,
-.operation-tooltip-detail {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.operation-tooltip-label {
-  font-weight: 700;
-}
-
-.operation-tooltip-shortcut {
-  justify-self: end;
-  padding: 1px 4px;
-  border: 1px solid var(--eypc-color-border-soft);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--eypc-color-surface-raised) 88%, var(--eypc-color-focus));
-  color: var(--eypc-color-text-muted);
-  font: inherit;
-  white-space: nowrap;
-}
-
-.operation-tooltip-detail {
-  grid-column: 1 / -1;
-  color: var(--eypc-color-text-muted);
-  font-size: 11px;
-}
-
 /* File favorites workbench: compact, keyboard-first, and narrow-window safe. */
 .favorites-workbench {
   grid-template-columns: 224px minmax(0, 1fr);
@@ -917,33 +825,6 @@ textarea {
 .tab-help-trigger:focus {
   border-color: #00a676;
   outline: none;
-}
-
-.tab-help-popover {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 50;
-  width: min(520px, calc(100vw - 12px));
-  border: 1px solid #b9c8d4;
-  border-radius: 6px;
-  background: #fbfffd;
-  box-shadow: 0 12px 28px rgba(16, 24, 32, 0.16);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition:
-    opacity 80ms ease,
-    visibility 0ms linear;
-  transition-delay: 0ms;
-}
-
-.tab-help:hover .tab-help-popover,
-.tab-help:focus-within .tab-help-popover {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-  transition-delay: var(--mouse-tooltip-delay);
 }
 
 .tab-content {
@@ -2503,93 +2384,10 @@ kbd {
   color: #006d4f;
 }
 
-.shortcut-command-tooltip {
-  position: fixed;
-  left: var(--shortcut-tooltip-x, 0px);
-  top: var(--shortcut-tooltip-y, 0px);
-  z-index: 60;
-  display: grid;
-  gap: 2px;
-  width: max-content;
-  min-width: 260px;
-  max-width: min(720px, calc(100vw - var(--shortcut-tooltip-x, 0px) - 16px));
-  padding: 8px 10px;
-  border: 1px solid #c7d0d9;
-  border-radius: 4px;
-  background: rgba(246, 247, 249, 0.98);
-  box-shadow: 0 8px 20px rgba(16, 24, 32, 0.14);
-  color: #172026;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-100%);
-  pointer-events: none;
-  transition:
-    opacity 80ms ease,
-    visibility 80ms ease;
-  transition-delay: 0ms;
-}
-
-.command-cell:hover .shortcut-command-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transition-delay: var(--mouse-tooltip-delay);
-}
-
-.shortcut-command-tooltip strong,
-.shortcut-command-tooltip small {
-  min-width: 0;
-  white-space: normal;
-  overflow-wrap: break-word;
-}
-
-.shortcut-command-tooltip strong {
-  font-size: 12px;
-}
-
-.shortcut-command-tooltip small {
-  color: #4d6675;
-  font-size: 11px;
-  line-height: 1.35;
-}
-
 .shortcut-label {
   position: relative;
   overflow: visible;
   cursor: help;
-}
-
-.shortcut-label-tooltip {
-  position: fixed;
-  left: var(--shortcut-tooltip-x, 0px);
-  top: var(--shortcut-tooltip-y, 0px);
-  z-index: var(--z-floating-preview);
-  display: block;
-  width: max-content;
-  max-width: min(420px, calc(100vw - var(--shortcut-tooltip-x, 0px) - 16px));
-  padding: 6px 8px;
-  border: 1px solid #c7d0d9;
-  border-radius: 4px;
-  background: rgba(246, 247, 249, 0.98);
-  box-shadow: 0 8px 20px rgba(16, 24, 32, 0.14);
-  color: #172026;
-  font-size: 11px;
-  line-height: 1.35;
-  white-space: normal;
-  overflow-wrap: break-word;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-100%);
-  pointer-events: none;
-  transition:
-    opacity 80ms ease,
-    visibility 80ms ease;
-  transition-delay: 0ms;
-}
-
-.shortcut-label:hover .shortcut-label-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transition-delay: var(--mouse-tooltip-delay);
 }
 
 .reservation-row span {
@@ -6523,10 +6321,6 @@ kbd {
     margin-left: 0;
   }
 
-  .tab-help-popover {
-    right: 0;
-    width: min(408px, calc(100vw - 8px));
-  }
 }
 
 /* Container-owned equivalent for embedded/narrow host windows. The media rule

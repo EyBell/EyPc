@@ -1,0 +1,108 @@
+.operation-tooltip {
+  position: fixed;
+  z-index: var(--z-operation-tooltip, var(--eypc-z-tooltip));
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto;
+  align-items: center;
+  gap: 2px 8px;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 16px));
+  padding: 6px 8px;
+  border: 1px solid var(--eypc-color-border);
+  border-radius: 5px;
+  background: var(--eypc-color-surface-raised);
+  box-shadow: var(--eypc-shadow-popover);
+  color: var(--eypc-color-text);
+  font-size: 12px;
+  line-height: 1.3;
+  pointer-events: none;
+  animation: operation-tooltip-enter var(--eypc-motion-instant) ease-out;
+}
+
+.operation-tooltip::after {
+  content: "";
+  position: absolute;
+  left: var(--operation-tooltip-arrow-left, 50%);
+  width: 7px;
+  height: 7px;
+  border: solid var(--eypc-color-border);
+  background: var(--eypc-color-surface-raised);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.operation-tooltip--above::after {
+  bottom: -5px;
+  border-width: 0 1px 1px 0;
+}
+
+.operation-tooltip--below::after {
+  top: -5px;
+  border-width: 1px 0 0 1px;
+}
+
+@keyframes operation-tooltip-enter {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operation-tooltip {
+    animation: none;
+  }
+}
+
+.operation-tooltip-label,
+.operation-tooltip-detail {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.operation-tooltip-label {
+  font-weight: 700;
+}
+
+.operation-tooltip-shortcut {
+  justify-self: end;
+  padding: 1px 4px;
+  border: 1px solid var(--eypc-color-border-soft);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--eypc-color-surface-raised) 88%, var(--eypc-color-focus));
+  color: var(--eypc-color-text-muted);
+  font: inherit;
+  white-space: nowrap;
+}
+
+.operation-tooltip-detail {
+  grid-column: 1 / -1;
+  color: var(--eypc-color-text-muted);
+  font-size: 11px;
+}
+
+
+.operation-tooltip--float,
+.operation-tooltip--compact {
+  z-index: 140;
+  max-width: min(240px, calc(100vw - 16px));
+  border-color: rgba(255, 255, 255, .86);
+  border-radius: 7px;
+  background: #111827;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .42);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1.35;
+  text-align: center;
+  animation: none;
+}
+.operation-tooltip--float::after {
+  border-color: rgba(255, 255, 255, .86);
+  background: #111827;
+}
+.operation-tooltip--sticky .operation-tooltip-label { font-weight: 800; }
+.operation-tooltip--compact { padding: 5px 7px; font-size: 10px; line-height: 1.2; white-space: nowrap; }
+.operation-tooltip--compact::after { display: none; }

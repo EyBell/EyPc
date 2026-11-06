@@ -151,9 +151,9 @@ export function projectCodexDynamicStatus(
   const windowMs = dynamicTaskWindowMs(windowHours)
   const windowStart = effectiveNow - windowMs
   const visibleInput = conversations.inputRequired
-    .filter((task) => !task.isHidden)
+    .filter((task) => !task.isHidden && !task.planPaused)
   const visibleUnread = conversations.completedUnread
-    .filter((task) => !task.isHidden)
+    .filter((task) => !task.isHidden && !task.planPaused)
   // A local pin moves the ROW into the pin group in every phase (user
   // decision, 2026-09-01); the pin is window-exempt like attention, since it
   // is a "keep this where I can find it" request. Badges keep counting by
@@ -164,7 +164,7 @@ export function projectCodexDynamicStatus(
     ...(conversations.stopped || []),
     ...visibleUnread,
     ...conversations.completed
-  ].filter((task, index, list) => !task.isHidden
+  ].filter((task, index, list) => !task.isHidden && !task.planPaused
     && Boolean(task.pinSource)
     && list.findIndex((candidate) => candidate.key === task.key) === index)
   const pinnedKeys = new Set(visiblePinned.map((task) => task.key))
@@ -172,7 +172,7 @@ export function projectCodexDynamicStatus(
     ...conversations.ongoing,
     ...(conversations.stopped || []),
     ...conversations.completed
-  ].filter((task) => !task.isHidden && taskActivityAt(task) >= windowStart && !pinnedKeys.has(task.key))
+  ].filter((task) => !task.isHidden && !task.planPaused && (task.bucket === 'stopped' || taskActivityAt(task) >= windowStart) && !pinnedKeys.has(task.key))
   const recentOngoing = recent.filter((task) => task.bucket === 'ongoing')
   const groups: CodexDynamicStatusGroups = {
     pinned: orderCodexTasksForDisplay(visiblePinned),
@@ -185,7 +185,8 @@ export function projectCodexDynamicStatus(
     completed: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'completed'))
   }
   const tasks = [groups.pinned, groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
-  const timeBounded = [groups.active, groups.stopped, groups.completed].flat()
+  // Stopped tasks remain actionable and never schedule a time-window expiry.
+  const timeBounded = [groups.active, groups.completed].flat()
   const nextTransitionAt = timeBounded.length
     ? Math.min(...timeBounded.map((task) => taskActivityAt(task) + windowMs + 1))
     : null

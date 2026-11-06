@@ -190,3 +190,15 @@ Environment Action 的 39 条有序来源条款继续由其来源/spec/PRD 承�
 用户要求每次 `pnpm run build` 后能确认用于打包的 `dist` 是否最新，并在 Codex 功能页展示最新打包日期。该要求精化 [RAW-178#3](invariants-raw-178-clause-003.md#L1) 的证据分层，`decision_status=explicit-current-request`。
 
 [RAW-189](shared-raw-189.md#L1) 将显示口径限定为「当前宿主产物」：Main/Float Preload 从自己实际加载的 `runtime-identity.cjs` 投影 `artifactState/builtAt/builtAtLocal/packageVersion`，Codex 运行页同时显示身份匹配或需重载。磁盘 `dist/runtime-identity.cjs` 仍是打包侧最新凭据；production build 只形成 `artifact-ready`，不会自动替换已加载 ASAR 或证明 `host-loaded`。这是 Runtime Identity 的非私密 additive field refinement，不改变 Task Snapshot、Command、状态 reducer 或真实宿主验收门禁。
+
+## 2026-10-30：悬浮提示组件统一
+
+用户明确要求整个 EyPc 的悬浮提示使用抽取后的统一组件；决策来源为本轮用户请求。新增[统一悬浮提示 RAW-001](tooltip-unification-raw-001.md#L1)，局部取代 [RAW-032](codex-raw-032.md#L1)、[RAW-049](codex-raw-049.md#L1) 和 [RAW-175](codex-raw-175.md#L1) 中浮窗提示必须独立实现或不得复用主窗口组件的结构限制。浮窗焦点与数据边界、200ms 提示、卡片内定位和五秒确认语义不变；不涉及整条需求取代。
+
+## 2026-11-06：继续与实施单击动作
+
+用户明确新增[任务继续与计划实施](task-recovery-actions-raw-001.md#L1)。最新未实施Plan显示待输入，局部精化RAW-179#1旧artifact-only stopped展示；独立证据车道保留。Plan执行单击发起，取代产品现行段落的五秒二次确认；归档确认未改变。真实中断与未实施Plan分别处理，不自动恢复任何业务Goal。decision_status=explicit-current-request。
+
+## 2026-11-06：待继续时间豁免及搜索提示
+
+[RAW-002](task-recovery-visibility-raw-002.md#L1)为本轮最新用户决定：撤回统一30天方案，保留独立可调动态范围；默认一周，待继续不受动态窗口限制。截图确认现有两个配置入口已存在，修复搜索右侧误用总体范围/数量。局部精化RAW-134旧默认与普通中断过窗退出规则；隐藏/暂停、完整库存范围、真实状态证据不变。decision_status=explicit-current-request。
