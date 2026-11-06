@@ -315,7 +315,8 @@ function projectVisibleProviders(project: CodexProjectCard) {
   const declared = project.providers?.length
     ? project.providers
     : [...new Set(project.tasks.map((task) => taskProvider(task)))]
-  return declared.filter((provider) => providerEnabled(provider) && (projectProviderFilter.value === 'all' || provider === projectProviderFilter.value))
+  const providers = declared.length ? declared : ['codex' as CompanionProviderId]
+  return providers.filter((provider) => providerEnabled(provider) && (projectProviderFilter.value === 'all' || provider === projectProviderFilter.value))
 }
 
 function projectMatchesProvider(project: CodexProjectCard) {
