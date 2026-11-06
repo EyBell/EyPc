@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>外观工坊 · EyPc</title><link rel="stylesheet" href="real-build/real-ball.css"><link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+ <header class="top">
+  <div class="model-tabs" role="tablist" aria-label="模型"><button data-model="ball" class="active">水球</button><button data-model="card">卡片</button></div>
+  <div class="scenario-tabs" id="scenarios" aria-label="任务 Agent 与额度来源"></div>
+  <div class="head-actions"><button id="save" class="primary">保存</button><details class="actions-menu"><summary aria-label="方案和配置操作">•••</summary><div><button id="saveAs">另存为</button><button id="alternate">保存备选</button><button id="rename">重命名</button><button id="refreshConfig">刷新配置</button><label class="import-button">导入配置<input id="importConfig" type="file" accept=".json,application/json" hidden></label></div></details></div>
+  <span id="configStatus" class="sr-only">正在读取插件配置</span>
+ </header>
+ <div class="workspace">
+  <main class="studio">
+   <div class="viewport-wrap"><div class="viewport" id="viewport" aria-label="三维模型预览"><canvas id="scene" aria-label="可旋转的三维模型"></canvas><div id="realBall" aria-label="插件水球三维编辑预览"></div><div class="canvas-top"><div><span class="dot"></span> <span id="modelTitle">水球模型</span><button id="stateLabel" class="state-toggle" aria-pressed="false" title="点击散开全部部件">已聚合</button></div><button id="resetView" title="恢复视角">⌖</button></div><div id="resetBar" class="reset-bar" hidden><div id="resetItems" class="reset-items"></div><span class="reset-more-wrap"><button id="resetMore" type="button" hidden aria-describedby="resetDetail">更多</button><span id="resetDetail" class="reset-detail" role="tooltip"></span></span></div><div class="scene-caption"><span id="hoverLabel">点击模型中的部件</span><small>双击散开或聚合 · 拖动旋转</small></div><div id="fallback" hidden>当前环境无法启动 WebGL，请使用支持 WebGL 的浏览器。</div></div>
+    <div class="viewport-controls"><div class="selection-tag"><span>当前选中</span><strong id="selectionSummary">未选择部件</strong></div></div>
+   </div>
+   <div class="sr-only"><span id="quotaStatus">额度尚未读取</span><span id="taskSourceStatus">任务状态</span><div id="taskAttribution"></div></div>
+  </main>
+  <aside class="inspector">
+   <section class="theme-section"><div class="section-heading"><b>主题方案</b></div><select id="themes" aria-label="选择主题方案"></select><select id="schemes" aria-label="切换已保存方案" hidden></select><div class="palette-quick" id="paletteQuick" aria-label="主题常用颜色"></div></section>
+   <section class="part-section"><div class="section-heading"><b>配置部件</b><span id="partCount"></span></div><select id="parts" aria-label="选择配置部件"></select></section>
+   <section class="reset-section"><div class="section-heading"><b>倒计时</b><span id="resetMode">额度来源</span></div><div id="resetChoices" class="reset-choices"></div><p id="resetHint" class="reset-hint"></p></section>
+   <section id="editor" class="editor"><div class="section-heading"><div><b id="partName">选择一个部件</b><span id="partDescription" class="sr-only">点选模型或部件列表开始编辑</span></div><button id="resetPart" class="icon-btn" title="恢复主题颜色">↺</button></div>
+    <div id="colorControls" hidden><div class="color-heading"><span>部件颜色</span><span id="colorValue">#FFFFFF</span></div><div class="color-area"><canvas id="sv" width="280" height="140" tabindex="0" aria-label="饱和度和亮度，方向键调整"></canvas><span id="svMarker"></span></div><div class="hue-wrap"><input type="range" id="hue" min="0" max="359" value="180" aria-label="色相"></div><div class="color-input"><span id="colorSwatch"></span><span>HEX</span><input id="hex" maxlength="7" aria-label="十六进制颜色" spellcheck="false"><button id="applyHex">应用</button></div><div class="quick-colors" id="quickColors"></div><p id="colorHint" class="hint" aria-live="polite"></p></div>
+    <label id="sizeControl" class="size-control" hidden><span>部件大小 <strong id="sizeText">100%</strong></span><input id="size" type="range" min="50" max="160" value="100" aria-label="部件大小"></label>
+    <div id="parameters" class="parameters"></div><div class="part-actions"><button id="extract">拆出选中部件</button><button id="restore">放回选中部件</button></div>
+   </section>
+  </aside>
+ </div><div class="toast" id="toast" role="status"></div>
+</div><dialog id="nameDialog"><form method="dialog"><h2 id="dialogTitle">方案名称</h2><input id="dialogName" maxlength="40" autocomplete="off" aria-label="方案名称"><div><button value="cancel">取消</button><button id="dialogConfirm" value="confirm" class="primary">确定</button></div></form></dialog><script type="module" src="app.js"></script>
+</body></html>
