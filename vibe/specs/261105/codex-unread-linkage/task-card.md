@@ -2,7 +2,50 @@
 
 2026-11-06 续修：[整合修复与验收账](../../261106/task-state-recovery/task-card.md)。修正 recovery 结束/超时/clear 后同 owner 较旧 revision 快照误放行；三个失败夹具修后通过，同 revision read 变化仍接纳。静态 owner 哈希随此已复现缺陷显式更新；不表示真实宿主多任务已读因果已证明。
 
-状态：第二版实际加载与指定任务的已读传播已核；完整“已完成未读→已完成”起点未捕获，不能记为全场景验收。用户已替换第二版，现场核查见下节；此前第一版虽已运行但实测无效的历史保留。
+状态：Windows 安全查询参数及 PowerShell 枚举错误已修正，完整脚本和真实工厂在 Windows SSH 上下文通过，17:23:11 候选已生成；目标宿主连接、精确绑定和未读传播仍待手测。macOS 第二版实际加载与指定任务的已读传播已核，完整“已完成未读→已完成”起点未捕获，不能记为全场景验收；此前第一版虽已运行但实测无效的历史保留。
+
+## 2026-11-10 Windows 安全查询参数纠正
+
+- 用户随后回传目标 Windows 实测：管道存在且只读安全句柄可打开，GetSecurityInfo 对象类型 1 返回 87，类型 6 返回 0，owner 匹配且 DACL 存在；此前候选使用类型 1，是本轮实现缺陷。旧候选的静态/编译核对不能证明此参数有效，旧 Windows 桥接不因此视为通过。
+- 本次改为 SE_KERNEL_OBJECT（6），保留 READ_CONTROL、owner/写权限保护、有界异步检查及资源释放。额外将查询参数错误、其它查询失败、启动失败、进程失败、超时和异常输出分为固定原因；不落原始输出、SID、账号或 context。
+- SSH 实测独立复核了类型 1 → 87、类型 6 → 0，ownerMatchesCurrentUser 与 daclPresent 均为 true。但只改类型后完整脚本仍失败；阶段探针定位到 ACE 标志位的枚举 `-band` 触发 InvalidCastException。两侧显式转为整数，原权限判断不变后，17:20:57（北京时间）完整脚本返回 secure，耗时 1233ms。17:17:27 中间候选因仍含该类型转换错误，不作为交付；最终完整源脚本回读结果与候选身份另记。
+- `BusinessChangeReview` / `VerificationImpactTrace` 沿用下节并追加用户当前实测：允许修正对象类型和诊断分类，不放宽所有者/ACL 或身份选桶。选定 JS 语法、镜像/包字节、产物身份、独立编译及授权 SSH 的内存只读安全探针；没有自动化行为测试，真实桥连接与未读传播仍需独立观察。
+- 最终本地完整脚本于 17:22:28 在 Windows SSH 上下文原样返回 secure（1130ms），同一 CJS 原工厂与真实 execFile 返回 secure=true / reason=secure（414ms），保留 5000ms 超时。候选为 EyPc V7 / host-276406b71202a45e4674 / renderer-813f05d5c341803fcad0 / 2026-11-10 17:23:11 北京时间；未安装或连接桌面桥，不能外推未读联动通过。
+- 同轮拖拽展开滚动条修复、SSH 入口、[最终候选及当前检查点](../../260915/float-edge-rail/windows-diagnostics-review.md#实现现场结果与当前候选)统一在窗口续查记录；下节 16:46:58 ZIP 保留为故障历史。
+
+## 2026-11-10 Windows 未读通道续修
+
+- 现场回传：北京时间 16:15—16:17，16:10:35 候选已加载；任务库存 6 条、运行切换与 Float applied 已确认。注册表缺省置顶字段阻断已解除，桌面未读仍为 `binding-unavailable / bindingKnown=false / readBridgeState=failed`。本轮不把接收 ACK 当作视觉验收，不覆盖原故障快照。
+- Windows 对应 Codex 随后回传：当前原生状态存在两个身份桶。这是现场转述，Mac 本轮未独立读取 Windows 文件；双身份验收必须先由受信原生通道取得当前身份与执行宿主 context，再精确选桶并重放。不能选首桶、合并桶或把读取失败改成已读。最终手测须覆盖产生未读 → 在原生 Codex 打开并标记已读 → 插件清除，同时验证账号隔离及既有任务状态连续性。
+- 用户已在明确上述 Windows 桌面通道与精确绑定缺口后授权继续修复。实现范围为补齐本地原生通道与可验证绑定来源，保留已修复的注册表兼容逻辑。
+- `BusinessChangeReview`：基线为[当前产品要求](../../PRODUCT_REQUIREMENTS.md#L300)、[原生身份隔离记录](../../../knowledge/error-memory/codex-native-unread-schema-protocol-drift.md#L1)及本节现场回传。允许变化仅为 Windows 原生桌面连接与失败诊断；既有 macOS 端点保护、单身份/本地执行宿主选桶、unknown 语义、通知版本校验和绑定恢复保持。禁止从目录名、未读集合或跨身份并集猜测当前账号；不读取认证资料，不写原生状态。
+- 消费者为 Desktop IPC → 原生通知/快照与持久未读 → Codex evidence → Kernel → Main/Float 分组、角标及原有归档通知。运行/完成、等待、Goal、成员与其它 Provider 的归约规则不变。没有测试预期变更；Windows 原生端点与信任依据在程序资源核实后才进入实现。
+- `VerificationImpactTrace`：涉及端点、安全判定、连接/重连、绑定与通知接线、受管理镜像、产物身份及帮助。选择语法、静态差异/私有同步 IPC 搜索、镜像、类型、合同与独立 Vite 构建/runtime prepare；按用户既有偏好不编写或运行自动化测试，默认 build 内的语义测试不执行。真实 Windows 连接、未读到已读及任务结束回落由用户加载候选后手测。
+- 分工：`planned_child_count=1`；原生子 agent 负责程序资源协议调查，核实后承接独占模块实现；Root 负责已有脏主入口的接线、整合、文档与最终静态/构建核对。请求/配置均继承当前模型，实际模型与用量未观测。派发 Hook 为 fail-open，未确认任务级预检关联，不将其提示视为派发治理已通过。
+- 原生依据：本机 Codex 程序包 26.1103.60933 / build 25894、bundle com.openai.codex。ASAR 内端点成员 early-bootstrap-824-8c6252e0131a7fe3.js 的第 34 行、模块 92272、字符偏移 207562，明确 Windows 使用固定本地命名管道；成员 SHA-256 为 `135ba428856dcfa52b53be2cc714bef8ed4fe8cefdad6011e61c89f27069b36b`。同模块证明 4 字节小端长度 + UTF-8 JSON、256 MiB 上限，与既有读取器相同。本轮只读程序代码，没有执行原生认证调用。
+- 原生握手只返回 clientId，不提供账号/执行宿主上下文；v3 read-state 通知在原生捕获当前身份与宿主后携带 context。端点名称和握手 UUID 均不单独证明可信来源。Windows 本地所有者/ACL 判定是 EyPc 新增的连接保护，不将其写成 Codex 原生认证机制。
+- 实现：[原生端点与验证入口](../../../../preload/codex/desktop-ipc-endpoint.cjs#L1)、[Windows 所有者与写权限检查](../../../../preload/codex/desktop-ipc-windows-security.cjs#L1)、[独立连接生命周期](../../../../preload/codex/desktop-ipc-connection.cjs#L1)。安全检查使用固定、异步且 5 秒有界的本地 PowerShell，输出固定原因；不记录 SID、账号、路径、命令输出或上下文正文。拒绝访问、所有者不符、外部可写 ACL、管道忙和能力缺失均不放行。
+- 已有 v3 通知接线继续负责精确绑定 → 重读持久未读 → 重新发布。Windows 断连撤回旧绑定、持久基线及旧桌面 read 字段，避免重连后沿用另一身份；macOS 原有重置行为保持。尚未收到合法 v3 context 时，两身份桶继续 unavailable，不能把连接成功写成绑定已恢复。
+- 当前状态：源码修复与完整候选已生成；尚无目标 Windows 新运行证据。新增连接代码已从主入口拆出；入口缩减后同步收紧预算，没有放宽行数门槛。既有自动测试结果不外推到本轮新代码。
+
+### 静态核对与候选
+
+- 语法、类型、合同结构、Vite 生产编译、runtime prepare、需求真值/登记及来源锚点校验通过。主入口为 14782 行 / 278 个 Codex 函数 / 160 个可变绑定，较本轮基线分别减少 15 行和 1 个函数，预算同步收紧。
+- 102 项受管理资源在 source/public/dist 三侧逐字节一致；13 个身份字段与当前源码计算值一致，Main/Float 编译入口内嵌同一 Host/Renderer。此为静态包完整性，不是行为测试或 Windows 运行验收。
+- 增量静态搜索没有新增私有同步宿主 IPC、认证文件/Token 读取或原生状态文件写入。系统用户 SID 与 ACL 只用于本地连接保护，不作为 Codex 账号绑定来源；安全元数据使用只读句柄和 GetSecurityInfo，句柄与描述符均在 finally 释放。
+- 最终产物：EyPc V7 / `host-fac102c28780051c814f` / `renderer-a28e5b966d5d77d75547` / 北京时间 `2026-11-10 16:46:58`（UTC `2026-11-10T08:46:58.741Z`），状态 `artifact-ready`。第一次 16:44:13 编译后，将安全元数据读取改为句柄接口，再重新编译；首版身份不作交付。候选 ZIP 文件名的 164641 是打包标签，交付时间以包内 runtime identity 为准；共享检出和 ZIP 的身份及时间已回读一致。
+- [完整 dist 入口](../../../../dist/plugin.json#L1)与[Windows 候选 ZIP](../../../../output/EyPc-Windows-unread-20261110-164641.zip)已生成；ZIP SHA-256 为 `db5e8a64fbc7fa8395d0197ad3a70ca7032b0ba3c39f3b3a956455218f481efc`。ZIP 内为完整 dist，包含本次构建时检出的其它既有改动。原 16:10:35 产物已保留为[修复前备份](../../../../output/windows-unread-20261110-164402/previous-dist/plugin.json#L1)。
+- 候选清单当前为 1.2.6，与 Windows 回传的 1.2.7 不同；本轮没有修改清单版本。加载核对以实际 Host、Renderer、构建时间和当前日志为依据，不能只比较清单版本。
+- 按用户既有偏好，没有编写或运行自动化测试，也未执行默认 build 内的语义 canary。PowerShell/C# 片段尚未在 Windows 解析或执行；JS 语法、编译和字节一致性不能证明 Windows ACL API、管道权限或 v3 通知及时性。未安装/重载候选。
+- 收尾发现原静态未读通路基线仍锁定旧 owner 摘要。本次 owner 的新增变化仅为 Windows 传输重置时撤回绑定及旧 read 证据；经差异审查，在同步架构与本记录后更新摘要，并把 Windows 重置接线加为必备项。保留原摘要核验、镜像核验及其余接线项。更新后未读静态基线与镜像检查通过（100 对已提交镜像及 2 对待提交新模块）；当前 102 项 source/public/dist/ZIP 字节和身份元数据一致。该静态检查不作为行为验收。
+
+### Windows 手动验收入口
+
+1. 解压候选，以 dist 的插件清单重新打包或接入，回读实际/预期 Host、Renderer 与上述产物一致。
+2. 在调试日志查看 desktop-bridge-state：安全检查后应进入 connected。失败时保留固定 reason；owner-mismatch、permissions-untrusted、access-denied 或 security-unavailable 不能绕过。
+3. 等待真实任务完成产生原生未读，在 Codex 原生界面打开并确认已读。核对本地 v3 desktop-read-notification received → desktop-read-binding recovered/rebound → desktop-unread-read ok 且 bindingKnown=true → Kernel 发布及 Float applied。握手只有 clientId，不能单独作为绑定恢复证据。
+4. 双身份桶仍只读取当前合法 context 对应桶；没有 context 时保持 unknown。检查断连出现绑定 invalidated，重连须重新收到有效 context；不通过改写原生文件构造已读。
+5. 分开观察本轮运行到完成回落，以及 Main/Float 实际绘制。日志/ACK、运行状态和未读同步分别验收；未覆盖的场景继续保留未验。
 
 ## 目标与现状
 

@@ -1,5 +1,139 @@
 # 较早 Side 终态独立核验
 
+## 2026-11-10 远端 Magpie 限额展示增补
+
+状态：实现及定向领域／新增 UI 回归通过，隔离候选已构建；作为 Windows 注册表与旧待输入修复后的第三项独立改动，前两项的验证结果及未闭合现场边界仍保留。当前候选以本节身份为准，下方联合修复身份保留为当时构建记录；全部验证和实机验收尚未闭合。
+
+### BusinessChangeReview / RequirementChangeReview
+
+1. 决定来源：用户明确批准远端 Magpie 限额增补方案，`decision_status=explicit-current-request`。本项为兼容新增：仅 Codex 与 Magpie、免费 Codex 无明确自身额度、没有应保留的具体 agent 读数时，以唯一远端 key 的有限限额接管外环和中间；同 key 取剩余比例最低项，平手接口顺序。
+2. 保留：无限、具体 agent 读数及 Codex 自身真实 0% 均不接管；多个 key 不猜选、不合并；原付费轮换、Token 回退、Grok／Cursor、液面、任务状态和持久化规则保持。不把缺失或读取失败解释为无限、0% 或 100%。
+3. 影响：限额纯解析 → 统一展示策略 → Float／Codex 设置预览／外观编辑预览；当前唯一需求主本为额度 Spec，本记录只存实施与验证证据，产品真值与架构同步对应入口。没有待裁决的规则冲突，不改前两项修复的原测试断言。
+4. 分工：`planned_child_count=1`，Root 负责两个源码模块、三个展示入口、水球、UI 回归、构建与文档；执行者 Dewey 独占两份 domain 回归。模型按父配置继承，实际模型未独立观测；原生 Hook 未核验任务绑定，不记为合规派发通过。
+
+### VerificationImpactTrace
+
+| 编号 | 检查范围 | 状态 |
+| --- | --- | --- |
+| M-V01 | 唯一远端 key、Token／金额、多周期最小剩余比例、0／100、非法字段与无限 | Magpie／CompanionPresentation 两 domain 文件共 290 项通过，原账户选择和网格断言保留 |
+| M-V02 | 免费且无自身额度准入；具体 agent 真实 0、其它 Provider、未知／失败账号阻断 | 同组回归通过；含隐藏零格不能接管、过期值及恢复 |
+| M-V03 | Float、设置与编辑预览一致；提示／读屏、过期与恢复、液面保持 | 三项新增 UI 回归通过；最近一次两 UI 全文件 118 通过／17 失败，全部 17 项在隔离基线复现，未改旧断言；最终补齐预览读屏后重跑新增三项通过 |
+| M-V04 | 语义类型、构建、镜像、预算、运行身份与需求真值 | typecheck、生产 build、source／packaged 各 40／60／23 保全检查通过；102 组工作树／public／dist／固定候选镜像字节及 13 字段身份通过；入口 14782／278／160。需求登记、来源锚点、文档链接与差异空白检查通过；validate:mirrors 仍被并行未读通路的静态基线变更拦住，未宣称该门禁或后续 HEAD 镜像检查通过 |
+| M-V05 | 配置远端的真实机器：加载身份、实际读数变化、具体额度恢复、无限保持 | 未测；用户加载候选后验收 |
+
+实际验证：领域文件使用 `pnpm exec vitest run tests/domain/magpieQuota.test.ts tests/domain/companionPresentation.test.ts`；UI 文件使用 `pnpm exec vitest run tests/ui/codexCompanion.test.ts tests/ui/codexAppearanceStudio.test.ts`。语义类型 `pnpm run typecheck` 通过。UI 首轮新增悬浮用例误用旧类名及局部查找 Teleport，修正该新增夹具后最终 118／17；旧失败未修改。基线在临时目录保留当前依赖与其它检出输入，仅将本轮起初无脏改的六个源码文件恢复为 `HEAD e3968ef`，按名称重跑全部 17 个失败，0 通过／17 失败；分类为外观旧提示选择器、Float 旧提示／ownership 预期及运行身份夹具。该对照只排除本次新增回归，不证明旧行为正确。临时目录不作为交付产物。
+
+### 最终候选、门禁与复核
+
+1. [限额解析](../../../../src/domain/magpieQuota.ts#L322)、[统一展示策略](../../../../src/domain/companionPresentation.ts#L209)、[Float](../../../../src/FloatApp.vue#L275)、[设置预览](../../../../src/pages/CodexPage.vue#L1050)、[编辑预览](../../../../src/components/CodexAppearanceStudio.vue#L109)及[水球](../../../../src/components/CodexWaterBall.vue#L42)已实现；[使用说明](../../../../src/help/guides/codex.md#L47)补充启用条件、来源、限额选择与保持场景。最后复核发现两种预览把水球设为装饰内容，原 label 不会进入读屏；已将同一限额提示加入编辑舞台和设置预览的可访问名称，新增回归检查启用及退出时的名称变化。
+2. `pnpm run build` 完成合同、语义类型、Vite、预加载准备和 source／packaged 各 40 核心场景、60 生命周期检查点、23 原生未读检查点。本项不修改 preload 入口或预算；并行工作已将入口收紧到 14782 行／278 Codex 函数／160 可变绑定，预算检查通过，没有放宽。
+3. `pnpm run validate:mirrors` 失败原因已直接核对：[未读 owner](../../../../preload/codex/desktop-unread-evidence.cjs#L522)新增 transport-reset 时撤销绑定的逻辑，其当前 SHA-256 为 `f6cbce5c59ff78dbe603c1f7e8a36b89b7204b49a14af25a458c9538f3041773`，[静态守卫](../../../../scripts/check-codex-unread-route.mjs#L10)仍要求与 HEAD 相符的 `e2e3946d0543af9e48649ac0ea765fee62ca8c308eb350271ae4bafe9d7b0c3b`。本项未改该 owner 或基线；保留失败，未跳过守卫或擅自更新。独立字节核对证明 102 组 source／public／dist 一致，但不能代替该门禁后尚未运行的 HEAD 镜像比较。
+4. 共享检出在构建后仍有 Windows IPC 安全模块改动，曾使刚生成的身份及镜像失效。最后按[现有隔离构建流程](../../../../scripts/build-isolated-utools.sh#L1)的输入清单捕获稳定源码快照，复制前后及隔离副本的源码身份一致，再执行标准 build；构建后确认共享源码仍匹配，才同步生成的 public／dist。候选包含快照内既有任务状态、Windows IPC 与未读改动，不能将这些并行改动视为本项已独立验收。
+5. 固定候选：[完整目录入口](../../../../output/eypc-magpie-261110-164658/dist/plugin.json#L1)，同时同步到[检出 dist 入口](../../../../dist/plugin.json#L1)。身份：`EyPc V7 / host-fac102c28780051c814f / renderer-a28e5b966d5d77d75547`，北京时间 `2026-11-10 16:46:58`（UTC `2026-11-10T08:46:58.741Z`）。manifest 仍为 1.2.6，未改变与 Windows 现场 1.2.7 的差异；没有生成新 ASAR。
+6. 手动接入时在 uTools 开发者工具选择固定候选完整目录中的 plugin.json；Windows 先复制完整目录，或用 uTools 开发者工具打包完整目录后安装。重新加载插件 preload 并核对完整身份后，分别验收任务识别、旧等待解除和本项远端额度；普通页面刷新不能证明新 preload 已加载。真实远端限额变化、agent 额度恢复退出及无限场景均未测。
+7. 最终隔离候选的三个新增 UI 场景再次通过（132 项未选，不作通过）；完整领域文件的 290 项结果复用，输入未变。`node scripts/check-runtime-identity.mjs` 在隔离及共享检出均通过，102 组四方资源及 public／dist／候选身份一致。来源锚点同步后仍为 69 documents／356 ordered，`--write-current-truth` 与 `validate:requirements` 通过，保留 2 条既有 proposed 警告；文档代码链接和 `git diff --check` 通过。未将失败门禁改写为通过。
+
+Tool: codex
+
+Review Target：用户已批准的第三项增补、M-V01～M-V05 及上述实现。Checked：规则准入、原始零读数保护、唯一 key／多窗口选择、失败／缓存语义、三个入口与读屏、差异及验证证据。未发现本项仍需追加的确定源码修正。P1 验证缺口：17 项既有 UI 失败及未读静态基线失败保持打开；远端实机验收未运行。P2 已纠正：使用说明及装饰预览的读屏信息遗漏。没有为清除旧失败修改原断言或扩大功能范围。
+
+## 2026-11-10 Windows 注册表与旧待输入联合修复
+
+当前状态：两项指定源码缺陷已修复，候选已构建；专项回归通过，扩展回归保留既有失败及循环。Windows 和 macOS 新产物实机验收均未运行，不能据本节宣称现场全链恢复。
+
+### BusinessChangeReview
+
+1. 用户已批准联合方案并明确授权源码最小修复、合成文件回归、定向测试、构建、镜像与需求真值同步。本节独立于上轮“不运行自动化测试”的历史记录；不授权安装、宿主重启、真实状态写入、提交或推送。
+2. Windows 现场身份为 host-c937dd796220736db8c8 / renderer-84b8584034a1a2be78bf，与实施前源码身份相符。用户提供主文件及备份同时缺少两个置顶字段的解析对照，证明此缺陷足以阻断预检；未直接读取 Windows 安装包，不宣称完整链路已经恢复。清单、注册表与动态任务数量不作机械相等比较。
+3. 允许变化：两个置顶属性仅在不存在时读取为空数组；错误类型继续拒绝。临时等待使用统一进程序列及稳定实例，原生成员完整请求集接管时精确关闭对应旧实例。Kernel 的旧证据保护、未知不清理、其他成员与新提问／审批／计划等待保持。
+4. 写端仍处理原始对象，保留未知字段与事务门禁；不补写缺失字段，不改真实 Codex 主文件或备份。来源读取失败继续失败，不能返回健康空任务；诊断仅增加阶段、白名单字段、有限类别和来源健康摘要。
+5. 分工：Root 独占 preload 入口、运行诊断、公共错误类型、统一验证与文档；执行者 Curie 独占注册表模块及 Bridge／PinBridge 测试；执行者 Carson 独占请求投影模块及异步提问／相关 Kernel 测试。计划子执行者 2，继承当前模型配置，实际模型未观测；原生 Hook 的任务绑定观察未核验，不记为合规通过。已有无关脏改全部保留。
+
+### VerificationImpactTrace / 本轮核验
+
+| 编号 | 影响与验收 | 当前状态 |
+| --- | --- | --- |
+| W-V01 | 两置顶均缺、分别缺失、空数组 | 旧解析器定向 48 失败／1 通过；修复后注册表组 49 项通过 |
+| W-V02 | 非空顺序、去重、错误类型与非法成员 | 同组行为回归通过；仅兼容属性不存在，不兼容 null 或其他非法类型 |
+| W-V03 | 合法主文件优先、读／解析失败备份回退、双失败保留 | 合成文件／模拟 FS 行为回归通过，未改真实状态 |
+| W-V04 | 归属、无项目、置顶与排序、原始对象写入、门禁和回滚 | 主备回读、并发变化、进程检查、未知字段与回滚行为通过；PinBridge 11、Controller 56 通过 |
+| W-V05 | 本地／RPC／投影失败、健康空、来源健康／代次／旧快照与隐私 | 诊断 20 项、Bridge 诊断消费者 10 项通过；投影失败保留 Kernel 原包，失败来源代次仍为零 |
+| W-V06 | 临时等待被完整原生请求集接管、恢复运行及重复实例稳定 | 旧身份包的 3 项 Bridge 反例失败，新实现 4 项通过；含旧毫秒等待无法被低序号完整集关闭的对照 |
+| W-V07 | 主子隔离、新问题／审批／计划、旧证据与部分／未知保护 | 请求投影／Kernel 新增 44 项通过；Side 代次串入主集合、旧 Turn 高观测序号误清新等待两项先失败后通过；扩展旧失败另列，不以新用例代替全链验收 |
+
+本轮构建入口是完整 dist 目录中的 plugin.json；manifest 为 1.2.6，Windows 现场报告为 1.2.7，保持差异且不改发行版本。实机验收需用户手动加载新产物并核对运行身份；当前 Windows 和 macOS 宿主验收均未运行。
+
+### 实现、影响与保护
+
+1. [注册表解析](../../../../preload/codex/native-registry.cjs#L88)仅对两个缺失 pin 属性投影为空数组，不修改输入对象；其他类型、列表元素、顺序／去重、数量上限和 UUID 过滤保持。主备读取仍由[原读取入口](../../../../preload/index.js#L8717)负责，合法主文件不因缺 pin 退回旧备份。
+2. [项目移除](../../../../preload/index.js#L10306)事务未改，继续基于原始主对象及字节／指纹检查操作；缺项目 pin 字段仍拒绝写入。仅缺 thread pin 的合成写入场景证明未知字段保留、不补该字段、失败回滚原字节。任务 pin 仍走 RPC／Host CLI 和回读。
+3. [请求投影](../../../../preload/codex/desktop-request-projection.cjs#L234)保存成员／分支／轮次／等待实例的稳定进程序列；完整请求集只接管对应成员，关闭旧临时实例并保留真实提问／审批／Plan。完整集及关闭证据可幂等重放，首次批次未接纳后仍可重新交付；部分／失败／未知保留打开实例。
+4. [原生请求集](../../../../preload/codex/desktop-request-projection.cjs#L600)按成员计算 revision，其他 Side 的活动不再抬高主成员集合。明确运行只使用真实 active evidence 序号，且不能跨旧 Turn 清理；时间戳只作时间。入口会话 reset、根归档和成员撤销清临时映射，无 TTL 或监控。Kernel 源码和旧证据保护未改。
+5. [Codex 证据接线](../../../../preload/index.js#L11459)合并原生及仍有效的临时等待，只将实际输出交互纳入返回 maxima；当前 maxima 无生产消费者，不将它描述为已经污染实际来源 lane 代次。实际阻断是旧 interaction／requestSetRevision 使用毫秒量级序号。
+6. [运行诊断](../../../../preload/codex/runtime-diagnostics.cjs#L72)与[快照读取](../../../../preload/index.js#L10210)保留公开 code，并透传 local-state／app-server／task-projection 安全上下文；不透传原异常正文。[冷预检](../../../../preload/index.js#L12120)分别记录 accepted／degraded／failed、来源健康、投影完成／未执行／失败及健康空结果。失败 draft 包络、旧快照和来源代次语义保持。
+7. [用户帮助](../../../../src/help/guides/codex.md#L30)补充失败阶段及健康空的含义；没有新操作、快捷键、发行版本或配置默认值。候选包含检出中既有相关修改，未提交、推送、安装或重启宿主。
+
+### 实际本地验证
+
+| 编号 | 检查 | 结果与适用边界 |
+| --- | --- | --- |
+| W-C01 | Bridge 专项：注册表、诊断消费者、等待接线 | 最终三专项 63 通过，304 未选；命令见下方，仅访问模拟来源 |
+| W-C02 | AsyncQuestions、PinBridge、RuntimeDiagnostics、EvidenceAdapter、Kernel、Controller 六文件 | 411 通过、1 既有失败；Async 113、Pin 11、诊断 20、Evidence 13、Controller 56 全过，Kernel 198 通过／1 失败。失败是既有 provider 条件源码断言，Kernel 与 HEAD 同字节，未改断言 |
+| W-C03 | 扩展 Bridge 文件 | 中止前 266 通过、10 失败，91 项未取得最终结果；循环用例为 `withdraws a previously live guardian while preserving other-live evidence`。不声明整个 Bridge 文件通过 |
+| W-C04 | 匹配旧身份产物对照 | 从原候选包提取 100 组预加载资源到临时目录，核对原 SHA-256 与 host-c937dd796220736db8c8 / renderer-84b8584034a1a2be78bf；同样 10 项旧 Bridge 失败全部复现，3 项新等待回归在旧包失败、修复后通过；旧包 guardian 循环在 10 秒有界运行仍不结束，主动停止 |
+| W-C05 | 镜像与构建 | `pnpm run sync:preloads`、`pnpm run build` 通过，含合同、语义类型、Vite、预加载准备及 source／packaged 各 40 核心、60 生命周期、23 原生未读保全检查 |
+| W-C06 | 产物静态与真值 | `validate:mirrors`、`validate:entry-budget`、working mirrors、runtime identity、需求真值写回和 `validate:requirements` 通过；100 组镜像、13 个身份字段一致，入口维持 14797／279／160，预算未改。保留 2 条原 proposed 警告；最终类型、文档代码链接和差异空白检查通过 |
+
+W-C01 的最终命令：
+
+```sh
+pnpm exec vitest run tests/platform/codexAppServerBridge.test.ts -t '^(Windows native registry missing pin fields|native registry diagnostic consumer integration|Codex fallback live sequence bridge)' --reporter=json
+```
+
+W-C02 与扩展 Bridge 的实际组合命令：
+
+```sh
+pnpm exec vitest run tests/platform/codexAppServerBridge.test.ts tests/platform/codexPinBridge.test.ts tests/platform/codexRuntimeDiagnostics.test.ts tests/platform/codexAsyncQuestions.test.ts tests/platform/providerEvidenceAdapterV7.test.ts tests/platform/companionTaskKernel.test.ts tests/runtime/codexController.test.ts --reporter=json
+```
+
+扩展失败未通过改断言、跳过或修无关代码来消除。10 项 Bridge 失败涉及既有 Plan 结束预期、Side 重建、owner 清等待和普通成员结束；它们在原候选包也失败，仅证明不是本次新增回归，不证明这些历史行为已正确。旧宿主的匿名等待实例及此前 unknown Side 证据仍未形成完整现场闭环，保留这些限制。
+
+### 当前候选及手动接入
+
+1. 当前产物：EyPc V7 / host-88fb54a5fd335b49a370 / renderer-9307bea5cd0bd0fddb58 / 北京时间 2026-11-10 16:10:35（UTC 2026-11-10T08:10:35.898Z）。实测前读回 public／dist 的身份与构建时间一致；此前记录的 15:34:43 为较早构建时间，两次代码身份相同，不据此推断重建原因。使用完整 [dist 入口](../../../../dist/plugin.json#L1)；本轮没有新 ASAR，不将此前 12:46 候选包冒充本轮修复包。
+2. 本机可在 uTools 开发者工具中选择完整 dist 目录下的 plugin.json 接入；Windows 需复制完整 dist 目录再选择该文件，或由开发者工具打包完整 dist 后手动安装。本轮采用此接入方式，不单独复制 manifest。另核对了仓库既有[隔离构建与 ASAR 脚本](../../../../scripts/build-isolated-utools.sh#L1)，该脚本会另建临时目录、重新构建并打包，本轮未执行。
+3. 手动重新加载插件 preload 后核对上述完整身份；普通页面刷新不能证明新 preload 生效。分别核对 Windows 当前任务出现、结束转换、置顶及项目归属，以及输入解决后恢复运行、新问题／审批／计划仍等待；按过滤、时间窗和归档规则核对，不要求会话、注册表和动态任务数字相等。
+4. Windows 与 macOS 新包实机项目全部未运行；未打开真实会话、修改已读或手动状态，未修改真实 Codex 状态主文件／备份或系统环境。
+
+### 实测前复核（2026-11-10）
+
+Tool: codex
+
+#### Review Target
+
+- Requirement: Windows 缺失置顶字段兼容、读取失败不伪装健康空结果，以及恢复运行后关闭对应旧等待。
+- Plan: 用户已批准的联合实施方案及本节 W-V01 至 W-V07。
+- Implementation: 本节列出的注册表、请求投影、入口接线及安全诊断改动。
+
+#### Checked
+
+- Requirement alignment / Plan-to-implementation coverage: 聚焦复核两项模块 diff、读取主备路径、临时实例清理接线、失败阶段与健康空判定，并核对既有专项测试覆盖；未发现两项指定修复尚遗漏的确定源码改动。
+- Risk and compatibility: 缺失与非法字段仍分开处理，未知／部分证据不关闭等待，Kernel 保护未放宽；未增加无证据重构或优化。
+- Verification evidence: 复用 W-C01 至 W-C06 的既有验证，不重复运行行为测试或构建。本次重新核对 runtime identity 13 字段通过，public／dist 构建时间均为 16:10:35；记录时间已校正。
+
+#### Findings
+
+- P1（未闭合验证）: 扩展 Bridge 的 10 项失败、guardian 循环和 Kernel 1 项失败仍存在，另有 91 项未取得最终结果；旧包对照仅排除本次新增回归，不能证明历史行为正确。允许两项定向实测，不将候选记为全面验收通过。
+- P2（已纠正）: 当前候选记录仍指向较早构建时间，容易造成实测产物混淆；本次按实际 public／dist 读回更新，Host／Renderer 身份不变。
+
+#### Optimization Suggestions
+
+- 当前没有需在两项定向实测前追加的确定源码优化。历史失败的原因与修正仍属源码调查，不交由用户用手工测试替代；现场验收重点为真实加载、任务出现、等待解除、新等待、主／Side 隔离、结束状态及置顶归属。
+
+#### Not Checked
+
+- 未安装、打包新 ASAR、重启宿主或执行真实预检；Windows／macOS 新产物实机验收、历史匿名等待归因及 unknown Side 终态仍未闭合。
+
 状态：2026-10-14 新包固定轮次的真实结束窗口通过。11:30:30 插件 running 直接进入 completed，未读包获 applied ACK；11:30:31.047–11:32:01.976 的 20 次原生样本在 90.929 秒内保持 completed/idle/unread，结束链未见短暂 stopped 或完成后反弹。结论限该轮原生与日志/ACK证据，未取得结束后截图，不扩大为长期保证；探针已退出，一次自动化已停用。代码回归和打包结果见 V-32–V-38，现场结果见 V-39–V-45。
 
 ## BusinessChangeReview
@@ -220,3 +354,44 @@
 ## 2026-10-14 文档收口与提交范围
 
 本次提交范围保留 Side 自身终态/Goal/原子清退、精确内部评审资格排除和 535 ms 来源仲裁三段修复及实际验收记录。前序 `1425-codex-side-phase/lifecycle-verify.md`、独立夹具错误记忆及索引、对应三项生命周期补测从本次提交快照剥离；工作树中的前序改动保留。上文实际运行的 58 项生命周期门禁和 477/480 相关回归是历史验证事实，不改写为新计数。独立导出的 HEAD 加本次选定改动快照已验证：源码 `preload` 与镜像 `public` 两侧生命周期55/55、原生未读23/23均通过，Companion生命周期/原生未读脚本测试26/26通过，Bridge中主结束、Side终态、内部评审、冷恢复与轮次边界筛选51/51通过，合计77项测试通过；入口预算14698行/279个函数/162个可变绑定通过。该快照排除前序1425的三项门禁与两项Bridge用例，历史完整工作树结果仍按上文保留。本段只确认选定快照验证，不提前宣称提交或推送完成。
+
+## 2026-11-10 macOS 状态异常续查
+
+### 现场事实与边界
+
+1. 用户截图有三条进行中。12:25 的本地轮次元数据表明，回复规则与个人主机短链两条主轮次仍为 `inProgress`；不能把截图三行一概认作假运行。
+2. 订阅服务主轮次及通过原生父子关系定位的六名 subagent、一名 attached Side 最新轮次均为 completed。插件匿名成员诊断另给出主 completed、一名 Side completed、另一名 Side unknown，整组 unknown、runningMembers=0。因此主终态拒收和未知成员阻塞是两个问题；数据库中已定位成员的完成不能代替该匿名未知成员的终态。
+3. 同一根日志在 12:21 后多次以 `newer-branch-turn` 拒收主 canonical；12:24:07 重载后先接纳，12:24:08 又拒收。当前安装包的三个判断模块与检出源码同字节；入口有本轮之前的其他未提交改动，不能把源码推演称为现场逐事件因果证据。
+4. 全程只读任务身份、父子关系、轮次状态和匿名诊断；未读取聊天正文或凭据，未改原生任务、已读、手动相位或安装包。
+
+### BusinessChangeReview 与分工
+
+1. 基线：本任务既有成员独立与来源仲裁合同、[原生组保持活动](../../requirements/shared-raw-218.md#L1)及 [Evidence Adapter](../../../../preload/companion/evidence-adapter-v7.cjs#L46)。允许变化仅恢复精确分支 Turn 的身份、起点和终态绑定，阻止 Side 或聚合记录把主轮次边界改写；补有限拒收字段。
+2. 保留：真实新轮、输入、审批及其他活动成员继续优先；父完成不证明整组完成；缺失、读取失败和未知不产生完成；不引入时间容差、TTL、轮询或强制完成；Kernel、未读和归档语义保持原合同。
+3. 消费者：Desktop / App Server / rollout 私有分支证据、Bridge 完成发布、Evidence Adapter、Kernel 根卡与分组、Main / Float、角标、cycle 和归档保护。
+4. Root 负责现场证据、范围、文档和整体验收；同一临时执行者先只读追踪，再独占修改入口。执行者模型配置继承，实际模型未观测；原生派发 Hook 未核验任务绑定，不记为预检通过。其他现有脏改动保留。
+5. 测试预期变化：无。遵守用户后续默认不写、不运行自动化测试的决定；不得用此前回归计数为本次修复背书。
+
+### VerificationImpactTrace / 本轮待核验
+
+| 编号 | 验收点 | 本轮选择与状态 |
+| --- | --- | --- |
+| V-46 | 主、Side 轮次独立 | 静态核对 Side started 自身 baseline、缓存键和查询键；精确成员查询的 running 恢复复用该入口；运行待用户手测 |
+| V-47 | 正确完成来源 | 完成发布各调用均传原始已确认 Turn 或已有确切主终态；同身份 rollout 复用 owner／缓存起点，旧同轮 active 不覆盖 owner 终态；静态复核完成 |
+| V-48 | 真实活动与未知保护 | 保留其他活动成员、新轮、输入/审批、未知不完成；Kernel / Evidence Adapter 不改；运行未验 |
+| V-49 | 未知 Side 可定位 | 已补普通 Side 的 reason 变化诊断及时间／来源比较值；仅记录匿名成员、有限状态和布尔值；新日志现场采集未验 |
+| V-50 | 镜像、语法与版本 | 四个源码文件语法、入口预算、镜像生成、Vite 编译与预加载准备通过；身份／文档静态核对见下文 |
+| V-51 | 现场恢复 | 新包未加载；订阅根未知成员未闭合；整组完成及稳定性未验 |
+
+不执行自动化测试或真实宿主操作。完整 build 含行为门禁，因此仅选择其既有 Vite 编译与预加载准备步骤，补源镜像、语法及文档静态检查；不能把这些检查称为行为回归或真机修复通过。无全库升级触发。
+
+### 本轮实现与产物
+
+1. [Side started](../../../../preload/index.js#L4774)不再把子轮次起点、ID、缓存写入主轮次；主完成只清匹配的主 live 和主查询，保留其他成员的独立活动和查询。原 App Server 单个 live 分支槽未扩展。
+2. [完成发布](../../../../preload/index.js#L5284)接收确切 Turn；[字段更新](../../../../preload/codex/inventory-turn-fields.cjs#L90)保留同起点已有身份，不从聚合记录拼造终态。原 Turn 校验和原生 active 空轮次投影原样归入同一字段 owner，以保持入口预算。
+3. [rollout 身份归一化](../../../../preload/codex/rollout-runtime-state.cjs#L121)在启用 runtime 观察时执行，不在仅核对等待状态时修改 known。事件时间与 Turn 起点分开；精确同 ID／ref 使用 owner 或缓存起点；同轮 owner 终态拒绝旧 active 重放，缺 ID 不覆盖强 owner。私有 ID 不进入诊断或公共任务包。
+4. [拒收诊断](../../../../preload/codex/desktop-activity-resolution.cjs#L346)补 canonical／terminal／branch 起点、exact-live、ephemeral 已知性、runtime／canonical 状态和有限来源；普通 Side 也可留下首条拒因，reason 未变不重复记录。未知成员继续等待真实证据。
+5. core：EyPc V7；host：host-c937dd796220736db8c8；renderer：renderer-84b8584034a1a2be78bf；builtAt：2026/11/10 12:46:31（北京时间；UTC：2026-11-10T04:46:31.839Z）。已生成本地 dist 及[候选包](../../../../output/EyPc-codex-state-20261110-124312.asar)，包名保留首次批次时间，内容已更新至本次最终构建。未替换安装包、重载、提交或推送；包含检出中原有的相关未提交改动。
+6. 未写／运行自动化测试，未跑 source／packaged 行为保全门禁或全量类型检查。四个源码文件 JavaScript 语法、14797／279／160 入口预算、100 组预加载镜像、13 个运行身份字段及 Vite 编译与预加载准备均通过。需求真值登记静态校验通过，保留原有两条 proposed 警告，无新增需求或语义变化；这些证据不证明真实状态转移通过。
+7. 帮助文案不变：本轮恢复既有状态含义与来源边界，无新用户操作、默认值或快捷键。未关闭其他运行中的对话或更改业务任务状态。
+8. 候选包为 7,228,522 字节，SHA-256：`39da69d50ab37a8ac800e1c3f2baccf2fab671000ce776b1343080211d3fec87`。包内身份文件与本轮四个实现文件均和 public、dist 逐字节一致；最终文档代码链接及差异空白检查通过。仅证明产物对应当前源码，未证明宿主已加载或现场恢复。

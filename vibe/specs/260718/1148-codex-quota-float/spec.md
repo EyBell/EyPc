@@ -12,6 +12,17 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
 
 Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
+## 2026-11-10 远端 Magpie key 限额展示
+
+决定状态：`explicit-current-request`，用户已确认并要求实施；真实远端机器验收仍待用户加载候选后执行。
+
+1. 仅开启 Codex 任务来源并启用 Magpie 额度读取、Codex 当前成功快照明确为免费账号且无自身额度、Magpie 无应保留的具体 agent 读数时，允许远端 key 的有限限额显示在水球外环和中间。中间与外环使用同一剩余百分比，标注 Magpie；液面沿用原规则。
+2. 数据只取现有 Magpie 额度接口内的 `…/~keys`、`kind=plan` 限额卡，不以某个 Codex 订阅额度或 Token 余额替代远端 key 上限。多个 key 无法唯一确定时保持原显示，不汇总或猜选。
+3. 同 key 的多个 Token／金额／周期窗口按未取整的剩余比例选择最低项，平手按接口顺序。优先有效 remaining；缺失时只在已用量有效且上限为有限正数时计算。无限、纯文本、仅余额无上限或非法数据不生成百分比；读取失败不等于无限或 0%。
+4. Magpie 已有具体 Codex／Grok／Cursor 额度或 Codex 自身已有明确额度时保持现状，真实 0% 也属于明确额度。原付费账户轮换、Token 回退和具体 agent 选择规则保持。
+5. Float、Codex 设置预览和外观编辑预览共用同一判断；悬停及读屏说明来源、已用量、上限、单位、重置时间与过期状态。已有缓存继续按 stale 语义使用，不新增持久化缓存。
+6. [限额解析](../../../../src/domain/magpieQuota.ts#L1)和[统一展示策略](../../../../src/domain/companionPresentation.ts#L1)持有规则；[联合任务记录](../../261013/1946-side-terminal-reconcile/task-card.md#2026-11-10-远端-magpie-限额展示增补)持有本地验证、候选身份与实机边界。此增补不改变任务识别与等待状态修复的独立验收。
+
 ## RAW-160 Current Authority Overlay
 
 The current V4 authority is [RAW-160 spec](../../260810/1155-install-runtime-diagnostics/spec.md#L1). Its installed-host rework adds the Kernel-private Branch Evidence Store、Host-current same-key opening、focus-private zero publication、the restored `20×20` single-digit counter contract and process-native Claude/Codex watchers that remain timely while Main is hidden. Codex native unread/rollout targets use immediate callbacks、one-second StatWatcher recovery and error rebuild；persisted unread true triggers a same-key latest-Turn check，while deferred Branch evidence and the matching public draft form one semantic commit。Claude App `1.28929.0` fixed grammar/archive shape and stopped-row direct archive are included while non-conflicting inventory、unread、archive、navigation and diagnostics foundations below remain. When text below conflicts, the current RAW-160 Controlled owner wins.

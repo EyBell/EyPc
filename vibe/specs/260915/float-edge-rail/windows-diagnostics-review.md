@@ -2,7 +2,73 @@
 
 Tool: codex
 
-状态：插件内采证与 Windows 透明重绘修复候选已生成，整合验证通过；现场因果与用户验收仍未闭合。
+状态：2026-11-10 滚动条与管道安全修复候选已生成；SSH、Windows 安全脚本与真实工厂调用已核，目标宿主加载、拖拽视觉和未读传播仍待验收。此前启动/绘制候选的检查及失败保留在历史段。
+
+## 2026-11-10 拖拽展开滚动条与 SSH 续查
+
+- 用户截图要求 Windows 拖拽展开面板不出现横向、纵向原生滚动条；保留列表内容可达、滚轮及键盘导航，不改变拖拽位置、尺寸保存、任务排序、计数和状态归约。
+- `BusinessChangeReview`：现有任务与项目共用列表容器使用双轴 auto 且指定细滚动条；本次只约束该容器的横向溢出和条形绘制，保留纵向内容滚动与现有选择项滚入视野。用户另授权核验 `ssh kmserver01`，只读取 Windows 插件运行身份、桥接、绘制及状态诊断，不读取凭据、认证或会话正文，不安装或重启宿主。
+- `VerificationImpactTrace` 初选：列表 CSS → Float 任务/项目容器 → 编译产物，管道安全参数 → 原生端点保护 → 桌面桥状态；选定语法、样式结构、源码/镜像/产物一致性、影响边界编译和远端只读管道参数复核。按用户既有偏好不编写或运行自动化测试；真实拖拽、滚轮、键盘、未读到已读仍需单列现场结论，不以编译或截图旧状态代替。
+- 分工：`planned_child_count=1`，Root 负责本地样式、管道参数、有限错误原因、编译与文档；独立原生子代理只读核验 Windows SSH 与当前插件诊断。模型继承，实际模型与用量未观测；派发 Hook 为 fail-open，未证明任务级预检绑定。写集不重叠。
+
+### 实现、现场结果与当前候选
+
+- [列表样式](../../../../src/styles/float.css#L237)禁用横向溢出，并用标准及 Chromium 规则隐藏原生条形；列表及其 flex 父级允许缩小，原纵向 auto、pan-y 和键盘选项滚入视野仍保留。任务及项目共用该容器，拖动/尺寸/任务状态代码未改；帮助、RAW-223 原始记录/登记及产品当前要求同步。
+- [Windows 安全脚本](../../../../preload/codex/desktop-ipc-windows-security.cjs#L1)改用内核对象类型 6，ACE 标志位两侧显式转整数；所有者与写权限策略未放宽。查询、启动、进程、超时、输出及脚本内部 API/owner/ACL 异常均返回固定原因，[端点入口](../../../../preload/codex/desktop-ipc-endpoint.cjs#L1)接纳同一组有限失败原因；不保存原始异常或身份资料。
+- 只读 SSH 入口实测可达：`ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes -o UpdateHostKeys=no kmserver01`，目标确认 Windows。经标准输入提交只含字段白名单的 PowerShell；固定诊断目录为 `%APPDATA%\uTools\eypc-diagnostics`，安装包目录为 `%APPDATA%\uTools\plugins`，可直接核验这台机器的 EyPc Windows 插件信息。没有读取凭据、认证或会话正文，没有安装、重启、改 ACL 或连接桌面桥。
+- 17:18:14（北京时间）观察的日志为 `runtime-1794301353660-1.jsonl`，当时安装模块仍用类型 1，桥为 failed / security-unavailable / bindingKnown=false。独立安全探针确认只读句柄可开，类型 1 返回 87，类型 6 返回 0，ownerMatchesCurrentUser 与 daclPresent 均为 true。
+- 第一次仅改类型的完整脚本仍返回 security-unavailable；有限阶段探针定位为 ACE 枚举位运算的 InvalidCastException。两侧转整数后，17:20:57 内存修正脚本返回 secure。最终本地完整脚本原样执行于 17:22:28 返回 secure / 1130ms；远程已有 Node，通过同一完整 CJS 源码、原工厂及真实 execFile（5000ms 上限）返回 secure=true / reason=secure / 414ms。均为 SSH 登录上下文，不外推桌面宿主连接或身份绑定。
+- 本次安全模块内容 SHA-256：`0919a5f8d1cc402af12b00262abd835fb969188ff45211eeba0953819fbe34fc`。最终候选为 **EyPc V7 / host-276406b71202a45e4674 / renderer-813f05d5c341803fcad0 / 2026-11-10 17:23:11 北京时间**；[完整候选 ZIP](../../../../output/EyPc-Windows-scroll-pipe-20261110-172311.zip)包含 313 个文件，与 dist 逐字节一致，SHA-256 为 `a0c7faf85c9568e171ff7cbfffa15af4489b5ec3fd2b1624e4ddf32eb8ba9016`。清单仍为 1.2.6，按 Host/Renderer/构建时间核验；包含当前检出的其它既有改动。17:17:27 中间 ZIP 保留为失败历史，不作交付。
+- 语法、合同结构、生产编译/runtime prepare、13 字段运行身份、静态未读基线、镜像及入口预算通过；入口仍为 14782 / 278 / 160。按既有偏好未编写或运行自动化测试；CSS/CJS 未改变 TypeScript 语义，未重复上一轮整仓类型检查。313 文件 ZIP 一致性不替代源镜像检查或真实绘制。
+
+### 本轮检查点
+
+记录版本：2026-11-10 当前候选；8 个检查点，已通过 5、失败 0、不符合 0、未测 3。按当前候选与验证层级计数，不将旧候选的失败尝试重复计为当前结果。需求为上文用户反馈、RAW-223 补充及未读任务卡的身份隔离合同；这是代理记录，不是用户验收。
+
+| 序号 | 路径 | 结果 | 是否成功 | 符合要求 |
+| --- | --- | --- | --- | --- |
+| W-06 | Windows 拖拽展开视觉及滚轮/键盘 | 新候选尚无宿主加载及像素证据 | 未测 | 未测 |
+| W-07 | 新包桥连接 → v3 绑定 → 原生未读到已读 → Float applied | 只有安全工厂通过，未取得新宿主链路回执 | 未测 | 未测 |
+| W-08 | 真实任务运行到完成回落 | 本轮未产生并观测该转换 | 未测 | 未测 |
+| W-01 | SSH 与诊断入口 | 17:18:14 只读连接及 Windows 目录可读 | 成功 | 符合 |
+| W-02 | 管道对象类型与安全元数据 | 类型 6 返回 0，owner 匹配且 DACL 存在 | 成功（修复后通过） | 符合 |
+| W-03 | 完整 PowerShell 安全策略 | 17:22:28 原样源脚本 secure，1130ms | 成功（修复后通过） | 符合 |
+| W-04 | 真实 Node/execFile 工厂包装 | secure=true / reason=secure，414ms，保留 5 秒上限 | 成功（修复后通过） | 符合 |
+| W-05 | 列表样式与候选编译/包结构 | 双轴条形隐藏、横向受限、纵向滚动保留；编译与资源核对通过 | 成功（静态与编译） | 符合（限静态） |
+
+后继入口：Windows 手动接入 17:23:11 候选，按加载身份核验后，再分别观察 W-06 至 W-08；可复用已验证 SSH 读取同机的新诊断。原故障及中间失败 ZIP 保留，不覆盖历史证据。
+
+## 2026-11-10 启动与绘制续查
+
+- 用户选择继续检查 uTools 内的模块加载、CLI 路径发现和实际启动，以及悬浮窗的宿主窗口与实际绘制；插件自身使用宿主 Node，原生 CLI 不依赖外部 Node。
+- 分工：Root 负责 CLI 启动链、整合、生成产物与文档；一位执行子代理负责悬浮桥接和绘制采证的缺陷复核及最小修复。`planned_child_count=1`，模型继承，实际模型未独立观测；两个写集互不重叠，公共镜像和构建由 Root 统一执行。
+- `BusinessChangeReview`：基线为原 Codex 启动合同、Windows 现场回传和本记录 W-1 至 W-7。允许修正原生 CLI 发现／启动缺陷与采证缺漏；保留手动路径优先、受控候选、不经 shell、原生程序不要求外部 Node、日志不保存路径／正文／图像，以及同锚点的展开收起几何。消费者包括 Codex 环境检查、额度／任务 RPC、Float 宿主与诊断写入器。现场根因尚未证明，不凭终端成功或窗口 API 读回推定宿主成功。
+- `VerificationImpactTrace` 初选：CLI 解析／发现和四模块加载的定向回归、启动失败及安全落盘；子代理运行受影响的 Float 桥接／绘制回归。实现后走项目影响选择入口并核入口预算、资源镜像；若生产输入变化，执行版本真值同步所需的构建／产物检查。排除全仓测试、真实 uTools／Windows／浏览器及服务启动。
+- 当前工作树基线没有已跟踪脏改；无关未跟踪的外观预览脚本保持原状。尚未取得新候选在 Windows 的现场日志，本轮不会把代码修正等同于实机验收。
+
+### 确认的代码缺口及修正
+
+| ID | 结论与依据 | 本轮修正与边界 |
+| --- | --- | --- |
+| W-8 | Windows 受控候选未包含官方独立安装器的默认目录，也没有查询已注册桌面包；仅有桌面应用自带 CLI 时，既有候选可以全部为空。 | 补官方默认目录及安装目录环境项；旧自动候选均不可用时，通过 uTools 的子进程能力异步查询当前用户的精确 Codex 包身份，从注册位置检查随包 CLI。保留手动路径和原自动优先级，不枚举全部用户、不递归扫描、不修改系统或安装软件。尚未证明用户现场恰好由该缺口引起。 |
+| W-9 | 原生候选也会无条件执行 Node 路径探测；原错误文案统一指向检查 Node/Codex 安装。自动候选还可能把同名目录交给启动解析。 | 原生程序直接生成启动计划，不查外部 Node；自动候选须为文件。错误文案改为检查可执行文件位置或日志；保留 JS 入口的既有 Node 兼容分支。 |
+| W-10 | 原记录侧重失败，没有成功的实际启动／初始化链；诊断模块本身不可用时，后续清单失败可能不再留下原因。 | `codex-startup` 记录启动请求、初始化成功或失败，带安全计划、模块状态及宿主运行时版本；安装查询保留权限类别／HRESULT／超时／输出异常。诊断模块失败时，清单 catch 仍记录模块状态。新增异步发现取消守卫，关闭连接后不会迟到启动。 |
+| W-11 | 同代捕获忙时直接返回，旧样本随后可能过期，导致新现场也无摘要；edge 分支提前返回，完全漏过几何和像素观察。 | 捕获后补采最新仍有效请求；water／card／edge 共用几何观察。补模块 ready 与按代次去重的跳过原因，保留每代 12 次、超时停采、隐私和 Mac 排除边界，不改定位计算。 |
+| W-12 | 项目正常影响选择入口拒绝两份 CLI 诊断测试：`unmapped core change`，这些诊断测试尚未接入机器映射。 | 将 CLI 与 Float 四份诊断测试接入原 Provider 证据边界的两组检查；映射结构由既有治理用例验证，不以全仓测试代替漏绑修正。 |
+
+- 上游依据：[官方 Windows 独立安装器](https://releases.openai.com/codex/install.ps1)声明默认可见目录与安装目录环境项；[Microsoft 当前用户包查询](https://learn.microsoft.com/en-us/powershell/module/appx/get-appxpackage)提供安装注册查询。Windows 桌面包的有限相对候选仍需现场核实，不将查询成功等同于可执行成功。
+- 实现入口：[Windows 准备与查询](../../../../preload/codex/launch-path-preference.cjs#L49)、[当次启动记录](../../../../preload/codex/runtime-diagnostics.cjs#L96)、[宿主实际启动](../../../../preload/index.js#L8171)、[统一几何观察](../../../../preload/codex/float-bridge.cjs#L1211)、[绘制排队与门槛](../../../../preload/codex/float-paint-diagnostics.cjs#L147)和[机器映射](../../../knowledge/core-verification-map.json#L1)。
+- 验证初选已与实际差异核对：主入口同时服务多个功能，因此使用项目正常入口选择全部受影响消费者；新增两组诊断检查与映射治理用例。生产身份变化触发构建及源／包保全门禁。没有全仓套件升级、真实宿主运行或 Windows 成功结论。
+
+### 本轮验证与交付
+
+- CLI 诊断 44 项、Float 绘制／窗口 75 项、原启动兼容与关闭取消 6 项、Side 恢复及主入口消费 15 项，共 140 个不同定向检查通过。后两组原测试断言保留；8 处旧夹具将已声明存在的 CLI／Node 文件模拟为非文件，已纠正文件事实，另按本轮文案修正更新一条错误消息预期。
+- Windows 包发现仅在旧候选未命中时异步执行；已有可用候选继续同步返回，保留 Mac 和普通原生 CLI 的既有启动时序。新增发现等待与原 PAC 等待两个取消场景均通过。
+- 正常影响入口选择 30 组检查，首轮 25 组通过；失败暴露出上述夹具矛盾、文档真值未同步，以及三项既有问题。夹具和真值已修正并定向重核；导航诊断三文件为 224 通过／1 失败，三份保全反例为 40 通过／2 失败，不记为整套门禁通过。
+- 以未修改的 `HEAD e3968ef` 独立快照复现全部三项：生命周期测试仍期望 58 而实际 60；删除旧 canonical 覆盖守卫的反例不再触发拒绝；Kernel 源码结构断言命中既有 Provider 分支。这三项源码／断言未修改，不属于本轮 CLI／Float 修复，保留失败与未闭合状态。
+- 合同、语义类型检查、生产构建和 uTools 源／包保全通过；入口仍为 14797 行／279 个 Codex 函数／160 个可变绑定，没有放宽预算。新诊断测试已进入正常机器映射；帮助文案同步了内置运行能力、发现与实际启动、采证跳过条件。
+- 当前产物：EyPc V7 / `host-0b29dfca94df48bfc771` / `renderer-74730ca05e5eaa33ac94` / 北京时间 `2026-11-10 11:39:55`（`2026-11-10T03:39:55.660Z`）。完整目录入口为项目 dist 的插件清单，取代 11-09 候选；未安装、重载或在真实 Windows 验收。
+- 本轮候选用于继续现场定位：连接记录核 `codex-cli-modules → codex-startup` 及当次 `launch.desktop / search`；悬浮记录核 `module-load → expansion → expansion-settled → capture / capture-skipped`，按请求／几何序号和窗口代次关联。原生读回或捕获成功均不能替代实际桌面画面。
 
 ## 本轮续修范围
 
@@ -37,12 +103,12 @@ W-5 的上游依据：[Electron Windows SetOpacity 实现](https://github.com/el
 ## 实现入口
 
 - [页面悬停与展开意图](../../../../src/FloatApp.vue#L1538)：记录决定所需的布尔状态和固定原因，不改变原命中、拖动与展开决策。
-- [宿主窗口观察](../../../../preload/codex/float-bridge.cjs#L477)：原生呈现状态、请求接收和几何前后读回。
+- [宿主窗口观察](../../../../preload/codex/float-bridge.cjs#L498)：原生呈现状态、请求接收和几何前后读回。
 - [Codex 诊断模块](../../../../preload/codex/runtime-diagnostics.cjs#L3)：有限分类、请求失败阶段、启动摘要和退出诊断。
 - [统一资源清单](../../../../scripts/utools-preload-assets.mjs#L22)：新模块随源码、公用镜像和生产产物同步。
 - [Windows 像素采证](../../../../preload/codex/float-paint-diagnostics.cjs#L5)：安全摘要、DPI 裁剪、先后比较和有界采样；[绘制回归](../../../../tests/platform/codexFloatPaintDiagnostics.test.ts#L1)。
-- [Windows 收起重绘](../../../../preload/codex/float-bridge.cjs#L978)：仅请求重绘，保持锚点与原生透明度；[窗口回归](../../../../tests/platform/codexFloatWindowBridge.test.ts#L1190)。
-- [CLI 模块加载状态](../../../../preload/index.js#L707)、[候选未命中计数](../../../../preload/codex/launch-path-preference.cjs#L85)、[启动解析类别](../../../../preload/codex/launch-plan.cjs#L93)、[当次失败快照](../../../../preload/codex/runtime-diagnostics.cjs#L10)及[定向回归](../../../../tests/platform/codexCliDiagnostics.test.ts#L66)。
+- [Windows 收起重绘](../../../../preload/codex/float-bridge.cjs#L986)：仅请求重绘，保持锚点与原生透明度；[窗口回归](../../../../tests/platform/codexFloatWindowBridge.test.ts#L1190)。
+- [CLI 模块加载状态](../../../../preload/index.js#L707)、[候选未命中计数](../../../../preload/codex/launch-path-preference.cjs#L147)、[启动解析类别](../../../../preload/codex/launch-plan.cjs#L93)、[当次失败快照](../../../../preload/codex/runtime-diagnostics.cjs#L10)及[定向回归](../../../../tests/platform/codexCliDiagnostics.test.ts#L66)。
 
 ## 16:50 候选验证
 
@@ -55,7 +121,7 @@ W-5 的上游依据：[Electron Windows SetOpacity 实现](https://github.com/el
 
 ## Windows 回传后的候选与验证
 
-- 当前候选：EyPc V7 / `host-a042aee90a2444e80c74` / `renderer-097465087482145ac72b` / 北京时间 `2026-11-09 20:03:25`。取代 16:50 候选，工作区 dist 已生成；未在 Mac 安装或重载，待用户打包到 Windows。
+- 2026-11-09 候选：EyPc V7 / `host-a042aee90a2444e80c74` / `renderer-097465087482145ac72b` / 北京时间 `2026-11-09 20:03:25`。当时取代 16:50 候选；后续候选以本记录最新验证段和项目状态为准。
 - 整合运行绘制、悬浮桥接、CLI 模块／候选、错误持久化、公共诊断、入口预算及运行身份七份测试共 112 项；另选 App Server 启动及 Windows shim／Volta 相关 6 项通过，未选的 298 项保持未跑。合计 118 个不同检查项通过；帮助文案更新后另复核运行身份 6 项，不重复计数。
 - 类型、合同、生产构建和 uTools 源／包保全校验通过；入口为 14797 行／279 个 Codex 函数／160 个可变绑定，预算同步收紧至实测值。
 - 资源镜像门禁通过：98 组已跟踪、2 组新增未提交；额外逐字节核对全部 100 组源码／public／dist 一致，生产身份与当前源码计算结果一致。本轮没有新增 CLI 运行模块；新增绘制模块已进入统一资源清单。
@@ -69,3 +135,17 @@ W-5 的上游依据：[Electron Windows SetOpacity 实现](https://github.com/el
 - `codex-cli-modules` 先区分模块加载状态；失败记录中的 `search` 按来源给出计数与安全错误码，`launch` 是错误对象关联的当次计划。没有快照时为 null，不能解释为“没有安装 CLI”；Windows 回传的终端版本探测也不代表 uTools 的发现结果。
 - 本轮像素采证要求诊断开启且为 debug；日志中 `float-paint/capture` 的 `beforeComparison` 与 `afterComparison` 是像素差异，不能单独当作“屏幕可见”判决。遮挡、动画、捕获本身引发刷新或权限拒绝都需要结合其他字段解释。
 - 当前构建与加载状态见[项目状态](../../PROJECT_STATUS.md#L3)，定位合同与实机边界见[架构记录](../../../knowledge/ARCHITECTURE.md#L24)。
+
+## 2026-11-10 注册表阻断续修
+
+用户提供的 Windows 日志已确认 CLI 模块加载、14:22:26 初始化成功；14:50:47 和 14:54:37 直接清单分别读到 8、9 条未归档会话，冷预检却输出 taskCount=0、来源代次为零。现场安装版本报告 1.2.7，Host / Renderer 与实施前源码的 host-c937dd796220736db8c8 / renderer-84b8584034a1a2be78bf 相符；没有直接访问 Windows 安装包，不以本机 manifest 1.2.6 推断其未更新。
+
+两份原生状态均缺少项目、会话置顶数组；用户使用原包解析器的内存对照证明，仅补齐两个空数组后可解析。此证据定位了足以阻断预检的兼容缺陷，不能证明后续全链路正常。修复限于读取时兼容缺失字段、保留非法类型拒绝、保护原始对象写入及区分安全的失败阶段；不改真实状态，不将来源失败转换成健康空结果。
+
+本次与“已恢复进行中但旧待输入残留”合并实施，按独立验收点分别核验。源码修复与完整 dist 已生成，专项 Bridge 63 通过；扩展旧失败及循环已由匹配现场身份的原候选包对照复现，保留未验边界。统一实现、验证与手动接入见[联合修复记录](../../261013/1946-side-terminal-reconcile/task-card.md#2026-11-10-windows-注册表与旧待输入联合修复)。本条不替代上文悬浮绘制问题的独立验收，也不外推为所有 Windows 故障均由注册表导致；未直接连接 Windows、安装候选或运行新包实机验收。
+
+## 2026-11-10 重载回传与未读续修
+
+- 用户回传北京时间 16:15—16:17：16:10:35 候选的 Host/Renderer 与安装包一致，库存识别 6 条任务、运行切换及 Float applied 已确认；缺省置顶字段的注册表阻断已解除。该结果属于现场回传，本机未独立读取 Windows 安装包或日志。
+- 桌面未读仍为 binding-unavailable，且有两个身份桶；不能把零计数解释为已读。真实桌面绘制、完整过滤规则及任务结束后的回落未随上述记录通过。
+- Windows 原生通道、受信当前 context、精确选桶和重放的续修统一转入[未读专项任务](../../261105/codex-unread-linkage/task-card.md#2026-11-10-windows-未读通道续修)。本页保留注册表与绘制历史，不覆盖旧故障 ZIP；最新候选和手测步骤由专项任务维护。

@@ -161,6 +161,10 @@
         "src/runtime/appRuntime.ts",
         "tests/domain/companionProvider.test.ts",
         "tests/platform/codexAppServerBridge.test.ts",
+        "tests/platform/codexCliDiagnostics.test.ts",
+        "tests/platform/codexRuntimeDiagnostics.test.ts",
+        "tests/platform/codexFloatPaintDiagnostics.test.ts",
+        "tests/platform/codexFloatWindowBridge.test.ts",
         "tests/platform/companionProviderAdmission.test.ts",
         "tests/scripts/companionCoreInvariants.test.ts",
         "tests/scripts/companionLifecycles.test.ts",
@@ -180,6 +184,8 @@
         "guard-canaries",
         "provider-admission",
         "orca-schema",
+        "codex-launch-diagnostics",
+        "float-window-diagnostics",
         "provider-state-repair",
         "codex-side-recovery",
         "types",
@@ -389,6 +395,22 @@
     }
   ],
   "checks": [
+    {
+      "id": "codex-launch-diagnostics",
+      "kind": "vitest",
+      "files": [
+        "tests/platform/codexCliDiagnostics.test.ts",
+        "tests/platform/codexRuntimeDiagnostics.test.ts"
+      ]
+    },
+    {
+      "id": "float-window-diagnostics",
+      "kind": "vitest",
+      "files": [
+        "tests/platform/codexFloatPaintDiagnostics.test.ts",
+        "tests/platform/codexFloatWindowBridge.test.ts"
+      ]
+    },
     {
       "id": "codex-appearance",
       "kind": "vitest",
