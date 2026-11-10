@@ -37,6 +37,7 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
       known: false,
       phase: 'unknown',
       edge: 'none',
+      turnId: '',
       startedAt: 0,
       edgeAt: 0
     }
@@ -63,6 +64,8 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
       try { parsed = JSON.parse(line) } catch { continue }
       const source = record(parsed)
       const payload = record(source.payload)
+      const turnId = typeof payload.turn_id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(payload.turn_id)
+        ? payload.turn_id : ''
       const observedAt = rolloutTimestampMs(
         source.timestamp,
         payload.timestamp,
@@ -73,6 +76,7 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         state.known = true
         state.phase = 'active'
         state.edge = 'task-started'
+        state.turnId = turnId
         state.startedAt = observedAt
         state.edgeAt = observedAt
         continue
@@ -81,6 +85,10 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         state.known = true
         state.phase = 'completed'
         state.edge = 'task-complete'
+        if (turnId) {
+          if (state.turnId && state.turnId !== turnId) state.startedAt = 0
+          state.turnId = turnId
+        }
         state.edgeAt = observedAt
         continue
       }
@@ -88,13 +96,20 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         state.known = true
         state.phase = 'interrupted'
         state.edge = 'turn-aborted'
+        if (turnId) {
+          if (state.turnId && state.turnId !== turnId) state.startedAt = 0
+          state.turnId = turnId
+        }
         state.edgeAt = observedAt
         continue
       }
       const liveAppend = (source.type === 'event_msg' && liveEventTypes.has(payload.type))
         || (source.type === 'response_item' && liveResponseTypes.has(payload.type))
       if (!liveAppend) continue
-      if (state.phase === 'completed' || state.phase === 'interrupted') state.startedAt = 0
+      if (state.phase === 'completed' || state.phase === 'interrupted') {
+        state.startedAt = 0
+        state.turnId = ''
+      }
       state.known = true
       state.phase = 'active'
       state.edge = 'live-append'
@@ -103,9 +118,24 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
     return state
   }
 
+  function codexRolloutRuntimeForTurn(runtime, input = {}) {
+    const owner = input.owner
+    const ownerTurn = owner?.ownerClientId && !owner.ownerDisconnectedAt && owner.canonicalLatestComplete === true
+      ? owner.currentCanonicalTurn : null
+    if (!runtime?.turnId) return ownerTurn?.turnRef ? null : runtime
+    const sameOwnerTurn = Boolean(ownerTurn?.turnRef) && ownerTurn.turnRef === input.turnRef
+    if (sameOwnerTurn && runtime.phase === 'active'
+      && ['completed', 'interrupted', 'failed'].includes(ownerTurn.status)) return null
+    const startedAt = sameOwnerTurn ? Number(ownerTurn.startedAt) || 0
+      : input.cachedTurn?.id === runtime.turnId ? Number(input.cachedTurn.startedAt) || 0
+        : input.known?.lastTurnId === runtime.turnId ? Number(input.known.lastTurnStartedAt) || 0 : 0
+    return startedAt > 0 ? { ...runtime, startedAt } : runtime
+  }
+
   return {
     revision: CODEX_ROLLOUT_RUNTIME_STATE_REVISION,
-    codexRolloutRuntimeStateText
+    codexRolloutRuntimeStateText,
+    codexRolloutRuntimeForTurn
   }
 }
 

@@ -519,9 +519,16 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
     return live === pending.liveUnread && pending.liveUnread?.hasUnreadTurn === true
   }
 
-  function clear(bridge) {
+  function clear(bridge, revokeBinding = false) {
     if (!bridge || typeof bridge !== 'object') return
     codexDesktopUnreadRecoveryBridges.delete(bridge)
+    if (revokeBinding !== true || !bridge.readStateBinding) return
+    delete bridge.readStateBinding
+    clearPersistedBaseline(bridge)
+    clearReboundEvidence(bridge)
+    safeRecord({ level: 'info', scope: 'codex-read-recovery', provider: 'codex',
+      event: 'desktop-read-binding', outcome: 'invalidated',
+      details: { reason: 'transport-reset' } })
   }
 
   return {

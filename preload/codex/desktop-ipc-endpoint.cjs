@@ -1,10 +1,10 @@
 'use strict'
 
 /**
- * Locates the Desktop IPC socket and decides whether it is safe to trust:
- * only on macOS, only when the socket and its directory are both owned by
- * the current user with no group/other permission bits set. A socket this
- * module cannot fully vouch for is one the entry must not connect to.
+ * Locates the Desktop IPC endpoint and decides whether it is safe to trust.
+ * macOS requires a current-user socket and directory with no group/other
+ * permission bits; Windows requires an asynchronous security check of the
+ * exact native named pipe.
  *
  * `process`/`fs` are injected on the node-runtime precedent. `path` is
  * injected the same way as `fs` -- both differ in behavior only by platform,
@@ -15,7 +15,14 @@
  * other collaborator.
  */
 
-const CODEX_DESKTOP_IPC_ENDPOINT_REVISION = 'codex-desktop-ipc-endpoint-v1'
+const CODEX_DESKTOP_IPC_ENDPOINT_REVISION = 'codex-desktop-ipc-endpoint-v2'
+const CODEX_DESKTOP_WINDOWS_IPC_ENDPOINT = '\\\\.\\pipe\\codex-ipc'
+const CODEX_DESKTOP_IPC_SECURITY_FAILURE_REASONS = new Set([
+  'not-running', 'pipe-busy', 'access-denied', 'security-unavailable', 'owner-mismatch', 'permissions-untrusted',
+  'security-invalid-parameter', 'security-query-failed', 'security-check-timeout',
+  'security-launch-failed', 'security-process-failed', 'security-output-invalid',
+  'security-api-unavailable', 'security-owner-check-failed', 'security-acl-check-failed'
+])
 
 // A Desktop snapshot can approach the existing 256 MiB protocol ceiling.
 // Re-concatenating the received prefix for each socket chunk is quadratic.
@@ -63,8 +70,10 @@ function createCodexDesktopIpcEndpoint(dependencies = {}) {
   const fs = dependencies.fs || require('node:fs')
   const path = dependencies.path || require('node:path')
   const host = dependencies.process || process
+  let windowsTrustChecker = dependencies.windowsTrustChecker
 
   function codexDesktopIpcEndpoint() {
+    if (host.platform === 'win32') return CODEX_DESKTOP_WINDOWS_IPC_ENDPOINT
     if (host.platform !== 'darwin') return ''
     return path.join(nativeStatePaths().codexHome, 'ipc', 'ipc.sock')
   }
@@ -87,10 +96,47 @@ function createCodexDesktopIpcEndpoint(dependencies = {}) {
     }
   }
 
+  async function verifyCodexDesktopIpcEndpoint(endpoint) {
+    if (host.platform !== 'win32') {
+      const secure = codexDesktopIpcEndpointIsSecure(endpoint)
+      return { secure, reason: secure ? 'secure' : 'security-unavailable' }
+    }
+    if (endpoint !== CODEX_DESKTOP_WINDOWS_IPC_ENDPOINT) {
+      return { secure: false, reason: 'security-unavailable' }
+    }
+    try {
+      if (typeof windowsTrustChecker !== 'function') {
+        const { createCodexDesktopWindowsPipeSecurity } = require('./desktop-ipc-windows-security.cjs')
+        windowsTrustChecker = createCodexDesktopWindowsPipeSecurity({
+          execFile: dependencies.execFile,
+          process: host,
+          path
+        })
+      }
+      const result = await windowsTrustChecker(endpoint)
+      if (result === true || result?.secure === true && result.reason === 'secure') {
+        return { secure: true, reason: 'secure' }
+      }
+      const reason = result?.secure === false && CODEX_DESKTOP_IPC_SECURITY_FAILURE_REASONS.has(result.reason)
+        ? result.reason : 'security-unavailable'
+      return { secure: false, reason }
+    } catch {
+      return { secure: false, reason: 'security-unavailable' }
+    }
+  }
+
+  const connection = require('./desktop-ipc-connection.cjs').createCodexDesktopIpcConnection({
+    fs, process: host, net: dependencies.net, record: dependencies.record,
+    endpoint: codexDesktopIpcEndpoint, isSecure: codexDesktopIpcEndpointIsSecure, verify: verifyCodexDesktopIpcEndpoint
+  })
+
   return {
     revision: CODEX_DESKTOP_IPC_ENDPOINT_REVISION,
     codexDesktopIpcEndpoint,
     codexDesktopIpcEndpointIsSecure,
+    verifyCodexDesktopIpcEndpoint,
+    ensureConnection: connection.ensure,
+    recordBridgeState: connection.noteState,
     createFrameReader: createCodexDesktopFrameReader
   }
 }

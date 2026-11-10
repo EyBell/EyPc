@@ -41,6 +41,68 @@ function createCodexLaunchPathPreference(dependencies = {}) {
   const os = dependencies.os || require('node:os')
   const host = dependencies.process || process
   const utools = dependencies.utools || (typeof globalThis !== 'undefined' ? globalThis.utools : null)
+  let desktopLocations = []
+  let desktopQuery = null
+  let desktopCheckedAt = 0
+  let desktopSearch = { state: 'not-queried', packages: 0, nativeCode: '' }
+
+  function prepareCodexLaunchPlan() {
+    const initial = resolveCodexLaunchPlan()
+    if (host.platform !== 'win32' || initial.detected || initial.launchMode === 'manual') return initial
+    if (!desktopCheckedAt || Date.now() - desktopCheckedAt >= 30_000) {
+      if (!desktopQuery) {
+        desktopQuery = new Promise((resolve) => {
+          let settled = false
+          const finish = (state, locations = [], nativeCode = '', failureDetails = {}) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            desktopLocations = locations
+            desktopSearch = { state, packages: locations.length, nativeCode, ...failureDetails }
+            desktopCheckedAt = Date.now()
+            resolve()
+          }
+          const timer = setTimeout(() => finish('timeout', [], 'ETIMEDOUT'), 2_500)
+          if (typeof dependencies.execFile !== 'function') { finish('unsupported'); return }
+          const platform = platformPath()
+          const systemRoot = host.env?.SystemRoot || 'C:\\Windows'
+          const command = platform.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+          const script = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $ErrorActionPreference = 'Stop'; & { try { @(Get-AppxPackage -Name OpenAI.Codex -PackageTypeFilter Main | Where-Object { $_.PackageFamilyName -eq 'OpenAI.Codex_2p2nqsd0c76g0' } | Select-Object -First 4 -ExpandProperty InstallLocation) } catch { [pscustomobject]@{ state = 'failed'; errorCategory = [string]$_.CategoryInfo.Category; hresult = $_.Exception.HResult } } } | ConvertTo-Json -Compress"
+          try {
+            dependencies.execFile(command, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+              encoding: 'utf8', windowsHide: true, timeout: 2_000, maxBuffer: 32 * 1024
+            }, (error, stdout) => {
+              if (settled) return
+              if (error) {
+                const code = ['ENOENT', 'EACCES', 'EPERM', 'ETIMEDOUT', 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'].includes(error.code)
+                  ? error.code : error.killed ? 'ETIMEDOUT' : 'OTHER'
+                finish(code === 'ETIMEDOUT' ? 'timeout' : 'failed', [], code)
+                return
+              }
+              try {
+                const parsed = JSON.parse(String(stdout || '').replace(/^\uFEFF/, '').trim() || '[]')
+                if (parsed?.state === 'failed') {
+                  const errorCategory = ['PermissionDenied', 'SecurityError', 'ResourceUnavailable', 'NotImplemented', 'ObjectNotFound', 'OperationStopped', 'NotSpecified'].includes(parsed.errorCategory) ? parsed.errorCategory : 'Other'
+                  finish('failed', [], ['PermissionDenied', 'SecurityError'].includes(errorCategory) ? 'EACCES' : 'OTHER', {
+                    errorCategory, hresult: Number.isInteger(parsed.hresult) && Math.abs(parsed.hresult) <= 0xffffffff ? parsed.hresult : null
+                  })
+                  return
+                }
+                const values = Array.isArray(parsed) ? parsed : [parsed]
+                if (values.length > 4 || values.some((value) => typeof value !== 'string' || !platform.isAbsolute(value) || value.includes('\u0000') || value.length > 4096)) {
+                  finish('invalid-output')
+                } else finish('queried', [...new Set(values.map((value) => platform.normalize(value)))])
+              } catch { finish('invalid-output') }
+            })
+          } catch (error) {
+            finish('failed', [], ['ENOENT', 'EACCES', 'EPERM'].includes(error?.code) ? error.code : 'OTHER')
+          }
+        }).finally(() => { desktopQuery = null })
+      }
+      return desktopQuery.then(() => resolveCodexLaunchPlan())
+    }
+    return resolveCodexLaunchPlan()
+  }
 
   function normalizeCodexLaunchPathPreference(value) {
     const candidate = typeof value === 'string' ? value.trim() : ''
@@ -122,7 +184,7 @@ function createCodexLaunchPathPreference(dependencies = {}) {
       if (reason) counts[reason] += 1
     }
     const result = (plan, mode, manualState, found) => ({
-      ...codexLaunchResult(plan, mode, manualState, found), launchSearch
+      ...codexLaunchResult(plan, mode, manualState, found), launchSearch, desktopSearch: { ...desktopSearch }
     })
     const env = host.env || {}
     const manualPath = readCodexLaunchPathPreference()
@@ -160,7 +222,10 @@ function createCodexLaunchPathPreference(dependencies = {}) {
         ...(typeof env.NVM_SYMLINK === 'string' ? [{ path: platform.join(env.NVM_SYMLINK, 'codex.cmd'), source: 'nvm' }] : []),
         { path: platform.join(home, '.codex', 'bin', 'codex.exe'), source: 'local' },
         { path: platform.join(home, '.local', 'bin', 'codex.exe'), source: 'local' },
-        { path: platform.join(localAppData, 'Programs', 'Codex', 'codex.exe'), source: 'local' }
+        { path: platform.join(localAppData, 'Programs', 'Codex', 'codex.exe'), source: 'local' },
+        { path: platform.join(localAppData, 'Programs', 'OpenAI', 'Codex', 'bin', 'codex.exe'), source: 'local' },
+        ...(typeof env.CODEX_INSTALL_DIR === 'string' && env.CODEX_INSTALL_DIR.trim()
+          ? [{ path: platform.join(env.CODEX_INSTALL_DIR.trim(), 'codex.exe'), source: 'local' }] : [])
       )
     } else {
       candidates.push(
@@ -190,6 +255,11 @@ function createCodexLaunchPathPreference(dependencies = {}) {
     for (const directory of pathValue.split(platform.delimiter).filter(Boolean)) {
       for (const executable of executableNames) candidates.push({ path: platform.join(directory, executable), source: 'path' })
     }
+    if (host.platform === 'win32') {
+      candidates.push(...desktopLocations.map((location) => ({
+        path: platform.join(location, 'app', 'resources', 'codex.exe'), source: 'local'
+      })))
+    }
     let detectedPlan = null
     let invalidPlan = null
     const launchCandidates = []
@@ -202,7 +272,7 @@ function createCodexLaunchPathPreference(dependencies = {}) {
       const counts = inspectCandidate(candidate.path, candidate.source)
       if (!candidate.path || !platform.isAbsolute(candidate.path)) continue
       try {
-        if (fs.existsSync(candidate.path)) {
+        if (fs.existsSync(candidate.path) && (typeof fs.statSync !== 'function' || codexLaunchPathIsFile(candidate.path))) {
           const plan = launchPlan(candidate.path, candidate.source, true)
           recordPlan(counts, plan)
           recordCandidate(candidate.source, plan.detected ? 'available' : 'unusable')
@@ -229,7 +299,8 @@ function createCodexLaunchPathPreference(dependencies = {}) {
     codexLaunchPathIsFile,
     codexLaunchCandidate,
     codexLaunchResult,
-    resolveCodexLaunchPlan
+    resolveCodexLaunchPlan,
+    prepareCodexLaunchPlan
   }
 }
 

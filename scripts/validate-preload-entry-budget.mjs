@@ -202,14 +202,14 @@ const BUDGET = Object.freeze({
   // 2026-11-06: +11 snapshot witness wiring lines; policy stays in the activity owner.
   // 2026-11-06: +53 lines for isolated continue-task dependency wiring and
   // post-resume Plan identity/activity revalidation; continuation policy stays in its module.
-  lines: 14797,
+  lines: 14782,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
   // silently undercounts them by more than half.
   // 2026-09-03: +2 for setCodexhostPath / clearCodexhostPath (manual codexhost location).
   // 2026-09-08 (RAW-218): +1 for codexNativeConnectorLiveTurn.
-  codexFunctions: 279,
+  codexFunctions: 278,
   // Module-level mutable state: top-level `let`/`var` plus top-level `const`
   // bindings holding a fresh `Map`/`Set`. These are the bindings a closure
   // rewrite has to either move or inject, so they measure coupling rather than

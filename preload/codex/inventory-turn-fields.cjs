@@ -29,6 +29,7 @@ const CODEX_INVENTORY_TURN_FIELDS_REVISION = 'codex-inventory-turn-fields-v1'
 
 function createCodexInventoryTurnFields(dependencies = {}) {
   const timestampMs = dependencies.timestampMs
+  const record = dependencies.record || ((value) => value && typeof value === 'object' ? value : {})
   if (typeof timestampMs !== 'function') {
     throw new TypeError('codex inventory turn fields requires timestampMs')
   }
@@ -86,9 +87,58 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     return next
   }
 
+  function codexCompletedTurnUpdate(known, turn, requireFresh = false) {
+    if (turn?.status !== 'completed' || !timestampMs(turn.startedAt)) return null
+    const baselineStartedAt = timestampMs(known.lastTurnStartedAt)
+    const fresh = turn.startedAt > baselineStartedAt
+      || turn.startedAt === baselineStartedAt && known.lastTurnStatus !== 'completed'
+      || turn.startedAt === baselineStartedAt && known.lastTurnStatus === 'completed'
+        && turn.completedAt > timestampMs(known.lastTurnCompletedAt)
+    if (requireFresh && !fresh) return null
+    const fields = { lastTurnStatus: 'completed', lastTurnStartedAt: turn.startedAt }
+    const remove = []
+    if (turn.id) fields.lastTurnId = turn.id
+    else if (turn.startedAt !== baselineStartedAt) remove.push('lastTurnId')
+    if (turn.completedAt) fields.lastTurnCompletedAt = turn.completedAt
+    else remove.push('lastTurnCompletedAt')
+    return { fields, remove, turn: { ...turn } }
+  }
+
+  function sanitizeCodexTurnStatus(value) {
+    const turn = record(value)
+    const status = ['completed', 'interrupted', 'failed', 'inProgress'].includes(turn.status) ? turn.status : ''
+    if (!status) return null
+    const id = typeof turn.id === 'string' && turn.id.length > 0 && turn.id.length <= 200 ? turn.id : ''
+    const completedAt = status === 'completed' ? timestampMs(turn.completedAt) : 0
+    const startedAt = timestampMs(turn.startedAt)
+    return {
+      status,
+      ...(id ? { id } : {}),
+      ...(startedAt ? { startedAt } : {}),
+      ...(completedAt ? { completedAt } : {})
+    }
+  }
+
+  function sanitizeCodexTurnStatusPage(value) {
+    const source = record(value)
+    const turns = Array.isArray(source.data) ? source.data : []
+    return sanitizeCodexTurnStatus(turns[0])
+  }
+
+  function codexNativeConnectorLiveTurn(thread) {
+    const row = record(thread)
+    if (row.codexhostExternal === true || record(row.status).type !== 'active') return null
+    const startedAt = timestampMs(row.recencyAt) || timestampMs(row.updatedAt)
+    return startedAt ? { status: 'inProgress', startedAt } : null
+  }
+
   return {
     revision: CODEX_INVENTORY_TURN_FIELDS_REVISION,
-    codexMergedInventoryTurnFields
+    codexMergedInventoryTurnFields,
+    codexCompletedTurnUpdate,
+    sanitizeCodexTurnStatus,
+    sanitizeCodexTurnStatusPage,
+    codexNativeConnectorLiveTurn
   }
 }
 

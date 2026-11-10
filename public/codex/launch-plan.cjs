@@ -102,6 +102,7 @@ function createCodexLaunchPlan(dependencies = {}) {
       try {
         const resolved = fs.realpathSync(command)
         const jsEntry = codexJavascriptEntry(command, resolved)
+        if (!jsEntry && !/\.(?:cmd|bat)$/i.test(command)) return { command, argsPrefix, key: command, source, detected, launchDiagnostic }
         if (jsEntry) launchDiagnostic.kind = 'javascript'
         const bundledBinary = codexBundledBinary(jsEntry)
         if (bundledBinary) {

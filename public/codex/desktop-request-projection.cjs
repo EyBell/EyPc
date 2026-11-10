@@ -1,6 +1,11 @@
 'use strict'
 
-const { COMPANION_V7_REVISIONS } = require('../companion/contracts-v7.cjs')
+const {
+  COMPANION_V7_REVISIONS,
+  COMPANION_INTERACTION_KINDS_V1,
+  normalizeCompanionInteractionEvidenceV1,
+  normalizeCompanionInteractionSetEvidenceV1
+} = require('../companion/contracts-v7.cjs')
 
 /**
  * How the desktop plan bridge classifies a live Codex request: a stable
@@ -41,6 +46,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       : crypto.randomBytes(16)
   const ownerRefreshes = new WeakMap()
   const streamObservations = new WeakMap()
+  const fallbackMembers = new Map()
   const now = typeof dependencies.now === 'function' ? dependencies.now : () => Date.now()
   const startTimer = dependencies.setTimeout || setTimeout
   const stopTimer = dependencies.clearTimeout || clearTimeout
@@ -206,6 +212,164 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       .update('\0interaction-v1')
     for (const part of parts) hash.update('\0').update(String(part || ''))
     return hash.digest('hex').slice(0, 32)
+  }
+
+  function fallbackMember(taskKey, parentTaskKey) {
+    let member = fallbackMembers.get(taskKey)
+    if (!member) {
+      member = { parentTaskKey, branches: new Map(), nativeRevision: 0, nativeTurnEpoch: 0 }
+      fallbackMembers.set(taskKey, member)
+    }
+    return member
+  }
+
+  function codexDesktopClearFallbackInteractions(taskKey) {
+    return fallbackMembers.delete(taskKey)
+  }
+
+  function codexDesktopResetFallbackInteractions() {
+    fallbackMembers.clear()
+  }
+
+  function codexDesktopProjectFallbackInteractions(input = {}) {
+    const source = record(input)
+    const parentTaskKey = typeof source.parentTaskKey === 'string' ? source.parentTaskKey : ''
+    if (!parentTaskKey || parentTaskKey.length > 256 || /[\r\n\0]/.test(parentTaskKey)) {
+      return { interactions: [], interactionSets: [], requestSetRevision: 0 }
+    }
+    const native = record(source.nativeEvidence)
+    const interactions = []
+    const invalidMembers = new Set()
+    const nativeRequestsKnown = Array.isArray(native.interactions)
+    for (const value of nativeRequestsKnown ? native.interactions : []) {
+      const interaction = normalizeCompanionInteractionEvidenceV1(value, 'codex')
+      if (interaction) interactions.push(interaction)
+      else invalidMembers.add(typeof value?.taskKey === 'string' ? value.taskKey : '')
+    }
+    const completeSets = new Map()
+    if (nativeRequestsKnown && (native.health === undefined || native.health === 'ready')
+      && !invalidMembers.has('')) {
+      for (const value of Array.isArray(native.interactionSets) ? native.interactionSets : []) {
+        const requestSet = normalizeCompanionInteractionSetEvidenceV1(value, 'codex')
+        if (!requestSet || invalidMembers.has(requestSet.taskKey)) continue
+        const member = fallbackMember(requestSet.taskKey, parentTaskKey)
+        if (member.parentTaskKey !== parentTaskKey) continue
+        if (requestSet.requestSetRevision < member.nativeRevision
+          || requestSet.requestSetRevision > member.nativeRevision
+            && [...member.branches.values()].some((branch) => [...branch.instances.values()]
+            .some((interaction) => interaction.state === 'opened'
+              && interaction.sequence > requestSet.requestSetRevision))) continue
+        const previous = completeSets.get(requestSet.taskKey)
+        if (!previous || requestSet.requestSetRevision > previous.requestSetRevision) {
+          completeSets.set(requestSet.taskKey, requestSet)
+        }
+      }
+    }
+    const handoffSets = new Map([...completeSets].filter(([taskKey, requestSet]) => (
+      requestSet.requestSetRevision > fallbackMember(taskKey, parentTaskKey).nativeRevision
+    )))
+    const members = (Array.isArray(source.members) ? source.members : []).map(record)
+      .filter((member) => typeof member.taskKey === 'string' && member.taskKey.length > 0
+        && member.taskKey.length <= 256 && !/[\r\n\0]/.test(member.taskKey)
+        && (member.branchRef === undefined || typeof member.branchRef === 'string'
+          && member.branchRef.length > 0 && member.branchRef.length <= 128 && !/[\r\n\0]/.test(member.branchRef)))
+      .map((member) => ({
+        ...member,
+        branchRef: member.branchRef || 'root',
+        turnEpoch: timestampMs(member.turnEpoch) || 0,
+        waitingSince: timestampMs(member.waitingSince) || 0
+      }))
+    function retire(branch, clearSequence = 0) {
+      for (const [key, interaction] of branch.instances) {
+        if (interaction.state !== 'opened' || clearSequence && clearSequence <= interaction.sequence) continue
+        const sequence = clearSequence || nextLiveEvidenceSequence()
+        const terminal = { ...interaction, state: 'resolved', sequence, requestSetRevision: sequence,
+          authority: 'provider-live', exact: true }
+        branch.instances.set(key, terminal)
+        const boundary = branch.closedBoundary
+        if (!boundary || branch.turnEpoch > boundary.turnEpoch
+          || branch.turnEpoch === boundary.turnEpoch && branch.waitingSince > boundary.waitingSince) {
+          branch.closedBoundary = { turnEpoch: branch.turnEpoch, waitingSince: branch.waitingSince }
+        }
+      }
+    }
+    for (const value of members) {
+      const member = fallbackMember(value.taskKey, parentTaskKey)
+      if (member.parentTaskKey !== parentTaskKey) continue
+      if (!value.kind && Number.isSafeInteger(value.clearSequence) && value.clearSequence > 0) {
+        const branch = member.branches.get(value.branchRef)
+        if (branch && value.turnEpoch >= branch.turnEpoch) retire(branch, value.clearSequence)
+      }
+      if (!COMPANION_INTERACTION_KINDS_V1.includes(value.kind) && !handoffSets.has(value.taskKey)) continue
+      let branch = member.branches.get(value.branchRef)
+      if (!branch) {
+        branch = { turnEpoch: 0, waitingSince: 0, closedBoundary: member.nativeRevision
+          ? { turnEpoch: member.nativeTurnEpoch || Number.MAX_SAFE_INTEGER, waitingSince: Number.MAX_SAFE_INTEGER }
+          : null, instances: new Map() }
+        member.branches.set(value.branchRef, branch)
+      }
+      if (value.turnEpoch < branch.turnEpoch
+        || value.turnEpoch === branch.turnEpoch && value.waitingSince < branch.waitingSince) continue
+      if (value.turnEpoch > branch.turnEpoch || value.waitingSince > branch.waitingSince) retire(branch)
+      branch.turnEpoch = value.turnEpoch
+      branch.waitingSince = value.waitingSince
+    }
+    for (const [taskKey, requestSet] of handoffSets) {
+      const member = fallbackMember(taskKey, parentTaskKey)
+      member.nativeRevision = requestSet.requestSetRevision
+      member.nativeTurnEpoch = Math.max(member.nativeTurnEpoch,
+        ...interactions.filter((value) => value.taskKey === taskKey).map((value) => value.turnEpoch),
+        ...[...member.branches.values()].map((branch) => branch.turnEpoch))
+      for (const branch of member.branches.values()) {
+        const boundary = branch.closedBoundary
+        if (!boundary || branch.turnEpoch > boundary.turnEpoch
+          || branch.turnEpoch === boundary.turnEpoch && branch.waitingSince > boundary.waitingSince) {
+          branch.closedBoundary = { turnEpoch: branch.turnEpoch, waitingSince: branch.waitingSince }
+        }
+        retire(branch)
+      }
+    }
+    for (const value of members) {
+      if (!COMPANION_INTERACTION_KINDS_V1.includes(value.kind) || handoffSets.has(value.taskKey)) continue
+      const member = fallbackMember(value.taskKey, parentTaskKey)
+      if (member.parentTaskKey !== parentTaskKey) continue
+      const branch = member.branches.get(value.branchRef)
+      if (value.turnEpoch !== branch.turnEpoch || value.waitingSince !== branch.waitingSince) continue
+      const boundary = branch.closedBoundary
+      if (boundary && (value.turnEpoch < boundary.turnEpoch
+        || value.turnEpoch === boundary.turnEpoch && value.waitingSince <= boundary.waitingSince)) continue
+      const instanceKey = JSON.stringify([value.turnEpoch, value.waitingSince, value.kind])
+      let interaction = branch.instances.get(instanceKey)
+      if (!interaction) {
+        const sequence = nextLiveEvidenceSequence()
+        interaction = {
+          revision: COMPANION_V7_REVISIONS.interaction, provider: 'codex',
+          taskKey: value.taskKey, branchRef: value.branchRef,
+          interactionRef: anonymousInteractionRef('fallback-v1', value.taskKey, value.branchRef, instanceKey, sequence),
+          kind: value.kind, state: 'opened', sequence, turnEpoch: value.turnEpoch,
+          requestSetRevision: sequence,
+          authority: value.authority === 'provider-live' ? 'provider-live' : 'provider-snapshot',
+          exact: value.exact === true
+        }
+        branch.instances.set(instanceKey, interaction)
+      }
+    }
+    for (const member of fallbackMembers.values()) {
+      if (member.parentTaskKey !== parentTaskKey) continue
+      for (const branch of member.branches.values()) {
+        for (const interaction of branch.instances.values()) {
+          interactions.push({ ...interaction })
+        }
+      }
+    }
+    const interactionSets = [...completeSets.values()]
+    return {
+      interactions,
+      interactionSets,
+      requestSetRevision: Math.max(0,
+        ...interactions.flatMap((value) => [value.sequence, value.requestSetRevision]),
+        ...interactionSets.map((value) => value.requestSetRevision))
+    }
   }
 
   function codexDesktopRequestTimestamp(value) {
@@ -453,6 +617,9 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     const byInstance = new Map()
     const interactionSets = []
     for (const [threadId, shadow] of shadowEntries) {
+      const requestSetRevision = Math.max(0, Number(shadow.requestSetRevision) || 0,
+        Number(shadow.activityEventSequence) || 0,
+        ...Object.values(record(shadow.runtimeWaitingSequences)).map((value) => Number(value) || 0))
       recordStreamProjection(bridge, threadId, shadow, waitingEvidenceVisible)
       const branchRef = threadId === parentThreadId
         ? 'root'
@@ -556,6 +723,9 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     codexDesktopRefreshPendingOwner,
     codexDesktopHandleOwnerDiscoveryResponse,
     codexDesktopClearOwnerRefreshes,
+    codexDesktopProjectFallbackInteractions,
+    codexDesktopClearFallbackInteractions,
+    codexDesktopResetFallbackInteractions,
     codexDesktopCompanionInteractionsForParent,
     codexDesktopRequestTimestamp,
     codexDesktopRequestCorrelation,

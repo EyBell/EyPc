@@ -503,6 +503,12 @@ export type CodexActivityDelta = CodexActivityDeltaV1 | CodexActivityDeltaV2
 export interface CodexBridgeError {
   code: 'unsupported' | 'unavailable' | 'runtime-unavailable' | 'not-authenticated' | 'timeout' | 'protocol-error' | 'process-exited' | 'open-failed'
   message: string
+  diagnostic?: {
+    stage: 'local-state' | 'app-server' | 'task-projection'
+    category: 'invalid-data' | 'read-failed' | 'request-failed' | 'projection-failed'
+    field?: 'local-projects' | 'thread-project-assignments' | 'project-order' | 'pinned-project-ids' | 'selected-project' | 'pinned-thread-ids' | 'projectless-thread-ids'
+    source?: 'primary' | 'backup'
+  }
 }
 
 export type CodexBridgeResult<T> =

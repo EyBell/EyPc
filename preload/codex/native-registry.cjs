@@ -29,6 +29,15 @@ const CODEX_NATIVE_MAX_PROJECTS = 10_000
 const CODEX_NATIVE_MAX_ASSIGNMENTS = 100_000
 const CODEX_NATIVE_MAX_ROOTS_PER_PROJECT = 32
 const CODEX_NATIVE_MAX_PROJECT_NAME = 160
+const CODEX_NATIVE_DIAGNOSTIC_FIELDS = new Set([
+  'local-projects',
+  'thread-project-assignments',
+  'project-order',
+  'pinned-project-ids',
+  'selected-project',
+  'pinned-thread-ids',
+  'projectless-thread-ids'
+])
 
 function createCodexNativeRegistry(dependencies = {}) {
   const crypto = dependencies.crypto || require('node:crypto')
@@ -41,14 +50,20 @@ function createCodexNativeRegistry(dependencies = {}) {
     if (typeof value !== 'function') throw new TypeError(`codex native registry requires ${name}`)
   }
 
-  const invalid = () => codexError('protocol-error', 'Codex native project state is invalid')
+  const invalid = (field = '', message = 'Codex native project state is invalid') => Object.assign(codexError('protocol-error', message), {
+    codexDiagnostic: {
+      stage: 'local-state',
+      ...(CODEX_NATIVE_DIAGNOSTIC_FIELDS.has(field) ? { field } : {}),
+      category: 'invalid-data'
+    }
+  })
 
-  function codexNativeStringList(value, maximum = CODEX_NATIVE_MAX_ASSIGNMENTS) {
-    if (!Array.isArray(value) || value.length > maximum) throw invalid()
+  function codexNativeStringList(value, maximum = CODEX_NATIVE_MAX_ASSIGNMENTS, field = '') {
+    if (!Array.isArray(value) || value.length > maximum) throw invalid(field)
     const result = []
     for (const item of value) {
       const normalized = codexNativeString(item)
-      if (!normalized) throw invalid()
+      if (!normalized) throw invalid(field)
       if (!result.includes(normalized)) result.push(normalized)
     }
     return result
@@ -76,10 +91,14 @@ function createCodexNativeRegistry(dependencies = {}) {
     const source = codexRecord(parsed)
     const localProjectsSource = source['local-projects']
     const assignmentsSource = source['thread-project-assignments']
-    if (!localProjectsSource || typeof localProjectsSource !== 'object' || Array.isArray(localProjectsSource)) throw invalid()
-    if (!assignmentsSource || typeof assignmentsSource !== 'object' || Array.isArray(assignmentsSource)) throw invalid()
-    const projectOrder = codexNativeStringList(source['project-order'])
-    const pinnedProjectIds = codexNativeStringList(source['pinned-project-ids'])
+    if (!localProjectsSource || typeof localProjectsSource !== 'object' || Array.isArray(localProjectsSource)) throw invalid('local-projects')
+    if (!assignmentsSource || typeof assignmentsSource !== 'object' || Array.isArray(assignmentsSource)) throw invalid('thread-project-assignments')
+    const projectOrder = codexNativeStringList(source['project-order'], CODEX_NATIVE_MAX_ASSIGNMENTS, 'project-order')
+    const pinnedProjectIds = codexNativeStringList(
+      Object.prototype.hasOwnProperty.call(source, 'pinned-project-ids') ? source['pinned-project-ids'] : [],
+      CODEX_NATIVE_MAX_ASSIGNMENTS,
+      'pinned-project-ids'
+    )
     const selectedProjectSource = source['selected-project']
     const selectedProjectRecord = codexRecord(selectedProjectSource)
     const selectedProjectId = typeof selectedProjectSource === 'string'
@@ -88,24 +107,28 @@ function createCodexNativeRegistry(dependencies = {}) {
         ? codexNativeString(selectedProjectRecord.projectId)
         : ''
     // Present but unreadable is an error; absent is simply "nothing selected".
-    if (selectedProjectSource !== undefined && selectedProjectSource !== null && !selectedProjectId) throw codexError('protocol-error', 'Codex selected project state is invalid')
-    const pinnedThreadIds = codexNativeStringList(source['pinned-thread-ids']).filter(validCodexThreadId)
-    const projectlessThreadIds = codexNativeStringList(source['projectless-thread-ids']).filter(validCodexThreadId)
+    if (selectedProjectSource !== undefined && selectedProjectSource !== null && !selectedProjectId) throw invalid('selected-project', 'Codex selected project state is invalid')
+    const pinnedThreadIds = codexNativeStringList(
+      Object.prototype.hasOwnProperty.call(source, 'pinned-thread-ids') ? source['pinned-thread-ids'] : [],
+      CODEX_NATIVE_MAX_ASSIGNMENTS,
+      'pinned-thread-ids'
+    ).filter(validCodexThreadId)
+    const projectlessThreadIds = codexNativeStringList(source['projectless-thread-ids'], CODEX_NATIVE_MAX_ASSIGNMENTS, 'projectless-thread-ids').filter(validCodexThreadId)
     const projects = []
     const projectById = new Map()
     const projectKeySet = new Set()
     const localProjectEntries = Object.entries(localProjectsSource)
-    if (localProjectEntries.length > CODEX_NATIVE_MAX_PROJECTS) throw invalid()
+    if (localProjectEntries.length > CODEX_NATIVE_MAX_PROJECTS) throw invalid('local-projects')
     for (let insertionOrder = 0; insertionOrder < localProjectEntries.length; insertionOrder += 1) {
       const [storageId, rawValue] = localProjectEntries[insertionOrder]
       const project = codexRecord(rawValue)
       const id = codexNativeString(project.id)
       const name = codexNativeString(project.name, CODEX_NATIVE_MAX_PROJECT_NAME)
-      if (!id || id !== storageId || !name || !Array.isArray(project.rootPaths) || project.rootPaths.length < 1 || project.rootPaths.length > CODEX_NATIVE_MAX_ROOTS_PER_PROJECT) throw invalid()
+      if (!id || id !== storageId || !name || !Array.isArray(project.rootPaths) || project.rootPaths.length < 1 || project.rootPaths.length > CODEX_NATIVE_MAX_ROOTS_PER_PROJECT) throw invalid('local-projects')
       const roots = [...new Set(project.rootPaths.map(codexNormalizeNativeRoot))]
-      if (roots.some((root) => !root) || roots.length < 1) throw invalid()
+      if (roots.some((root) => !root) || roots.length < 1) throw invalid('local-projects')
       const key = codexProjectKey(roots)
-      if (projectKeySet.has(key)) throw codexError('protocol-error', 'Codex native project roots are ambiguous')
+      if (projectKeySet.has(key)) throw invalid('local-projects', 'Codex native project roots are ambiguous')
       projectKeySet.add(key)
       const normalized = { id, key, name, roots, insertionOrder }
       projects.push(normalized)
@@ -113,12 +136,12 @@ function createCodexNativeRegistry(dependencies = {}) {
     }
     const assignments = new Map()
     const assignmentEntries = Object.entries(assignmentsSource)
-    if (assignmentEntries.length > CODEX_NATIVE_MAX_ASSIGNMENTS) throw invalid()
+    if (assignmentEntries.length > CODEX_NATIVE_MAX_ASSIGNMENTS) throw invalid('thread-project-assignments')
     for (const [threadId, rawValue] of assignmentEntries) {
-      if (!validCodexThreadId(threadId)) throw invalid()
+      if (!validCodexThreadId(threadId)) throw invalid('thread-project-assignments')
       const assignment = codexRecord(rawValue)
       const projectId = codexNativeString(assignment.projectId)
-      if (!projectId) throw invalid()
+      if (!projectId) throw invalid('thread-project-assignments')
       assignments.set(threadId, projectId)
     }
     const nativeProjection = {

@@ -343,6 +343,38 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     return { turn: { status: turn.status, startedAt }, duplicate, reason: duplicate ? 'existing-terminal' : 'owner-canonical-terminal' }
   }
 
+  function codexDesktopTerminalDiagnostic(shadow, previousShadow, input = {}) {
+    const reason = input.decision?.reason || 'unavailable'
+    if ((shadow.terminalDecisionReason || previousShadow?.terminalDecisionReason) === reason) return null
+    const terminal = input.terminal
+    const details = {
+      reason, source: 'owner-canonical', terminalStatus: input.decision?.turn?.status || 'unknown',
+      memberRef: input.memberRef, goalStatus: input.goal?.goalStatus, goalFreshness: input.goal?.goalFreshness,
+      canonicalStartedAt: timestampMs(shadow.currentCanonicalTurn?.startedAt),
+      terminalStartedAt: timestampMs(terminal?.turnStartedAt), branchStartedAt: input.branchStartedAt,
+      branchLiveExact: input.exactLive === true,
+      terminalEvidence: ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(terminal?.lastTurnEvidence)
+        ? terminal.lastTurnEvidence : 'unknown',
+      ...(shadow.sideConversation === true ? {
+        ephemeralKnown: typeof shadow.ephemeral === 'boolean', ephemeral: shadow.ephemeral === true,
+        runtimeType: ['active', 'idle', 'notLoaded', 'systemError'].includes(shadow.runtime?.type) ? shadow.runtime.type : 'unknown',
+        canonicalStatus: ['inProgress', 'completed', 'interrupted', 'failed'].includes(shadow.currentCanonicalTurn?.status)
+          ? shadow.currentCanonicalTurn.status : 'unknown'
+      } : {})
+    }
+    return {
+      level: 'info', scope: 'task-topology', event: shadow.sideConversation === true ? 'desktop-side-terminal' : 'desktop-main-terminal',
+      outcome: input.decision?.turn ? 'corroborated' : 'abstained', provider: 'codex', taskRef: input.taskRef || '', details
+    }
+  }
+
+  function codexDesktopStartedBranchBaseline(known, sideTurn, sideInventory, side) {
+    return side ? {
+      lastTurnStatus: sideTurn?.status || sideInventory?.lastTurnStatus,
+      lastTurnStartedAt: sideTurn?.startedAt || sideInventory?.turnStartedAt
+    } : known
+  }
+
   function codexDesktopSideTerminalDecision(shadow, options = {}) {
     if (shadow?.sideConversation !== true || shadow.ephemeral !== true) return { reason: 'not-ephemeral-side' }
     return codexDesktopCanonicalTerminalDecision(shadow, options)
@@ -496,7 +528,9 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     codexDesktopInventoryTurnCandidate,
     codexDesktopMainTerminalFallback,
     codexDesktopBranchTurnFields,
-    codexDesktopSnapshotRefreshOptions
+    codexDesktopSnapshotRefreshOptions,
+    codexDesktopTerminalDiagnostic,
+    codexDesktopStartedBranchBaseline
   }
 }
 
