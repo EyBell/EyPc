@@ -167,6 +167,9 @@ function createCodexFloatBridge(dependencies = {}) {
     codexFloatPaintDiagnostics = paintModule.createCodexFloatPaintDiagnostics({
       runtimeDiagnostics, utools, process, requireElectron: dependencies.requireElectron
     })
+    if (process.platform === 'win32') runtimeDiagnostics.record({
+      level: 'info', scope: 'float-paint', event: 'module-load', outcome: 'ready'
+    })
   } catch (error) {
     if (process.platform === 'win32') runtimeDiagnostics.record({
       level: 'info', scope: 'float-paint', event: 'module-load', outcome: 'failed',
@@ -207,7 +210,12 @@ function createCodexFloatBridge(dependencies = {}) {
       const actual = codexFloatWindow.getBounds()
       codexFloatAnchor = { ...codexFloatAnchor, x: codexFloatAnchor.x + actual.x - layout.bounds.x, y: codexFloatAnchor.y + actual.y - layout.bounds.y }
       codexFloatRailLayout = { ...layout, bounds: actual }
+      const wasExpanded = codexFloatExpanded
       codexFloatExpanded = expanded
+      observeCodexFloatGeometry({
+        expanded, wasExpanded, current, target: layout.bounds, applied: true, display,
+        free: false, edge: codexFloatEdge
+      })
       return true
     } catch {
       runtimeDiagnostics.record({ scope: 'float-geometry', event: 'position', outcome: 'failed', code: 'set-bounds-failed', level: 'error' })
@@ -1200,6 +1208,64 @@ function createCodexFloatBridge(dependencies = {}) {
     }
   }
 
+  function observeCodexFloatGeometry({ expanded, wasExpanded, current, target, applied, display, free, edge }) {
+    const needsWrite = !boundsMatch(current, target)
+    const transition = wasExpanded !== expanded
+    if (process.platform === 'win32' && (transition || needsWrite)) {
+      const sequence = ++codexFloatGeometrySequence
+      const requestId = codexFloatExpansionRequestId
+      const generation = codexFloatWindowGeneration
+      const windowRef = codexFloatWindow
+      let actual = null
+      try { actual = windowRef.getBounds() } catch {}
+      runtimeDiagnostics.record({
+        level: applied && boundsMatch(actual, target) ? 'info' : 'error',
+        scope: 'float-geometry',
+        event: 'expansion',
+        outcome: applied && boundsMatch(actual, target) ? 'applied' : 'mismatch',
+        details: {
+          sequence, requestId, windowGeneration: generation,
+          expanded, style: codexFloatSnapshot?.style || '', free,
+          edge, anchor: codexFloatAnchor, before: current, target,
+          actual, displayBounds: display?.bounds, workArea: display?.workArea,
+          displayId: String(display?.id || ''), scaleFactor: display?.scaleFactor,
+          ...nativeFloatPresentation(windowRef)
+        }
+      })
+      const timer = setTimeout(() => {
+        if (sequence !== codexFloatGeometrySequence || !codexFloatAlive() || codexFloatWindow !== windowRef) return
+        let settled = null
+        try { settled = windowRef.getBounds() } catch {}
+        runtimeDiagnostics.record({
+          level: boundsMatch(settled, target) ? 'info' : 'error', scope: 'float-geometry', event: 'expansion-settled',
+          outcome: boundsMatch(settled, target) ? 'matched' : 'mismatch',
+          details: {
+            sequence, requestId, windowGeneration: generation, expanded, target, actual: settled,
+            ...nativeFloatPresentation(windowRef)
+          }
+        })
+        codexFloatPaintDiagnostics?.observe({
+          sequence, requestId, windowGeneration: generation, expanded,
+          window: windowRef, display, observation: codexFloatRendererObservation,
+          isCurrent: () => {
+            try {
+              return sequence === codexFloatGeometrySequence && generation === codexFloatWindowGeneration
+                && codexFloatAlive() && codexFloatWindow === windowRef && !codexFloatDrag && !codexFloatResize
+                && boundsMatch(windowRef.getBounds(), settled)
+            } catch { return false }
+          }
+        }).catch((error) => runtimeDiagnostics.record({
+          level: 'info', scope: 'float-paint', event: 'capture', outcome: 'failed',
+          details: {
+            sequence, requestId, windowGeneration: generation,
+            errorName: ['Error', 'TypeError', 'RangeError'].includes(error?.name) ? error.name : 'Error'
+          }
+        }))
+      }, 150)
+      timer?.unref?.()
+    }
+  }
+
   function resizeCodexFloat(expanded, notifyState = true) {
     if (!codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
     codexFloatBackingEpoch += 1
@@ -1224,60 +1290,7 @@ function createCodexFloatBridge(dependencies = {}) {
         : resizeFloatBounds(current, size, display, edge)
     const needsWrite = !boundsMatch(current, resized.bounds)
     const applied = !needsWrite || applyNativeBounds(resized.bounds)
-    const transition = wasExpanded !== expanded
-    if (process.platform === 'win32' && (transition || needsWrite)) {
-      const sequence = ++codexFloatGeometrySequence
-      const requestId = codexFloatExpansionRequestId
-      const generation = codexFloatWindowGeneration
-      const windowRef = codexFloatWindow
-      let actual = null
-      try { actual = windowRef.getBounds() } catch {}
-      runtimeDiagnostics.record({
-        level: applied && boundsMatch(actual, resized.bounds) ? 'info' : 'error',
-        scope: 'float-geometry',
-        event: 'expansion',
-        outcome: applied && boundsMatch(actual, resized.bounds) ? 'applied' : 'mismatch',
-        details: {
-          sequence, requestId, windowGeneration: generation,
-          expanded, style: codexFloatSnapshot?.style || '', free,
-          edge, anchor: codexFloatAnchor, before: current, target: resized.bounds,
-          actual, displayBounds: display?.bounds, workArea: display?.workArea,
-          displayId: String(display?.id || ''), scaleFactor: display?.scaleFactor,
-          ...nativeFloatPresentation(windowRef)
-        }
-      })
-      const timer = setTimeout(() => {
-        if (sequence !== codexFloatGeometrySequence || !codexFloatAlive() || codexFloatWindow !== windowRef) return
-        let settled = null
-        try { settled = windowRef.getBounds() } catch {}
-        runtimeDiagnostics.record({
-          level: boundsMatch(settled, resized.bounds) ? 'info' : 'error', scope: 'float-geometry', event: 'expansion-settled',
-          outcome: boundsMatch(settled, resized.bounds) ? 'matched' : 'mismatch',
-          details: {
-            sequence, requestId, windowGeneration: generation, expanded, target: resized.bounds, actual: settled,
-            ...nativeFloatPresentation(windowRef)
-          }
-        })
-        codexFloatPaintDiagnostics?.observe({
-          sequence, requestId, windowGeneration: generation, expanded,
-          window: windowRef, display, observation: codexFloatRendererObservation,
-          isCurrent: () => {
-            try {
-              return sequence === codexFloatGeometrySequence && generation === codexFloatWindowGeneration
-                && codexFloatAlive() && codexFloatWindow === windowRef && !codexFloatDrag && !codexFloatResize
-                && boundsMatch(windowRef.getBounds(), settled)
-            } catch { return false }
-          }
-        }).catch((error) => runtimeDiagnostics.record({
-          level: 'info', scope: 'float-paint', event: 'capture', outcome: 'failed',
-          details: {
-            sequence, requestId, windowGeneration: generation,
-            errorName: ['Error', 'TypeError', 'RangeError'].includes(error?.name) ? error.name : 'Error'
-          }
-        }))
-      }, 150)
-      timer?.unref?.()
-    }
+    observeCodexFloatGeometry({ expanded, wasExpanded, current, target: resized.bounds, applied, display, free, edge })
     if (!expanded && wasExpanded && codexFloatSnapshot?.style === 'water') clearCollapsedWaterBacking(resized.bounds)
     if (!free) codexFloatEdge = resized.edge
     codexFloatExpanded = expanded

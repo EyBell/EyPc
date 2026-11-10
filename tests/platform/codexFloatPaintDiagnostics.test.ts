@@ -24,7 +24,7 @@ function image(width: number, height: number, value = 180, alpha = 255) {
   }
 }
 
-function harness() {
+function harness(nativeImage?: { createFromBuffer: (buffer: Buffer) => any }) {
   const events: any[] = []
   const display = { id: 17, bounds: { x: -1280, y: -100, width: 1280, height: 800 }, scaleFactor: 1.5 }
   const bounds = { x: -1260, y: -80, width: 360, height: 352 }
@@ -36,6 +36,7 @@ function harness() {
   const diagnostics = createCodexFloatPaintDiagnostics({
     utools: { captureDisplay },
     process: { platform: 'win32', versions: { electron: 'test-version' } },
+    requireElectron: () => ({ nativeImage }),
     runtimeDiagnostics: { record: (event: any) => events.push(event), snapshot: () => ({ settings }) }
   })
   const context = {
@@ -135,12 +136,79 @@ describe('Windows float painted content diagnostics', () => {
     expect(fixture.capturePage).not.toHaveBeenCalled()
   })
 
+  it('keeps macOS outside the Windows pixel capture path', async () => {
+    const fixture = harness()
+    const diagnostics = createCodexFloatPaintDiagnostics({
+      utools: { captureDisplay: fixture.captureDisplay },
+      process: { platform: 'darwin' },
+      runtimeDiagnostics: {
+        snapshot: () => ({ settings: fixture.settings }),
+        record: (event: any) => fixture.events.push(event)
+      }
+    })
+    await diagnostics.observe(fixture.context)
+    expect(fixture.events).toEqual([])
+    expect(fixture.captureDisplay).not.toHaveBeenCalled()
+    expect(fixture.capturePage).not.toHaveBeenCalled()
+  })
+
+  it('records why enabled diagnostics skip pixels without repeating the same gate', async () => {
+    const fixture = harness()
+    fixture.settings.level = 'info'
+    await fixture.diagnostics.observe(fixture.context)
+    await fixture.diagnostics.observe({ ...fixture.context, sequence: 2 })
+    expect(fixture.events).toHaveLength(1)
+    expect(fixture.events[0]).toMatchObject({
+      scope: 'float-paint', event: 'capture-skipped', outcome: 'debug-required',
+      details: { sequence: 1, windowGeneration: 3 }
+    })
+    expect(fixture.captureDisplay).not.toHaveBeenCalled()
+  })
+
+  it('keeps the newest geometry observation while the previous capture is still pending', async () => {
+    const fixture = harness()
+    let finish: ((value: any) => void) | undefined
+    let currentSequence = 1
+    fixture.captureDisplay.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const pending = fixture.diagnostics.observe({ ...fixture.context, isCurrent: () => currentSequence === 1 })
+    await Promise.resolve()
+    currentSequence = 2
+    await fixture.diagnostics.observe({ ...fixture.context, sequence: 2, isCurrent: () => currentSequence === 2 })
+    currentSequence = 3
+    await fixture.diagnostics.observe({ ...fixture.context, sequence: 3, isCurrent: () => currentSequence === 3 })
+    finish?.([{ display: fixture.display, image: fixture.desktopImage }])
+    await pending
+    const captures = fixture.events.filter((entry) => entry.event === 'capture')
+    expect(captures.map((entry) => [entry.details.sequence, entry.outcome])).toEqual([[1, 'stale'], [3, 'observed']])
+    expect(fixture.capturePage).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses Electron bitmap conversion for the documented host NativeImage wrapper', async () => {
+    const png = Buffer.from('synthetic-image')
+    const createFromBuffer = vi.fn(() => image(360, 352))
+    const fixture = harness({ createFromBuffer })
+    fixture.capturePage.mockResolvedValue({
+      getSize: () => ({ width: 360, height: 352 }),
+      isEmpty: () => false,
+      toPNG: () => png
+    } as any)
+    await fixture.diagnostics.observe(fixture.context)
+    expect(createFromBuffer).toHaveBeenCalledWith(png)
+    expect(fixture.events[0]).toMatchObject({
+      outcome: 'observed', details: { page: { width: 360, height: 352 }, beforeComparison: { matchingRatio: 1 } }
+    })
+    expect(JSON.stringify(fixture.events)).not.toContain('synthetic-image')
+  })
+
   it('stops after twelve observations per native window generation', async () => {
     const fixture = harness()
     for (let sequence = 0; sequence < 14; sequence += 1) {
       await fixture.diagnostics.observe({ ...fixture.context, sequence })
     }
     expect(fixture.capturePage).toHaveBeenCalledTimes(12)
+    expect(fixture.events.filter((entry) => entry.event === 'capture-skipped')).toMatchObject([
+      { outcome: 'budget-exhausted', details: { windowGeneration: 3, attempts: 12 } }
+    ])
     await fixture.diagnostics.observe({ ...fixture.context, windowGeneration: 4 })
     expect(fixture.capturePage).toHaveBeenCalledTimes(13)
   })
@@ -171,6 +239,20 @@ describe('Windows float painted content diagnostics', () => {
     })
     await fixture.diagnostics.observe(fixture.context)
     expect(fixture.captureDisplay).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not start queued work after a capture times out', async () => {
+    vi.useFakeTimers()
+    const fixture = harness()
+    fixture.captureDisplay.mockImplementation(() => new Promise(() => {}))
+    const pending = fixture.diagnostics.observe(fixture.context)
+    await Promise.resolve()
+    await fixture.diagnostics.observe({ ...fixture.context, sequence: 2 })
+    await vi.advanceTimersByTimeAsync(1500)
+    await pending
+    expect(fixture.captureDisplay).toHaveBeenCalledTimes(1)
+    expect(fixture.capturePage).not.toHaveBeenCalled()
+    expect(fixture.events.some((entry) => entry.event === 'capture' && entry.outcome === 'timeout')).toBe(true)
   })
 
   it('does not compare a clipped display region against a complete page', async () => {

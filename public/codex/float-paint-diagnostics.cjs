@@ -5,6 +5,8 @@ const { createHash } = require('node:crypto')
 function createCodexFloatPaintDiagnostics(dependencies = {}) {
   const { runtimeDiagnostics, utools, process, requireElectron } = dependencies
   const pendingGenerations = new Set()
+  const pendingSources = new Map()
+  const skippedReasons = new Set()
   let generation = null
   let attempts = 0
   let timedOut = false
@@ -144,13 +146,33 @@ function createCodexFloatPaintDiagnostics(dependencies = {}) {
 
   async function observe(source) {
     const settings = runtimeDiagnostics?.snapshot?.()?.settings
-    if (process?.platform !== 'win32' || settings?.enabled !== true || settings?.level !== 'debug') return
+    if (process?.platform !== 'win32' || settings?.enabled !== true) return
     if (source.windowGeneration !== generation) {
       generation = source.windowGeneration
       attempts = 0
       timedOut = false
+      skippedReasons.clear()
     }
-    if (attempts >= 12 || timedOut || pendingGenerations.has(generation) || !source.isCurrent()) return
+    function skip(outcome) {
+      if (skippedReasons.has(outcome)) return
+      skippedReasons.add(outcome)
+      runtimeDiagnostics.record({
+        level: 'info', scope: 'float-paint', event: 'capture-skipped', outcome,
+        details: {
+          sequence: source.sequence, requestId: source.requestId, windowGeneration: generation,
+          expanded: source.expanded, attempts
+        }
+      })
+    }
+    if (settings.level !== 'debug') { skip('debug-required'); return }
+    if (attempts >= 12) { skip('budget-exhausted'); return }
+    if (timedOut) { skip('timeout-backoff'); return }
+    if (!source.isCurrent()) { skip('stale'); return }
+    if (pendingGenerations.has(generation)) {
+      pendingSources.set(generation, source)
+      skip('capture-in-progress')
+      return
+    }
     attempts += 1
     const currentGeneration = generation
     pendingGenerations.add(currentGeneration)
@@ -240,7 +262,12 @@ function createCodexFloatPaintDiagnostics(dependencies = {}) {
         scope: 'float-paint', event: 'capture', outcome: errorCode(error),
         durationMs: Date.now() - startedAt, details
       })
-    } finally { pendingGenerations.delete(currentGeneration) }
+    } finally {
+      pendingGenerations.delete(currentGeneration)
+      const pending = pendingSources.get(currentGeneration)
+      pendingSources.delete(currentGeneration)
+      if (pending && generation === currentGeneration) await observe(pending)
+    }
   }
 
   return { observe }

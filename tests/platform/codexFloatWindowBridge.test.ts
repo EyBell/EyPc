@@ -283,7 +283,7 @@ function snapshot(overrides: Partial<FloatSnapshot> = {}): FloatSnapshot {
   }
 }
 
-function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Array<Record<string, any>>; platform?: string; captureDiagnostics?: boolean } = {}) {
+function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Array<Record<string, any>>; platform?: string; captureDiagnostics?: boolean; capturePaint?: boolean; diagnosticsLevel?: string } = {}) {
   const nativeBounds = (bounds: Rect): Rect => ({ ...bounds, y: Math.max(options.minimumY ?? -Infinity, bounds.y) })
   const leftoverWindows = options.leftoverWindows || []
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
@@ -299,6 +299,18 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
   ]
   let floatBounds: Rect | null = null
   let floatDestroyed = false
+  const paintImage = (width: number, height: number): any => ({
+    getSize: () => ({ width, height }),
+    isEmpty: () => false,
+    resize: () => paintImage(48, 48),
+    toBitmap: () => Buffer.alloc(48 * 48 * 4, 255),
+    crop: (bounds: Rect) => paintImage(bounds.width, bounds.height)
+  })
+  const capturePage = vi.fn(async () => paintImage(floatBounds!.width, floatBounds!.height))
+  const captureDisplay = vi.fn(async ({ displayId }: { displayId: string }) => {
+    const display = displays.find((candidate) => candidate.id === displayId)!
+    return [{ display, image: paintImage(display.bounds.width, display.bounds.height) }]
+  })
   const floatWindow = {
     isDestroyed: () => floatDestroyed,
     getBounds: () => ({ ...(floatBounds as Rect) }),
@@ -317,13 +329,15 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
     setOpacity: undefined as ((value: number) => void) | undefined,
     webContents: {
       send: vi.fn((channel: string, payload: unknown) => sent.push({ channel, payload })),
-      invalidate: vi.fn()
+      invalidate: vi.fn(),
+      capturePage: options.capturePaint ? capturePage : undefined
     }
   }
   const utools = {
     getAllDisplays: () => displays,
     getCursorScreenPoint: () => ({ x: 2500, y: 300 }),
     getDisplayNearestPoint: (point: { x: number }) => point.x < 0 ? displays[0] : displays[1],
+    captureDisplay: options.capturePaint ? captureDisplay : undefined,
     createBrowserWindow: vi.fn((_url: string, options: Rect, loaded: () => void) => {
       windowLoadedCallbacks.push(loaded)
       floatDestroyed = false
@@ -345,7 +359,10 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
     utools,
     require(name: string) {
       if (name.endsWith('/diagnostics.cjs') && options.captureDiagnostics) return {
-        createRuntimeDiagnostics: () => ({ record: (event: Record<string, any>) => diagnosticEvents.push(event) })
+        createRuntimeDiagnostics: () => ({
+          record: (event: Record<string, any>) => diagnosticEvents.push(event),
+          snapshot: () => ({ settings: { enabled: true, level: options.diagnosticsLevel || 'debug' } })
+        })
       }
       if (name === './companion/task-kernel.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'))
       if (name === 'node:buffer') return { Buffer }
@@ -401,6 +418,8 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
     displays,
     sent,
     diagnosticEvents,
+    capturePage,
+    captureDisplay,
     floatWindow,
     windowLoadedCallbacks,
     bounds: () => floatBounds as Rect,
@@ -1208,6 +1227,68 @@ it('keeps Windows water in the per-pixel rendering path across repeated expansio
   expect(setOpacity).not.toHaveBeenCalled()
   expect(h.floatWindow.webContents.invalidate).toHaveBeenCalledTimes(6)
   expect(h.diagnosticEvents.filter((entry) => entry.event === 'backing-repaint')).toHaveLength(6)
+  h.bridge.close()
+})
+
+it.each(['water', 'card', 'edge'] as const)('reaches pixel capture through the Windows entry and IPC across repeated %s expansion', async (style) => {
+  vi.useFakeTimers()
+  const h = loadPreloadHarness({ platform: 'win32', captureDiagnostics: true, capturePaint: true })
+  h.bridge.sync({
+    visible: true, snapshot: snapshot({ style }),
+    position: { version: 2, displayId: 'right', x: 3266, y: -100, edge: 'right', placed: 'free' }
+  })
+  for (let requestId = 1; requestId <= 4; requestId += 1) {
+    const expanded = requestId % 2 === 1
+    h.ipcHandlers.get('eypc-float:expansion')?.({}, { expanded, requestId })
+    await vi.advanceTimersByTimeAsync(200)
+  }
+  expect(h.capturePage).toHaveBeenCalledTimes(4)
+  expect(h.captureDisplay).toHaveBeenCalledTimes(8)
+  expect(h.diagnosticEvents.filter((entry) => entry.scope === 'float-paint' && entry.event === 'capture')).toMatchObject([
+    { outcome: 'observed', details: { requestId: 1, sequence: 1, expanded: true } },
+    { outcome: 'observed', details: { requestId: 2, sequence: 2, expanded: false } },
+    { outcome: 'observed', details: { requestId: 3, sequence: 3, expanded: true } },
+    { outcome: 'observed', details: { requestId: 4, sequence: 4, expanded: false } }
+  ])
+  h.bridge.close()
+})
+
+it('captures the latest Windows IPC geometry after an older capture becomes stale', async () => {
+  vi.useFakeTimers()
+  const h = loadPreloadHarness({ platform: 'win32', captureDiagnostics: true, capturePaint: true })
+  let finish: ((value: any) => void) | undefined
+  h.captureDisplay.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+  h.bridge.sync({ visible: true, snapshot: snapshot(), position: {} })
+  for (let requestId = 1; requestId <= 3; requestId += 1) {
+    h.ipcHandlers.get('eypc-float:expansion')?.({}, { expanded: requestId % 2 === 1, requestId })
+    await vi.advanceTimersByTimeAsync(150)
+  }
+  finish?.([])
+  await vi.advanceTimersByTimeAsync(0)
+  expect(h.diagnosticEvents.filter((entry) => entry.scope === 'float-paint' && entry.event === 'capture')).toMatchObject([
+    { outcome: 'stale', details: { requestId: 1, sequence: 1 } },
+    { outcome: 'observed', details: { requestId: 3, sequence: 3, expanded: true } }
+  ])
+  expect(h.capturePage).toHaveBeenCalledTimes(1)
+  h.bridge.close()
+})
+
+it('reports the loaded Windows paint module and its debug gate without taking pixels', async () => {
+  vi.useFakeTimers()
+  const h = loadPreloadHarness({
+    platform: 'win32', captureDiagnostics: true, capturePaint: true, diagnosticsLevel: 'info'
+  })
+  h.bridge.sync({ visible: true, snapshot: snapshot(), position: {} })
+  setExpansion(h.ipcHandlers, true, false)
+  await vi.advanceTimersByTimeAsync(200)
+  expect(h.diagnosticEvents).toContainEqual(expect.objectContaining({
+    scope: 'float-paint', event: 'module-load', outcome: 'ready'
+  }))
+  expect(h.diagnosticEvents).toContainEqual(expect.objectContaining({
+    scope: 'float-paint', event: 'capture-skipped', outcome: 'debug-required'
+  }))
+  expect(h.captureDisplay).not.toHaveBeenCalled()
+  expect(h.capturePage).not.toHaveBeenCalled()
   h.bridge.close()
 })
 
