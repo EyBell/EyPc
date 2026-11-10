@@ -1,4 +1,4 @@
-import type { CodexhostEnvironmentV1 } from './codex'
+import type { CodexhostEnvironmentV1, CodexQuotaSnapshotV1 } from './codex'
 import { CLAUDE_QUOTA_WINDOW_LABELS } from './generated/claudeQuotaVocabulary'
 import {
   claudePrimaryQuotaWindow,
@@ -25,10 +25,14 @@ import {
   type CompanionWaterBallMapping
 } from './companionProvider'
 import {
+  formatMagpieRemoteLimitHint,
+  hasMagpieAgentQuota,
   resolveCompactQuotaGridPresentation,
+  resolveMagpieRemoteLimit,
   type CompactQuotaGridPresentation,
   type MagpieQuotaGridLabelOptions,
-  type MagpieQuotaProvider
+  type MagpieQuotaProvider,
+  type MagpieRemoteLimitReading
 } from './magpieQuota'
 
 /**
@@ -140,8 +144,8 @@ export interface CompanionWaterBallPresentation {
   mapping: CompanionWaterBallMapping
   /**
    * Centre percentage override, or null to keep the existing Codex-derived
-   * rendering. Null is the compatibility path and must stay null whenever the
-   * companion is Codex-only or Claude has no usable reading.
+   * rendering. Null keeps the existing channel whenever no eligible
+   * alternative quota reading is available.
    */
   percentOverride: number | null
   /**
@@ -167,12 +171,15 @@ export interface CompanionWaterBallPresentation {
   ariaSuffix: string
   /** 2×2 centre grid sourced from Magpie when enabled. */
   quotaGrid: CompactQuotaGridPresentation
+  remoteLimit: MagpieRemoteLimitReading | null
+  quotaHint: string
 }
 
 /** The Codex compact readings the float already resolved; the ball keeps them authoritative for Codex-owned channels. */
 export interface CompanionWaterBallCodexReadings {
   primary?: CodexQuotaReading | null
   secondary?: CodexQuotaReading | null
+  quota?: Pick<CodexQuotaSnapshotV1, 'plan' | 'status'>
 }
 
 const EMPTY_PRESENTATION: CompanionWaterBallPresentation = {
@@ -184,7 +191,9 @@ const EMPTY_PRESENTATION: CompanionWaterBallPresentation = {
   liquidPercent: null,
   ringPercent: null,
   ariaSuffix: '',
-  quotaGrid: resolveCompactQuotaGridPresentation(null, { enabled: false })
+  quotaGrid: resolveCompactQuotaGridPresentation(null, { enabled: false }),
+  remoteLimit: null,
+  quotaHint: ''
 }
 
 function clampQuotaPercent(value: number): number {
@@ -194,9 +203,8 @@ function clampQuotaPercent(value: number): number {
 /**
  * Resolves what the collapsed water ball should show.
  *
- * Codex-only, a missing Claude registration and an unreadable Claude quota all
- * converge on the same result: no override at all, so the ball renders exactly
- * as it did before this feature existed.
+ * Existing channels remain authoritative unless the enabled sources provide
+ * an eligible alternative reading.
  */
 export function resolveCompanionWaterBallPresentation(
   slice: CompanionSnapshotSlice | null | undefined,
@@ -214,6 +222,27 @@ export function resolveCompanionWaterBallPresentation(
   const claudeLive = slice.providers.claude === true
     && (isClaudeAvailable(slice.claudeEnvironment) || appQuotaReadable)
   const mapping = resolveCompanionWaterBallMapping(slice.providers, { claude: claudeLive })
+  const magpie = slice.magpieQuota
+  if (slice.providers.codex && !slice.providers.claude && !slice.providers.cursor && !slice.providers.orca
+    && codex.quota?.status === 'ok' && codex.quota.plan.trim().toLowerCase() === 'free'
+    && !codex.primary && !codex.secondary && magpie && !hasMagpieAgentQuota(magpie.providers)) {
+    const remoteLimit = resolveMagpieRemoteLimit(magpie.providers, { status: magpie.status, updatedAt: magpie.updatedAt })
+    if (remoteLimit) {
+      const percent = clampQuotaPercent(remoteLimit.remainingPercent)
+      const quotaHint = formatMagpieRemoteLimitHint(remoteLimit)
+      return {
+        ...EMPTY_PRESENTATION,
+        mapping,
+        quotaGrid,
+        percentOverride: percent,
+        ringPercent: percent,
+        percentProviderLabel: 'Magpie',
+        remoteLimit,
+        quotaHint,
+        ariaSuffix: `，${quotaHint}`
+      }
+    }
+  }
   if (mapping.percent !== 'claude') return { ...EMPTY_PRESENTATION, mapping, quotaGrid }
   const window = claudePrimaryQuotaWindow(slice.claudeQuota)
   if (!window) return { ...EMPTY_PRESENTATION, mapping, quotaGrid }
@@ -269,6 +298,7 @@ export function resolveCompanionWaterBallPresentation(
   }
   const scopedPercent = clampQuotaPercent(scoped.remainingPercent)
   return {
+    ...EMPTY_PRESENTATION,
     mapping,
     percentOverride: percent,
     scopedPercent,

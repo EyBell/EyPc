@@ -4,9 +4,13 @@ import {
   buildMagpieQuotaResetLines,
   formatMagpieQuotaResetInline,
   formatMagpieTokenBalance,
+  hasMagpieAgentQuota,
   magpieResetCountdownText,
   magpieResetCompactText,
-  resolveCompactQuotaGridPresentation
+  resolveCompactQuotaGridPresentation,
+  resolveMagpieRemoteLimit,
+  type MagpieQuotaProvider,
+  type MagpieQuotaWindow
 } from '../../src/domain/magpieQuota'
 
 const SAMPLE = [
@@ -317,5 +321,351 @@ describe('remote magpie quota', () => {
     ]
     expect(resolveCompactQuotaGridPresentation(providers, enabled).cells).toEqual([])
     expect(buildMagpieQuotaExpandCards(providers)).toEqual([])
+  })
+})
+
+function remoteLimitCard(
+  windows: MagpieQuotaWindow[] = [{
+    name: 'Daily tokens',
+    remaining: 67.49,
+    amount: 123.4,
+    limit: 1000,
+    unit: 'tokens',
+    resetsAt: '2026-11-11T00:00:00Z'
+  }],
+  patch: Partial<MagpieQuotaProvider> = {}
+): MagpieQuotaProvider {
+  return { provider: 'remote-magpie/~keys', kind: 'plan', windows, ...patch }
+}
+
+describe('magpie remote key limits', () => {
+  it('keeps the explicit unrounded remaining value ahead of the amount calculation', () => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard()], enabled)).toEqual({
+      remainingPercent: 67.49,
+      used: 123.4,
+      limit: 1000,
+      unit: 'tokens',
+      name: 'Daily tokens',
+      resetAt: Date.parse('2026-11-11T00:00:00Z'),
+      stale: false
+    })
+  })
+
+  it.each(['tokens', 'USD'])('accepts an explicit %s percentage without inventing missing amounts', (unit) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([{ name: 'Daily', remaining: 23.456, unit }])]))
+      .toEqual({
+        remainingPercent: 23.456,
+        used: null,
+        limit: null,
+        unit,
+        name: 'Daily',
+        resetAt: null,
+        stale: false
+      })
+  })
+
+  it.each([
+    [{ amount: 0 }, { used: 0, limit: null }],
+    [{ limit: 200 }, { used: null, limit: 200 }]
+  ])('retains independently supplied amount fields alongside an explicit percentage: %j', (patch, expected) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Daily', remaining: 50, unit: 'tokens', ...patch }
+    ])])).toMatchObject({ remainingPercent: 50, ...expected })
+  })
+
+  it.each(['tokens', 'USD'])('calculates an unrounded %s percentage from a finite amount and total', (unit) => {
+    const reading = resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Daily', amount: 123.4, limit: 200, unit }
+    ])])
+    expect(reading).toMatchObject({ used: 123.4, limit: 200, unit })
+    expect(reading?.remainingPercent).toBeCloseTo(38.3, 10)
+  })
+
+  it.each([0, 100])('keeps a real explicit %s percent endpoint', (remaining) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Daily', remaining, unit: 'tokens' }
+    ])])?.remainingPercent).toBe(remaining)
+  })
+
+  it.each([
+    [0, 100],
+    [200, 0],
+    [250, 0]
+  ])('calculates the exhausted or unused boundary for amount %s', (amount, expected) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Daily', amount, limit: 200, unit: 'tokens' }
+    ])])?.remainingPercent).toBe(expected)
+  })
+
+  it.each([
+    { remaining: Number.NaN },
+    { remaining: Number.POSITIVE_INFINITY },
+    { remaining: Number.NEGATIVE_INFINITY },
+    { remaining: -0.01 },
+    { remaining: 100.01 },
+    { remaining: '50' },
+    { remaining: null },
+    { remaining: false },
+    { amount: Number.NaN },
+    { amount: Number.POSITIVE_INFINITY },
+    { amount: Number.NEGATIVE_INFINITY },
+    { amount: -1 },
+    { amount: '100' },
+    { amount: null },
+    { limit: Number.NaN },
+    { limit: Number.POSITIVE_INFINITY },
+    { limit: Number.NEGATIVE_INFINITY },
+    { limit: -1 },
+    { limit: 0 },
+    { limit: '200' },
+    { limit: null }
+  ])('rejects a supplied invalid numeric field without using another calculation: %j', (patch) => {
+    const window = {
+      name: 'Daily',
+      remaining: 50,
+      amount: 100,
+      limit: 200,
+      unit: 'tokens',
+      ...patch
+    } as unknown as MagpieQuotaWindow
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([window])])).toBeNull()
+  })
+
+  it.each([
+    {},
+    { amount: 0 },
+    { limit: 200 },
+    { used: 100, limit: 200 }
+  ])('does not calculate a percentage from incomplete amount and total fields: %j', (patch) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Daily', unit: 'tokens', ...patch }
+    ], { balance: '12000 credits' })])).toBeNull()
+  })
+
+  it.each([undefined, '', 'usd', 'credits', 'requests', 'CNY'])('rejects unsupported unit %s', (unit) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Daily', remaining: 50, amount: 100, limit: 200, unit }
+    ])])).toBeNull()
+  })
+
+  it('skips unlimited, text and invalid windows while still selecting a usable window', () => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Unlimited', remaining: 0, amount: 200, limit: 200, unit: 'tokens', unlimited: true },
+      { name: 'Text', remaining: 0, amount: 200, limit: 200, unit: 'USD', text: true },
+      { name: 'Invalid', remaining: 0, amount: -1, limit: 200, unit: 'tokens' },
+      { name: 'Daily', remaining: 82.45, amount: 35.1, limit: 200, unit: 'tokens', unlimited: false, text: false }
+    ])])).toMatchObject({ name: 'Daily', remainingPercent: 82.45 })
+  })
+
+  it.each([
+    { unlimited: true },
+    { text: true }
+  ])('does not turn a lone unlimited or text window into a limit: %j', (patch) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Daily', remaining: 50, unit: 'tokens', ...patch }
+    ])])).toBeNull()
+  })
+
+  it('selects the lowest unrounded remaining value before display rounding', () => {
+    const reading = resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Daily', remaining: 40.49, unit: 'tokens', resetsAt: '2026-11-11T00:00:00Z' },
+      { name: 'Monthly', remaining: 40.41, unit: 'USD', resetsAt: '2026-12-01T00:00:00Z' }
+    ])])
+    expect(reading).toMatchObject({
+      name: 'Monthly',
+      remainingPercent: 40.41,
+      unit: 'USD',
+      resetAt: Date.parse('2026-12-01T00:00:00Z')
+    })
+  })
+
+  it('compares calculated and explicit windows on the same remaining percentage scale', () => {
+    const reading = resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Daily tokens', remaining: 40, unit: 'tokens' },
+      { name: 'Monthly spend', amount: 80, limit: 100, unit: 'USD' }
+    ])])
+    expect(reading).toMatchObject({ name: 'Monthly spend', used: 80, limit: 100, unit: 'USD' })
+    expect(reading?.remainingPercent).toBeCloseTo(20, 10)
+  })
+
+  it('keeps API order for an exact tie without preferring a unit or reset time', () => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'First', remaining: 40.25, unit: 'USD' },
+      { name: 'Second', remaining: 40.25, unit: 'tokens', resetsAt: '2026-11-11T00:00:00Z' }
+    ])])).toMatchObject({ name: 'First', unit: 'USD', resetAt: null })
+  })
+
+  it.each([
+    { providers: undefined },
+    { providers: null },
+    { providers: [] }
+  ])('returns no limit for absent providers: $providers', ({ providers }) => {
+    expect(resolveMagpieRemoteLimit(providers)).toBeNull()
+  })
+
+  it.each(['~keys', 'remote-magpie/~keys-extra', 'remote-magpie/~keys/codex', 'remote-magpie/codex'])(
+    'requires the exact remote key-card suffix rather than %s',
+    (provider) => {
+      expect(resolveMagpieRemoteLimit([remoteLimitCard(undefined, { provider })])).toBeNull()
+    }
+  )
+
+  it('accepts a unique key card beside unrelated providers', () => {
+    expect(resolveMagpieRemoteLimit([
+      { provider: 'remote-magpie/deepseek', kind: 'plan', balance: '20 credits' },
+      remoteLimitCard(undefined, { provider: 'another-gateway/~keys' })
+    ])).toMatchObject({ remainingPercent: 67.49 })
+  })
+
+  it.each([undefined, 'balance', 'quota'])('requires kind plan rather than %s', (kind) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard(undefined, { kind })])).toBeNull()
+  })
+
+  it.each([
+    {},
+    { provider: 'another-gateway/~keys' },
+    { kind: 'balance', windows: [] }
+  ])('rejects multiple key cards even when a second card has no usable limit: %j', (patch) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard(), remoteLimitCard(undefined, patch)])).toBeNull()
+  })
+
+  it.each([
+    { windows: undefined },
+    { windows: [] }
+  ])('does not derive a percentage from balance alone: $windows', ({ windows }) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([], { windows, balance: '12000 credits' })])).toBeNull()
+  })
+
+  it.each(['idle', 'loading', 'error'] as const)('rejects snapshot status %s despite usable cached fields', (status) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard()], { status, updatedAt: 1 })).toBeNull()
+  })
+
+  it.each([
+    ['ok', false],
+    ['stale', true]
+  ] as const)('marks snapshot status %s with the matching freshness', (status, stale) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard()], { status, updatedAt: 1 })).toMatchObject({ stale })
+  })
+
+  it.each([undefined, '', 'invalid-date'])('rejects a card error without a valid asOf: %s', (asOf) => {
+    expect(resolveMagpieRemoteLimit([
+      remoteLimitCard(undefined, { error: 'temporarily unavailable', asOf })
+    ], enabled)).toBeNull()
+  })
+
+  it.each([undefined, 'temporarily unavailable'])('marks valid retained asOf data stale with error %s', (error) => {
+    expect(resolveMagpieRemoteLimit([
+      remoteLimitCard(undefined, { error, asOf: '2026-11-10T00:00:00Z' })
+    ], enabled)).toMatchObject({ remainingPercent: 67.49, used: 123.4, limit: 1000, stale: true })
+  })
+
+  it('does not let error plus asOf rescue an invalid window', () => {
+    expect(resolveMagpieRemoteLimit([
+      remoteLimitCard([{ name: 'Daily', remaining: Number.NaN, unit: 'tokens' }], {
+        error: 'temporarily unavailable',
+        asOf: '2026-11-10T00:00:00Z'
+      })
+    ], enabled)).toBeNull()
+  })
+
+  it.each([undefined, null, 'invalid-date'])('keeps an unavailable reset time null: %s', (resetsAt) => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Daily', remaining: 50, unit: 'tokens', resetsAt }
+    ])], { status: 'ok', updatedAt: Date.parse('2026-11-10T00:00:00Z') })).toMatchObject({ resetAt: null })
+  })
+
+  it('recovers after an error and ambiguity without retaining a previous key reading', () => {
+    expect(resolveMagpieRemoteLimit([remoteLimitCard()], enabled)?.remainingPercent).toBe(67.49)
+    expect(resolveMagpieRemoteLimit([remoteLimitCard()], { status: 'error' })).toBeNull()
+    expect(resolveMagpieRemoteLimit([remoteLimitCard(), remoteLimitCard()])).toBeNull()
+    expect(resolveMagpieRemoteLimit([remoteLimitCard([
+      { name: 'Recovered', remaining: 0, unit: 'USD' }
+    ])], enabled)).toMatchObject({ name: 'Recovered', remainingPercent: 0, stale: false })
+  })
+})
+
+describe('magpie agent quota availability', () => {
+  const supportedWindows = [
+    ['codex', '7 days'],
+    ['remote-magpie/codex', '7 days'],
+    ['grok', '7 days'],
+    ['remote-magpie/grok', '7 days'],
+    ['cursor', 'Cursor Models'],
+    ['cursor', 'Other Models'],
+    ['remote-magpie/cursor', 'Cursor Models'],
+    ['remote-magpie/cursor', 'Other Models']
+  ]
+
+  it.each(supportedWindows)('recognizes positive and exhausted raw %s / %s readings', (provider, name) => {
+    for (const remaining of [0, 50.25]) {
+      expect(hasMagpieAgentQuota([{ provider, windows: [{ name, remaining }] }])).toBe(true)
+    }
+  })
+
+  it.each(['codex', 'remote-magpie/codex'])('recognizes a %s token balance including zero without a window', (provider) => {
+    for (const balance of ['0 credits', '12000 credits']) {
+      expect(hasMagpieAgentQuota([{ provider, balance, windows: [] }])).toBe(true)
+    }
+  })
+
+  it('recognizes raw remote free Codex readings that the grid deliberately omits', () => {
+    const providers = [
+      { provider: 'remote-magpie/codex', plan: 'free', windows: [{ name: '7 days', remaining: 0 }] }
+    ]
+    expect(resolveCompactQuotaGridPresentation(providers, enabled).cells).toEqual([])
+    expect(hasMagpieAgentQuota(providers)).toBe(true)
+  })
+
+  it('recognizes a raw later row even when the selected grid row has no visible cells', () => {
+    const providers = [
+      { provider: 'remote-magpie/grok', windows: [] },
+      { provider: 'remote-magpie/grok', windows: [{ name: '7 days', remaining: 0 }] }
+    ]
+    expect(resolveCompactQuotaGridPresentation(providers, enabled).cells).toEqual([])
+    expect(hasMagpieAgentQuota(providers)).toBe(true)
+  })
+
+  it('recognizes positive Codex weekly quota despite having no Codex percentage cell', () => {
+    const providers = [{ provider: 'codex', windows: [{ name: '7 days', remaining: 80 }] }]
+    expect(resolveCompactQuotaGridPresentation(providers, enabled).cells).toEqual([])
+    expect(hasMagpieAgentQuota(providers)).toBe(true)
+  })
+
+  it.each([
+    { providers: undefined },
+    { providers: null },
+    { providers: [] }
+  ])('rejects absent agent providers: $providers', ({ providers }) => {
+    expect(hasMagpieAgentQuota(providers)).toBe(false)
+  })
+
+  it.each([undefined, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, '50', null])(
+    'rejects a nonnumeric supported-window reading: %s',
+    (remaining) => {
+      expect(hasMagpieAgentQuota([
+        { provider: 'grok', windows: [{ name: '7 days', remaining } as unknown as MagpieQuotaWindow] }
+      ])).toBe(false)
+    }
+  )
+
+  it.each([
+    { provider: 'codex', windows: [{ name: '30 days', remaining: 100 }] },
+    { provider: 'remote-magpie/codex', windows: [{ name: '5 hours', remaining: 100 }] },
+    { provider: 'grok', windows: [{ name: '1 day', remaining: 100 }] },
+    { provider: 'remote-magpie/grok', balance: '12000 credits', windows: [] },
+    { provider: 'cursor', windows: [{ name: 'Total', remaining: 100 }] },
+    { provider: 'remote-magpie/cursor', windows: [{ name: 'Grok Bot', remaining: 100 }, { name: 'Free usage', remaining: 100 }] },
+    { provider: 'remote-magpie/deepseek', balance: '12000 credits', windows: [{ name: '7 days', remaining: 100 }] },
+    { provider: 'codex', balance: 'unavailable', windows: [] },
+    remoteLimitCard()
+  ])('ignores unsupported providers, windows and invalid balances: %j', (provider) => {
+    expect(hasMagpieAgentQuota([provider])).toBe(false)
+  })
+
+  it('recomputes availability as real zero appears, disappears and recovers', () => {
+    expect(hasMagpieAgentQuota([])).toBe(false)
+    expect(hasMagpieAgentQuota([{ provider: 'cursor', windows: [{ name: 'Other Models', remaining: 0 }] }])).toBe(true)
+    expect(hasMagpieAgentQuota([{ provider: 'cursor', windows: [] }])).toBe(false)
+    expect(hasMagpieAgentQuota([{ provider: 'codex', balance: '0 credits' }])).toBe(true)
   })
 })

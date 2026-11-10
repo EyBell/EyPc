@@ -15,6 +15,11 @@ export interface MagpieQuotaWindow {
   used?: number
   remaining?: number
   resetsAt?: string | null
+  unlimited?: boolean
+  text?: boolean
+  amount?: number
+  limit?: number
+  unit?: string
 }
 
 export interface MagpieQuotaProvider {
@@ -25,6 +30,19 @@ export interface MagpieQuotaProvider {
   balance?: string | null
   windows?: MagpieQuotaWindow[]
   readAt?: string
+  kind?: string
+  error?: string
+  asOf?: string
+}
+
+export interface MagpieRemoteLimitReading {
+  remainingPercent: number
+  used: number | null
+  limit: number | null
+  unit: 'tokens' | 'USD'
+  name: string
+  resetAt: number | null
+  stale: boolean
 }
 
 export interface MagpieQuotaListResponse {
@@ -287,6 +305,76 @@ function resolveMagpieQuotaSources(list: MagpieQuotaProvider[]): MagpieQuotaSour
       (entries) => entries[0] ?? null
     )
   }
+}
+
+export function hasMagpieAgentQuota(providers: MagpieQuotaProvider[] | null | undefined): boolean {
+  return normalizeMagpieQuotaProviders(providers).some((entry) => {
+    const provider = entry?.provider
+    if (provider === 'codex' || provider === REMOTE_CODEX_PROVIDER) {
+      return windowRemaining(entry, '7 days') !== null || parseMagpieTokenBalance(entry.balance) !== null
+    }
+    if (provider === 'grok' || provider === REMOTE_GROK_PROVIDER) return windowRemaining(entry, '7 days') !== null
+    return (provider === 'cursor' || provider === REMOTE_CURSOR_PROVIDER)
+      && (windowRemaining(entry, 'Cursor Models') !== null || windowRemaining(entry, 'Other Models') !== null)
+  })
+}
+
+export function resolveMagpieRemoteLimit(
+  providers: MagpieQuotaProvider[] | null | undefined,
+  options: { status?: CompactQuotaGridPresentation['status']; updatedAt?: number } = {}
+): MagpieRemoteLimitReading | null {
+  const status = options.status ?? 'ok'
+  if (status !== 'ok' && status !== 'stale') return null
+  const cards = normalizeMagpieQuotaProviders(providers)
+    .filter((entry) => typeof entry?.provider === 'string' && entry.provider.endsWith('/~keys'))
+  if (cards.length !== 1) return null
+  const card = cards[0]
+  if (card.kind !== 'plan' || !Array.isArray(card.windows)) return null
+  const asOf = parseMagpieResetAt(card.asOf)
+  if (card.asOf !== undefined && asOf === null || card.error && asOf === null) return null
+  let selected: MagpieRemoteLimitReading | null = null
+  for (const window of card.windows) {
+    if (!window || typeof window !== 'object' || window.unlimited === true || window.text === true
+      || window.unlimited !== undefined && typeof window.unlimited !== 'boolean'
+      || window.text !== undefined && typeof window.text !== 'boolean'
+      || window.unit !== 'tokens' && window.unit !== 'USD') continue
+    const used = finiteNumber(window.amount)
+    const limit = finiteNumber(window.limit)
+    if (window.amount !== undefined && (used === null || used < 0)
+      || window.limit !== undefined && (limit === null || limit <= 0)) continue
+    let remainingPercent = finiteNumber(window.remaining)
+    if (window.remaining !== undefined && (remainingPercent === null || remainingPercent < 0 || remainingPercent > 100)) continue
+    if (remainingPercent === null && used !== null && limit !== null) {
+      remainingPercent = Math.max(0, Math.min(100, (1 - used / limit) * 100))
+    }
+    if (remainingPercent === null) continue
+    if (!selected || remainingPercent < selected.remainingPercent) {
+      selected = {
+        remainingPercent,
+        used,
+        limit,
+        unit: window.unit,
+        name: typeof window.name === 'string' ? window.name.trim().slice(0, 80) : '',
+        resetAt: parseMagpieResetAt(window.resetsAt),
+        stale: status === 'stale' || asOf !== null
+      }
+    }
+  }
+  return selected
+}
+
+export function formatMagpieRemoteLimitHint(reading: MagpieRemoteLimitReading): string {
+  const numberText = (value: number | null) => value === null
+    ? '未提供'
+    : new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 6 }).format(value)
+  const parts = [
+    `Magpie${reading.name ? ` ${reading.name}` : ''} 剩余 ${clampPercent(reading.remainingPercent)}%`,
+    `已用 ${numberText(reading.used)} ${reading.unit}`,
+    `上限 ${numberText(reading.limit)} ${reading.unit}`,
+    reading.resetAt === null ? '重置时间未提供' : `重置 ${new Date(reading.resetAt).toLocaleString('zh-CN', { hour12: false })}`
+  ]
+  if (reading.stale) parts.push('上次数据，可能过期')
+  return parts.join('；')
 }
 
 

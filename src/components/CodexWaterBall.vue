@@ -39,6 +39,7 @@ const props = withDefaults(defineProps<{
   ringPercent?: number | null
   /** When set, the centre renders a 2×2 Magpie quota grid instead of one percentage. */
   quotaGrid?: CompactQuotaGridCell[] | null
+  quotaHint?: string
   partHints?: { base: string; liquid: string; track: string; ring: string; reading: string }
   suppressGridHints?: boolean
 }>(), {
@@ -50,7 +51,8 @@ const props = withDefaults(defineProps<{
   percentProviderLabel: '',
   liquidPercent: null,
   ringPercent: null,
-  quotaGrid: null
+  quotaGrid: null,
+  quotaHint: ''
 })
 
 // Liquid level follows this ball's own primary reading; an override only
@@ -98,6 +100,7 @@ const style = computed(() => ({
     :role="decorative ? undefined : 'img'"
     :aria-hidden="decorative ? 'true' : undefined"
     :aria-label="decorative ? undefined : label"
+    :data-operation-tooltip="quotaHint || undefined"
   >
     <div class="codex-water-ball__surface" aria-hidden="true" :data-operation-tooltip="partHints?.base">
       <i class="refraction refraction-a" />
@@ -119,6 +122,7 @@ const style = computed(() => ({
           class="segment"
           :class="{ active: index <= activeWeeklySegments }"
           :data-operation-tooltip="index <= activeWeeklySegments ? partHints?.ring : partHints?.track"
+          :data-operation-description="quotaHint || undefined"
           x1="50"
           y1="5"
           x2="50"
@@ -127,8 +131,8 @@ const style = computed(() => ({
         />
       </template>
       <template v-else>
-        <circle class="track" cx="50" cy="50" r="45" :data-operation-tooltip="partHints?.track" />
-        <circle class="value" cx="50" cy="50" r="45" :data-operation-tooltip="partHints?.ring" />
+        <circle class="track" cx="50" cy="50" r="45" :data-operation-tooltip="partHints?.track" :data-operation-description="quotaHint || undefined" />
+        <circle class="value" cx="50" cy="50" r="45" :data-operation-tooltip="partHints?.ring" :data-operation-description="quotaHint || undefined" />
       </template>
     </svg>
 
@@ -136,6 +140,7 @@ const style = computed(() => ({
       v-if="!primary || appearance.inner.showPercent"
       class="codex-water-ball__value"
       :data-operation-tooltip="partHints?.reading"
+      :data-operation-description="quotaHint || undefined"
       :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary && !hasPercentOverride, 'has-grid': gridMode }]"
     >
       <div v-if="gridMode" class="codex-water-ball__grid" :class="`layout-${gridLayout}`" aria-hidden="true">

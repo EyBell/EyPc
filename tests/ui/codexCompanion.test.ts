@@ -2139,6 +2139,41 @@ describe('Codex Companion V4 UI contract', () => {
     expect(css).toContain('@container (max-width: 350px)')
   })
 
+  it('shows the remote Magpie key limit in the collapsed centre and ring with an accessible hover hint', async () => {
+    vi.useFakeTimers({ now: NOW })
+    const source = {
+      ...floatSnapshot('ongoing', { ...emptyCodexQuota('ok'), plan: 'free' }),
+      companion: {
+        providers: { codex: true, claude: false, cursor: false, orca: false },
+        claudeQuota: emptyClaudeQuota(),
+        claudeEnvironment: emptyClaudeEnvironment(),
+        magpieQuota: {
+          status: 'stale' as const, updatedAt: NOW, providers: [{
+            provider: 'office/~keys', kind: 'plan',
+            windows: [
+              { name: 'Tokens today', remaining: 78, amount: 22, limit: 100, unit: 'tokens' },
+              { name: 'Spend this week', remaining: 37, amount: 6.3, limit: 10, unit: 'USD', resetsAt: new Date(NOW + 3_600_000).toISOString() }
+            ]
+          }]
+        }
+      }
+    }
+    const { wrapper } = mountFloat(false, source)
+    await wrapper.vm.$nextTick()
+    const ball = wrapper.get('.codex-water-ball')
+    expect(ball.get('.codex-water-ball__value strong').text()).toBe('37%')
+    expect(ball.get('.codex-water-ball__percent-source').text()).toBe('Magpie')
+    expect(ball.attributes('style')).toContain('--weekly-ring: 37')
+    expect(ball.find('.codex-water-ball__liquid').exists()).toBe(false)
+    expect(wrapper.get('.float-compact').attributes('aria-label')).toContain('上次数据，可能过期')
+    expect(ball.attributes('data-operation-tooltip')).toContain('上限 10 USD')
+    await ball.trigger('pointerenter')
+    await vi.advanceTimersByTimeAsync(200)
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('已用 6.3 USD')
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('重置')
+    expect(ball.attributes('aria-describedby')).toBe('eypc-operation-tooltip')
+  })
+
   it('shows Magpie reset countdowns beside quota without a collapsed row', async () => {
     vi.useFakeTimers({ now: NOW })
     const source = {

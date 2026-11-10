@@ -30,10 +30,12 @@ import {
   buildCompanionTaskMetaLine,
   type CompanionCodexQuotaWindow,
   type CompanionSnapshotSlice,
+  type CompanionWaterBallCodexReadings,
   companionQuotaRefreshReceiptText
 } from '../../src/domain/companionPresentation'
 import { emptyClaudeEnvironment, emptyClaudeQuota, normalizeClaudeQuota } from '../../src/domain/claude'
 import type { CodexQuotaReading } from '../../src/domain/codexPresentation'
+import type { MagpieQuotaProvider } from '../../src/domain/magpieQuota'
 
 const READY_ENVIRONMENT = {
   ...emptyClaudeEnvironment(),
@@ -243,6 +245,357 @@ describe('water ball presentation', () => {
         seven_day_fable: { used_percentage: 21 }
       })
     })).scopedPercent).toBeNull()
+  })
+})
+
+describe('water ball Magpie remote limit fallback', () => {
+  const keyCard: MagpieQuotaProvider = {
+    provider: 'remote-magpie/~keys',
+    kind: 'plan',
+    windows: [{
+      name: 'Daily tokens',
+      remaining: 67.49,
+      amount: 123.4,
+      limit: 1000,
+      unit: 'tokens',
+      resetsAt: '2026-11-11T00:00:00Z'
+    }]
+  }
+  const freeCodex: CompanionWaterBallCodexReadings = { quota: { status: 'ok', plan: 'free' } }
+
+  function remoteSlice(patch: Partial<CompanionSnapshotSlice> = {}): CompanionSnapshotSlice {
+    return slice({
+      providers: { codex: true, claude: false, cursor: false, orca: false },
+      magpieQuota: { providers: [keyCard], status: 'ok', updatedAt: Date.parse('2026-11-10T00:00:00Z') },
+      ...patch
+    })
+  }
+
+  function expectLegacyPresentation(
+    snapshot: CompanionSnapshotSlice | null | undefined,
+    codex: CompanionWaterBallCodexReadings = freeCodex
+  ) {
+    const result = resolveCompanionWaterBallPresentation(snapshot, codex)
+    const legacy = resolveCompanionWaterBallPresentation(
+      snapshot ? { ...snapshot, magpieQuota: undefined } : snapshot,
+      codex
+    )
+    expect(result).toEqual({ ...legacy, quotaGrid: result.quotaGrid })
+    expect(result.remoteLimit).toBeNull()
+    return result
+  }
+
+  it('uses a unique remote key limit for a confirmed free Codex account with no agent readings', () => {
+    const result = resolveCompanionWaterBallPresentation(remoteSlice(), freeCodex)
+    expect(result).toMatchObject({
+      mapping: { liquid: 'codex', ring: 'codex', percent: 'codex', compatibility: true },
+      percentOverride: 67,
+      ringPercent: 67,
+      liquidPercent: null,
+      percentProviderLabel: 'Magpie',
+      scopedPercent: null,
+      scopedLabel: '',
+      remoteLimit: {
+        remainingPercent: 67.49,
+        used: 123.4,
+        limit: 1000,
+        unit: 'tokens',
+        name: 'Daily tokens',
+        resetAt: Date.parse('2026-11-11T00:00:00Z'),
+        stale: false
+      }
+    })
+    expect(result.quotaGrid.cells).toEqual([])
+    for (const text of ['Magpie', 'Daily tokens', '67%', '123.4', '1,000', 'tokens', '重置']) {
+      expect(result.ariaSuffix).toContain(text)
+      expect(result.quotaHint).toContain(text)
+    }
+    expect(result.ariaSuffix).toBe(`，${result.quotaHint}`)
+    expect(result.ariaSuffix).not.toMatch(/过期|上次数据/)
+  })
+
+  it.each(['free', ' Free ', 'FREE', '\tFrEe\n'])('normalizes the confirmed account plan %j', (plan) => {
+    expect(resolveCompanionWaterBallPresentation(remoteSlice(), {
+      quota: { status: 'ok', plan }
+    }).percentOverride).toBe(67)
+  })
+
+  it.each([
+    [0, 0],
+    [100, 100],
+    [49.49, 49],
+    [49.5, 50],
+    [99.5, 100]
+  ])('uses one rounded value for the centre and ring at %s percent', (remaining, expected) => {
+    const result = resolveCompanionWaterBallPresentation(remoteSlice({
+      magpieQuota: {
+        providers: [{ ...keyCard, windows: [{ name: 'Daily', remaining, unit: 'tokens' }] }],
+        status: 'ok',
+        updatedAt: 1
+      }
+    }), freeCodex)
+    expect(result.percentOverride).toBe(expected)
+    expect(result.ringPercent).toBe(expected)
+    expect(result.liquidPercent).toBeNull()
+    expect(result.percentProviderLabel).toBe('Magpie')
+    expect(result.remoteLimit?.remainingPercent).toBe(remaining)
+  })
+
+  it('projects a computed USD limit with its original source amounts', () => {
+    const result = resolveCompanionWaterBallPresentation(remoteSlice({
+      magpieQuota: {
+        providers: [{ ...keyCard, windows: [{ name: 'Monthly spend', amount: 12.5, limit: 20, unit: 'USD' }] }],
+        status: 'ok',
+        updatedAt: 1
+      }
+    }), freeCodex)
+    expect(result).toMatchObject({
+      percentOverride: 38,
+      ringPercent: 38,
+      liquidPercent: null,
+      remoteLimit: { remainingPercent: 37.5, used: 12.5, limit: 20, unit: 'USD', name: 'Monthly spend' }
+    })
+    for (const text of ['Magpie', 'Monthly spend', '38%', '12.5', '20', 'USD']) {
+      expect(result.ariaSuffix).toContain(text)
+      expect(result.quotaHint).toContain(text)
+    }
+  })
+
+  it.each(['ok', 'stale'] as const)('accepts Magpie status %s and exposes its freshness accessibly', (status) => {
+    const result = resolveCompanionWaterBallPresentation(remoteSlice({
+      magpieQuota: { providers: [keyCard], status, updatedAt: 1 }
+    }), freeCodex)
+    expect(result).toMatchObject({
+      percentOverride: 67,
+      ringPercent: 67,
+      liquidPercent: null,
+      remoteLimit: { stale: status === 'stale' }
+    })
+    if (status === 'stale') {
+      expect(result.ariaSuffix).toMatch(/过期/)
+      expect(result.quotaHint).toMatch(/过期/)
+    } else {
+      expect(result.ariaSuffix).not.toMatch(/过期/)
+      expect(result.quotaHint).not.toMatch(/过期/)
+    }
+  })
+
+  it.each([undefined, 'temporarily unavailable'])('marks retained asOf data stale in an ok snapshot with error %s', (error) => {
+    const result = resolveCompanionWaterBallPresentation(remoteSlice({
+      magpieQuota: {
+        providers: [{ ...keyCard, error, asOf: '2026-11-10T00:00:00Z' }],
+        status: 'ok',
+        updatedAt: 1
+      }
+    }), freeCodex)
+    expect(result).toMatchObject({ percentOverride: 67, ringPercent: 67, remoteLimit: { stale: true } })
+    expect(result.ariaSuffix).toMatch(/Magpie.*67%/)
+    expect(result.ariaSuffix).toMatch(/过期/)
+    expect(result.quotaHint).toMatch(/过期/)
+  })
+
+  it.each(['idle', 'loading', 'error'] as const)('keeps legacy presentation for Magpie status %s', (status) => {
+    expectLegacyPresentation(remoteSlice({
+      magpieQuota: { providers: [keyCard], status, updatedAt: 1 }
+    }))
+  })
+
+  it.each(['idle', 'loading', 'stale', 'error'] as const)('does not replace a free Codex snapshot with status %s', (status) => {
+    expectLegacyPresentation(remoteSlice(), { quota: { status, plan: 'free' } })
+  })
+
+  it.each(['plus', 'promax', 'team', 'unknown', '', 'free trial'])('keeps legacy presentation for plan %j', (plan) => {
+    expectLegacyPresentation(remoteSlice(), { quota: { status: 'ok', plan } })
+  })
+
+  it('requires an explicit successful free-account snapshot', () => {
+    expectLegacyPresentation(remoteSlice(), {})
+    expectLegacyPresentation(remoteSlice(), { primary: null, secondary: null })
+  })
+
+  it.each([
+    { codex: false, claude: false, cursor: false, orca: false },
+    { codex: false, claude: true, cursor: false, orca: false },
+    { codex: true, claude: true, cursor: false, orca: false },
+    { codex: true, claude: false, cursor: true, orca: false },
+    { codex: true, claude: false, cursor: false, orca: true }
+  ])('requires Codex alone to be enabled: %j', (providers) => {
+    expectLegacyPresentation(remoteSlice({ providers }))
+  })
+
+  it('does not activate merely because an enabled Claude provider currently has no readable quota', () => {
+    expectLegacyPresentation(remoteSlice({
+      providers: { codex: true, claude: true, cursor: false, orca: false },
+      claudeEnvironment: emptyClaudeEnvironment(),
+      claudeQuota: emptyClaudeQuota()
+    }))
+  })
+
+  it('preserves the existing Claude channels and accessible text in mixed mode', () => {
+    const result = expectLegacyPresentation(remoteSlice({
+      providers: { codex: true, claude: true, cursor: false, orca: false }
+    }))
+    expect(result).toMatchObject({
+      percentOverride: 45,
+      ringPercent: 45,
+      liquidPercent: 70,
+      percentProviderLabel: 'Claude',
+      ariaSuffix: '，Claude 剩余 45%'
+    })
+  })
+
+  it.each([
+    ['primary', 'short', 0],
+    ['primary', 'short', 65],
+    ['primary', 'weekly', 0],
+    ['secondary', 'weekly', 0],
+    ['secondary', 'weekly', 42],
+    ['secondary', 'short', 0]
+  ] as const)('preserves native %s %s quota at %s percent', (slot, kind, remaining) => {
+    const result = expectLegacyPresentation(remoteSlice(), {
+      ...freeCodex,
+      [slot]: codexReading(kind, remaining)
+    })
+    expect(result.percentOverride).toBeNull()
+    expect(result.ringPercent).toBeNull()
+    expect(result.liquidPercent).toBeNull()
+  })
+
+  it.each([
+    ['codex', '7 days'],
+    ['remote-magpie/codex', '7 days'],
+    ['grok', '7 days'],
+    ['remote-magpie/grok', '7 days'],
+    ['cursor', 'Cursor Models'],
+    ['cursor', 'Other Models'],
+    ['remote-magpie/cursor', 'Cursor Models'],
+    ['remote-magpie/cursor', 'Other Models']
+  ])('blocks replacement for raw %s / %s agent quota including real zero', (provider, name) => {
+    for (const remaining of [0, 50]) {
+      expectLegacyPresentation(remoteSlice({
+        magpieQuota: {
+          providers: [keyCard, { provider, windows: [{ name, remaining }] }],
+          status: 'ok',
+          updatedAt: 1
+        }
+      }))
+    }
+  })
+
+  it.each(['codex', 'remote-magpie/codex'])('blocks replacement for a %s token balance including real zero', (provider) => {
+    for (const balance of ['0 credits', '12000 credits']) {
+      expectLegacyPresentation(remoteSlice({
+        magpieQuota: {
+          providers: [keyCard, { provider, plan: 'free', balance, windows: [] }],
+          status: 'ok',
+          updatedAt: 1
+        }
+      }))
+    }
+  })
+
+  it('blocks replacement for free Codex raw quota omitted from the Magpie grid', () => {
+    const result = expectLegacyPresentation(remoteSlice({
+      magpieQuota: {
+        providers: [keyCard, { provider: 'remote-magpie/codex', plan: 'free', windows: [{ name: '7 days', remaining: 0 }] }],
+        status: 'ok',
+        updatedAt: 1
+      }
+    }))
+    expect(result.quotaGrid.cells).toEqual([])
+  })
+
+  it('keeps fallback available beside unsupported agent windows and unrelated provider balances', () => {
+    const result = resolveCompanionWaterBallPresentation(remoteSlice({
+      magpieQuota: {
+        providers: [
+          keyCard,
+          { provider: 'remote-magpie/codex', plan: 'free', windows: [{ name: '30 days', remaining: 100 }] },
+          { provider: 'cursor', windows: [{ name: 'Total', remaining: 100 }] },
+          { provider: 'remote-magpie/deepseek', balance: '12000 credits' }
+        ],
+        status: 'ok',
+        updatedAt: 1
+      }
+    }), freeCodex)
+    expect(result).toMatchObject({ percentOverride: 67, ringPercent: 67, remoteLimit: { remainingPercent: 67.49 } })
+  })
+
+  it.each([
+    { name: 'missing key card', providers: [] },
+    { name: 'ambiguous key cards', providers: [keyCard, { ...keyCard, provider: 'another-gateway/~keys' }] },
+    { name: 'non-plan card', providers: [{ ...keyCard, kind: 'balance' }] },
+    { name: 'balance without a cap', providers: [{ ...keyCard, windows: [], balance: '12000 credits' }] },
+    { name: 'amount without a cap', providers: [{ ...keyCard, windows: [{ name: 'Daily', amount: 10, unit: 'tokens' }] }] },
+    { name: 'invalid explicit percentage', providers: [{ ...keyCard, windows: [{ name: 'Daily', remaining: Number.NaN, amount: 100, limit: 200, unit: 'tokens' }] }] },
+    { name: 'unsupported unit', providers: [{ ...keyCard, windows: [{ name: 'Daily', remaining: 50, unit: 'credits' }] }] },
+    { name: 'error without retained data', providers: [{ ...keyCard, error: 'temporarily unavailable' }] }
+  ])('preserves legacy presentation with $name', ({ providers }) => {
+    expectLegacyPresentation(remoteSlice({
+      magpieQuota: { providers, status: 'ok', updatedAt: 1 }
+    }))
+  })
+
+  it('preserves legacy presentation when the slice or Magpie snapshot is absent', () => {
+    expectLegacyPresentation(null)
+    expectLegacyPresentation(undefined)
+    expectLegacyPresentation(remoteSlice({ magpieQuota: undefined }))
+  })
+
+  it('removes the fallback when a native zero reading recovers and restores it when native readings disappear', () => {
+    const snapshot = remoteSlice()
+    expect(resolveCompanionWaterBallPresentation(snapshot, freeCodex).percentOverride).toBe(67)
+    expectLegacyPresentation(snapshot, { ...freeCodex, primary: codexReading('short', 0) })
+    expectLegacyPresentation(snapshot, { ...freeCodex, secondary: codexReading('weekly', 0) })
+    expect(resolveCompanionWaterBallPresentation(snapshot, { ...freeCodex, primary: null, secondary: null }))
+      .toMatchObject({ percentOverride: 67, ringPercent: 67, liquidPercent: null, remoteLimit: { stale: false } })
+  })
+
+  it('removes the fallback when hidden agent zero data appears and restores it after that data disappears', () => {
+    expect(resolveCompanionWaterBallPresentation(remoteSlice(), freeCodex).percentOverride).toBe(67)
+    const blocked = expectLegacyPresentation(remoteSlice({
+      magpieQuota: {
+        providers: [keyCard, { provider: 'cursor', windows: [{ name: 'Other Models', remaining: 0 }] }],
+        status: 'ok',
+        updatedAt: 2
+      }
+    }))
+    expect(blocked.quotaGrid.cells).toEqual([])
+    expect(resolveCompanionWaterBallPresentation(remoteSlice(), freeCodex).remoteLimit?.remainingPercent).toBe(67.49)
+  })
+
+  it('clears stale fallback on a failed snapshot and uses only the recovered limit', () => {
+    const stale = resolveCompanionWaterBallPresentation(remoteSlice({
+      magpieQuota: { providers: [keyCard], status: 'stale', updatedAt: 1 }
+    }), freeCodex)
+    expect(stale.remoteLimit?.stale).toBe(true)
+    expect(stale.ariaSuffix).toMatch(/过期/)
+    expectLegacyPresentation(remoteSlice({
+      magpieQuota: { providers: [keyCard], status: 'error', updatedAt: 1 }
+    }))
+    const recovered = resolveCompanionWaterBallPresentation(remoteSlice({
+      magpieQuota: {
+        providers: [{ ...keyCard, windows: [{ name: 'Recovered', remaining: 0, unit: 'USD' }] }],
+        status: 'ok',
+        updatedAt: 3
+      }
+    }), freeCodex)
+    expect(recovered).toMatchObject({
+      percentOverride: 0,
+      ringPercent: 0,
+      liquidPercent: null,
+      remoteLimit: { name: 'Recovered', remainingPercent: 0, unit: 'USD', stale: false }
+    })
+    expect(recovered.ariaSuffix).not.toMatch(/过期|Daily tokens/)
+  })
+
+  it('drops the fallback after account changes and restores it only after free status is confirmed again', () => {
+    const snapshot = remoteSlice()
+    expect(resolveCompanionWaterBallPresentation(snapshot, freeCodex).percentOverride).toBe(67)
+    expectLegacyPresentation(snapshot, { quota: { plan: 'plus', status: 'ok' } })
+    expectLegacyPresentation(snapshot, { quota: { plan: 'free', status: 'loading' } })
+    expectLegacyPresentation(snapshot, { quota: { plan: 'free', status: 'error' } })
+    expect(resolveCompanionWaterBallPresentation(snapshot, freeCodex).percentOverride).toBe(67)
   })
 })
 

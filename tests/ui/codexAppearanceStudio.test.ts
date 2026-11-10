@@ -13,6 +13,24 @@ function snapshot(): CodexRuntimeView {
   return { settings, quota: emptyCodexQuota(), claudeQuota: emptyClaudeQuota(), claudeEnvironment: emptyClaudeEnvironment(), taskState: { dynamic: { compactCounts: { input: 1, active: 2, unread: 0 } } } } as unknown as CodexRuntimeView
 }
 
+function remoteLimitSnapshot(source = snapshot()): CodexRuntimeView {
+  source.settings.providers = { codex: true, claude: false, cursor: false, orca: false }
+  source.settings.magpieQuotaAccess = true
+  source.quota = { ...emptyCodexQuota('ok'), plan: ' Free ' }
+  source.companion = {
+    providers: source.settings.providers,
+    claudeQuota: source.claudeQuota,
+    claudeEnvironment: source.claudeEnvironment,
+    magpieQuota: {
+      status: 'ok', updatedAt: 1, providers: [{
+        provider: 'office/~keys', kind: 'plan',
+        windows: [{ name: 'Spend this week', amount: 6.3, limit: 10, unit: 'USD' }]
+      }]
+    }
+  }
+  return source
+}
+
 const mountedHarnesses: Array<{ unmount: () => void }> = []
 afterEach(() => { for (const wrapper of mountedHarnesses.splice(0)) wrapper.unmount() })
 
@@ -41,6 +59,43 @@ function selectedText(select: HTMLSelectElement) {
 }
 
 describe('unified appearance editor', () => {
+  it('shares the remote Magpie limit reading and restores the normal display when another provider is enabled', async () => {
+    const source = reactive(remoteLimitSnapshot())
+    const wrapper = mount(CodexAppearanceStudio, { props: { snapshot: source, mode: 'water' } })
+    mountedHarnesses.push(wrapper)
+    const ball = wrapper.get('.appearance-complete .codex-water-ball')
+    expect(ball.get('.codex-water-ball__value strong').text()).toBe('37%')
+    expect(ball.get('.codex-water-ball__percent-source').text()).toBe('Magpie')
+    expect(ball.attributes('style')).toContain('--weekly-ring: 37')
+    expect(ball.attributes('data-operation-tooltip')).toContain('上限 10 USD')
+    expect(wrapper.get('.appearance-studio-stage').attributes('aria-label')).toContain('上限 10 USD')
+    expect(ball.find('.codex-water-ball__liquid').exists()).toBe(false)
+    source.settings.providers.cursor = true
+    await nextTick()
+    expect(wrapper.find('.codex-water-ball__percent-source').exists()).toBe(false)
+    expect(wrapper.find('.codex-water-ball__ring').exists()).toBe(false)
+    expect(wrapper.get('.appearance-studio-stage').attributes('aria-label')).not.toContain('Magpie')
+  })
+
+  it('feeds the remote limit into the configuration page preview and preserves explicit zero agent quota', async () => {
+    const { source, wrapper } = await appearancePage()
+    remoteLimitSnapshot(source)
+    await nextTick()
+    expect(wrapper.get('.appearance-complete .codex-water-ball__value strong').text()).toBe('37%')
+    expect(wrapper.get('.appearance-complete .codex-water-ball').attributes('data-operation-tooltip')).toContain('Magpie')
+    const preview = wrapper.get('.codex-water-appearance-preview')
+    expect(preview.attributes('role')).toBe('img')
+    expect(preview.attributes('aria-label')).toContain('上限 10 USD')
+    source.companion!.magpieQuota!.providers.push({
+      provider: 'remote-magpie/grok', windows: [{ name: '7 days', remaining: 0 }]
+    })
+    await nextTick()
+    expect(wrapper.find('.codex-water-ball__percent-source').exists()).toBe(false)
+    expect(wrapper.find('.codex-water-ball__ring').exists()).toBe(false)
+    expect(preview.attributes('role')).toBeUndefined()
+    expect(preview.attributes('aria-label')).not.toContain('Magpie')
+  })
+
   it('shows only the pointed part name and keeps selection after hover ends', async () => {
     const wrapper = mount(CodexAppearanceStudio, { props: { snapshot: snapshot(), mode: 'water' } })
     const select = wrapper.get('[aria-label="选择配置部件"]')

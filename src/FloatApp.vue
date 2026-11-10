@@ -274,7 +274,8 @@ const compactCounts = computed(() => compact.value.taskCounts)
 const companionSlice = computed(() => snapshot.value?.companion || null)
 const companionWaterBall = computed(() => resolveCompanionWaterBallPresentation(companionSlice.value, {
   primary: compact.value.primary,
-  secondary: compact.value.secondary
+  secondary: compact.value.secondary,
+  quota: quota.value
 }))
 const quotaResetClock = ref(Date.now())
 let quotaResetTimer: ReturnType<typeof setInterval> | null = null
@@ -499,8 +500,9 @@ const searchLiveText = computed(() => {
 })
 const statusText = computed(() => searchLiveText.value || '等待真实会话预检')
 const compactAriaLabel = computed(() => {
-  if (snapshot.value && (taskState.value.compatibility === 'degraded' || quota.value?.status === 'stale' || quota.value?.status === 'error' || conversations.value?.status === 'stale' || conversations.value?.status === 'error')) return `${compact.value.ariaLabel}，${statusText.value}`
-  return compact.value.ariaLabel
+  const label = `${compact.value.ariaLabel}${companionWaterBall.value.remoteLimit ? companionWaterBall.value.ariaSuffix : ''}`
+  if (snapshot.value && (taskState.value.compatibility === 'degraded' || quota.value?.status === 'stale' || quota.value?.status === 'error' || conversations.value?.status === 'stale' || conversations.value?.status === 'error')) return `${label}，${statusText.value}`
+  return label
 })
 const composerHasContent = computed(() => Boolean(composer.value?.image || composer.value?.prompt.trim()))
 
@@ -3551,6 +3553,9 @@ onUnmounted(() => {
           :liquid-percent="companionWaterBall.liquidPercent"
           :ring-percent="companionWaterBall.ringPercent"
           :quota-grid="companionWaterBall.quotaGrid.enabled ? companionWaterBall.quotaGrid.cells : null"
+          :quota-hint="companionWaterBall.quotaHint"
+          @pointerenter="companionWaterBall.quotaHint && queueActionHint($event, companionWaterBall.quotaHint)"
+          @pointerleave="clearActionHint"
           decorative
         />
         <template v-else>

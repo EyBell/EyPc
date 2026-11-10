@@ -216,7 +216,8 @@ const companionPreview = computed(() => resolveCompanionWaterBallPresentation({
     : undefined
 }, {
   primary: waterPreview.value.primary,
-  secondary: waterPreview.value.secondary
+  secondary: waterPreview.value.secondary,
+  quota: props.snapshot.quota
 }))
 
 const waterPreviewStyle = computed<Record<string, string>>(() => {
@@ -1046,7 +1047,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         <div class="codex-appearance-zones" :class="{ 'card-only': appearanceMode === 'card' }">
           <section v-if="appearanceMode === 'water'" class="codex-appearance-zone codex-appearance-zone--water" aria-labelledby="water-appearance-title">
             <div class="codex-appearance-zone-head"><div><span>01 · 悬浮水球</span><h3 id="water-appearance-title">水球外观</h3></div><button type="button" class="codex-tip" aria-label="水球外观说明" data-operation-tooltip="水球外观说明" data-operation-description="预览与桌面水球共用渲染；可分别控制球体背景、液体、Weekly 进度环、百分比读数和三类数字角标。" data-tip="预览与桌面水球共用渲染；可分别控制球体背景、液体、Weekly 进度环、百分比读数和三类数字角标。">i</button></div>
-            <div class="codex-water-appearance-preview" :style="waterPreviewStyle" aria-label="与真实悬浮水球一致的颜色部位预览">
+            <div class="codex-water-appearance-preview" :style="waterPreviewStyle" :role="companionPreview.remoteLimit ? 'img' : undefined" :aria-label="`与真实悬浮水球一致的颜色部位预览${companionPreview.remoteLimit ? companionPreview.ariaSuffix : ''}`">
               <CodexWaterBall
                 :primary="waterPreview.primary"
                 :secondary="waterPreview.secondary"
@@ -1058,6 +1059,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 :liquid-percent="companionPreview.liquidPercent"
                 :ring-percent="companionPreview.ringPercent"
                 :quota-grid="companionPreview.quotaGrid.enabled ? companionPreview.quotaGrid.cells : null"
+                :quota-hint="companionPreview.quotaHint"
                 :appearance="waterDraft"
                 :colors="snapshot.settings.colors"
                 decorative
