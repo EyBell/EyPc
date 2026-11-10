@@ -186,4 +186,32 @@ describe('codex pin lane · outbound write', () => {
     expect(rpc).toEqual([])
     expect(verified).toEqual([[STAMPED_ID, true, 'codexhost']])
   })
+
+  it.each([
+    { state: { ok: true, pinned: false }, outcome: 'failed', errorCode: 'section-mismatch', providerPin: false },
+    { state: { ok: true }, outcome: 'indeterminate', errorCode: 'section-unavailable', providerPin: null }
+  ])('requires Host read-back after a pin write ($errorCode)', async ({ state, outcome, errorCode, providerPin }) => {
+    const write = vi.fn(async () => ({ ok: true }))
+    const read = vi.fn(async () => state)
+    const context = harness({ codexhost: { codexhostPinThread: write, codexhostPinState: read } })
+    await expect(context.bridge.setCompanionPin('ct_ext_alias_000000000001', { pinned: true })).resolves.toMatchObject({
+      outcome, errorCode, providerPin, method: 'codexhost thread pin'
+    })
+    expect(write).toHaveBeenCalledWith(EXT_ID, true)
+    expect(read).toHaveBeenCalledWith(EXT_ID)
+    expect(write.mock.invocationCallOrder[0]).toBeLessThan(read.mock.invocationCallOrder[0]!)
+    expect(context.verified).toEqual([])
+    expect(context.rpc).toEqual([])
+  })
+
+  it('keeps Host read errors indeterminate without publishing a verified pin', async () => {
+    const context = harness({
+      codexhost: { codexhostPinState: vi.fn(async () => { throw new Error('private Host read failure') }) }
+    })
+    const result = await context.bridge.setCompanionPin('ct_ext_alias_000000000001', { pinned: true })
+    expect(result).toMatchObject({ outcome: 'indeterminate', providerPin: null, errorCode: 'verify-read-failed' })
+    expect(context.verified).toEqual([])
+    expect(context.rpc).toEqual([])
+    expect(JSON.stringify([result, context.diagnostics])).not.toContain('private Host read failure')
+  })
 })

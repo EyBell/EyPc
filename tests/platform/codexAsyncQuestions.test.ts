@@ -64,6 +64,314 @@ describe('Desktop Plan request classification', () => {
   })
 })
 
+describe('Desktop fallback interaction handoff', () => {
+  function fallbackHarness() {
+    let sequence = 0
+    const projection = createCodexDesktopRequestProjection({
+      record: (value: any) => value && typeof value === 'object' ? value : {},
+      timestampMs: (value: any) => typeof value === 'number' ? value : 0,
+      correlationSalt: 'ab'.repeat(16),
+      nextLiveEvidenceSequence: () => ++sequence
+    })
+    const member = (overrides: Record<string, any> = {}) => ({
+      taskKey: 'codex-a', branchRef: 'root', kind: 'user-input',
+      turnEpoch: 1_790_000_000_000, waitingSince: 1_790_000_001_000,
+      observedAt: 1_790_000_002_000, sequence: 1_790_000_002_000,
+      authority: 'provider-snapshot', exact: true, ...overrides
+    })
+    const native = (interactions: any[] = [], overrides: Record<string, any> = {}) => {
+      const requestSetRevision = ++sequence
+      return {
+        interactions: interactions.map((value) => ({
+          revision: 'companion-interaction-evidence-v1', provider: 'codex',
+          taskKey: 'codex-a', branchRef: 'root', interactionRef: 'cc'.repeat(16),
+          kind: 'user-input', state: 'opened', sequence: requestSetRevision,
+          requestSetRevision, turnEpoch: member().turnEpoch,
+          authority: 'provider-live', exact: true, ...value
+        })),
+        interactionSets: [{
+          revision: 'companion-interaction-evidence-v1', provider: 'codex',
+          taskKey: 'codex-a', requestSetRevision, complete: true
+        }],
+        requestSetRevision,
+        ...overrides
+      }
+    }
+    const project = (members: any[], nativeEvidence: any = null) => (
+      projection.codexDesktopProjectFallbackInteractions({ parentTaskKey: 'codex-a', members, nativeEvidence })
+    )
+    return { projection, member, native, project, allocations: () => sequence }
+  }
+
+  it('reuses one identity and live-counter sequence when only poll timestamps advance', () => {
+    const { member, project, allocations } = fallbackHarness()
+    const first = project([member()])
+    const repeated = project([member({ observedAt: 1_790_000_099_000, sequence: 1_790_000_099_000 })])
+    expect(first.interactions).toEqual([expect.objectContaining({
+      sequence: 1, requestSetRevision: 1, state: 'opened'
+    })])
+    expect(repeated).toEqual(first)
+    expect(allocations()).toBe(1)
+    expect(first.requestSetRevision).toBe(1)
+    expect(first.interactionSets).toEqual([])
+    expect(JSON.stringify(first)).not.toContain('1790000099000')
+  })
+
+  it('closes the old fallback in the same batch as a complete native empty set', () => {
+    const { member, native, project } = fallbackHarness()
+    const first = project([member()])
+    const evidence = native()
+    const handedOff = project([member()], evidence)
+    expect(handedOff.interactions).toEqual([expect.objectContaining({
+      interactionRef: first.interactions[0].interactionRef,
+      state: 'resolved', exact: true
+    })])
+    expect(handedOff.interactions[0].sequence).toBeGreaterThan(first.interactions[0].sequence)
+    expect(handedOff.interactionSets).toEqual(evidence.interactionSets)
+    expect(handedOff.requestSetRevision).toBe(handedOff.interactions[0].sequence)
+    expect(project([member({ observedAt: 1_790_000_099_000 })]).interactions).toEqual(handedOff.interactions)
+    expect(project([member()], evidence)).toEqual(handedOff)
+  })
+
+  it.each(['user-input', 'approval', 'plan-choice', 'plan-implementation'])('preserves a real native %s while retiring only the fallback', (kind) => {
+    const { member, native, project } = fallbackHarness()
+    const old = project([member()]).interactions[0]
+    const evidence = native([{ kind }])
+    const handedOff = project([member()], evidence)
+    expect(handedOff.interactions).toEqual(expect.arrayContaining([
+      evidence.interactions[0],
+      expect.objectContaining({ interactionRef: old.interactionRef, state: 'resolved' })
+    ]))
+    expect(handedOff.interactions.filter((value: any) => value.state === 'opened')).toEqual(evidence.interactions)
+  })
+
+  it.each([
+    ['partial', { interactions: [], interactionSets: [{ revision: 'companion-interaction-evidence-v1',
+      provider: 'codex', taskKey: 'codex-a', requestSetRevision: 20, complete: false }] }],
+    ['failed', { interactions: [], interactionSets: [{ revision: 'companion-interaction-evidence-v1',
+      provider: 'codex', taskKey: 'codex-a', requestSetRevision: 20, complete: true }], health: 'unavailable' }],
+    ['unknown', null],
+    ['missing requests', { interactionSets: [{ revision: 'companion-interaction-evidence-v1',
+      provider: 'codex', taskKey: 'codex-a', requestSetRevision: 20, complete: true }] }],
+    ['malformed requests', { interactions: [{ taskKey: 'codex-a', kind: 'future-kind' }],
+      interactionSets: [{ revision: 'companion-interaction-evidence-v1',
+        provider: 'codex', taskKey: 'codex-a', requestSetRevision: 20, complete: true }] }]
+  ])('retains fallback waiting on %s native evidence', (_label, nativeEvidence) => {
+    const { member, project, allocations } = fallbackHarness()
+    const first = project([member()])
+    const next = project([member()], nativeEvidence)
+    expect(next.interactions).toEqual(first.interactions)
+    expect(next.interactionSets).toEqual([])
+    expect(next.requestSetRevision).toBe(1)
+    expect(allocations()).toBe(1)
+  })
+
+  it('merges a partial real request with the still-open fallback', () => {
+    const { member, native, project } = fallbackHarness()
+    const first = project([member()])
+    const evidence = native([{ kind: 'approval' }], { interactionSets: [] })
+    const next = project([member()], evidence)
+    expect(next.interactions).toEqual(expect.arrayContaining([...first.interactions, ...evidence.interactions]))
+    expect(next.interactions.every((value: any) => value.state === 'opened')).toBe(true)
+  })
+
+  it.each([null, { interactions: [], interactionSets: [] }])('retains omitted fallback candidates while authority is unknown or partial: %j', (nativeEvidence) => {
+    const { member, project } = fallbackHarness()
+    const first = project([member()])
+    expect(project([], nativeEvidence)).toEqual(first)
+    expect(project([member({ kind: '' })], nativeEvidence)).toEqual(first)
+    expect(project([member({ kind: '', turnEpoch: member().turnEpoch + 10_000,
+      waitingSince: member().waitingSince + 10_000 })], nativeEvidence)).toEqual(first)
+  })
+
+  it('keeps an omitted Side fallback when only the root has a complete request set', () => {
+    const { member, native, project } = fallbackHarness()
+    const side = member({ taskKey: 'codex-child:side-a', branchRef: 'side-a' })
+    const first = project([member(), side])
+    const next = project([member()], native())
+    expect(next.interactions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskKey: 'codex-a', state: 'resolved' }),
+      first.interactions.find((value: any) => value.taskKey === side.taskKey)
+    ]))
+  })
+
+  it('never leaks cached fallback requests into another parent family', () => {
+    const { projection, member, project } = fallbackHarness()
+    const first = project([member()])
+    const other = projection.codexDesktopProjectFallbackInteractions({
+      parentTaskKey: 'codex-b', members: [member({ taskKey: 'codex-b' })]
+    })
+    expect(other.interactions).toEqual([expect.objectContaining({ taskKey: 'codex-b' })])
+    expect(project([])).toEqual(first)
+  })
+
+  it('hands off only the complete member and keeps root and Side requests isolated', () => {
+    const { member, native, project } = fallbackHarness()
+    const side = member({ taskKey: 'codex-child:side-a', branchRef: 'side-a' })
+    const first = project([member(), side])
+    const evidence = native()
+    const next = project([member(), side], evidence)
+    expect(next.interactions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskKey: 'codex-a', state: 'resolved' }),
+      first.interactions.find((value: any) => value.taskKey === side.taskKey)
+    ]))
+    const sideEvidence = native([], { interactionSets: [{ ...evidence.interactionSets[0],
+      taskKey: side.taskKey, requestSetRevision: evidence.requestSetRevision + 1 }] })
+    expect(project([member(), side], sideEvidence).interactions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskKey: side.taskKey, state: 'resolved' })
+    ]))
+    expect(project([member(), side]).interactions.every((value: any) => value.state === 'resolved')).toBe(true)
+  })
+
+  it('does not register a discarded fallback or inflate the generation behind native authority', () => {
+    const { member, native, project, allocations } = fallbackHarness()
+    const evidence = native([{ kind: 'approval' }])
+    const before = allocations()
+    const result = project([member()], evidence)
+    expect(result.interactions).toEqual(evidence.interactions)
+    expect(result.requestSetRevision).toBe(evidence.requestSetRevision)
+    expect(allocations()).toBe(before)
+    expect(project([member()]).interactions).toEqual([])
+    expect(allocations()).toBe(before)
+  })
+
+  it('keeps native request-set revisions local to each member when a Side advances', () => {
+    const { projection, member, native, project } = fallbackHarness()
+    const old = native()
+    const first = project([member()])
+    const bridge = {
+      shadows: new Map([['parent', { requests: [], requestSetRevision: old.requestSetRevision,
+        requestSetComplete: true, runtime: { type: 'idle', activeFlags: [] } }]]),
+      sideShadows: new Map([['side', { parentThreadId: 'parent', requests: [],
+        requestSetRevision: 100, requestSetComplete: true, runtime: { type: 'idle', activeFlags: [] } }]])
+    }
+    const evidence = projection.codexDesktopCompanionInteractionsForParent(
+      bridge, 'parent', { key: 'codex-a' }, () => 'side-a', () => true
+    )
+    expect(evidence.interactionSets.find((value: any) => value.taskKey === 'codex-a').requestSetRevision)
+      .toBe(old.requestSetRevision)
+    expect(project([member()], evidence).interactions).toEqual(first.interactions)
+  })
+
+  it('refuses an older Turn running event even when its observed sequence is newer', () => {
+    const { member, project, native } = fallbackHarness()
+    const first = project([member()])
+    const clearSequence = native().requestSetRevision
+    const result = project([member({ kind: '', turnEpoch: member().turnEpoch - 1_000, clearSequence })])
+    expect(result.interactions).toEqual(first.interactions)
+  })
+
+  it('admits a new waiting instance or Turn but never reopens an older snapshot', () => {
+    const { member, native, project } = fallbackHarness()
+    const first = project([member()])
+    project([member()], native())
+    const later = member({ waitingSince: member().waitingSince + 100 })
+    const newWait = project([later])
+    const opened = newWait.interactions.filter((value: any) => value.state === 'opened')
+    expect(opened).toEqual([expect.objectContaining({ state: 'opened' })])
+    expect(opened[0].interactionRef).not.toBe(first.interactions[0].interactionRef)
+    expect(project([member()])).toEqual(newWait)
+    const newTurn = member({ turnEpoch: member().turnEpoch + 10_000, waitingSince: member().waitingSince + 10_000 })
+    const latest = project([newTurn])
+    expect(latest.interactions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ turnEpoch: newTurn.turnEpoch, state: 'opened' })
+    ]))
+    expect(project([later])).toEqual(latest)
+  })
+
+  it('does not let a replayed complete native set close a later fallback instance', () => {
+    const { member, native, project } = fallbackHarness()
+    project([member()])
+    const complete = native()
+    project([member()], complete)
+    const later = member({ waitingSince: member().waitingSince + 100 })
+    const first = project([later])
+    const repeated = project([later], complete)
+    expect(repeated.interactions).toEqual(first.interactions)
+    expect(repeated.interactionSets).toEqual(complete.interactionSets)
+    expect(repeated.requestSetRevision).toBe(first.requestSetRevision)
+  })
+
+  it('rejects a complete snapshot captured before the current fallback was observed', () => {
+    const { member, native, project } = fallbackHarness()
+    const stale = native()
+    const first = project([member()])
+    expect(project([member()], stale)).toEqual(first)
+    const fresh = project([member()], native())
+    expect(fresh.interactions).toEqual([expect.objectContaining({ state: 'resolved' })])
+  })
+
+  it('replays the same terminal and complete set when the first projected batch was never consumed', () => {
+    const { member, native, project, allocations } = fallbackHarness()
+    project([member()])
+    const evidence = native()
+    const discarded = project([member()], evidence)
+    const before = allocations()
+    expect(project([], evidence)).toEqual(discarded)
+    expect(project([]).interactions).toEqual(discarded.interactions)
+    expect(allocations()).toBe(before)
+  })
+
+  it.each([null, { interactions: [], interactionSets: [] }])('retires fallback on an exact newer running clear sequence without complete native authority: %j', (nativeEvidence) => {
+    const { member, native, project, allocations } = fallbackHarness()
+    const first = project([member()])
+    const clearSequence = native().requestSetRevision
+    const cleared = project([member({ kind: '', clearSequence })], nativeEvidence)
+    expect(cleared.interactions).toEqual([expect.objectContaining({
+      interactionRef: first.interactions[0].interactionRef, state: 'resolved',
+      sequence: clearSequence, requestSetRevision: clearSequence
+    })])
+    expect(allocations()).toBe(clearSequence)
+    expect(project([member()]).interactions).toEqual(cleared.interactions)
+    expect(project([member({ kind: '', clearSequence })], nativeEvidence)).toEqual(cleared)
+  })
+
+  it.each([0, 1, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('keeps fallback open when running clear sequence %s is not strictly newer and valid', (clearSequence) => {
+    const { member, project } = fallbackHarness()
+    const first = project([member()])
+    expect(project([member({ kind: '', clearSequence })])).toEqual(first)
+  })
+
+  it('does not clear an active waiting kind or another member through a running clear sequence', () => {
+    const { member, native, project } = fallbackHarness()
+    const side = member({ taskKey: 'codex-child:side-a', branchRef: 'side-a' })
+    const first = project([member(), side])
+    const clearSequence = native().requestSetRevision
+    expect(project([member({ clearSequence })])).toEqual(first)
+    const next = project([member({ kind: '', clearSequence })])
+    expect(next.interactions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskKey: 'codex-a', state: 'resolved', sequence: clearSequence }),
+      first.interactions.find((value: any) => value.taskKey === side.taskKey)
+    ]))
+  })
+
+  it('keeps the two branches of one member distinct', () => {
+    const { member, project } = fallbackHarness()
+    const result = project([member(), member({ branchRef: 'side-a' })])
+    expect(result.interactions).toHaveLength(2)
+    expect(new Set(result.interactions.map((value: any) => value.interactionRef)).size).toBe(2)
+    expect(project([member(), member({ branchRef: 'side-a' })])).toEqual(result)
+  })
+
+  it('clears only a revoked member and resets all temporary identities explicitly', () => {
+    const { projection, member, native, project } = fallbackHarness()
+    const side = member({ taskKey: 'codex-child:side-a', branchRef: 'side-a' })
+    const first = project([member(), side])
+    project([member()], native())
+    projection.codexDesktopClearFallbackInteractions('codex-a')
+    const next = project([member(), side])
+    expect(next.interactions.find((value: any) => value.taskKey === side.taskKey))
+      .toEqual(first.interactions.find((value: any) => value.taskKey === side.taskKey))
+    expect(next.interactions.find((value: any) => value.taskKey === 'codex-a').interactionRef)
+      .not.toBe(first.interactions.find((value: any) => value.taskKey === 'codex-a').interactionRef)
+    projection.codexDesktopResetFallbackInteractions()
+    const reset = project([member(), side])
+    expect(reset.interactions.every((value: any) => !next.interactions.some((old: any) => (
+      old.interactionRef === value.interactionRef
+    )))).toBe(true)
+  })
+})
+
 describe('Desktop root Goal source evidence', () => {
   function goalSnapshot(shadow: any, goal: any, previous?: any) {
     const state = shadow.codexDesktopShadowFromSnapshot({ revision: 1, conversationState: {

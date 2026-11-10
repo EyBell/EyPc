@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
+const { createCodexDesktopRequestProjection } = require('../../preload/codex/desktop-request-projection.cjs')
 const { createCompanionTaskKernel: createCompanionTaskKernelRaw, UNKNOWN_GRACE_MS } = require('../../preload/companion/task-kernel.cjs') as {
   createCompanionTaskKernel(options?: Record<string, unknown>): any
   UNKNOWN_GRACE_MS: number
@@ -529,6 +530,139 @@ function publishClaudeSessionEvidenceV7(
 }
 
 afterEach(() => vi.useRealTimers())
+
+describe('Codex fallback handoff through the Kernel', () => {
+  function fallbackKernelHarness() {
+    let sequence = 0
+    let revision = 0
+    const nextSequence = () => ++sequence
+    const projection = createCodexDesktopRequestProjection({
+      record: (value: any) => value && typeof value === 'object' ? value : {},
+      timestampMs: (value: any) => typeof value === 'number' ? value : 0,
+      nextLiveEvidenceSequence: nextSequence
+    })
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const member = (overrides: Record<string, any> = {}) => ({
+      taskKey: 'codex-a', branchRef: 'root', kind: 'user-input',
+      turnEpoch: 1_790_000_000_000, waitingSince: 1_790_000_001_000,
+      observedAt: 1_790_000_002_000, ...overrides
+    })
+    const native = (kinds: string[] = []) => {
+      const requestSetRevision = nextSequence()
+      return {
+        interactions: kinds.map((kind, index) => interaction({
+          kind, interactionRef: String(index + 1).repeat(32), sequence: requestSetRevision,
+          requestSetRevision, turnEpoch: member().turnEpoch
+        })),
+        interactionSets: [{
+          revision: 'companion-interaction-evidence-v1', provider: 'codex',
+          taskKey: 'codex-a', requestSetRevision, complete: true
+        }]
+      }
+    }
+    const publish = (members: any[], nativeEvidence: any = null, discard = false) => {
+      const bundle = projection.codexDesktopProjectFallbackInteractions({
+        parentTaskKey: 'codex-a', members, nativeEvidence
+      })
+      if (discard) return bundle
+      const next = draft([
+        task({ phase: 'running', phaseRevision: 100, turnStartedAt: member().turnEpoch }),
+        task({ key: 'codex-child:side-a', phase: 'running', phaseRevision: 100,
+          turnStartedAt: member().turnEpoch })
+      ], ++revision, {
+        interactions: bundle.interactions,
+        sourceLaneGenerations: {
+          codex: { membership: 1, activity: 100, interaction: bundle.requestSetRevision,
+            unread: 100, planArtifact: 0, metadata: 100, topology: 0 }
+        }
+      })
+      next.evidenceBatches.codex.interactionSets = bundle.interactionSets
+      next.evidenceBatches.codex.channels.interaction = {
+        mode: 'snapshot', complete: true, generation: bundle.requestSetRevision, removedKeys: []
+      }
+      kernel.publishEvidence(next)
+      return bundle
+    }
+    return { kernel, member, native, publish }
+  }
+
+  it('keeps low-counter fallback waiting through omitted, unknown and partial snapshots over newer plain-running activity', () => {
+    const { kernel, member, publish } = fallbackKernelHarness()
+    const first = publish([member()])
+    expect(first.interactions[0].sequence).toBe(1)
+    expect(kernel.getPackage().tasks.find((value: any) => value.key === 'codex-a').phase).toBe('waiting-input')
+    for (const nativeEvidence of [null, { interactions: [], interactionSets: [] }]) {
+      expect(publish([], nativeEvidence)).toEqual(first)
+      expect(kernel.getPackage().tasks.find((value: any) => value.key === 'codex-a').phase).toBe('waiting-input')
+      expect(kernel.diagnostics().openInteractionCount).toBe(1)
+    }
+    kernel.close()
+  })
+
+  it('hands an empty complete root set over atomically while an omitted Side remains waiting', () => {
+    const { kernel, member, native, publish } = fallbackKernelHarness()
+    publish([member(), member({ taskKey: 'codex-child:side-a', branchRef: 'side-a' })])
+    expect(kernel.diagnostics().openInteractionCount).toBe(2)
+    const next = publish([], native())
+    expect(next.interactions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ taskKey: 'codex-a', state: 'resolved' }),
+      expect.objectContaining({ taskKey: 'codex-child:side-a', state: 'opened' })
+    ]))
+    expect(kernel.getPackage().tasks.find((value: any) => value.key === 'codex-a').phase).toBe('running')
+    expect(kernel.getPackage().tasks.find((value: any) => value.key === 'codex-child:side-a').phase).toBe('waiting-input')
+    expect(kernel.diagnostics()).toMatchObject({ openInteractionCount: 1, interactionTombstoneCount: 1 })
+    publish([member()])
+    expect(kernel.diagnostics().openInteractionCount).toBe(1)
+    kernel.close()
+  })
+
+  it('still clears Kernel waiting when the first handoff projection was not accepted and the same native snapshot is retried', () => {
+    const { kernel, member, native, publish } = fallbackKernelHarness()
+    publish([member()])
+    const evidence = native()
+    const discarded = publish([member()], evidence, true)
+    expect(kernel.getPackage().tasks.find((value: any) => value.key === 'codex-a').phase).toBe('waiting-input')
+    expect(publish([member()], evidence)).toEqual(discarded)
+    expect(kernel.getPackage().tasks.find((value: any) => value.key === 'codex-a').phase).toBe('running')
+    expect(kernel.diagnostics()).toMatchObject({ openInteractionCount: 0, interactionTombstoneCount: 1 })
+    kernel.close()
+  })
+
+  it.each([null, { interactions: [], interactionSets: [] }])('accepts an exact newer plain-running clear sequence with missing or partial native evidence: %j', (nativeEvidence) => {
+    const { kernel, member, native, publish } = fallbackKernelHarness()
+    publish([member()])
+    const clearSequence = native().interactionSets[0].requestSetRevision
+    const discarded = publish([member({ kind: '', clearSequence })], nativeEvidence, true)
+    expect(kernel.getPackage().tasks.find((value: any) => value.key === 'codex-a').phase).toBe('waiting-input')
+    expect(publish([member({ kind: '', clearSequence })], nativeEvidence)).toEqual(discarded)
+    expect(kernel.getPackage().tasks.find((value: any) => value.key === 'codex-a').phase).toBe('running')
+    publish([member()])
+    expect(kernel.diagnostics()).toMatchObject({ openInteractionCount: 0, interactionTombstoneCount: 1 })
+    kernel.close()
+  })
+
+  it.each([
+    ['user-input', 'waiting-input'],
+    ['approval', 'waiting-approval'],
+    ['plan-choice', 'waiting-input'],
+    ['plan-implementation', 'waiting-input']
+  ])('keeps real native %s actionable during and after fallback retirement', (kind, phase) => {
+    const { kernel, member, native, publish } = fallbackKernelHarness()
+    publish([member()])
+    const evidence = native([kind])
+    const next = publish([member()], evidence)
+    expect(next.requestSetRevision).toBeLessThan(100)
+    expect(kernel.getPackage().sourceLaneGenerations.codex.interaction).toBe(next.requestSetRevision)
+    expect(kernel.getPackage().tasks.find((value: any) => value.key === 'codex-a').phase).toBe(phase)
+    expect(kernel.diagnostics()).toMatchObject({ openInteractionCount: 1, interactionTombstoneCount: 1 })
+    publish([], evidence)
+    expect(kernel.getPackage().tasks.find((value: any) => value.key === 'codex-a').phase).toBe(phase)
+    expect(kernel.diagnostics().openInteractionCount).toBe(1)
+    kernel.close()
+  })
+})
 
 describe('CompanionTaskKernel', () => {
   it('records admitted member causes anonymously without changing or replaying state', () => {

@@ -13,6 +13,7 @@ const { createRuntimeDiagnostics } = require('../../preload/diagnostics.cjs')
 const entry = fs.readFileSync(path.resolve('preload/index.js'), 'utf8')
 const loaderSource = entry.slice(entry.indexOf('const codexCliModules ='), entry.indexOf('const codexLaunchContext ='))
 const startupSource = entry.slice(entry.indexOf('async function startCodexServer()'), entry.indexOf('async function requestCodexRpc('))
+const closeSource = entry.slice(entry.indexOf('function closeCodexServer()'), entry.indexOf('function closeCodexConnections('))
 const diagnosticsLoadSource = entry.slice(entry.indexOf('const codexRuntimeDiagnostics ='), entry.indexOf('async function openRuntimeDiagnosticsDirectory('))
 
 function loadModules(load: (candidate: string) => unknown) {
@@ -30,6 +31,7 @@ function discovery(options: {
   broken?: string[]
   notExecutable?: string[]
   manual?: string
+  execFile?: (...args: any[]) => unknown
 } = {}) {
   const platform = options.platform || 'win32'
   const platformPath = platform === 'win32' ? path.win32 : path.posix
@@ -57,7 +59,7 @@ function discovery(options: {
   const plans = createCodexLaunchPlan({ fs: mockFs, path, process: host })
   const preferences = createCodexLaunchPathPreference({
     platformPath: () => platformPath, launchPlan: plans.codexLaunchPlan, storageKey: 'test-cli-preference',
-    fs: mockFs, os: { homedir: () => home }, process: host,
+    fs: mockFs, os: { homedir: () => home }, process: host, execFile: options.execFile,
     utools: { dbStorage: { getItem: () => options.manual || '' } }
   })
   return { preferences, plans, mockFs }
@@ -157,7 +159,7 @@ describe('Codex CLI bounded candidate evidence', () => {
       expect.objectContaining({ source: 'npm-global', checked: 1, missing: 1 }),
       expect.objectContaining({ source: 'volta', checked: 4, missing: 4 }),
       expect.objectContaining({ source: 'nvm', checked: 1, missing: 1 }),
-      expect.objectContaining({ source: 'local', checked: 3, missing: 3 }),
+      expect.objectContaining({ source: 'local', checked: 4, missing: 4 }),
       expect.objectContaining({ source: 'path', checked: 3, missing: 3 })
     ]))
     expect(JSON.stringify(plan.launchSearch)).not.toContain('private')
@@ -172,10 +174,10 @@ describe('Codex CLI bounded candidate evidence', () => {
     })
     const plan = preferences.resolveCodexLaunchPlan()
     expect(plan.launchSearch.find((row: any) => row.source === 'path')).toMatchObject({
-      checked: 3, inaccessible: 1, nonFile: 1, nonExecutable: 1, unusable: 1, shim: 1, entryMissing: 1,
+      checked: 3, inaccessible: 1, nonFile: 1, nonExecutable: 0, unusable: 0, shim: 0, entryMissing: 0,
       failed: 1, nativeCode: 'OTHER'
     })
-    expect(plan.launchDiagnostic).toMatchObject({ kind: 'shim', resolution: 'entry-missing' })
+    expect(plan.launchDiagnostic).toMatchObject({ kind: 'path-lookup', resolution: 'unresolved' })
     expect(plan.detected).toBe(false)
     expect(JSON.stringify(plan.launchSearch)).not.toContain('private')
   })
@@ -186,6 +188,17 @@ describe('Codex CLI bounded candidate evidence', () => {
     expect(plan.launchSearch[0]).toMatchObject({ source: 'configured', checked: 1, relative: 1 })
     expect(mockFs.statSync).not.toHaveBeenCalledWith('private-relative')
     expect(plan).toMatchObject({ detected: false, source: 'unknown' })
+  })
+
+  it('skips a directory named codex.exe so it cannot hide a real native CLI', () => {
+    const directory = 'D:\\private-directory\\codex.exe'
+    const native = 'C:\\private-user\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe'
+    const { preferences } = discovery({
+      env: { CODEX_CLI_PATH: directory }, directories: [directory], files: [native]
+    })
+    const plan = preferences.resolveCodexLaunchPlan()
+    expect(plan).toMatchObject({ detected: true, command: native, source: 'local' })
+    expect(plan.launchSearch[0]).toMatchObject({ source: 'configured', nonFile: 1, available: 0 })
   })
 
   it('keeps manual invalid-path selection and records its missing file', () => {
@@ -224,6 +237,99 @@ describe('Codex CLI bounded candidate evidence', () => {
   })
 })
 
+describe('Windows native CLI discovery without an external Node', () => {
+  const packageRoot = 'D:\\private-apps\\OpenAI.Codex_26.1109_x64__2p2nqsd0c76g0'
+  const packagedCli = `${packageRoot}\\app\\resources\\codex.exe`
+
+  it.each<[string, Record<string, string>]>([
+    ['C:\\private-user\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe', {}],
+    ['D:\\private-install\\codex.exe', { CODEX_INSTALL_DIR: 'D:\\private-install' }]
+  ])('finds the official standalone location %s with an empty PATH', async (candidate, env) => {
+    const execFile = vi.fn()
+    const { preferences, mockFs } = discovery({ env, files: [candidate], execFile })
+    const plan = await preferences.prepareCodexLaunchPlan()
+    expect(plan).toMatchObject({ detected: true, command: candidate, argsPrefix: [], source: 'local' })
+    expect(execFile).not.toHaveBeenCalled()
+    expect(mockFs.existsSync.mock.calls.flat()).not.toEqual(expect.arrayContaining([expect.stringMatching(/node\.exe$/i)]))
+  })
+
+  it('queries only the current-user Codex package once for concurrent discovery', async () => {
+    let complete: ((error: any, stdout?: string) => void) | undefined
+    const execFile = vi.fn((_command, _args, _options, callback) => { complete = callback })
+    const { preferences } = discovery({ files: [packagedCli], execFile })
+    const first = preferences.prepareCodexLaunchPlan()
+    const second = preferences.prepareCodexLaunchPlan()
+    expect(execFile).toHaveBeenCalledTimes(1)
+    const [command, args, options] = execFile.mock.calls[0]!
+    expect(command).toMatch(/\\System32\\WindowsPowerShell\\v1.0\\powershell\.exe$/)
+    expect(args).toEqual(expect.arrayContaining(['-NoProfile', '-NonInteractive']))
+    expect(args.at(-1)).toContain('Get-AppxPackage -Name OpenAI.Codex')
+    expect(args.at(-1)).not.toContain('-AllUsers')
+    expect(args.at(-1)).not.toContain('private')
+    expect(options).toMatchObject({ windowsHide: true, timeout: 2000, maxBuffer: 32 * 1024 })
+    complete!(null, JSON.stringify([packageRoot]))
+    const plans = await Promise.all([first, second])
+    expect(plans).toEqual(expect.arrayContaining([
+      expect.objectContaining({ detected: true, command: packagedCli, argsPrefix: [], desktopSearch: { state: 'queried', packages: 1, nativeCode: '' } })
+    ]))
+    expect(await preferences.prepareCodexLaunchPlan()).toMatchObject({ command: packagedCli })
+    expect(execFile).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    [Object.assign(new Error('private failure'), { code: 'EACCES' }), '', 'failed', 'EACCES'],
+    [Object.assign(new Error('private failure'), { killed: true }), '', 'timeout', 'ETIMEDOUT'],
+    [null, JSON.stringify({ state: 'failed', errorCategory: 'PermissionDenied', hresult: -2147024891 }), 'failed', 'EACCES'],
+    [null, '{private broken json', 'invalid-output', ''],
+    [null, JSON.stringify(['relative-path']), 'invalid-output', ''],
+    [null, '', 'queried', '']
+  ])('keeps package query failure classification bounded', async (error, output, state, nativeCode) => {
+    const execFile = vi.fn((_command, _args, _options, callback) => callback(error, output))
+    const { preferences } = discovery({ execFile })
+    const plan = await preferences.prepareCodexLaunchPlan()
+    expect(plan).toMatchObject({ detected: false, desktopSearch: { state, packages: 0, nativeCode } })
+    expect(JSON.stringify(plan.desktopSearch)).not.toContain('private')
+    await preferences.prepareCodexLaunchPlan()
+    expect(execFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects late timeout results and allows a fresh package query after the cache expires', async () => {
+    vi.useFakeTimers()
+    try {
+      const callbacks: Array<(error: any, output?: string) => void> = []
+      const execFile = vi.fn((_command, _args, _options, callback) => callbacks.push(callback))
+      const { preferences } = discovery({ files: [packagedCli], execFile })
+      const first = preferences.prepareCodexLaunchPlan()
+      await vi.advanceTimersByTimeAsync(2500)
+      expect(await first).toMatchObject({ detected: false, desktopSearch: { state: 'timeout' } })
+      await vi.advanceTimersByTimeAsync(30_000)
+      const second = preferences.prepareCodexLaunchPlan()
+      callbacks[0]!(null, JSON.stringify(packageRoot))
+      callbacks[1]!(null, JSON.stringify([]))
+      expect(await second).toMatchObject({ detected: false, desktopSearch: { state: 'queried', packages: 0 } })
+    } finally { vi.useRealTimers() }
+  })
+
+  it('preserves manual path priority even when it changes during package discovery', async () => {
+    let complete: ((error: any, output?: string) => void) | undefined
+    const manual = 'D:\\private-manual\\codex.exe'
+    const options = { files: [manual, packagedCli], manual: '', execFile: vi.fn((_command, _args, _options, callback) => { complete = callback }) }
+    const { preferences } = discovery(options)
+    const pending = preferences.prepareCodexLaunchPlan()
+    options.manual = manual
+    complete!(null, JSON.stringify(packageRoot))
+    expect(await pending).toMatchObject({ command: manual, source: 'manual', launchMode: 'manual' })
+  })
+
+  it('does not run a Windows package query for Mac or an explicitly invalid manual path', async () => {
+    const execFile = vi.fn()
+    await discovery({ platform: 'darwin', execFile }).preferences.prepareCodexLaunchPlan()
+    expect(await discovery({ manual: 'D:\\private-missing\\codex.exe', execFile }).preferences.prepareCodexLaunchPlan())
+      .toMatchObject({ detected: false, launchMode: 'manual' })
+    expect(execFile).not.toHaveBeenCalled()
+  })
+})
+
 describe('Codex CLI startup uses the failed attempt evidence', () => {
   function startupHarness(resolvePlan: () => any, initializationFailure?: Error) {
     const events: any[] = []
@@ -237,6 +343,7 @@ describe('Codex CLI startup uses the failed attempt evidence', () => {
       codexRuntimeDiagnostics: diagnostics, resolveCodexLaunchPlan: resolvePlan,
       spawn: vi.fn(() => child), codexError: (code: string, message: string) => Object.assign(new Error(message), { code }),
       codexReadyPromise: null, codexLaunchKey: '', codexProcessAlive: () => false,
+      codexStartupState: { generation: 0 },
       codexProcess: null, codexStartupHint: '',
       resolveCodexProxyEnvironment: async () => ({}), codexSpawnEnvironment: () => ({}),
       os: { homedir: () => 'C:\\private-home' }, closeCodexServer: vi.fn(),
@@ -256,7 +363,7 @@ describe('Codex CLI startup uses the failed attempt evidence', () => {
     diagnostics.inventoryFailure(failure, 'plugin-enter', true)
     expect(resolvePlan).toHaveBeenCalledTimes(1)
     expect(context.spawn).not.toHaveBeenCalled()
-    expect(events[0].details).toMatchObject({
+    expect(events.find((event) => event.event === 'codex-inventory-membership').details).toMatchObject({
       failure: 'runtime-unavailable', launch: { detected: false, searchState: 'observed' },
       search: expect.arrayContaining([expect.objectContaining({ source: 'path', checked: 3, missing: 3 })])
     })
@@ -274,9 +381,32 @@ describe('Codex CLI startup uses the failed attempt evidence', () => {
     const second = start()
     await Promise.all([first.catch(() => null), second.catch(() => null)])
     diagnostics.inventoryFailure(failed, 'plugin-enter', false)
-    expect(events[0].details).toMatchObject({
+    expect(events.find((event) => event.event === 'codex-inventory-membership').details).toMatchObject({
       failure: 'protocol-error', launch: { source: 'configured', kind: 'native', resolution: 'direct' }
     })
     expect(JSON.stringify(events)).not.toContain('private')
+  })
+
+  it('records the selected native launch and initialization without Node or command paths', async () => {
+    const plan = { command: 'D:\\private\\codex.exe', argsPrefix: [], key: 'native', detected: true,
+      source: 'local', launchMode: 'automatic', launchDiagnostic: { kind: 'native', resolution: 'direct' } }
+    const { start, context, events } = startupHarness(() => plan)
+    await expect(start()).resolves.toBe(true)
+    expect(context.spawn).toHaveBeenCalledWith(plan.command, ['app-server', '--listen', 'stdio://'], expect.any(Object))
+    expect(events.filter((event) => event.event === 'codex-startup').map((event) => event.outcome)).toEqual(['spawn-requested', 'initialized'])
+    expect(JSON.stringify(events)).not.toContain('private')
+  })
+
+  it('does not start a process after its asynchronous discovery was cancelled', async () => {
+    let complete: ((value: any) => void) | undefined
+    const { start, context } = startupHarness(() => new Promise((resolve) => { complete = resolve }))
+    const pending = start()
+    Object.assign(context, { rejectCodexPending: vi.fn(), resetCodexThreadSessionState: vi.fn(),
+      codexRpcBuffer: '', codexNativePlanExecutionCapabilityPromise: null, codexNativePlanExecutionCapability: null })
+    vm.runInContext(`${closeSource}\nthis.stop = closeCodexServer`, context)
+    context.stop()
+    complete!({ detected: true, command: 'D:\\private\\codex.exe' })
+    await expect(pending).rejects.toMatchObject({ code: 'process-exited' })
+    expect(context.spawn).not.toHaveBeenCalled()
   })
 })

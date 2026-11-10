@@ -11,6 +11,7 @@ import vm from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
 
 const nodeRequire = createRequire(import.meta.url)
+const TEST_PRELOAD_ROOT = process.env.EYPC_TEST_PRELOAD_ROOT || resolve(process.cwd(), 'preload')
 const TEST_RUNTIME_IDENTITY = {
   revision: 'runtime-identity-v2',
   artifactState: 'artifact-ready',
@@ -822,11 +823,20 @@ function loadCodexBridge(
   claudeBridgeOverride: Record<string, any> | null = null,
   enableFloatHarness = false,
   dbStorageHarness: { values: Map<string, unknown>; failWrites?: boolean; writes?: string[] } | null = null,
-  codexhostThreads: Array<Record<string, unknown>> | null = null
+  codexhostThreads: Array<Record<string, unknown>> | null = null,
+  nativeHarness: {
+    platform?: 'darwin' | 'win32'
+    fileSystem?: Record<string, unknown>
+    desktopRunning?: () => boolean
+  } = {}
 ) {
-  const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+  const preload = readFileSync(resolve(TEST_PRELOAD_ROOT, 'index.js'), 'utf8')
   const spawn = vi.fn(() => child)
   const execFile = vi.fn((command: string, args: string[], options: Record<string, unknown>, callback: ExecFileCallback) => {
+    if (nativeHarness.desktopRunning && command.endsWith('tasklist.exe')) {
+      queueMicrotask(() => callback(null, nativeHarness.desktopRunning?.() ? '"Codex.exe","4242"\n' : '', ''))
+      return
+    }
     const codexhost = codexhostThreads ? codexhostExecFileReply(command, args) : null
     if (codexhost !== null) {
       queueMicrotask(() => callback(null, codexhost === CODEXHOST_LIST_MARKER
@@ -933,7 +943,7 @@ function loadCodexBridge(
     window: {} as Record<string, unknown>,
     globalThis: {} as Record<string, unknown>,
     process: {
-      platform: 'darwin',
+      platform: nativeHarness.platform || 'darwin',
       arch: 'arm64',
       env: { CODEX_HOME: '/tmp/.codex', CODEX_CLI_PATH: '/tmp/codex' },
       cwd: () => '/host/eypc',
@@ -973,8 +983,8 @@ function loadCodexBridge(
       if (name === './claude/index.cjs' && claudeBridgeOverride) {
         return { createClaudeBridge: () => claudeBridgeOverride }
       }
-      if (name === './companion/task-kernel.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'))
-      if (name === './companion/persisted-side-state.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/persisted-side-state.cjs'))
+      if (name === './companion/task-kernel.cjs') return nodeRequire(resolve(TEST_PRELOAD_ROOT, 'companion/task-kernel.cjs'))
+      if (name === './companion/persisted-side-state.cjs') return nodeRequire(resolve(TEST_PRELOAD_ROOT, 'companion/persisted-side-state.cjs'))
       if (String(name).endsWith('/diagnostics.cjs')) return {
         createRuntimeDiagnostics: () => ({
           revision: 'eypc-runtime-diagnostics-v3',
@@ -1019,6 +1029,7 @@ function loadCodexBridge(
         },
         realpathSync: (candidate: string) => candidate,
         statSync: (candidate: string) => {
+          if (candidate === '/tmp/codex') return { isFile: () => true, size: 1 }
           if (candidate === '/tmp/.codex/.codex-global-state.json' || candidate === '/tmp/.codex/.codex-global-state.json.bak') return { isFile: () => true, size: 1024 }
           const rolloutText = rolloutTextForPath(candidate)
           if (rolloutText !== undefined) return { isFile: () => true, size: Buffer.byteLength(rolloutText), mtimeMs: 1_900_000_000 }
@@ -1047,7 +1058,8 @@ function loadCodexBridge(
         watchFile: (candidate: string, options: { interval?: number }, listener: () => void) => {
           nativeFileWatchers.set(candidate, { interval: Number(options?.interval) || 0, listener })
         },
-        unwatchFile: (candidate: string) => { nativeFileWatchers.delete(candidate) }
+        unwatchFile: (candidate: string) => { nativeFileWatchers.delete(candidate) },
+        ...nativeHarness.fileSystem
       }
       if (name === 'node:path') return pathModule
       if (name === 'node:os') return { homedir: () => '/tmp' }
@@ -1056,13 +1068,23 @@ function loadCodexBridge(
       // in for the module system, so it resolves those from `preload/` the way
       // the real one does. Naming each module here would mean every future
       // extraction breaks the run before anyone notices.
-      if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
+      if (name.startsWith('.')) return nodeRequire(resolve(TEST_PRELOAD_ROOT, name))
       throw new Error(`unexpected require: ${name}`)
     }
   }
   if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { requestCodexRpc, parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology: codexInventoryThreadTopologyModule.codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, codexObservationForThread: (thread) => codexBranchObservationV7(companionCodexFallbackBranchV7(thread)), applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { requestCodexRpc, parseCodexNativeRegistryText, readCodexNativeRegistry, readCodexNativePrimaryState, removeCodexProject, codexProjectActionAlias, codexNativeStringList: (...args) => codexNativeRegistry.codexNativeStringList(...args), codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology: codexInventoryThreadTopologyModule.codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, codexObservationForThread: (thread) => codexBranchObservationV7(companionCodexFallbackBranchV7(thread)), applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`Object.assign(globalThis.__codexNativeTest, {
+    preflightTaskPackageV7: preflightCompanionTaskPackageV7,
+    nextLiveEvidenceSequence: codexNextLiveEvidenceSequence,
+    syntheticInteractionBundle: companionSyntheticInteractionBundleV7,
+    replaceCodexEvidence: (replacement) => {
+      const previous = companionCodexEvidenceV7;
+      companionCodexEvidenceV7 = replacement;
+      return previous;
+    }
+  });`, sandbox, { filename: 'preload-native-test-hooks.js' })
   const exposedPlatform = (sandbox.window as { eypcPlatform: Record<string, any> }).eypcPlatform
   if (!dbStorageHarness?.failWrites) handshakeTestRuntime(exposedPlatform)
   const internalKernel = vm.runInNewContext('companionTaskKernel', sandbox) as Record<string, any>
@@ -1089,6 +1111,12 @@ function loadCodexBridge(
         requestCodexRpc(method: string, params: Record<string, unknown>): Promise<unknown>
         parseCodexNativeRegistryText(text: string): Record<string, any>
         readCodexNativeRegistry(): Record<string, any>
+        readCodexNativePrimaryState(): Record<string, any>
+        removeCodexProject(actionAlias: string, request: Record<string, unknown>): Promise<Record<string, any>>
+        codexProjectActionAlias(project: Record<string, unknown>, fingerprint: string, now: number): string
+        codexNativeStringList(value: unknown, maximum?: number, field?: string): string[]
+        preflightTaskPackageV7(input: Record<string, unknown>): Promise<Record<string, any>>
+        replaceCodexEvidence(replacement: (...args: any[]) => any): (...args: any[]) => any
         codexThreadNativeProject(thread: Record<string, unknown>, registry: Record<string, any>): Record<string, any> | null
         codexResolveParentActivity(own: Record<string, unknown>, children: Record<string, unknown>[], options?: Record<string, unknown>): Record<string, any>
         codexInventoryThreadTopology(rows: Record<string, unknown>[]): {
@@ -1111,6 +1139,8 @@ function loadCodexBridge(
         openCompanionCodexTarget(target: Record<string, unknown>): Promise<Record<string, unknown>>
         expireCompanionCodexAlias(key: string): void
         companionHostReconciliationPending(): boolean
+        nextLiveEvidenceSequence(): number
+        syntheticInteractionBundle(input: Record<string, any>): Record<string, any>
       }
     }).__codexNativeTest,
     registryReads,
@@ -10747,7 +10777,7 @@ draft: v7EvidenceDraft({
           readdirSync: (candidate: string) => candidate === '/tmp/.nvm/versions/node' ? [{ name: 'v24.14.0', isDirectory: () => true }] : [],
           readFileSync: (candidate: string) => candidate === '/tmp/.codex/.codex-global-state.json' ? nativeRegistryText() : (() => { throw new Error('not found') })(),
           realpathSync: (candidate: string) => candidate.endsWith('/bin/codex') ? '/tmp/.nvm/versions/node/v24.14.0/lib/node_modules/@openai/codex/bin/codex.js' : candidate,
-          statSync: (candidate: string) => ({ isFile: () => false, size: candidate === '/tmp/.codex/.codex-global-state.json' ? Buffer.byteLength(nativeRegistryText()) : 1 }),
+          statSync: (candidate: string) => ({ isFile: () => candidate === '/tmp/.nvm/versions/node/v24.14.0/bin/codex' || candidate === '/tmp/.nvm/versions/node/v24.14.0/bin/node', size: candidate === '/tmp/.codex/.codex-global-state.json' ? Buffer.byteLength(nativeRegistryText()) : 1 }),
           promises: {}
         }
         if (name === 'node:path') return pathModule
@@ -11244,7 +11274,7 @@ draft: v7EvidenceDraft({
           readdirSync: () => [],
           readFileSync: (candidate: string) => candidate === '/tmp/.codex/.codex-global-state.json' ? nativeRegistryText() : (() => { throw new Error('not found') })(),
           realpathSync: (candidate: string) => candidate,
-          statSync: (candidate: string) => ({ isFile: () => false, size: candidate === '/tmp/.codex/.codex-global-state.json' ? Buffer.byteLength(nativeRegistryText()) : 1 }),
+          statSync: (candidate: string) => ({ isFile: () => candidate === '/tmp/codex', size: candidate === '/tmp/.codex/.codex-global-state.json' ? Buffer.byteLength(nativeRegistryText()) : 1 }),
           promises: {}
         }
         if (name === 'node:path') return pathModule
@@ -11300,7 +11330,7 @@ draft: v7EvidenceDraft({
           readdirSync: () => [],
           readFileSync: (candidate: string) => candidate === '/tmp/.codex/.codex-global-state.json' ? nativeRegistryText() : (() => { throw new Error('not found') })(),
           realpathSync: (candidate: string) => candidate,
-          statSync: (candidate: string) => ({ isFile: () => false, size: candidate === '/tmp/.codex/.codex-global-state.json' ? Buffer.byteLength(nativeRegistryText()) : 1 }),
+          statSync: (candidate: string) => ({ isFile: () => candidate === '/tmp/codex', size: candidate === '/tmp/.codex/.codex-global-state.json' ? Buffer.byteLength(nativeRegistryText()) : 1 }),
           promises: {}
         }
         if (name === 'node:path') return pathModule
@@ -11377,7 +11407,7 @@ draft: v7EvidenceDraft({
 
     expect(result).toMatchObject({
       ok: false,
-      error: { code: 'runtime-unavailable', message: 'Codex CLI 启动失败，请检查本机 Node/Codex 安装' }
+      error: { code: 'runtime-unavailable', message: 'Codex CLI 不可用，请检查可执行文件位置或运行日志' }
     })
     expect(JSON.stringify(result)).not.toContain('No such file or directory')
     expect(JSON.stringify(result)).not.toContain('/usr/bin')
@@ -11402,7 +11432,7 @@ draft: v7EvidenceDraft({
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto
         if (name === 'node:net') return { connect: vi.fn() }
-        if (name === 'node:fs') return { existsSync: (candidate: string) => candidate === '/tmp/codex', readdirSync: () => [], realpathSync: (candidate: string) => candidate, statSync: () => ({ isFile: () => false }), promises: {} }
+        if (name === 'node:fs') return { existsSync: (candidate: string) => candidate === '/tmp/codex', readdirSync: () => [], realpathSync: (candidate: string) => candidate, statSync: (candidate: string) => ({ isFile: () => candidate === '/tmp/codex' }), promises: {} }
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => '/tmp' }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
@@ -11516,7 +11546,7 @@ draft: v7EvidenceDraft({
           accessSync: (candidate: string) => { if (!existing.has(candidate)) throw new Error('missing') },
           readdirSync: () => [],
           realpathSync: (candidate: string) => candidate,
-          statSync: () => ({ isFile: () => false }),
+          statSync: (candidate: string) => ({ isFile: () => candidate === shim || candidate === jsEntry || candidate === nodeRuntime }),
           promises: {}
         }
         if (name === 'node:path') return pathModule
@@ -11573,7 +11603,7 @@ draft: v7EvidenceDraft({
         if (name === 'node:child_process') return { execFile, spawn: vi.fn() }
         if (name === 'node:crypto') return crypto
         if (name === 'node:net') return { connect: vi.fn() }
-        if (name === 'node:fs') return { existsSync: (candidate: string) => candidate === voltaCodex, readdirSync: () => [], realpathSync: (candidate: string) => candidate, statSync: () => ({ isFile: () => false }), promises: {} }
+        if (name === 'node:fs') return { existsSync: (candidate: string) => candidate === voltaCodex, readdirSync: () => [], realpathSync: (candidate: string) => candidate, statSync: (candidate: string) => ({ isFile: () => candidate === voltaCodex }), promises: {} }
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => home }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
@@ -11616,7 +11646,7 @@ draft: v7EvidenceDraft({
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto
         if (name === 'node:net') return { connect: vi.fn() }
-        if (name === 'node:fs') return { existsSync: (candidate: string) => candidate === shim, readdirSync: () => [], realpathSync: (candidate: string) => candidate, statSync: () => ({ isFile: () => false }), promises: {} }
+        if (name === 'node:fs') return { existsSync: (candidate: string) => candidate === shim, readdirSync: () => [], realpathSync: (candidate: string) => candidate, statSync: (candidate: string) => ({ isFile: () => candidate === shim }), promises: {} }
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => home }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
@@ -12582,6 +12612,583 @@ describe('Codex continue host capability boundary', () => {
       .resolves.toMatchObject({ outcome: 'failed' })
     expect(child.writes.filter((frame) => ['thread/resume', 'turn/start', 'thread/goal/set'].includes(frame.method))).toHaveLength(0)
     context.triggerPluginOut(true)
+  })
+})
+
+describe('Windows native registry missing pin fields', () => {
+  const primaryPath = '/tmp/.codex/.codex-global-state.json'
+  const backupPath = `${primaryPath}.bak`
+  const pinFields = ['pinned-project-ids', 'pinned-thread-ids']
+
+  function fixture(omitted: string[] = []) {
+    const value: Record<string, any> = {
+      'local-projects': {
+        root: { id: 'root', name: 'Root', rootPaths: ['C:\\Work'] },
+        deep: { id: 'deep', name: 'Deep', rootPaths: ['C:\\Work\\Deep'] }
+      },
+      'project-order': ['deep', 'root'],
+      'pinned-project-ids': ['root'],
+      'pinned-thread-ids': [FIXED_THREAD_IDS[0]],
+      'selected-project': { type: 'local', projectId: 'root' },
+      'thread-project-assignments': {
+        [FIXED_THREAD_IDS[0]]: { projectId: 'root', futureAssignment: true },
+        [FIXED_THREAD_IDS[3]]: { projectId: 'removed' }
+      },
+      'projectless-thread-ids': [FIXED_THREAD_IDS[1], FIXED_THREAD_IDS[3]],
+      futureState: { nested: ['unchanged'], enabled: true }
+    }
+    for (const field of omitted) delete value[field]
+    return value
+  }
+
+  function load(readRegistry?: (candidate: string, index: number) => string, fileSystem?: Record<string, unknown>, desktopRunning = () => false) {
+    return loadCodexBridge(new FakeCodexProcess(), readRegistry, null, false, true, null, false, null, null, {
+      platform: 'win32', fileSystem, desktopRunning
+    })
+  }
+
+  function expectInvalid(operation: () => unknown, field: string) {
+    expect(operation).toThrow(expect.objectContaining({
+      code: 'protocol-error',
+      codexDiagnostic: { stage: 'local-state', field, category: 'invalid-data' }
+    }))
+  }
+
+  function transaction(value: Record<string, any>, withBackup = true) {
+    const originalPrimary = Buffer.from(JSON.stringify(value))
+    const originalBackup = Buffer.from(JSON.stringify({ ...fixture(), backupOnly: 'preserve-on-rollback' }))
+    const files = new Map<string, Buffer>([[primaryPath, originalPrimary]])
+    if (withBackup) files.set(backupPath, originalBackup)
+    const modes = new Map([[primaryPath, 0o100600], [backupPath, 0o100640]])
+    const descriptors = new Map<number, string>()
+    const mutations: Array<{ operation: string; target: string; mode?: number }> = []
+    const reads: string[] = []
+    let nextDescriptor = 10
+    const controls = {
+      desktopRunning: false,
+      onRead: (_candidate: string) => {},
+      onRename: (_source: string, _target: string) => {}
+    }
+    const fileSystem = {
+      existsSync: (candidate: string) => files.has(candidate) || candidate === '/tmp/codex' || candidate === '/tmp/.codex',
+      statSync: (candidate: string) => {
+        if (candidate === '/tmp/codex') return { isFile: () => true, size: 1 }
+        const buffer = files.get(candidate)
+        if (!buffer) throw Object.assign(new Error('synthetic missing file'), { code: 'ENOENT' })
+        return { isFile: () => true, size: buffer.length, mode: modes.get(candidate) || 0o100600 }
+      },
+      readFileSync: (candidate: string, encoding?: string) => {
+        reads.push(candidate)
+        controls.onRead(candidate)
+        const buffer = files.get(candidate)
+        if (!buffer) throw Object.assign(new Error('synthetic missing file'), { code: 'ENOENT' })
+        return encoding ? buffer.toString('utf8') : Buffer.from(buffer)
+      },
+      openSync: (candidate: string, flags: string, mode?: number) => {
+        if (flags === 'wx') {
+          if (files.has(candidate)) throw new Error('synthetic file exists')
+          files.set(candidate, Buffer.alloc(0))
+          modes.set(candidate, mode || 0o100600)
+          mutations.push({ operation: 'open', target: candidate, mode })
+        } else if (candidate !== '/tmp/.codex' && !files.has(candidate)) {
+          throw new Error('synthetic missing descriptor')
+        }
+        const descriptor = nextDescriptor++
+        descriptors.set(descriptor, candidate)
+        return descriptor
+      },
+      writeFileSync: (descriptor: number, data: Buffer) => {
+        if (!descriptors.has(descriptor)) throw new Error('synthetic writes require an open descriptor')
+        const target = descriptors.get(descriptor)!
+        mutations.push({ operation: 'write', target })
+        files.set(target, Buffer.from(data))
+      },
+      fsyncSync: (descriptor: number) => mutations.push({ operation: 'sync', target: descriptors.get(descriptor)! }),
+      closeSync: (descriptor: number) => descriptors.delete(descriptor),
+      renameSync: (source: string, target: string) => {
+        controls.onRename(source, target)
+        if (!files.has(source)) throw new Error('synthetic missing temporary file')
+        mutations.push({ operation: 'rename', target })
+        files.set(target, files.get(source)!)
+        files.delete(source)
+        modes.set(target, modes.get(source)!)
+        modes.delete(source)
+      },
+      unlinkSync: (target: string) => {
+        mutations.push({ operation: 'unlink', target })
+        files.delete(target)
+      }
+    }
+    const context = load(undefined, fileSystem, () => controls.desktopRunning)
+    const registry = context.native.parseCodexNativeRegistryText(JSON.stringify(value))
+    const alias = context.native.codexProjectActionAlias(registry.projectById.get('root'), registry.fingerprint, Date.now())
+    return {
+      ...context, files, modes, reads, mutations, controls, originalPrimary, originalBackup,
+      remove: (fingerprint = registry.fingerprint) => context.native.removeCodexProject(alias, { expectedSourceFingerprint: fingerprint })
+    }
+  }
+
+  it.each([
+    { fields: ['pinned-project-ids'] },
+    { fields: ['pinned-thread-ids'] },
+    { fields: pinFields }
+  ])('defaults only absent pin fields $fields to empty without changing fingerprints', ({ fields }) => {
+    const { native } = load()
+    const missing = fixture(fields)
+    const explicit = { ...missing, ...Object.fromEntries(fields.map((field) => [field, []])) }
+    const registry = native.parseCodexNativeRegistryText(JSON.stringify(missing))
+    expect(registry.fingerprint).toBe(native.parseCodexNativeRegistryText(JSON.stringify(explicit)).fingerprint)
+    expect(registry.projects.map((project: any) => [project.id, project.nativeOrder, project.nativePinnedOrder])).toEqual([
+      ['root', 1, fields.includes('pinned-project-ids') ? undefined : 0], ['deep', 0, undefined]
+    ])
+    expect([...registry.pinnedThreadOrder]).toEqual(fields.includes('pinned-thread-ids') ? [] : [[FIXED_THREAD_IDS[0], 0]])
+    expect(Object.keys(missing)).not.toEqual(expect.arrayContaining(fields))
+  })
+
+  it.each(pinFields.flatMap((field) => [null, {}, 'private-bad-value', 42, false].map((value) => ({ field, value }))))(
+    'rejects present $field = $value with a safe field diagnosis', ({ field, value }) => {
+      const { native } = load()
+      expectInvalid(() => native.parseCodexNativeRegistryText(JSON.stringify({ ...fixture(), [field]: value })), field)
+    }
+  )
+
+  it.each(pinFields.flatMap((field) => [
+    { field, value: [''] }, { field, value: [null] }, { field, value: Array(100_001).fill('duplicate') }
+  ]))('keeps invalid elements and count caps for $field', ({ field, value }) => {
+    expectInvalid(() => load().native.parseCodexNativeRegistryText(JSON.stringify({ ...fixture(), [field]: value })), field)
+  })
+
+  it.each(['local-projects', 'thread-project-assignments', 'project-order', 'selected-project', 'projectless-thread-ids'])(
+    'identifies invalid %s without exposing source data', (field) => {
+      expectInvalid(() => load().native.parseCodexNativeRegistryText(JSON.stringify({ ...fixture(), [field]: 123 })), field)
+    }
+  )
+
+  it('never copies an unrecognized diagnostic field or raw value into an error', () => {
+    const { native } = load()
+    try {
+      native.codexNativeStringList(null, 100, 'private-unknown-field')
+      expect.unreachable()
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'protocol-error' })
+      expect((error as any).codexDiagnostic).toEqual({ stage: 'local-state', category: 'invalid-data' })
+      expect(JSON.stringify(error)).not.toContain('private-unknown-field')
+    }
+  })
+
+  it('preserves deduplication order, UUID filtering and Windows assignment precedence', () => {
+    const value = fixture()
+    value['project-order'] = ['deep', 'deep', 'root']
+    value['pinned-project-ids'] = ['deep', 'deep', 'root']
+    value['pinned-thread-ids'] = [FIXED_THREAD_IDS[2], 'not-a-uuid', FIXED_THREAD_IDS[2], FIXED_THREAD_IDS[0]]
+    const { native } = load()
+    const registry = native.parseCodexNativeRegistryText(JSON.stringify(value))
+    expect([...registry.pinnedThreadOrder]).toEqual([[FIXED_THREAD_IDS[2], 0], [FIXED_THREAD_IDS[0], 1]])
+    expect(registry.projects.map((project: any) => [project.roots, project.nativeOrder, project.nativePinnedOrder])).toEqual([
+      [['c:\\work'], 1, 1], [['c:\\work\\deep'], 0, 0]
+    ])
+    const projectFor = (index: number, cwd = 'C:\\WORK\\Deep\\Task') => native.codexThreadNativeProject({ id: FIXED_THREAD_IDS[index], cwd }, registry)
+    expect(projectFor(0)).toMatchObject({ reason: 'assignment', project: { id: 'root' } })
+    expect(projectFor(1)).toMatchObject({ reason: 'projectless', project: { kind: 'chats' } })
+    expect(projectFor(2)).toMatchObject({ reason: 'cwd', project: { id: 'deep' } })
+    expect(projectFor(3)).toBeNull()
+    expect(projectFor(4, 'C:\\Work-other')).toBeNull()
+  })
+
+  it.each(['local-projects', 'thread-project-assignments', 'project-order', 'projectless-thread-ids'])(
+    'continues to reject missing required %s', (field) => {
+      expectInvalid(() => load().native.parseCodexNativeRegistryText(JSON.stringify(fixture([field]))), field)
+    }
+  )
+
+  it.each([['project-id'], ['assignment-id'], ['duplicate-root']])('keeps project and assignment validation for %s', (kind) => {
+    const value = fixture(pinFields)
+    if (kind === 'project-id') value['local-projects'].root.id = 'different'
+    if (kind === 'assignment-id') value['thread-project-assignments']['not-a-uuid'] = { projectId: 'root' }
+    if (kind === 'duplicate-root') value['local-projects'].deep.rootPaths = ['c:\\WORK\\']
+    expectInvalid(() => load().native.parseCodexNativeRegistryText(JSON.stringify(value)), kind === 'assignment-id' ? 'thread-project-assignments' : 'local-projects')
+  })
+
+  it('accepts a missing-pin primary before an older pinned backup and keeps the raw primary unchanged', () => {
+    const primary = JSON.stringify(fixture(pinFields))
+    const backup = JSON.stringify(fixture())
+    const context = load((candidate) => candidate === primaryPath ? primary : backup)
+    const registry = context.native.readCodexNativeRegistry()
+    expect([...registry.pinnedThreadOrder]).toEqual([])
+    expect(registry.projects.every((project: any) => project.nativePinnedOrder === undefined)).toBe(true)
+    expect(context.registryReads).toEqual([primaryPath])
+    const state = context.native.readCodexNativePrimaryState()
+    expect(state.buffer.toString('utf8')).toBe(primary)
+    expect(state.value).toEqual(fixture(pinFields))
+    expect(state.registry.fingerprint).toBe(registry.fingerprint)
+    expect(context.registryReads).toEqual([primaryPath, primaryPath])
+  })
+
+  it.each(['malformed', 'invalid-pin', 'unreadable'])('uses backup only after a %s primary fails', (kind) => {
+    const backup = JSON.stringify(fixture(pinFields))
+    const context = load((candidate) => {
+      if (candidate === backupPath) return backup
+      if (kind === 'unreadable') throw Object.assign(new Error('synthetic inaccessible'), { code: 'EACCES' })
+      return kind === 'malformed' ? '{' : JSON.stringify({ ...fixture(), 'pinned-thread-ids': null })
+    })
+    expect([...context.native.readCodexNativeRegistry().pinnedThreadOrder]).toEqual([])
+    expect(context.registryReads).toEqual([primaryPath, backupPath])
+  })
+
+  it('throws when both copies fail and never substitutes an empty registry', () => {
+    const context = load((candidate) => JSON.stringify({ ...fixture(), [candidate === primaryPath ? 'pinned-project-ids' : 'pinned-thread-ids']: null }))
+    expectInvalid(() => context.native.readCodexNativeRegistry(), 'pinned-thread-ids')
+    expect(context.registryReads).toEqual([primaryPath, backupPath])
+  })
+
+  it('keeps primary-state reads strict and never takes a valid backup', () => {
+    const context = load((candidate) => JSON.stringify(candidate === primaryPath ? { ...fixture(), 'pinned-project-ids': null } : fixture()))
+    expectInvalid(() => context.native.readCodexNativePrimaryState(), 'pinned-project-ids')
+    expect(context.registryReads).toEqual([primaryPath])
+  })
+
+  it.each([{ fields: ['pinned-project-ids'] }, { fields: pinFields }])('refuses removal without the project pin field $fields and performs no writes', async ({ fields }) => {
+    const context = transaction(fixture(fields))
+    await expect(context.remove()).resolves.toMatchObject({ status: 'unsupported-schema' })
+    expect(context.files.get(primaryPath)).toEqual(context.originalPrimary)
+    expect(context.files.get(backupPath)).toEqual(context.originalBackup)
+    expect(context.mutations).toEqual([])
+  })
+
+  it.each([true, false])('removes with a missing thread pin field, verifies both copies and preserves unknown fields (backup=%s)', async (withBackup) => {
+    const original = fixture(['pinned-thread-ids'])
+    const context = transaction(original, withBackup)
+    await expect(context.remove()).resolves.toMatchObject({ status: 'verified' })
+    const expected = {
+      ...original,
+      'local-projects': { deep: original['local-projects'].deep },
+      'project-order': ['deep'],
+      'pinned-project-ids': [],
+      'selected-project': null
+    }
+    expect(JSON.parse(context.files.get(primaryPath)!.toString())).toEqual(expected)
+    expect(context.files.get(primaryPath)).toEqual(context.files.get(backupPath))
+    expect(expected).not.toHaveProperty('pinned-thread-ids')
+    expect(context.mutations.filter((entry) => entry.operation === 'rename').map((entry) => entry.target)).toEqual([backupPath, primaryPath])
+    expect(context.mutations.filter((entry) => entry.operation === 'sync')).toHaveLength(3)
+    expect(context.modes.get(primaryPath)).toBe(0o100600)
+    expect(context.modes.get(backupPath)).toBe(withBackup ? 0o100640 : 0o100600)
+    expect(context.reads.slice(-2)).toEqual([primaryPath, backupPath])
+    expect([...context.files.keys()].sort()).toEqual([primaryPath, backupPath].sort())
+    await expect(context.remove()).resolves.toMatchObject({ status: 'stale-source' })
+  })
+
+  it('rejects a changed fingerprint before preparing any writes', async () => {
+    const context = transaction(fixture(['pinned-thread-ids']))
+    await expect(context.remove('0'.repeat(64))).resolves.toMatchObject({ status: 'stale-source' })
+    expect(context.mutations).toEqual([])
+  })
+
+  it('detects concurrent raw state changes before creating temporary files', async () => {
+    const context = transaction(fixture(['pinned-thread-ids']))
+    const concurrent = Buffer.from(JSON.stringify({ ...fixture(['pinned-thread-ids']), futureState: { concurrent: true } }))
+    let primaryReads = 0
+    context.controls.onRead = (candidate) => {
+      if (candidate === primaryPath && ++primaryReads === 2) context.files.set(primaryPath, concurrent)
+    }
+    await expect(context.remove()).resolves.toMatchObject({ status: 'stale-source' })
+    expect(context.files.get(primaryPath)).toEqual(concurrent)
+    expect(context.files.get(backupPath)).toEqual(context.originalBackup)
+    expect(context.mutations).toEqual([])
+  })
+
+  it('cleans temporary files if Codex starts between preparation and commit', async () => {
+    const context = transaction(fixture(['pinned-thread-ids']))
+    context.controls.onRead = (candidate) => {
+      if (candidate === backupPath) context.controls.desktopRunning = true
+    }
+    await expect(context.remove()).resolves.toMatchObject({ status: 'codex-running' })
+    expect(context.files.get(primaryPath)).toEqual(context.originalPrimary)
+    expect(context.files.get(backupPath)).toEqual(context.originalBackup)
+    expect(context.mutations.filter((entry) => entry.operation === 'rename')).toEqual([])
+    expect(context.mutations.filter((entry) => entry.operation === 'unlink')).toHaveLength(2)
+    expect(context.files.size).toBe(2)
+  })
+
+  it.each([true, false])('rolls back both originals after a primary rename failure (backup=%s)', async (withBackup) => {
+    const context = transaction(fixture(['pinned-thread-ids']), withBackup)
+    let failed = false
+    context.controls.onRename = (_source, target) => {
+      if (target === primaryPath && !failed) {
+        failed = true
+        throw new Error('synthetic primary rename failure')
+      }
+    }
+    await expect(context.remove()).resolves.toMatchObject({ status: 'write-failed' })
+    expect(failed).toBe(true)
+    expect(context.files.get(primaryPath)).toEqual(context.originalPrimary)
+    expect(context.files.get(backupPath)).toEqual(withBackup ? context.originalBackup : undefined)
+    expect(context.files.size).toBe(withBackup ? 2 : 1)
+  })
+
+  it('rolls back after read-back detects a changed unknown field', async () => {
+    const context = transaction(fixture(['pinned-thread-ids']))
+    let committed = false
+    let corrupted = false
+    context.controls.onRename = (_source, target) => { if (target === primaryPath) committed = true }
+    context.controls.onRead = (candidate) => {
+      if (candidate === primaryPath && committed && !corrupted) {
+        corrupted = true
+        const value = JSON.parse(context.files.get(primaryPath)!.toString())
+        context.files.set(primaryPath, Buffer.from(JSON.stringify({ ...value, futureState: 'changed-after-write' })))
+      }
+    }
+    await expect(context.remove()).resolves.toMatchObject({ status: 'write-failed' })
+    expect(corrupted).toBe(true)
+    expect(context.files.get(primaryPath)).toEqual(context.originalPrimary)
+    expect(context.files.get(backupPath)).toEqual(context.originalBackup)
+    expect(context.files.size).toBe(2)
+  })
+})
+
+describe('native registry diagnostic consumer integration', () => {
+  const privateValue = 'private-registry-diagnostic-sentinel'
+  const request = { includeQuota: false, includeConfig: false, includeThreads: true }
+  const providers = { codex: true, claude: false, cursor: false, orca: false }
+  const diagnostic = (field: string) => ({ stage: 'local-state', field, source: 'backup', category: 'invalid-data' })
+  const coldEvents = (context: ReturnType<typeof loadCodexBridge>) => context.diagnosticEvents.filter((entry: any) => entry.event === 'cold-preflight-v7')
+
+  function failedRegistry(candidate: string, backupField: string) {
+    return JSON.stringify({
+      ...JSON.parse(nativeRegistryText()),
+      [candidate.endsWith('.bak') ? backupField : 'pinned-project-ids']: { privateValue }
+    })
+  }
+
+  it.each([
+    { fields: ['pinned-project-ids'] },
+    { fields: ['pinned-thread-ids'] },
+    { fields: ['pinned-project-ids', 'pinned-thread-ids'] }
+  ])('keeps the full snapshot inventory when primary pin fields $fields are absent', async ({ fields }) => {
+    const value = JSON.parse(nativeRegistryText())
+    for (const field of fields) delete value[field]
+    const primary = JSON.stringify(value)
+    const context = loadCodexBridge(new FakeCodexProcess(), (candidate) => candidate.endsWith('.bak') ? nativeRegistryText() : primary)
+    try {
+      const result = await context.bridge.readSnapshot(request)
+      expect(result).toMatchObject({ ok: true, value: { completeness: 'verified', rawSourceCount: 5, eligibleSourceCount: 5 } })
+      expect(result.value.threads).toHaveLength(5)
+      expect(result.value.projects.find((project: any) => project.name === 'Test Project')).toMatchObject({
+        nativePinned: !fields.includes('pinned-project-ids')
+      })
+      expect(result.value.threads.filter((thread: any) => thread.nativePinned)).toHaveLength(fields.includes('pinned-thread-ids') ? 0 : 1)
+      expect(result.value.threads.every((thread: any) => thread.nativePinLane === 'mirror')).toBe(true)
+      expect(result.value.sourceFingerprint).toBe(context.native.parseCodexNativeRegistryText(primary).fingerprint)
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it.each(['pinned-project-ids', 'pinned-thread-ids'])('reports the backup %s failure on the public snapshot error', async (field) => {
+    const context = loadCodexBridge(new FakeCodexProcess(), (candidate) => failedRegistry(candidate, field))
+    try {
+      const result = await context.bridge.readSnapshot(request)
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'protocol-error', message: 'Codex 本地状态读取或解析失败', diagnostic: diagnostic(field) }
+      })
+      expect(JSON.stringify(result)).not.toContain(privateValue)
+      expect(JSON.stringify(context.diagnosticEvents)).not.toContain(privateValue)
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it.each(['pinned-project-ids', 'pinned-thread-ids'])('keeps a failed %s provider unavailable and unprojected at generation zero', async (field) => {
+    const context = loadCodexBridge(new FakeCodexProcess(), (candidate) => failedRegistry(candidate, field))
+    try {
+      const draft = await context.native.preflightTaskPackageV7({ providers })
+      expect(draft.providerHealth.codex).toEqual({ status: 'unavailable', generation: 0, errorCode: 'codex-task-preflight-failed' })
+      expect(draft.sourceGenerations.codex).toBe(0)
+      expect(Object.values(draft.sourceLaneGenerations.codex).every((generation) => generation === 0)).toBe(true)
+      expect(draft.evidenceBatches.codex.nodes).toEqual([])
+      expect(coldEvents(context)).toHaveLength(1)
+      expect(coldEvents(context)[0]).toMatchObject({
+        outcome: 'failed', count: 0,
+        details: { providerResults: { codex: {
+          health: 'unavailable', projection: 'not-run', empty: 'not-evaluated', diagnostic: diagnostic(field)
+        } } }
+      })
+      expect(JSON.stringify(context.diagnosticEvents)).not.toContain(privateValue)
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it('distinguishes a healthy projected empty inventory from an unavailable provider', async () => {
+    const child = new FakeCodexProcess()
+    for (const threadId of FIXED_THREAD_IDS) child.omittedIds.add(threadId)
+    const value = JSON.parse(nativeRegistryText())
+    delete value['pinned-project-ids']
+    delete value['pinned-thread-ids']
+    const context = loadCodexBridge(child, () => JSON.stringify(value))
+    try {
+      const draft = await context.native.preflightTaskPackageV7({ providers })
+      expect(draft.providerHealth.codex).toMatchObject({ status: 'ready', generation: expect.any(Number), errorCode: '' })
+      expect(draft.providerHealth.codex.generation).toBeGreaterThan(0)
+      expect(draft.sourceGenerations.codex).toBeGreaterThan(0)
+      expect(draft.evidenceBatches.codex.nodes).toEqual([])
+      expect(coldEvents(context)).toHaveLength(1)
+      expect(coldEvents(context)[0]).toMatchObject({
+        outcome: 'accepted', count: 0,
+        details: { providerResults: { codex: { health: 'ready', projection: 'completed', empty: 'healthy-empty' } } }
+      })
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it('logs projection failure and preserves the last accepted Kernel package', async () => {
+    const context = loadCodexBridge(new FakeCodexProcess())
+    let previous: ((...args: any[]) => any) | undefined
+    try {
+      const snapshot = await context.bridge.readSnapshot(request)
+      expect(snapshot.ok).toBe(true)
+      seedSingleCodexKernelTask(context, snapshot, snapshot.value.threads[0])
+      const kernel = context.platform.companionKernel
+      const before = kernel.getPackage()
+      expect(before.tasks.length).toBeGreaterThan(0)
+      previous = context.native.replaceCodexEvidence(() => { throw new Error(privateValue) })
+      await expect(context.native.preflightTaskPackageV7({ providers })).rejects.toThrow(privateValue)
+      expect(kernel.getPackage()).toBe(before)
+      expect(kernel.getPackage().packageRevision).toBe(before.packageRevision)
+      const failed = coldEvents(context).at(-1)
+      expect(failed).toMatchObject({
+        outcome: 'failed',
+        details: {
+          diagnostic: { stage: 'task-projection', category: 'projection-failed' },
+          providerResults: { codex: { health: 'ready', projection: 'failed', empty: 'not-evaluated' } }
+        }
+      })
+      expect(JSON.stringify(context.diagnosticEvents)).not.toContain(privateValue)
+    } finally {
+      if (previous) context.native.replaceCodexEvidence(previous)
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it('identifies an app-server request failure independently of local-state parsing', async () => {
+    const context = loadCodexBridge(new FakeCodexProcess(true))
+    try {
+      await expect(context.bridge.readSnapshot(request)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'protocol-error', diagnostic: { stage: 'app-server', category: 'request-failed' } }
+      })
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+})
+
+describe('Codex fallback live sequence bridge', () => {
+  async function fallbackContext() {
+    const context = loadCodexBridge(new FakeCodexProcess())
+    const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const project = context.native.replaceCodexEvidence(() => { throw new Error('unused test replacement') })
+    context.native.replaceCodexEvidence(project)
+    const task = {
+      ...snapshot.value.threads[0], key: 'ed'.repeat(16), status: 'active',
+      activeFlags: ['waitingOnUserInput'], statusAuthority: 'app-server-live', activityEvidence: 'activity-event',
+      lastTurnStatus: 'inProgress', lastTurnStartedAt: 1_790_000_000_000, lastTurnCompletedAt: undefined,
+      activeEvidenceSequence: context.native.nextLiveEvidenceSequence(),
+      waitingSince: 1_790_000_001_000, activityRevision: 1_790_000_002_000
+    }
+    seedSingleCodexKernelTask(context, snapshot, task)
+    let generation = Number(context.platform.companionKernel.getPackage().sourceLaneGenerations.codex.activity) + 1
+    const publish = (entries: any[], extra: Record<string, any> = {}) => context.native.applyCodexActivityToCompanionKernel({
+      generation: generation++, receivedAt: 1_790_000_003_000, inventoryChanged: false, entries, ...extra
+    })
+    const current = () => context.platform.companionKernel.getPackage().tasks.find((value: any) => value.key === task.key)
+    const openCount = () => context.platform.companionKernel.diagnostics().openInteractionCount
+    return { context, task, project, publish, current, openCount }
+  }
+
+  it('uses a stable live-counter interaction when poll timestamps advance', async () => {
+    const { context, task, project } = await fallbackContext()
+    try {
+      const first = project(task)
+      const repeated = project({ ...task, activityRevision: task.activityRevision + 1_000 })
+      expect(first.interactions).toHaveLength(1)
+      expect(first.interactions[0].sequence).toBeLessThan(1_000_000)
+      expect(first.interactions[0].requestSetRevision).toBe(first.interactions[0].sequence)
+      expect(repeated.interactions).toEqual(first.interactions)
+      expect(repeated.maxima.interaction).toBe(first.interactions[0].sequence)
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it('reproduces the legacy millisecond wait surviving a low-counter complete native set', async () => {
+    const { context, task, publish, current, openCount } = await fallbackContext()
+    try {
+      const observation = context.native.codexObservationForThread(task)
+      const legacy = context.native.syntheticInteractionBundle({
+        provider: 'codex', taskKey: task.key, branchRef: 'root', kind: observation.interactionKind,
+        sequence: observation.interactionSequence, turnEpoch: observation.turnStartedAt,
+        requestSetRevision: observation.interactionSequence, exact: true, complete: false
+      })
+      expect(legacy.interactions[0].sequence).toBeGreaterThanOrEqual(task.waitingSince)
+      publish([], legacy)
+      expect(current().phase).toBe('waiting-input')
+      const revision = context.native.nextLiveEvidenceSequence()
+      publish([], { interactionSets: [{
+        revision: 'companion-interaction-evidence-v1', provider: 'codex',
+        taskKey: task.key, requestSetRevision: revision, complete: true
+      }] })
+      expect(revision).toBeLessThan(legacy.interactions[0].sequence)
+      expect(current().phase).toBe('waiting-input')
+      expect(openCount()).toBe(1)
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it('lets a complete low-counter native empty set close fallback waiting in Kernel', async () => {
+    const { context, task, publish, current, openCount } = await fallbackContext()
+    try {
+      expect(publish([task])).toBe(true)
+      expect(current().phase).toBe('waiting-input')
+      expect(openCount()).toBe(1)
+      const revision = context.native.nextLiveEvidenceSequence()
+      expect(revision).toBeLessThan(task.waitingSince)
+      expect(publish([], { interactionSets: [{
+        revision: 'companion-interaction-evidence-v1', provider: 'codex',
+        taskKey: task.key, requestSetRevision: revision, complete: true
+      }] })).toBe(true)
+      expect(openCount()).toBe(0)
+      expect(current().phase).not.toBe('waiting-input')
+      publish([task])
+      expect(openCount()).toBe(0)
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it('retains unknown waiting until an exact newer running event closes it', async () => {
+    const { context, task, publish, current, openCount } = await fallbackContext()
+    try {
+      publish([task])
+      expect(current().phase).toBe('waiting-input')
+      expect(openCount()).toBe(1)
+      publish([{ ...task, status: 'notLoaded', activeFlags: [], activeEvidenceSequence: 0, activityRevision: 0,
+        lastTurnStatus: undefined, activityEvidence: 'initial-snapshot', statusAuthority: 'connector' }])
+      expect(current().phase).toBe('waiting-input')
+      expect(openCount()).toBe(1)
+      publish([{ ...task, activeFlags: [], activeEvidenceSequence: 0, activityRevision: task.activityRevision + 500 }])
+      expect(current().phase).toBe('waiting-input')
+      expect(openCount()).toBe(1)
+      publish([{ ...task, activeFlags: [], activeEvidenceSequence: context.native.nextLiveEvidenceSequence(),
+        waitingSince: undefined, activityRevision: task.activityRevision + 1_000 }])
+      expect(current().phase).toBe('running')
+      expect(openCount()).toBe(0)
+    } finally {
+      context.triggerPluginOut(true)
+    }
   })
 })
 
