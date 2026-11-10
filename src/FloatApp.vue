@@ -87,8 +87,8 @@ import type { RuntimeIdentityHandshakeV1 } from './platform/eypcPlatform'
 
 type RenderRow =
   | { kind: 'section'; key: string; section: CodexProjectSection }
-  | { kind: 'hidden-project-section'; key: string; title: string }
-  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'pinned' | 'input' | 'active' | 'unknown' | 'stopped' | 'unread' | 'completed'; collapsible?: boolean; collapsed?: boolean }
+  | { kind: 'hidden-project-section'; key: string; groupKey?: string; title: string; collapsible?: boolean; collapsed?: boolean }
+  | { kind: 'status-section'; key: string; groupKey?: string; title: string; count: number; tone: 'pinned' | 'input' | 'active' | 'unknown' | 'stopped' | 'unread' | 'completed'; collapsible?: boolean; collapsed?: boolean }
   | { kind: 'project'; key: string; project: CodexProjectCard; marker: CompanionProjectMarker; sectionId: string; hiddenProject?: boolean }
   | { kind: 'task'; key: string; task: CodexTaskCard; marker: CompanionRowMarker; sectionId?: string; parentProjectKey?: string; nested?: boolean }
   | { kind: 'empty-project'; key: string; projectKey: string }
@@ -152,7 +152,8 @@ const taskScroll = ref<HTMLElement | null>(null)
 const selectedKeys = ref<Set<string>>(new Set())
 const focusedKey = ref('')
 const rangeAnchorKey = ref('')
-const pinnedGroupCollapsed = ref(false)
+const COLLAPSIBLE_DYNAMIC_STATUS_GROUPS = new Set(['pinned', 'active', 'stopped', 'completed'])
+const collapsedStatusGroups = ref<Record<string, true>>({})
 /** 快速筛选模式：动态列表编号可见，`Ctrl+1…0` 直接打开对应任务。 */
 const quickMode = ref(false)
 const batchPlacement = ref<'top' | 'bottom'>('bottom')
@@ -549,8 +550,18 @@ function displayPinnedTasks(tasks: CodexTaskCard[]) {
   ))
 }
 
-function togglePinnedGroup() {
-  pinnedGroupCollapsed.value = !pinnedGroupCollapsed.value
+function toggleStatusGroup(groupKey: string) {
+  const next = { ...collapsedStatusGroups.value }
+  if (next[groupKey]) delete next[groupKey]
+  else next[groupKey] = true
+  collapsedStatusGroups.value = next
+}
+
+function expandStatusGroup(groupKey: string) {
+  if (!collapsedStatusGroups.value[groupKey]) return
+  const next = { ...collapsedStatusGroups.value }
+  delete next[groupKey]
+  collapsedStatusGroups.value = next
 }
 
 const renderRows = computed<RenderRow[]>(() => {
@@ -609,10 +620,10 @@ const renderRows = computed<RenderRow[]>(() => {
         ? orderCodexAttentionTasks(matched)
         : displayOrderedTasks(matched)
       if (!tasks.length) return []
-      const collapsible = group.key === 'pinned'
-      const collapsed = collapsible && pinnedGroupCollapsed.value
+      const collapsible = COLLAPSIBLE_DYNAMIC_STATUS_GROUPS.has(group.key)
+      const collapsed = collapsible && collapsedStatusGroups.value[group.key] === true
       return [
-        { kind: 'status-section', key: `status:${group.key}`, title: group.title, count: tasks.length, tone: group.tone, collapsible, collapsed },
+        { kind: 'status-section', key: `status:${group.key}`, groupKey: group.key, title: group.title, count: tasks.length, tone: group.tone, collapsible, collapsed },
         ...(collapsed ? [] : tasks.map((task) => addTaskRow(task)))
       ]
     })
@@ -674,14 +685,34 @@ const renderRows = computed<RenderRow[]>(() => {
       }
     }
     if (sectionRows.length) {
-      rows.push({ kind: 'status-section', key: `section:${section.id}`, title: section.title, count: sectionRows.length, tone: 'active' })
-      rows.push(...sectionRows)
+      const groupKey = `project-section:${section.id}`
+      const collapsed = !searchQuery && collapsedStatusGroups.value[groupKey] === true
+      rows.push({
+        kind: 'status-section',
+        key: `section:${section.id}`,
+        groupKey,
+        title: section.title,
+        count: sectionRows.length,
+        tone: section.id === 'pinned' ? 'pinned' : 'active',
+        collapsible: true,
+        collapsed
+      })
+      if (!collapsed) rows.push(...sectionRows)
     }
   }
 
   if (value.hiddenProjects.length) {
-    rows.push({ kind: 'hidden-project-section', key: 'hidden-projects', title: '已隐藏项目' })
-    const hiddenProjects = value.hiddenProjects
+    const hiddenGroupKey = 'project-section:hidden-projects'
+    const hiddenCollapsed = !searchQuery && collapsedStatusGroups.value[hiddenGroupKey] === true
+    rows.push({
+      kind: 'hidden-project-section',
+      key: 'hidden-projects',
+      groupKey: hiddenGroupKey,
+      title: '已隐藏项目',
+      collapsible: true,
+      collapsed: hiddenCollapsed
+    })
+    const hiddenProjects = (hiddenCollapsed ? [] : value.hiddenProjects)
       .filter((project) => projectMatchesProvider(project))
       .map((project) => ({
         ...project,
@@ -703,10 +734,32 @@ const focusItems = computed<FocusItem[]>(() => renderRows.value.filter((row): ro
 const focusedItem = computed(() => focusItems.value.find((item) => item.key === focusedKey.value) || null)
 
 const QUICK_INDEX_LIMIT = 10
-/** 编号落在可执行的可见项上；折叠置顶只占一个“展开”编号。 */
+/** 编号落在可执行的可见项上；折叠的状态分组只占一个“展开”编号。 */
+const projectSectionGroupKeys = computed(() => renderRows.value.flatMap((row) => {
+  if ((row.kind === 'status-section' || row.kind === 'hidden-project-section') && row.groupKey?.startsWith('project-section:')) return [row.groupKey]
+  return []
+}))
+const projectSectionsAllCollapsed = computed(() => {
+  const keys = projectSectionGroupKeys.value
+  return keys.length > 0 && keys.every((key) => collapsedStatusGroups.value[key] === true)
+})
+
+function toggleAllProjectSections() {
+  const keys = projectSectionGroupKeys.value
+  if (!keys.length) return
+  const collapse = !projectSectionsAllCollapsed.value
+  const next = { ...collapsedStatusGroups.value }
+  for (const key of keys) {
+    if (collapse) next[key] = true
+    else delete next[key]
+  }
+  collapsedStatusGroups.value = next
+}
+
 const quickIndexRows = computed(() => renderRows.value
-  .filter((row): row is Extract<RenderRow, { kind: 'task' | 'status-section' }> => (
-    row.kind === 'task' || row.kind === 'status-section' && row.collapsible === true && row.collapsed === true
+  .filter((row): row is Extract<RenderRow, { kind: 'task' | 'status-section' | 'hidden-project-section' }> => (
+    row.kind === 'task'
+    || (row.kind === 'status-section' || row.kind === 'hidden-project-section') && row.collapsible === true && row.collapsed === true
   ))
   .slice(0, QUICK_INDEX_LIMIT))
 // 编号常驻：`Alt+数字` 在展开卡片里始终可用，所以徽标不能只在筛选模式出现，
@@ -1483,7 +1536,12 @@ function cancelWaterCollapseWait() {
 }
 
 function requestExpansion(nextExpanded: boolean) {
-  if (floatState.value.resizing || resize || drag || floatState.value.dragging) return
+  const blocked = Boolean(floatState.value.resizing || resize || drag || floatState.value.dragging)
+  window.eypcFloat?.observeInteraction?.('expansion-intent', {
+    blocked, nextExpanded, expanded: expanded.value, hostExpanded: floatState.value.expanded,
+    reason: floatState.value.resizing || resize ? 'resizing' : drag || floatState.value.dragging ? 'dragging' : 'ready'
+  })
+  if (blocked) return
   if (collapseTimer) clearTimeout(collapseTimer)
   cancelWaterCollapseWait()
   desiredExpanded = nextExpanded
@@ -2227,8 +2285,8 @@ function exitQuickMode() {
 function openQuickIndex(index: number) {
   const row = quickIndexRows.value[index - 1]
   if (!row) return
-  if (row.kind === 'status-section') {
-    pinnedGroupCollapsed.value = false
+  if (row.kind === 'status-section' || row.kind === 'hidden-project-section') {
+    if (row.groupKey) expandStatusGroup(row.groupKey)
     return
   }
   focusedKey.value = row.key
@@ -2977,10 +3035,16 @@ function onMouseEnter() {
 }
 
 function onCompactSurfacePointer(event: PointerEvent) {
-  if (event.pointerType === 'touch' || desiredExpanded || expanded.value || drag || resize) return
   const surface = event.currentTarget as HTMLElement | null
-  if (!surface) return
-  if (isCompactExpansionZone(event, surface)) requestExpansion(true)
+  const upperZone = Boolean(surface && isCompactExpansionZone(event, surface))
+  const reason = event.pointerType === 'touch' ? 'touch'
+    : drag ? 'dragging' : resize ? 'resizing'
+      : expanded.value ? 'renderer-expanded' : floatState.value.expanded ? 'host-expanded'
+        : !surface ? 'missing-surface' : !upperZone ? 'outside-zone' : 'ready'
+  window.eypcFloat?.observeInteraction?.('compact-hover', {
+    blocked: reason !== 'ready', reason, upperZone, expanded: expanded.value, hostExpanded: floatState.value.expanded
+  })
+  if (reason === 'ready') requestExpansion(true)
 }
 
 function scheduleCollapse() {
@@ -2992,6 +3056,7 @@ function scheduleCollapse() {
 }
 
 function onMouseLeave() {
+  window.eypcFloat?.observeInteraction?.('hover-leave', { expanded: expanded.value, hostExpanded: floatState.value.expanded })
   clearRailHover()
   if (!drag && !floatState.value.dragging) suppressRailHover = false
   hoverInside = false
@@ -3559,6 +3624,14 @@ onUnmounted(() => {
           @keydown="onProjectFilterKeydown($event, index)"
         >{{ filter.label }}</button>
         <span aria-live="polite">{{ projectCount }} 项目 · {{ projectTaskCount }} 任务</span>
+        <button
+          type="button"
+          class="project-collapse-all"
+          :aria-pressed="projectSectionsAllCollapsed"
+          :disabled="projectSectionGroupKeys.length === 0"
+          :aria-label="projectSectionsAllCollapsed ? '展开全部项目分组' : '折叠全部项目分组'"
+          @click="toggleAllProjectSections"
+        >{{ projectSectionsAllCollapsed ? '全部展开' : '全部折叠' }}</button>
       </div>
 
       <div v-if="!edgeStyle" class="float-drag-handle" aria-hidden="true" />
@@ -3682,7 +3755,24 @@ onUnmounted(() => {
           >
           <template v-for="row in renderRows" :key="row.key">
             <h2 v-if="row.kind === 'section'" class="float-project-section">{{ row.section.title }}</h2>
-            <h2 v-else-if="row.kind === 'hidden-project-section'" class="float-project-section hidden-project-section">{{ row.title }}</h2>
+            <h2 v-else-if="row.kind === 'hidden-project-section'" class="float-project-section hidden-project-section" :class="{ collapsible: row.collapsible, collapsed: row.collapsed }">
+              <button
+                v-if="row.collapsible"
+                type="button"
+                class="status-section-toggle"
+                :aria-expanded="!row.collapsed"
+                :aria-label="`${row.collapsed ? '展开' : '折叠'}${row.title}${quickIndexHint(row.key, '展开')}`"
+                data-quick-jump-target
+                :data-quick-jump-label="`${row.collapsed ? '展开' : '折叠'}${row.title}`"
+                @click="row.groupKey && toggleStatusGroup(row.groupKey)"
+              >
+                <ChevronRight v-if="row.collapsed" :size="13" aria-hidden="true" />
+                <ChevronDown v-else :size="13" aria-hidden="true" />
+                <span v-if="quickIndexDigit(row.key)" class="status-quick-index" aria-hidden="true">{{ quickIndexDigit(row.key) }}</span>
+                <span>{{ row.title }}</span>
+              </button>
+              <template v-else>{{ row.title }}</template>
+            </h2>
             <h2 v-else-if="row.kind === 'status-section'" class="float-status-section" :class="[row.tone, { collapsible: row.collapsible, collapsed: row.collapsed }]">
               <button
                 v-if="row.collapsible"
@@ -3692,7 +3782,7 @@ onUnmounted(() => {
                 :aria-label="`${row.collapsed ? '展开' : '折叠'}${row.title}，${row.count} 项${quickIndexHint(row.key, '展开')}`"
                 data-quick-jump-target
                 :data-quick-jump-label="`${row.collapsed ? '展开' : '折叠'}${row.title}`"
-                @click="togglePinnedGroup"
+                @click="row.groupKey && toggleStatusGroup(row.groupKey)"
               >
                 <ChevronRight v-if="row.collapsed" :size="13" aria-hidden="true" />
                 <ChevronDown v-else :size="13" aria-hidden="true" />

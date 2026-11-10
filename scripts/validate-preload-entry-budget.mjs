@@ -202,7 +202,7 @@ const BUDGET = Object.freeze({
   // 2026-11-06: +11 snapshot witness wiring lines; policy stays in the activity owner.
   // 2026-11-06: +53 lines for isolated continue-task dependency wiring and
   // post-resume Plan identity/activity revalidation; continuation policy stays in its module.
-  lines: 14818,
+  lines: 14797,
   // Top-level `function` declarations whose name contains `odex` (case-sensitive
   // infix match, not a prefix: same-domain functions are commonly named by verb
   // first -- `activateCodexFloat`, `installCodexFloatIpc` -- and a prefix filter
@@ -220,7 +220,7 @@ const BUDGET = Object.freeze({
   // provider order, inventory disposer.
   // 2026-10-02: +1 for codexChatgptProjectIndex.
   // One cached continue executor; per-target locks remain module-owned.
-  mutableBindings: 163
+  mutableBindings: 160
 })
 
 const root = resolve(import.meta.dirname, '..')

@@ -1,5 +1,11 @@
 # EyPc Project Status Hub
 
+- 2026-11-09 20:03:25 Windows 内置采证候选：根据本机回传确认 CLI／Node 可运行但外部日志／窗口读取受限，补关键模块加载状态、按来源的候选未命中计数及当次失败计划快照；Windows 水球收起改为只请求重绘，不切换原生透明度、不在重绘回调写位置。调试日志限前12次几何变化，对屏幕窗口区域、页面、再次屏幕区域采集像素摘要，不保存截图；权限／能力缺失和超时单独记录。118项不同定向检查、类型／合同／生产构建和源／包校验通过，入口14797行／279函数／160绑定并收紧预算，镜像98组已跟踪及2组新增通过。EyPc V7 / host-a042aee90a2444e80c74 / renderer-097465087482145ac72b；取代16:50候选，未安装或重载，Windows现场因果与验收仍待新日志。[续修、依据与验证](260915/float-edge-rail/windows-diagnostics-review.md#L1)。
+
+- 2026-11-09 16:50:16 Windows 诊断复核候选：补齐悬停／展开意图、重复与被忽略请求、请求和窗口关联、面板视口／透明度与原生呈现状态；Codex 诊断拆入模块，入口降为14808行并收紧预算，补有限错误名及日志落盘验证。87项相关检查、类型／合同／生产构建和源／包校验通过，99组源码／public／dist一致。EyPc V7 / host-bfbcd1b6df99ec196a64 / renderer-8abf1a07c6692593a16d；取代16:37候选供下一次Windows复现，根因与实机验收仍待回传日志。[复核与验证](260915/float-edge-rail/windows-diagnostics-review.md#L1)。
+
+- 2026-11-09 16:37:56 Windows 排障候选：用户日志确认加载 host-3a5c454625e601751199，但二次悬浮坐标与渲染状态缺记录；Codex 清单读取两次失败，原日志缺失败分类。已补窗口几何和渲染观察、Codex 错误阶段与有限分类；悬浮桥接48项、定向4项及构建通过。新产物 EyPc V7 / host-364d6e99c6ab3d9da6e1 / renderer-9670d6f3dbb48d93d23e，待 Windows 加载并回传复现日志，两个问题根因和验收仍未闭合。[定位与诊断边界](../knowledge/ARCHITECTURE.md#float-placement-boundary)。
+
 - 2026-11-06 15:59:04候选：修复动态页搜索提示误用总体30天/总库存数量，补动态配置到Float快照；待继续豁免动态窗、循环一致。默认一周但保留当前72小时，总体30天独立配置。整合17项定向、类型/合同/隔离build与核心门禁通过。host-b6175cbd81243ace4b9e / renderer-cd33fd9d59935efe0aa6，EyPc V7 / 0.1.0；dist已准备，未实机验收；提交与远端以本次 Git 回读为准。[任务及验证](261106/task-state-recovery/task-card.md#L1) · [明确需求](requirements/task-recovery-visibility-raw-002.md#L1)。
 
 - 2026-11-06 15:39:58已确认实际加载15:24:45候选。AG两条内部stopped但活动锚点10月29日，超过实测72小时窗口；未隐藏/暂停、未置顶，最终dynamicGroup=none，缺席原因已闭合。未更改窗口规则或恢复业务任务；按钮实点运行仍待验收。[重启核验](261106/task-state-recovery/stopped-evidence-audit.md#L1)。

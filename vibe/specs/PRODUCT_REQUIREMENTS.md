@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 69 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-b6175cbd81243ace4b9e / renderer-cd33fd9d59935efe0aa6` · `artifact-ready` |
-| 当前构建时间 | `2026/11/06 15:59:04`（`2026-11-06T07:59:04.440Z`） |
+| 当前构建产物 | `host-a042aee90a2444e80c74 / renderer-097465087482145ac72b` · `artifact-ready` |
+| 当前构建时间 | `2026/11/09 20:03:25`（`2026-11-09T12:03:25.371Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-b6175cbd81243ace4b9e",
-    "renderer_asset": "renderer-cd33fd9d59935efe0aa6",
+    "host_asset": "host-a042aee90a2444e80c74",
+    "renderer_asset": "renderer-097465087482145ac72b",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-11-06T07:59:04.440Z",
-    "built_at_local": "2026/11/06 15:59:04",
+    "built_at": "2026-11-09T12:03:25.371Z",
+    "built_at_local": "2026/11/09 20:03:25",
     "package_version": "0.1.0"
   },
   "content_digests": {
     "requirement_registry": "2ed75066c106ef09f91d257809186e84951db82d5710c0745357154c0b17a135",
     "raw_sources": "9a6b29a1df6ae11121bf539d711461c794c27414f0280408d491f081eb0aaf33",
     "source_anchor_catalog": "8b1d197a1bfad8ab592525686a38e074a479d1dc42c1933d8febc6bd4f6f5539",
-    "product_body": "4c8a6bf4887f40ea57885831a886a2c47728e219f9123c3ceccc03577f9654fd",
-    "architecture": "2ed770a10310e3a41b3b7cc315b966b961a2178a7a8b7263594eb9b5cecf51b5",
-    "runtime_contract": "425a98690660cbef829cc02105c358a51ffdd2b1272390caeee42f8654a45959"
+    "product_body": "ded3948276c04f5fef38252d401a6f40110619a8b5df88f40b9b6be65aa526fa",
+    "architecture": "305404fbaf79d6f54a092259383fa3f487b0259c46202c1240a5ac0401980bbc",
+    "runtime_contract": "d7061e3da0ce4919f60bd4a1de21fa3965492e5ed0d60aeeb2dd45d69da27c14"
   }
 }
 ```
@@ -251,7 +251,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - RAW-160 requires the current Claude `session.phase` evidence to outrank `previous.phase` whenever its causal event is newer；a delayed older inventory generation cannot regress a newer watcher/open-refresh event，and a membership mutation must not advance activity/interaction/unread lane generations。App state 固定语法按行式匹配，App 版本号不得作为准入白名单（RAW-211）；日志冷重放的普通 running/waiting 不得推导 live activity。phase、phaseRevision、statusEnteredAt、unread and capabilities are accepted atomically through the same State Store。D′ archive success text is exactly split into EyPc convergence and native-sidebar capability：EyPc 已归档并移除；Claude 原生侧栏同步未确认，当前不受支持。Occasional native sidebar refresh is observation only，never a supported postcondition。
 - Claude 与其它 Provider 的任务状态由 Host evidence 自动进入同一 Kernel；产品不提供来源专用“同步任务状态”动作，成功打开也不触发 Renderer 侧第二次状态归约。来源专用入口只可读取 quota、environment 或展示 metadata，不能拥有 phase、unread、Plan、count 或 jump 语义。
 - 本地置顶的语义是「暂存待查」：图钉留在行上。进行中、待输入、待继续、已完成未读优先显示在对应状态分组；只有已完成已读和 `unknown` 停在动态列表最顶部的置顶分组。RAW-205 起 Provider 原生置顶（Codex Desktop Pinned 分区、CodexHost 额外进程 Host `pinned`、Claude App `isStarred`、Cursor workspace `cursor/pinnedComposers`）以 Kernel `providerPin` 进入同一谓词（`localPin || providerPin`），共享时间窗豁免、角标与入口不变式；置顶分组内 EyPc 本地置顶按本地顺序在前，Provider 置顶按 Provider 顺序在后。一条任务恰好出现在一个动态分组。**活动时间窗对任何相位的本地置顶任务一律不适用**，窗口只淘汰未置顶工作。显示位置不改变状态权威：置顶的待输入、进行中、待继续、已完成未读仍按真实相位参与角标计数、「上一个/下一个」与专用入口；已完成已读和 `unknown` 本就没有状态入口，只由「已完成未读」专用入口在真实未读为空时按持久化置顶顺序独占兜底。由此确立两条不变式：**凡进入 `cycleKeys` 的任务必须在某个动态分组可见**，且**每个任务恰好出现在一个动态分组**。置顶项访问进度使用固定身份，不挂在成员聚合会重算的生命周期时间戳；metadata-only 重排只改变状态候选顺序，置顶分组与兜底始终复用持久化本地置顶顺序。取消置顶后任务恢复按真实状态分组，并按该状态的活动时间窗规则处理；待继续沿用2026-11-06时间豁免。置顶分组是泊位而非角标，不新增状态计数。RAW-215 纠偏 RAW-185「凡置顶即进置顶分组」。
-- 动态「置顶」分组可在当前 Float 会话内折叠；该状态不持久化，也不改变项目页项目折叠。展开时标题不占快捷编号，当前可见可执行任务行按顺序取得 `Alt+1…9/0`；折叠时全部置顶任务行隐藏，标题只占一个编号并且唯一行为是展开，后续可见任务从下一号连续编号。展开后立即按新可见顺序重算编号，不为隐藏任务保留空号；`Alt+F` 继续只标记真实任务行。
+- 动态「置顶、正在进行中、待继续、已完成」分组可在当前 Float 会话内分别折叠；该状态不持久化，也不改变项目页项目折叠，待输入、状态未知和已完成未读仍不折叠。项目页 Pinned、Projects、已隐藏项目同样只在当前 Float 会话内折叠；「全部折叠 / 全部展开」只切换这些分组，不改写单个项目已持久化的折叠，搜索时临时展开以便看到结果。展开时标题不占快捷编号，当前可见可执行任务行按顺序取得 `Alt+1…9/0`；折叠时该组任务行隐藏，标题只占一个编号并且唯一行为是展开该组，后续可见任务从下一号连续编号。展开后立即按新可见顺序重算编号，不为隐藏任务保留空号；`Alt+F` 继续只标记真实任务行。
 - 「上一个/下一个」通用任务循环以 [RAW-222](requirements/shared-raw-222.md#L1) 为当前权威：每次只发布最高非空层，顺序为进行中 → 待输入/待确认（含当前 Plan interaction）→ 已完成未读＋待继续（含 artifact-only Plan）→ 已完成已读的本地/来源置顶。前层仍有合格项不进入后层，更高层重新出现立即优先。待继续只调整通用候选归类，实际 phase、unread、显示组与专用入口不变。所有层均排除 EyPc 隐藏、暂停、不可打开、子任务和关闭来源；保留活动窗及置顶豁免。普通已完成已读与 unknown 不入环，unknown 置顶仍可由既有专用入口兜底。层内跨来源按最近提问时间倒序，创建时间与匿名 key 稳定并列；Provider/置顶不改排序。一次连续 walk 的 `CYCLE_WALK_HOLD_MS` 只冻结幸存项次序，新合格项追加，失格项立即移除；未派发的失格循环请求取消，已派发原生操作无法撤回，迟到回执不得夺回失格游标。整层替换无共同成员时从新层边界开始；所有层为空提示无可切换任务。候选只来自进程 V7 Snapshot 的根任务 `cycleKeys`，子任务不参与；热且可信时直接派发，只有冷启动、重连或明确成员缺口才等待所需 Provider 的 tasks-only 盘点，不得从部分集合跳转。第一下立即派发；打开仍在执行时，后续每一次按键都在**逻辑游标**上继续推进，只有最后一个目标真正派发——N 次连按前进 N 格并落在最终尾随目标，而不是重复选中正在打开的那一条；若推进后回到正在打开的目标（例如环只有一条），则不再重复调用 Provider。逻辑游标只在本次 walk 的请求全部落定前有效，之后回到已确认游标。进程游标由任意一次确认打开的 `cycleKeys` 成员提交，不再为循环按键独占：卡片点击、快速跳转与 attention 入口都让位置移到用户当前所见任务；落在 `cycleKeys` 之外的打开不提交游标。游标所指任务因层变化离开循环时，按旧次序就近改锚到幸存邻居。待输入与已完成未读专用入口的独立未打开进度（`attentionSeen`）不受游标提交影响。
 - 每个任务行和项目行固定显示一个明显的文本化来源标记；即使只启用单一来源也不得省略，且图标与可访问名称必须同步表达来源。任务行可见标记为 `CC` / `CX` / `CS` / `OR`，Codex Host 额外进程为 `XH`；可访问名称仍为「归属 Claude / Codex / Cursor / Orca / Codex Host」。Claude 第二行项目名来自会话目录，Cursor 来自工作区文件夹；证据层必须把该名写入 Kernel，不得只显示来源平台。RAW-217 / RAW-218。
 - 所有打开由 `CompanionTaskCommandV1` 进入同一个 Command Gateway：Kernel 在命令所见 Snapshot 上解析原根任务，再由 Provider Adapter 执行 Codex 深链、Claude Epitaxy deep link、Cursor deeplink 或 Orca `terminal switch`。手动点击、Enter、角标、attention、快捷键和循环之间没有第二条效果通路；选择/打开不刷新或改写 phase，失败不清 unread。第一下循环立即派发；仅当打开仍在执行时，后续按键合并成一个最终 trailing 目标；全部 Provider 最大打开并发为 1。打开回执统一携带 `companion-open-handoff-v1`：当前外部链接最多证明 `requested/dispatched`，只有未来真实原生回执才能进入 `native-confirmed/applied`。打开前先经就绪层（`companion-open-readiness-v1`）：目标应用未运行时先启动（Codex 按「通过 CodexHost 打开 Codex」的有效模式决定经 `codexhost launch` 还是 `open -b`；Claude / Cursor 用 `open -b`；Orca 用 `orca open` 并等到 runtime `ready`），每 500 ms 轮询至进程出现（≤ 25 秒）并软等待就绪（≤ 8 秒）后才派发；超时或启动失败 fail-closed，不派发、不清 unread；探测未知时不启动。「跳转前确保目标应用已打开」默认开，关闭时回到只发深链。CodexHost 有效（`on`，或 `auto` 找到 codexhost 命令 / Host 描述符存活 / 当前 Desktop 环境带 CodexHost 启动变量）但找不到 codexhost 命令时拦下不启动；Claude 的在运行判定以 `pgrep -x Claude` 为准，不再要求辅助功能权限。RAW-202。

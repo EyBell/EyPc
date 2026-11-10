@@ -1062,7 +1062,7 @@ function loadCodexBridge(
   }
   if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology: codexInventoryThreadTopologyModule.codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, codexObservationForThread: (thread) => codexBranchObservationV7(companionCodexFallbackBranchV7(thread)), applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { requestCodexRpc, parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology: codexInventoryThreadTopologyModule.codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, codexObservationForThread: (thread) => codexBranchObservationV7(companionCodexFallbackBranchV7(thread)), applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
   const exposedPlatform = (sandbox.window as { eypcPlatform: Record<string, any> }).eypcPlatform
   if (!dbStorageHarness?.failWrites) handshakeTestRuntime(exposedPlatform)
   const internalKernel = vm.runInNewContext('companionTaskKernel', sandbox) as Record<string, any>
@@ -1086,6 +1086,7 @@ function loadCodexBridge(
     }).eypcPlatform.codex,
     native: (sandbox as unknown as {
       __codexNativeTest: {
+        requestCodexRpc(method: string, params: Record<string, unknown>): Promise<unknown>
         parseCodexNativeRegistryText(text: string): Record<string, any>
         readCodexNativeRegistry(): Record<string, any>
         codexThreadNativeProject(thread: Record<string, unknown>, registry: Record<string, any>): Record<string, any> | null
@@ -3244,6 +3245,14 @@ draft: v7EvidenceDraft({
     context.triggerPluginEnter({ code: 'eypc-main' })
     await vi.waitFor(() => expect(entryRefreshes()).toBeGreaterThan(refreshesBefore))
     stop()
+    context.triggerPluginOut(true)
+  })
+
+  it('classifies a failed thread inventory startup', async () => {
+    const context = loadCodexBridge(new FakeCodexProcess(true))
+    await expect(context.native.requestCodexRpc('thread/list', {})).rejects.toMatchObject({
+      code: 'protocol-error', diagnosticPhase: 'startup', rpcCode: -32000
+    })
     context.triggerPluginOut(true)
   })
 

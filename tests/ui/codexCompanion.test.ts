@@ -2324,6 +2324,25 @@ describe('Codex Companion V4 UI contract', () => {
 
 
 describe('full-width compact lower drag area', () => {
+  it('records compact hover gating and expansion intent without changing the gesture decision', async () => {
+    const source = floatSnapshot()
+    source.style = 'water'
+    const observeInteraction = vi.fn(() => true)
+    const { wrapper, setExpansion } = mountFloat(false, source, { observeInteraction })
+    await wrapper.vm.$nextTick()
+    const compact = wrapper.get('.float-compact')
+    vi.spyOn(compact.element, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 94, 94))
+    await compact.trigger('pointerenter', { pointerType: 'touch', clientX: 45, clientY: 10 })
+    expect(observeInteraction).toHaveBeenCalledWith('compact-hover', expect.objectContaining({ blocked: true, reason: 'touch' }))
+    expect(setExpansion).not.toHaveBeenCalled()
+    await compact.trigger('pointermove', { pointerType: 'mouse', clientX: 45, clientY: 40 })
+    expect(observeInteraction).toHaveBeenCalledWith('compact-hover', expect.objectContaining({ blocked: true, reason: 'outside-zone' }))
+    expect(setExpansion).not.toHaveBeenCalled()
+    await compact.trigger('pointermove', { pointerType: 'mouse', clientX: 45, clientY: 10 })
+    expect(observeInteraction).toHaveBeenCalledWith('expansion-intent', expect.objectContaining({ blocked: false, reason: 'ready', nextExpanded: true }))
+    expect(setExpansion).toHaveBeenCalledWith(true, false)
+  })
+
   it.each(['water', 'card', 'edge'] as const)('drags from %s bottom padding/corners without consulting circular button geometry', async (style) => {
     const source = floatSnapshot()
     source.style = style

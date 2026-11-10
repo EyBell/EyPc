@@ -283,7 +283,7 @@ function snapshot(overrides: Partial<FloatSnapshot> = {}): FloatSnapshot {
   }
 }
 
-function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Array<Record<string, any>> } = {}) {
+function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Array<Record<string, any>>; platform?: string; captureDiagnostics?: boolean } = {}) {
   const nativeBounds = (bounds: Rect): Rect => ({ ...bounds, y: Math.max(options.minimumY ?? -Infinity, bounds.y) })
   const leftoverWindows = options.leftoverWindows || []
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
@@ -292,6 +292,7 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
   const windowLoadedCallbacks: Array<() => void> = []
   const pluginOutListeners: Array<(isKill: boolean) => void> = []
   const pluginEnterListeners: Array<(action: { code?: string } | null) => void> = []
+  const diagnosticEvents: Array<Record<string, any>> = []
   const displays = [
     { id: 'left', workArea: { x: -1280, y: 0, width: 1280, height: 800 }, bounds: { x: -1280, y: 0, width: 1280, height: 800 } },
     { id: 'right', workArea: { x: 1920, y: -100, width: 1440, height: 900 }, bounds: { x: 1920, y: -100, width: 1440, height: 900 } }
@@ -313,7 +314,11 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
     hide: vi.fn(),
     focus: vi.fn(),
     showInactive: vi.fn(),
-    webContents: { send: vi.fn((channel: string, payload: unknown) => sent.push({ channel, payload })) }
+    setOpacity: undefined as ((value: number) => void) | undefined,
+    webContents: {
+      send: vi.fn((channel: string, payload: unknown) => sent.push({ channel, payload })),
+      invalidate: vi.fn()
+    }
   }
   const utools = {
     getAllDisplays: () => displays,
@@ -333,12 +338,15 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
     globalThis: null,
     console,
     Date,
-    process: { platform: 'darwin', env: {}, cwd: () => process.cwd() },
+    process: { platform: options.platform || 'darwin', env: {}, cwd: () => process.cwd() },
     setTimeout,
     clearTimeout,
     queueMicrotask,
     utools,
     require(name: string) {
+      if (name.endsWith('/diagnostics.cjs') && options.captureDiagnostics) return {
+        createRuntimeDiagnostics: () => ({ record: (event: Record<string, any>) => diagnosticEvents.push(event) })
+      }
       if (name === './companion/task-kernel.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'))
       if (name === 'node:buffer') return { Buffer }
       if (name === 'node:child_process') return { execFile, spawn }
@@ -392,6 +400,7 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
     ipcHandlers,
     displays,
     sent,
+    diagnosticEvents,
     floatWindow,
     windowLoadedCallbacks,
     bounds: () => floatBounds as Rect,
@@ -402,12 +411,19 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
   }
 }
 
-function loadFloatRendererPreloadHarness() {
+function loadFloatRendererPreloadHarness(platform = 'darwin', renderOptions: { x?: number; opacity?: string } = {}) {
   const preload = readFileSync(resolve(process.cwd(), 'preload/float.js'), 'utf8')
   const ipcHandlers = new Map<string, (...args: unknown[]) => void>()
   const sent: Array<{ channel: string; payload: Record<string, unknown> }> = []
   const sandbox: Record<string, any> = {
-    window: {},
+    window: { innerWidth: 360, innerHeight: 400 },
+    process: { platform },
+    document: {
+      querySelector: (selector: string) => selector === '.float-expanded-card'
+        ? { getBoundingClientRect: () => ({ x: renderOptions.x || 0, y: 0, width: 348, height: 388 }) }
+        : null
+    },
+    getComputedStyle: () => ({ display: 'flex', visibility: 'visible', opacity: renderOptions.opacity ?? '1' }),
     globalThis: null,
     Date,
     setTimeout,
@@ -440,6 +456,8 @@ function loadFloatRendererPreloadHarness() {
     bridge: bridge as {
       createThread(request: Record<string, unknown>): Promise<Record<string, unknown>>
       returnFocus(): boolean
+      setExpansion(expanded: boolean, pinned?: boolean): boolean
+      observeInteraction(event: string, details: Record<string, unknown>): boolean
       getHealth(): { heartbeatSequence: number; lastHeartbeatAckAt: number }
       getSnapshot(): Record<string, any> | null
       ackTaskSnapshot(stage: 'applied' | 'rejected', revision: number, reason?: string): boolean
@@ -1137,6 +1155,161 @@ describe('float movement and corner parking', () => {
   })
 })
 
+
+it('pins a free water drop to the same corner on the second hover', async () => {
+  const h = loadPreloadHarness()
+  const position = { version: 2, displayId: 'right', x: 3266, y: -100, edge: 'right' as const, placed: 'free' as const }
+  h.bridge.sync({ visible: true, snapshot: snapshot(), position })
+  const collapsed = { ...h.bounds() }
+  expect(collapsed).toMatchObject({ x: 3266, y: -100, width: 94, height: 94 })
+  setExpansion(h.ipcHandlers, true, false)
+  const opened = { ...h.bounds() }
+  expect(opened.x + opened.width).toBe(collapsed.x + collapsed.width)
+  expect(opened.y).toBe(collapsed.y)
+  expect(opened.width).toBeGreaterThan(collapsed.width)
+  expect(opened.height).toBeGreaterThan(collapsed.height)
+
+  h.floatWindow.setOpacity = (value: number) => {
+    if (value === 1) h.floatWindow.setBounds({ x: 1, y: 2, width: collapsed.width, height: collapsed.height })
+  }
+  setExpansion(h.ipcHandlers, false, false)
+  expect(h.bounds()).toEqual(collapsed)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  expect(h.bounds()).toEqual(collapsed)
+
+  const stripped = { version: 2, displayId: 'right', x: 3266, y: -100, edge: 'right' as const }
+  h.bridge.sync({ visible: true, snapshot: snapshot({ baseRevision: 2 }), position: stripped })
+  setExpansion(h.ipcHandlers, true, false)
+  expect(h.bounds()).toEqual(opened)
+  setExpansion(h.ipcHandlers, false, false)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  expect(h.bounds()).toEqual(collapsed)
+  h.bridge.close()
+})
+
+it('keeps Windows water in the per-pixel rendering path across repeated expansion', async () => {
+  vi.useFakeTimers()
+  const h = loadPreloadHarness({ platform: 'win32', captureDiagnostics: true })
+  const setOpacity = vi.fn()
+  h.floatWindow.setOpacity = setOpacity
+  h.bridge.sync({
+    visible: true, snapshot: snapshot(),
+    position: { version: 2, displayId: 'right', x: 3266, y: -100, edge: 'right', placed: 'free' }
+  })
+  const collapsed = { ...h.bounds() }
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    setExpansion(h.ipcHandlers, true, false)
+    expect(h.bounds().x + h.bounds().width).toBe(collapsed.x + collapsed.width)
+    expect(h.bounds().y).toBe(collapsed.y)
+    setExpansion(h.ipcHandlers, false, false)
+    await vi.advanceTimersByTimeAsync(60)
+    expect(h.bounds()).toEqual(collapsed)
+  }
+  expect(setOpacity).not.toHaveBeenCalled()
+  expect(h.floatWindow.webContents.invalidate).toHaveBeenCalledTimes(6)
+  expect(h.diagnosticEvents.filter((entry) => entry.event === 'backing-repaint')).toHaveLength(6)
+  h.bridge.close()
+})
+
+it('drops delayed Windows collapsed repaint when the next expansion has already begun', async () => {
+  vi.useFakeTimers()
+  const h = loadPreloadHarness({ platform: 'win32', captureDiagnostics: true })
+  h.bridge.sync({ visible: true, snapshot: snapshot(), position: {} })
+  setExpansion(h.ipcHandlers, true, false)
+  setExpansion(h.ipcHandlers, false, false)
+  setExpansion(h.ipcHandlers, true, false)
+  const expanded = { ...h.bounds() }
+  await vi.advanceTimersByTimeAsync(60)
+  expect(h.floatWindow.webContents.invalidate).not.toHaveBeenCalled()
+  expect(h.bounds()).toEqual(expanded)
+  h.bridge.close()
+})
+
+it('records Windows expansion bounds, settled bounds and renderer visibility without page content', async () => {
+  const h = loadPreloadHarness({ platform: 'win32', captureDiagnostics: true })
+  const position = { version: 2, displayId: 'right', x: 3266, y: -100, edge: 'right', placed: 'free' }
+  h.bridge.sync({ visible: true, snapshot: snapshot(), position })
+  setExpansion(h.ipcHandlers, true, false)
+  const expansion = h.diagnosticEvents.find((entry) => entry.event === 'expansion')
+  expect(expansion).toMatchObject({
+    scope: 'float-geometry', outcome: 'applied',
+    details: { sequence: 1, expanded: true, free: true, before: { x: 3266, y: -100 }, target: h.bounds(), actual: h.bounds() }
+  })
+  h.ipcHandlers.get('eypc-float:render-observed')?.({}, {
+    expanded: true, panelPresent: true, panelVisible: true, viewportWidth: 360, viewportHeight: 400, content: 'private'
+  })
+  expect(h.diagnosticEvents.find((entry) => entry.event === 'renderer-observed')?.details).toMatchObject({
+    expanded: true, panelPresent: true, panelVisible: true, viewportWidth: 360
+  })
+  expect(JSON.stringify(h.diagnosticEvents)).not.toContain('private')
+  await new Promise((resolve) => setTimeout(resolve, 180))
+  expect(h.diagnosticEvents.find((entry) => entry.event === 'expansion-settled')).toMatchObject({
+    outcome: 'matched', details: { sequence: 1, actual: h.bounds() }
+  })
+  h.bridge.close()
+})
+
+it('reports the rendered Windows panel after an expansion state change', async () => {
+  const h = loadFloatRendererPreloadHarness('win32')
+  h.ipcHandlers.get('eypc-float:state')?.({}, { expanded: true })
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  expect(h.sent).toContainEqual({
+    channel: 'eypc-float:render-observed',
+    payload: expect.objectContaining({
+      expanded: true, panelPresent: true, compactPresent: false, panelVisible: true,
+      viewportWidth: 360, viewportHeight: 400, panelWidth: 348, panelHeight: 388,
+      intersectsViewport: true, documentVisible: true, panelOpacity: 1
+    })
+  })
+})
+
+it.each([{ x: 500 }, { opacity: '0' }])('does not report a clipped or transparent Windows panel as visible: %j', async (renderOptions) => {
+  const h = loadFloatRendererPreloadHarness('win32', renderOptions)
+  h.ipcHandlers.get('eypc-float:state')?.({}, { expanded: true, expansionRequestId: 7, geometrySequence: 3, windowGeneration: 2 })
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  expect(h.sent.find((entry) => entry.channel === 'eypc-float:render-observed')?.payload).toMatchObject({
+    requestId: 7, geometrySequence: 3, windowGeneration: 2, panelPresent: true, panelVisible: false
+  })
+})
+
+it('records repeated Windows requests and interactions without flooding pointer frames', async () => {
+  const renderer = loadFloatRendererPreloadHarness('win32')
+  renderer.bridge.setExpansion(true)
+  renderer.bridge.setExpansion(true)
+  expect(renderer.sent.filter((entry) => entry.channel === 'eypc-float:expansion').map((entry) => entry.payload.requestId)).toEqual([1, 2])
+  const details = { blocked: true, reason: 'host-expanded', hostExpanded: true }
+  renderer.bridge.observeInteraction('compact-hover', details)
+  renderer.bridge.observeInteraction('compact-hover', details)
+  expect(renderer.sent.filter((entry) => entry.channel === 'eypc-float:interaction-observed')).toHaveLength(1)
+  renderer.bridge.observeInteraction('hover-leave', {})
+  renderer.bridge.observeInteraction('compact-hover', details)
+  expect(renderer.sent.filter((entry) => entry.channel === 'eypc-float:interaction-observed')).toHaveLength(3)
+  renderer.ipcHandlers.get('eypc-float:state')?.({}, { expanded: true, expansionRequestId: 1 })
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  renderer.ipcHandlers.get('eypc-float:state')?.({}, { expanded: true, expansionRequestId: 2 })
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  expect(renderer.sent.filter((entry) => entry.channel === 'eypc-float:render-observed').map((entry) => entry.payload.requestId)).toEqual([1, 2])
+})
+
+it('records ignored Windows expansion and native failures with their request ids', () => {
+  const h = loadPreloadHarness({ platform: 'win32', captureDiagnostics: true })
+  h.bridge.sync({ visible: true, snapshot: snapshot(), position: {} })
+  h.ipcHandlers.get('eypc-float:drag-start')?.({}, { screenX: 2500, screenY: 300 })
+  h.ipcHandlers.get('eypc-float:expansion')?.({}, { expanded: true, requestId: 4 })
+  expect(h.diagnosticEvents.find((entry) => entry.event === 'expansion-request')).toMatchObject({
+    outcome: 'ignored-interaction', details: { requestId: 4, dragging: true }
+  })
+  h.ipcHandlers.get('eypc-float:interaction-cancel')?.({}, {})
+  const getBounds = h.floatWindow.getBounds
+  h.floatWindow.getBounds = () => { throw new TypeError('private native failure') }
+  h.ipcHandlers.get('eypc-float:expansion')?.({}, { expanded: true, requestId: 5 })
+  expect(h.diagnosticEvents.find((entry) => entry.event === 'expansion' && entry.outcome === 'failed')).toMatchObject({
+    code: 'native-call-failed', details: { requestId: 5, errorName: 'TypeError' }
+  })
+  expect(JSON.stringify(h.diagnosticEvents)).not.toContain('private native failure')
+  h.floatWindow.getBounds = getBounds
+  h.bridge.close()
+})
 
 it('crops only the water top padding and restores its paint anchor after cancel and expansion', () => {
   const h = loadPreloadHarness()

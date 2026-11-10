@@ -94,26 +94,37 @@ function createCodexLaunchPlan(dependencies = {}) {
     const platformPath = codexPlatformPath()
     const command = candidate || 'codex'
     const argsPrefix = []
+    const kind = /\.[cm]?js$/i.test(command) ? 'javascript'
+      : /\.(?:cmd|bat)$/i.test(command) ? 'shim'
+        : platformPath.isAbsolute(command) ? 'native' : 'path-lookup'
+    const launchDiagnostic = { kind, resolution: kind === 'path-lookup' ? 'unresolved' : 'direct', nativeCode: '' }
     if (platformPath.isAbsolute(command)) {
       try {
         const resolved = fs.realpathSync(command)
         const jsEntry = codexJavascriptEntry(command, resolved)
+        if (jsEntry) launchDiagnostic.kind = 'javascript'
         const bundledBinary = codexBundledBinary(jsEntry)
         if (bundledBinary) {
-          return { command: bundledBinary, argsPrefix: [], key: bundledBinary, source, detected: true }
+          return { command: bundledBinary, argsPrefix: [], key: bundledBinary, source, detected: true,
+            launchDiagnostic: { ...launchDiagnostic, kind: 'native', resolution: 'bundled-native' } }
         }
         const nodeRuntime = codexNodeRuntime(command)
         if (jsEntry && nodeRuntime) {
           // NUL separates the two paths because it is the one byte neither can
           // contain, so the key cannot collide across different pairs.
-          return { command: nodeRuntime, argsPrefix: [jsEntry], key: `${nodeRuntime}\u0000${jsEntry}`, source, detected: true }
+          return { command: nodeRuntime, argsPrefix: [jsEntry], key: `${nodeRuntime}\u0000${jsEntry}`, source, detected: true,
+            launchDiagnostic: { ...launchDiagnostic, resolution: 'javascript-node' } }
         }
         if (jsEntry || /\.(?:cmd|bat)$/i.test(command)) {
-          return { command, argsPrefix: [], key: command, source, detected: false, invalid: true }
+          return { command, argsPrefix: [], key: command, source, detected: false, invalid: true,
+            launchDiagnostic: { ...launchDiagnostic, resolution: jsEntry ? 'node-missing' : 'entry-missing' } }
         }
-      } catch {}
+      } catch (error) {
+        launchDiagnostic.resolution = 'inspection-failed'
+        launchDiagnostic.nativeCode = ['ENOENT', 'EACCES', 'EPERM', 'EINVAL', 'ENOTDIR', 'ELOOP'].includes(error?.code) ? error.code : 'OTHER'
+      }
     }
-    return { command, argsPrefix, key: command, source, detected }
+    return { command, argsPrefix, key: command, source, detected, launchDiagnostic }
   }
 
   return {

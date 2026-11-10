@@ -30,6 +30,9 @@ declare global {
       onState(listener: (state: CodexFloatWindowState) => void): () => void
       onActivate?(listener: (payload: { requestedAt?: number; command?: 'new-thread' | 'quick' }) => void): () => void
       setExpansion(expanded: boolean, pinned?: boolean): boolean
+      observeInteraction?(event: 'compact-hover' | 'expansion-intent' | 'hover-leave', details: {
+        blocked?: boolean; reason?: string; expanded?: boolean; hostExpanded?: boolean; nextExpanded?: boolean; upperZone?: boolean
+      }): boolean
       returnFocus(): boolean
       requestRecreate?(code?: string): boolean
       action(actionId: string, args?: Record<string, unknown>): boolean

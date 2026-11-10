@@ -46,6 +46,8 @@ const CODEX_FLOAT_CHANNELS = {
   taskPackage: 'eypc-float:task-package',
   taskPackageAck: 'eypc-float:task-package-ack',
   state: 'eypc-float:state',
+  renderObserved: 'eypc-float:render-observed',
+  interactionObserved: 'eypc-float:interaction-observed',
   activate: 'eypc-float:activate',
   expansion: 'eypc-float:expansion',
   returnFocus: 'eypc-float:return-focus',
@@ -140,6 +142,11 @@ function createCodexFloatBridge(dependencies = {}) {
   let codexFloatAnchor = null
   let codexFloatRailLayout = null
   let codexFloatPreferredPosition = {}
+  let codexFloatFreeDrop = false
+  let codexFloatBackingEpoch = 0
+  let codexFloatGeometrySequence = 0
+  let codexFloatExpansionRequestId = 0
+  let codexFloatRendererObservation = null
   let codexFloatSyncedPosition = ''
   let codexFloatDisplaySignature = ''
   let codexFloatPersistent = false
@@ -154,6 +161,18 @@ function createCodexFloatBridge(dependencies = {}) {
     errorCode: process.platform === 'darwin' ? 'not-checked' : 'unsupported'
   }
   const codexFloatActionListeners = new Set()
+  let codexFloatPaintDiagnostics = null
+  try {
+    const paintModule = require('./float-paint-diagnostics.cjs')
+    codexFloatPaintDiagnostics = paintModule.createCodexFloatPaintDiagnostics({
+      runtimeDiagnostics, utools, process, requireElectron: dependencies.requireElectron
+    })
+  } catch (error) {
+    if (process.platform === 'win32') runtimeDiagnostics.record({
+      level: 'info', scope: 'float-paint', event: 'module-load', outcome: 'failed',
+      details: { errorName: ['Error', 'TypeError', 'SyntaxError'].includes(error?.name) ? error.name : 'Error' }
+    })
+  }
 
   const isEdgeFloat = () => codexFloatSnapshot?.style === 'edge'
   function allFloatDisplays() {
@@ -199,6 +218,7 @@ function createCodexFloatBridge(dependencies = {}) {
     if (!codexFloatAnchor) return
     const position = placement.savePosition(codexFloatAnchor, display, codexFloatEdge, placed)
     codexFloatPreferredPosition = position
+    codexFloatFreeDrop = placed === 'free'
     emitCodexFloatAction('codex.float.position.save', { position })
   }
   function reconcileFloatDisplays() {
@@ -445,6 +465,116 @@ function createCodexFloatBridge(dependencies = {}) {
     return { bounds: alignFloatBoundsToEdge(next, display, edge), edge }
   }
 
+  function freeFloatPlacement(position) {
+    return position?.version === 2 && position?.placed === 'free'
+  }
+
+  function acceptPreferredPosition(position) {
+    const incoming = record(position)
+    if (codexFloatFreeDrop && !freeFloatPlacement(incoming)) {
+      const current = codexFloatPreferredPosition
+      const sameAnchor = Number(incoming.x) === Number(current?.x)
+        && Number(incoming.y) === Number(current?.y)
+        && String(incoming.displayId || '') === String(current?.displayId || '')
+      if (sameAnchor) return
+      codexFloatFreeDrop = false
+    }
+    if (freeFloatPlacement(incoming)) codexFloatFreeDrop = true
+    codexFloatPreferredPosition = incoming
+  }
+
+  function boundsMatch(actual, target) {
+    return Boolean(actual) && ['x', 'y', 'width', 'height'].every((key) => actual[key] === target[key])
+  }
+
+  function nativeFloatPresentation(win) {
+    let nativeVisible = null
+    let nativeOpacity = null
+    try { if (typeof win?.isVisible === 'function') nativeVisible = win.isVisible() === true } catch {}
+    try { if (typeof win?.getOpacity === 'function') nativeOpacity = win.getOpacity() } catch {}
+    return { nativeVisible, nativeOpacity: Number.isFinite(nativeOpacity) ? nativeOpacity : null }
+  }
+
+  // Windows can keep the previous corner when a non-resizable window changes
+  // size, or discard position while the transparent backing is repainted.
+  // Retry position after size, and never copy that readback into the anchor.
+  function applyNativeBounds(bounds) {
+    const win = codexFloatWindow
+    if (!win || typeof win.setBounds !== 'function') return false
+    const target = {
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.max(1, Math.round(bounds.width)),
+      height: Math.max(1, Math.round(bounds.height))
+    }
+    const wasResizable = typeof win.isResizable === 'function' && win.isResizable() === true
+    try {
+      if (!wasResizable && typeof win.setResizable === 'function') win.setResizable(true)
+      win.setBounds(target)
+      let actual = typeof win.getBounds === 'function' ? win.getBounds() : null
+      if (!boundsMatch(actual, target) && typeof win.setSize === 'function' && typeof win.setPosition === 'function') {
+        win.setSize(target.width, target.height)
+        win.setPosition(target.x, target.y)
+        actual = typeof win.getBounds === 'function' ? win.getBounds() : null
+      }
+      if (!boundsMatch(actual, target)) win.setBounds(target)
+      return true
+    } catch (error) {
+      if (process.platform === 'win32') runtimeDiagnostics.record({
+        level: 'error', scope: 'float-geometry', event: 'native-bounds', outcome: 'failed',
+        details: {
+          requestId: codexFloatExpansionRequestId, target,
+          errorName: ['Error', 'TypeError', 'RangeError'].includes(error?.name) ? error.name : 'Error'
+        }
+      })
+      return false
+    } finally {
+      try { if (!wasResizable && typeof win.setResizable === 'function') win.setResizable(false) } catch {}
+    }
+  }
+
+  function collapsedFloatWindowRect() {
+    const inset = collapsedOriginInset()
+    const size = codexFloatCollapsedSize(codexFloatSnapshot)
+    return {
+      x: codexFloatAnchor.x - inset.x,
+      y: codexFloatAnchor.y - inset.y,
+      width: size.width,
+      height: size.height
+    }
+  }
+
+  function resizeFreeFloatBounds(collapsed, size, display) {
+    const bounds = display?.bounds || display?.workArea || { x: 0, y: 0, width: 1440, height: 900 }
+    const work = display?.workArea || bounds
+    const leftDistance = collapsed.x - bounds.x
+    const rightDistance = bounds.x + bounds.width - (collapsed.x + collapsed.width)
+    const topDistance = collapsed.y - bounds.y
+    const bottomDistance = bounds.y + bounds.height - (collapsed.y + collapsed.height)
+    const pinRight = rightDistance <= leftDistance
+    const pinTop = topDistance <= bottomDistance
+    let x = pinRight ? collapsed.x + collapsed.width - size.width : collapsed.x
+    let y = pinTop ? collapsed.y : collapsed.y + collapsed.height - size.height
+    const limitX = work.x + work.width - size.width
+    const limitY = work.y + work.height - size.height
+    x = Math.min(Math.max(x, work.x), Math.max(work.x, limitX))
+    y = Math.min(Math.max(y, work.y), Math.max(work.y, limitY))
+    const horizontalDistance = pinRight ? rightDistance : leftDistance
+    const verticalDistance = pinTop ? topDistance : bottomDistance
+    const edge = horizontalDistance <= verticalDistance
+      ? (pinRight ? 'right' : 'left')
+      : (pinTop ? 'top' : 'bottom')
+    return {
+      bounds: {
+        x: Math.round(x),
+        y: Math.round(y),
+        width: Math.round(size.width),
+        height: Math.round(size.height)
+      },
+      edge
+    }
+  }
+
   function codexFloatTaskPackageRevision(taskPackage) {
     const revision = Number(record(taskPackage).packageRevision)
     return Number.isInteger(revision) && revision > 0 ? revision : 0
@@ -581,6 +711,9 @@ function createCodexFloatBridge(dependencies = {}) {
       const preference = codexFloatExpandedPreference(display)
       codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.state, {
         expanded: codexFloatExpanded,
+        windowGeneration: codexFloatWindowGeneration,
+        geometrySequence: codexFloatGeometrySequence,
+        expansionRequestId: codexFloatExpansionRequestId,
         pinned: codexFloatPinned,
         resizing: Boolean(codexFloatResize),
         dragging: Boolean(codexFloatDrag),
@@ -842,21 +975,52 @@ function createCodexFloatBridge(dependencies = {}) {
   // Card keeps a 5px gutter. Water matches the 94px ball, with no outer frame.
   const collapsedOriginInset = () => codexFloatSnapshot?.style === 'card' ? { x: 5, y: 5 } : { x: 0, y: 0 }
 
-  function clearCollapsedWaterBacking() {
+  function clearCollapsedWaterBacking(bounds) {
     const win = codexFloatWindow
+    codexFloatBackingEpoch += 1
     if (!win) return
     try {
       if (typeof win.setBackgroundColor === 'function') win.setBackgroundColor('#00000000')
     } catch {}
+    if (process.platform === 'win32') {
+      const epoch = codexFloatBackingEpoch
+      const requestId = codexFloatExpansionRequestId
+      const generation = codexFloatWindowGeneration
+      const repaint = () => {
+        if (epoch !== codexFloatBackingEpoch || !codexFloatAlive() || codexFloatWindow !== win
+          || codexFloatExpanded || codexFloatDrag || codexFloatResize) return
+        let outcome = 'unsupported'
+        try {
+          if (typeof win.webContents?.invalidate === 'function') {
+            win.webContents.invalidate()
+            outcome = 'requested'
+          }
+        } catch { outcome = 'failed' }
+        runtimeDiagnostics.record({
+          level: 'info', scope: 'float-paint', event: 'backing-repaint', outcome,
+          details: { requestId, windowGeneration: generation, strategy: 'invalidate-only' }
+        })
+      }
+      for (const delay of [0, 50]) {
+        const timer = setTimeout(repaint, delay)
+        timer?.unref?.()
+      }
+      return
+    }
     try {
       if (typeof win.setOpacity !== 'function') return
-      win.setOpacity(0.99)
+      const epoch = codexFloatBackingEpoch
       const restore = () => {
-        try { if (codexFloatAlive() && codexFloatWindow === win) win.setOpacity(1) } catch {}
+        if (epoch !== codexFloatBackingEpoch || !codexFloatAlive() || codexFloatWindow !== win || codexFloatExpanded || codexFloatDrag || codexFloatResize) return
+        try { win.setOpacity(1) } catch {}
+        applyNativeBounds(bounds)
       }
+      try { win.setOpacity(0.99) } catch {}
       if (typeof setTimeout === 'function') {
-        const timer = setTimeout(restore, 0)
-        timer?.unref?.()
+        for (const delay of [0, 50]) {
+          const timer = setTimeout(restore, delay)
+          timer?.unref?.()
+        }
       } else restore()
     } catch {}
   }
@@ -865,7 +1029,7 @@ function createCodexFloatBridge(dependencies = {}) {
     if (isEdgeFloat()) return applyRailGeometry(false, force)
     const inset = collapsedOriginInset()
     try {
-      codexFloatWindow.setBounds({ x: codexFloatAnchor.x - inset.x, y: codexFloatAnchor.y - inset.y, ...codexFloatCollapsedSize(codexFloatSnapshot) })
+      if (!applyNativeBounds({ x: codexFloatAnchor.x - inset.x, y: codexFloatAnchor.y - inset.y, ...codexFloatCollapsedSize(codexFloatSnapshot) })) return false
       const actual = codexFloatWindow.getBounds()
       codexFloatAnchor = { ...codexFloatAnchor, x: actual.x + inset.x, y: actual.y + inset.y }
       codexFloatExpanded = false
@@ -993,6 +1157,7 @@ function createCodexFloatBridge(dependencies = {}) {
       codexFloatAnchor = snapped.anchor
       codexFloatEdge = snapped.edge
       codexFloatPreferredPosition = placement.savePosition(snapped.anchor, display, snapped.edge)
+      codexFloatFreeDrop = false
       codexFloatPositionDisplayId = String(display.id)
       if (codexFloatDrag || codexFloatResize) {
         clearCodexFloatInteractionTimer()
@@ -1001,7 +1166,7 @@ function createCodexFloatBridge(dependencies = {}) {
       }
     }
     if (!enteringEdge && positionKey !== codexFloatSyncedPosition) {
-      codexFloatPreferredPosition = position
+      acceptPreferredPosition(position)
       codexFloatSyncedPosition = positionKey
     }
     if (!enteringEdge && previousStyle !== incomingStyle && codexFloatAlive()) adoptFloatPosition(codexFloatPreferredPosition)
@@ -1037,24 +1202,84 @@ function createCodexFloatBridge(dependencies = {}) {
 
   function resizeCodexFloat(expanded, notifyState = true) {
     if (!codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
+    codexFloatBackingEpoch += 1
     if (isEdgeFloat()) {
       if (applyRailGeometry(expanded) && notifyState) pushCodexFloatState()
       return
     }
     const wasExpanded = codexFloatExpanded
     const current = codexFloatWindow.getBounds()
-    const display = floatDisplayForPoint({ x: current.x + current.width / 2, y: current.y + current.height / 2 })
+    const inset = collapsedOriginInset()
+    const free = Boolean(expanded && codexFloatAnchor && (codexFloatFreeDrop || freeFloatPlacement(codexFloatPreferredPosition)))
+    const collapsed = free ? collapsedFloatWindowRect() : null
+    const display = floatDisplayForPoint(free
+      ? { x: collapsed.x + collapsed.width / 2, y: collapsed.y + collapsed.height / 2 }
+      : { x: current.x + current.width / 2, y: current.y + current.height / 2 })
     const edge = validCodexFloatEdge(codexFloatEdge) ? codexFloatEdge : nearestFloatEdge(current, display)
     const size = codexFloatDesiredSize(codexFloatSnapshot, expanded, display)
-    const inset = collapsedOriginInset()
     const resized = !expanded && codexFloatAnchor
       ? { bounds: { x: codexFloatAnchor.x - inset.x, y: codexFloatAnchor.y - inset.y, ...size }, edge }
-      : resizeFloatBounds(current, size, display, edge)
-    if (current.x !== resized.bounds.x || current.y !== resized.bounds.y || current.width !== resized.bounds.width || current.height !== resized.bounds.height) {
-      try { codexFloatWindow.setBounds(resized.bounds) } catch {}
+      : free
+        ? resizeFreeFloatBounds(collapsed, size, display)
+        : resizeFloatBounds(current, size, display, edge)
+    const needsWrite = !boundsMatch(current, resized.bounds)
+    const applied = !needsWrite || applyNativeBounds(resized.bounds)
+    const transition = wasExpanded !== expanded
+    if (process.platform === 'win32' && (transition || needsWrite)) {
+      const sequence = ++codexFloatGeometrySequence
+      const requestId = codexFloatExpansionRequestId
+      const generation = codexFloatWindowGeneration
+      const windowRef = codexFloatWindow
+      let actual = null
+      try { actual = windowRef.getBounds() } catch {}
+      runtimeDiagnostics.record({
+        level: applied && boundsMatch(actual, resized.bounds) ? 'info' : 'error',
+        scope: 'float-geometry',
+        event: 'expansion',
+        outcome: applied && boundsMatch(actual, resized.bounds) ? 'applied' : 'mismatch',
+        details: {
+          sequence, requestId, windowGeneration: generation,
+          expanded, style: codexFloatSnapshot?.style || '', free,
+          edge, anchor: codexFloatAnchor, before: current, target: resized.bounds,
+          actual, displayBounds: display?.bounds, workArea: display?.workArea,
+          displayId: String(display?.id || ''), scaleFactor: display?.scaleFactor,
+          ...nativeFloatPresentation(windowRef)
+        }
+      })
+      const timer = setTimeout(() => {
+        if (sequence !== codexFloatGeometrySequence || !codexFloatAlive() || codexFloatWindow !== windowRef) return
+        let settled = null
+        try { settled = windowRef.getBounds() } catch {}
+        runtimeDiagnostics.record({
+          level: boundsMatch(settled, resized.bounds) ? 'info' : 'error', scope: 'float-geometry', event: 'expansion-settled',
+          outcome: boundsMatch(settled, resized.bounds) ? 'matched' : 'mismatch',
+          details: {
+            sequence, requestId, windowGeneration: generation, expanded, target: resized.bounds, actual: settled,
+            ...nativeFloatPresentation(windowRef)
+          }
+        })
+        codexFloatPaintDiagnostics?.observe({
+          sequence, requestId, windowGeneration: generation, expanded,
+          window: windowRef, display, observation: codexFloatRendererObservation,
+          isCurrent: () => {
+            try {
+              return sequence === codexFloatGeometrySequence && generation === codexFloatWindowGeneration
+                && codexFloatAlive() && codexFloatWindow === windowRef && !codexFloatDrag && !codexFloatResize
+                && boundsMatch(windowRef.getBounds(), settled)
+            } catch { return false }
+          }
+        }).catch((error) => runtimeDiagnostics.record({
+          level: 'info', scope: 'float-paint', event: 'capture', outcome: 'failed',
+          details: {
+            sequence, requestId, windowGeneration: generation,
+            errorName: ['Error', 'TypeError', 'RangeError'].includes(error?.name) ? error.name : 'Error'
+          }
+        }))
+      }, 150)
+      timer?.unref?.()
     }
-    if (!expanded && wasExpanded && codexFloatSnapshot?.style === 'water') clearCollapsedWaterBacking()
-    codexFloatEdge = resized.edge
+    if (!expanded && wasExpanded && codexFloatSnapshot?.style === 'water') clearCollapsedWaterBacking(resized.bounds)
+    if (!free) codexFloatEdge = resized.edge
     codexFloatExpanded = expanded
     if (!expanded) codexFloatPinned = false
     if (notifyState) pushCodexFloatState()
@@ -1068,7 +1293,7 @@ function createCodexFloatBridge(dependencies = {}) {
     codexFloatDrag = null
     codexFloatResize = null
     const position = record(source.position)
-    codexFloatPreferredPosition = position
+    acceptPreferredPosition(position)
     codexFloatSyncedPosition = JSON.stringify(position)
     const initial = initialCodexFloatBounds(position)
     if (isEdgeFloat()) {
@@ -1109,11 +1334,81 @@ function createCodexFloatBridge(dependencies = {}) {
     const ipc = electronIpcRenderer()
     if (!ipc || typeof ipc.on !== 'function') return
     ipc.on(CODEX_FLOAT_CHANNELS.expansion, (_event, payload) => {
-      if (codexFloatResize || codexFloatDrag) return
       const source = record(payload)
       const expanded = source.expanded === true
+      if (process.platform === 'win32') {
+        codexFloatExpansionRequestId = Number.isSafeInteger(source.requestId) && source.requestId > 0 ? source.requestId : 0
+        runtimeDiagnostics.record({
+          level: 'info', scope: 'float-geometry', event: 'expansion-request',
+          outcome: codexFloatResize || codexFloatDrag ? 'ignored-interaction' : 'received',
+          details: {
+            requestId: codexFloatExpansionRequestId, windowGeneration: codexFloatWindowGeneration,
+            expanded, previousExpanded: codexFloatExpanded,
+            dragging: Boolean(codexFloatDrag), resizing: Boolean(codexFloatResize), alive: codexFloatAlive()
+          }
+        })
+      }
+      if (codexFloatResize || codexFloatDrag) return
       codexFloatPinned = expanded && source.pinned === true
-      resizeCodexFloat(expanded, true)
+      try {
+        resizeCodexFloat(expanded, true)
+      } catch (error) {
+        runtimeDiagnostics.record({
+          level: 'error', scope: 'float-geometry', event: 'expansion', outcome: 'failed', code: 'native-call-failed',
+          details: {
+            requestId: codexFloatExpansionRequestId, expanded,
+            errorName: ['Error', 'TypeError', 'RangeError'].includes(error?.name) ? error.name : 'Error'
+          }
+        })
+      }
+    })
+    ipc.on(CODEX_FLOAT_CHANNELS.renderObserved, (_event, payload) => {
+      if (process.platform !== 'win32') return
+      const source = record(payload)
+      codexFloatRendererObservation = {
+        expanded: source.expanded === true,
+        panelVisible: source.panelVisible === true,
+        windowGeneration: Number.isSafeInteger(source.windowGeneration) ? source.windowGeneration : 0,
+        geometrySequence: Number.isSafeInteger(source.geometrySequence) ? source.geometrySequence : 0
+      }
+      const size = (value) => Number.isFinite(value) && value >= 0 && value <= 100000 ? Math.round(value) : null
+      const identity = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null
+      runtimeDiagnostics.record({
+        level: 'info', scope: 'float-geometry', event: 'renderer-observed', outcome: 'observed',
+        details: {
+          expanded: source.expanded === true,
+          panelPresent: source.panelPresent === true,
+          compactPresent: source.compactPresent === true,
+          panelVisible: source.panelVisible === true,
+          intersectsViewport: source.intersectsViewport === true,
+          documentVisible: source.documentVisible === true,
+          panelOpacity: Number.isFinite(source.panelOpacity) ? source.panelOpacity : null,
+          panelX: Number.isFinite(source.panelX) ? Math.round(source.panelX) : null,
+          panelY: Number.isFinite(source.panelY) ? Math.round(source.panelY) : null,
+          requestId: identity(source.requestId), geometrySequence: identity(source.geometrySequence),
+          windowGeneration: identity(source.windowGeneration),
+          hostExpanded: codexFloatExpanded,
+          ...nativeFloatPresentation(codexFloatWindow),
+          viewportWidth: size(source.viewportWidth), viewportHeight: size(source.viewportHeight),
+          devicePixelRatio: Number.isFinite(source.devicePixelRatio) && source.devicePixelRatio > 0 && source.devicePixelRatio <= 16 ? source.devicePixelRatio : null,
+          panelWidth: size(source.panelWidth), panelHeight: size(source.panelHeight)
+        }
+      })
+    })
+    ipc.on(CODEX_FLOAT_CHANNELS.interactionObserved, (_event, payload) => {
+      if (process.platform !== 'win32') return
+      const source = record(payload)
+      if (!['compact-hover', 'expansion-intent', 'hover-leave'].includes(source.event)) return
+      runtimeDiagnostics.record({
+        level: 'info', scope: 'float-geometry', event: source.event,
+        outcome: source.blocked === true ? 'blocked' : 'observed',
+        details: {
+          reason: ['touch', 'dragging', 'resizing', 'renderer-expanded', 'host-expanded', 'outside-zone', 'missing-surface', 'ready'].includes(source.reason) ? source.reason : '',
+          expanded: source.expanded === true, hostExpanded: source.hostExpanded === true,
+          nextExpanded: source.nextExpanded === true, upperZone: source.upperZone === true,
+          windowGeneration: codexFloatWindowGeneration
+        }
+      })
     })
     ipc.on(CODEX_FLOAT_CHANNELS.returnFocus, () => {
       if (!codexFloatAlive()) return

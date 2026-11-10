@@ -704,38 +704,51 @@ function parseCodexNativeRegistryText(text) {
 // How to invoke a Codex CLI candidate, and what proxy the spawned process
 // should inherit. Two modules because they are two subjects: one resolves an
 // executable, the other is a refusal boundary over untrusted PAC output.
-let codexLaunchContext = null
-let codexProxyDiscovery = null
-try {
-  const loadCodexModule = (relative, file) => {
-    let loaded = null
-    try {
-      loaded = require(relative)
-    } catch {}
-    if (loaded) return loaded
-    const bases = [
-      typeof __dirname === 'string' ? __dirname : '',
-      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
-    ].filter(Boolean)
-    for (const base of Array.from(new Set(bases))) {
+const codexCliModules = (() => {
+  const states = []
+  const codes = ['MODULE_NOT_FOUND', 'ERR_MODULE_NOT_FOUND', 'ERR_REQUIRE_ESM', 'ERR_PACKAGE_PATH_NOT_EXPORTED', 'ERR_DLOPEN_FAILED', 'ENOENT', 'EACCES', 'EPERM', 'EINVAL', 'ENOTDIR']
+  const safeError = (error) => ({
+    errorName: ['Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError'].includes(error?.name) ? error.name : 'Error',
+    nativeCode: codes.includes(error?.code) ? error.code : 'OTHER'
+  })
+  return {
+    summary: () => states.map((state) => ({ ...state })),
+    load(file, factory, dependencies, extended = false) {
+      const state = { module: file, state: 'load-failed', attempts: 0, loadFailures: 0, nativeCode: '', errorName: '', priorCode: '', priorErrorName: '' }
+      states.push(state)
+      const moduleDirectory = typeof process.cwd === 'function' ? process.cwd() : ''
+      const bases = [typeof __dirname === 'string' ? __dirname : '', moduleDirectory, ...(extended && moduleDirectory ? [path.join(moduleDirectory, 'preload'), path.join(moduleDirectory, 'public')] : [])].filter(Boolean)
+      let loaded = null
+      for (const candidate of [`./codex/${file}`, ...Array.from(new Set(bases)).map((base) => path.join(base, 'codex', file))]) {
+        state.attempts += 1
+        try { loaded = require(candidate); state.state = 'export-missing' } catch (error) {
+          state.loadFailures += 1
+          Object.assign(state, safeError(error))
+          state.priorCode = state.nativeCode
+          state.priorErrorName = state.errorName
+          continue
+        }
+        break
+      }
+      if (!loaded) return null
+      state.nativeCode = ''
+      state.errorName = ''
+      if (typeof loaded[factory] !== 'function') { state.state = 'export-missing'; return null }
       try {
-        return require(path.join(base, 'codex', file))
-      } catch {}
+        const helpers = loaded[factory](dependencies)
+        const valid = helpers && (typeof helpers === 'object' || typeof helpers === 'function')
+        state.state = valid ? 'loaded' : 'factory-invalid'
+        return valid ? helpers : null
+      } catch (error) {
+        state.state = 'factory-error'
+        Object.assign(state, safeError(error))
+        return null
+      }
     }
-    return null
   }
-  const launchModule = loadCodexModule('./codex/launch-plan.cjs', 'launch-plan.cjs')
-  if (typeof launchModule?.createCodexLaunchPlan === 'function') {
-    codexLaunchContext = launchModule.createCodexLaunchPlan({ fs, path, process })
-  }
-  const proxyModule = loadCodexModule('./codex/proxy-discovery.cjs', 'proxy-discovery.cjs')
-  if (typeof proxyModule?.createCodexProxyDiscovery === 'function') {
-    codexProxyDiscovery = proxyModule.createCodexProxyDiscovery({ execFile, process })
-  }
-} catch {
-  codexLaunchContext = null
-  codexProxyDiscovery = null
-}
+})()
+const codexLaunchContext = codexCliModules.load('launch-plan.cjs', 'createCodexLaunchPlan', { fs, path, process })
+const codexProxyDiscovery = codexCliModules.load('proxy-discovery.cjs', 'createCodexProxyDiscovery', { execFile, process })
 
 // Environment TOML parsing. Depends on nothing, so it is required directly
 // rather than constructed, on the same precedent as command-validation.cjs. A
@@ -958,36 +971,10 @@ try {
 // runs when no manual path is set. `codexPlatformPath`/`codexLaunchPlan` are
 // this entry's own delegating stubs for already-extracted modules, injected
 // like any other collaborator.
-let codexLaunchPathPreference = null
-try {
-  let launchPathModule = null
-  try {
-    launchPathModule = require('./codex/launch-path-preference.cjs')
-  } catch {}
-  if (!launchPathModule) {
-    const bases = [
-      typeof __dirname === 'string' ? __dirname : '',
-      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
-    ].filter(Boolean)
-    for (const base of Array.from(new Set(bases))) {
-      try {
-        launchPathModule = require(path.join(base, 'codex', 'launch-path-preference.cjs'))
-        break
-      } catch {}
-    }
-  }
-  if (typeof launchPathModule?.createCodexLaunchPathPreference === 'function') {
-    codexLaunchPathPreference = launchPathModule.createCodexLaunchPathPreference({
-      platformPath: codexPlatformPath,
-      launchPlan: codexLaunchPlan,
-      storageKey: CODEX_LAUNCH_PATH_STORAGE_KEY,
-      fs,
-      os,
-      process,
-      utools: typeof globalThis !== 'undefined' ? globalThis.utools : null
-    })
-  }
-} catch { codexLaunchPathPreference = null }
+const codexLaunchPathPreference = codexCliModules.load('launch-path-preference.cjs', 'createCodexLaunchPathPreference', {
+  platformPath: codexPlatformPath, launchPlan: codexLaunchPlan, storageKey: CODEX_LAUNCH_PATH_STORAGE_KEY,
+  fs, os, process, utools: typeof globalThis !== 'undefined' ? globalThis.utools : null
+})
 
 // Reads a rollout tail for live-runtime phase (active/completed/interrupted)
 // as opposed to persisted Turn status. Pure text analysis; `record` and
@@ -2062,6 +2049,15 @@ try {
     })
   }
 } catch {}
+
+const codexRuntimeDiagnostics = codexCliModules.load('runtime-diagnostics.cjs', 'createCodexRuntimeDiagnostics', {
+  runtimeDiagnostics, startCodexServer, sendCodexRpc, process, modules: codexCliModules.summary
+}, true)
+runtimeDiagnostics.record({
+  level: codexCliModules.summary().some((entry) => entry.state !== 'loaded') ? 'error' : 'info',
+  scope: 'task-recovery', event: 'codex-cli-modules', outcome: 'observed',
+  details: { modules: codexCliModules.summary() }
+})
 
 async function openRuntimeDiagnosticsDirectory() {
   const startedAt = Date.now()
@@ -3496,27 +3492,8 @@ function codexError(code, message) {
 }
 
 function codexErrorResult(error) {
-  const sourceCode = error && typeof error === 'object' ? String(error.code || '') : ''
-  const code = sourceCode === 'ETIMEDOUT' || sourceCode === 'timeout'
-    ? 'timeout'
-    : sourceCode === 'not-authenticated'
-      ? 'not-authenticated'
-      : sourceCode === 'runtime-unavailable'
-        ? 'runtime-unavailable'
-        : sourceCode === 'process-exited'
-          ? 'process-exited'
-          : sourceCode === 'protocol-error'
-            ? 'protocol-error'
-            : 'unavailable'
-  const messages = {
-    timeout: 'Codex App Server 响应超时',
-    'not-authenticated': 'Codex 尚未登录或登录已失效',
-    'runtime-unavailable': 'Codex CLI 启动失败，请检查本机 Node/Codex 安装',
-    'process-exited': 'Codex App Server 已退出',
-    'protocol-error': 'Codex App Server 返回了不兼容的数据',
-    unavailable: '未找到可用的 Codex CLI'
-  }
-  return { ok: false, error: { code, message: messages[code] }, receivedAt: Date.now() }
+  return codexRuntimeDiagnostics?.errorResult(error)
+    || { ok: false, error: { code: 'unavailable', message: '未找到可用的 Codex CLI' }, receivedAt: Date.now() }
 }
 
 function codexRecord(value) {
@@ -7545,17 +7522,9 @@ function requestCodexInventoryMembershipReconciliation(reasonValue, options = {}
   const generation = codexInventoryMembershipGeneration
   let operation = null
   operation = reconcileCodexInventoryMembership(reason, forceTasksOnly, generation)
-    .catch(() => {
+    .catch((error) => {
       if (generation === codexInventoryMembershipGeneration) {
-        runtimeDiagnostics.record({
-          level: 'error',
-          scope: 'task-recovery',
-          event: 'codex-inventory-membership',
-          outcome: 'failed',
-          code: 'provider-read-failed',
-          cache: 'provider-direct',
-          details: { reason, forceTasksOnly }
-        })
+        codexRuntimeDiagnostics?.inventoryFailure(error, reason, forceTasksOnly)
       }
       return false
     })
@@ -8125,6 +8094,7 @@ function handleCodexServerMessage(message) {
 
 function onCodexProcessEnd(processRef = codexProcess, reason = null) {
   if (processRef && processRef !== codexProcess) return
+  if (processRef) codexRuntimeDiagnostics?.processEnd(reason, codexProcessEndError(reason), codexStartupHint)
   rejectCodexPending(codexProcessEndError(reason))
   codexProcess = null
   codexLaunchKey = ''
@@ -8208,7 +8178,11 @@ function codexProcessAlive() {
 async function startCodexServer() {
   if (typeof spawn !== 'function') throw codexError('unavailable', 'Codex process bridge is unavailable')
   const launch = resolveCodexLaunchPlan()
-  if (!launch.detected) throw codexError('runtime-unavailable', 'Codex runtime unavailable')
+  if (!launch.detected) {
+    const error = codexError('runtime-unavailable', 'Codex runtime unavailable')
+    codexRuntimeDiagnostics?.captureLaunch?.(error, launch)
+    throw error
+  }
   if (codexReadyPromise && codexLaunchKey === launch.key) return codexReadyPromise
   if (codexProcessAlive()) throw codexError('unavailable', 'Previous Codex App Server session is still exiting')
   codexLaunchKey = launch.key
@@ -8241,14 +8215,19 @@ async function startCodexServer() {
   })()
   codexReadyPromise = readyPromise
   return readyPromise.catch((error) => {
+    codexRuntimeDiagnostics?.captureLaunch?.(error, launch)
     if (codexReadyPromise === readyPromise) closeCodexServer()
     throw error
   })
 }
 
 async function requestCodexRpc(method, params, timeoutMs = CODEX_RPC_TIMEOUT_MS) {
-  await startCodexServer()
-  const result = await sendCodexRpc(method, params, timeoutMs)
+  let result
+  if (codexRuntimeDiagnostics) result = await codexRuntimeDiagnostics.request(method, params, timeoutMs)
+  else {
+    await startCodexServer()
+    result = await sendCodexRpc(method, params, timeoutMs)
+  }
   if (method === 'thread/list') codexObserveThreadMembership(codexRecord(result).data)
   if (method === 'thread/read' && codexRecord(codexRecord(result).thread).id === params?.threadId) codexObserveThreadMembership([result.thread])
   return result

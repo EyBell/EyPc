@@ -85,14 +85,56 @@ function createCodexLaunchPathPreference(dependencies = {}) {
   function resolveCodexLaunchPlan() {
     const platform = platformPath()
     const candidates = []
+    const launchSearch = []
+    const inspectCandidate = (candidate, source) => {
+      let counts = launchSearch.find((entry) => entry.source === source)
+      if (!counts) {
+        counts = { source, checked: 0, missing: 0, inaccessible: 0, nonFile: 0, nonExecutable: 0,
+          available: 0, unusable: 0, relative: 0, unverified: 0, failed: 0,
+          native: 0, javascript: 0, shim: 0, nodeMissing: 0, entryMissing: 0, inspectionFailed: 0, nativeCode: '' }
+        launchSearch.push(counts)
+      }
+      counts.checked += 1
+      if (!candidate || !platform.isAbsolute(candidate)) { counts.relative += 1; return counts }
+      if (typeof fs.statSync !== 'function') { counts.unverified += 1; return counts }
+      try {
+        if (!fs.statSync(candidate).isFile()) counts.nonFile += 1
+        else if (host.platform !== 'win32' && typeof fs.accessSync === 'function' && fs.constants?.X_OK != null) {
+          try { fs.accessSync(candidate, fs.constants.X_OK) } catch (error) {
+            if (['EACCES', 'EPERM'].includes(error?.code)) { counts.nonExecutable += 1; counts.nativeCode = error.code }
+            else throw error
+          }
+        }
+      } catch (error) {
+        if (['ENOENT', 'ENOTDIR'].includes(error?.code)) counts.missing += 1
+        else if (['EACCES', 'EPERM'].includes(error?.code)) counts.inaccessible += 1
+        else counts.failed += 1
+        counts.nativeCode = ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EINVAL', 'ELOOP'].includes(error?.code) ? error.code : 'OTHER'
+      }
+      return counts
+    }
+    const recordPlan = (counts, plan) => {
+      counts[plan.detected ? 'available' : 'unusable'] += 1
+      if (!plan.detected) counts.nonExecutable += 1
+      const diagnostic = plan.launchDiagnostic || {}
+      if (['native', 'javascript', 'shim'].includes(diagnostic.kind)) counts[diagnostic.kind] += 1
+      const reason = { 'node-missing': 'nodeMissing', 'entry-missing': 'entryMissing', 'inspection-failed': 'inspectionFailed' }[diagnostic.resolution]
+      if (reason) counts[reason] += 1
+    }
+    const result = (plan, mode, manualState, found) => ({
+      ...codexLaunchResult(plan, mode, manualState, found), launchSearch
+    })
     const env = host.env || {}
     const manualPath = readCodexLaunchPathPreference()
     if (manualPath) {
+      const counts = inspectCandidate(manualPath, 'manual')
       const exists = codexLaunchPathIsFile(manualPath)
       const plan = exists
         ? launchPlan(manualPath, 'manual', true)
         : { ...launchPlan(manualPath, 'manual', false), invalid: true }
-      return codexLaunchResult(
+      if (exists) recordPlan(counts, plan)
+      else counts.unusable += 1
+      return result(
         plan,
         'manual',
         plan.detected ? 'valid' : 'invalid',
@@ -134,7 +176,13 @@ function createCodexLaunchPathPreference(dependencies = {}) {
           .map((entry) => entry.name)
           .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
         for (const version of versions) candidates.push({ path: platform.join(nvmRoot, version, 'bin', 'codex'), source: 'nvm' })
-      } catch {}
+      } catch (error) {
+        const counts = { source: 'nvm', checked: 0, failed: 1, nativeCode: 'OTHER' }
+        if (['ENOENT', 'ENOTDIR'].includes(error?.code)) { counts.failed = 0; counts.missing = 1 }
+        if (['EACCES', 'EPERM'].includes(error?.code)) { counts.failed = 0; counts.inaccessible = 1 }
+        if (['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EINVAL', 'ELOOP'].includes(error?.code)) counts.nativeCode = error.code
+        launchSearch.push(counts)
+      }
     }
     const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path')
     const pathValue = pathKey && typeof env[pathKey] === 'string' ? env[pathKey] : ''
@@ -151,17 +199,22 @@ function createCodexLaunchPathPreference(dependencies = {}) {
       }
     }
     for (const candidate of candidates) {
+      const counts = inspectCandidate(candidate.path, candidate.source)
       if (!candidate.path || !platform.isAbsolute(candidate.path)) continue
       try {
         if (fs.existsSync(candidate.path)) {
           const plan = launchPlan(candidate.path, candidate.source, true)
+          recordPlan(counts, plan)
           recordCandidate(candidate.source, plan.detected ? 'available' : 'unusable')
           if (plan.detected && !detectedPlan) detectedPlan = plan
           if (!invalidPlan) invalidPlan = plan
         }
-      } catch {}
+      } catch (error) {
+        counts.failed += 1
+        counts.nativeCode = ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EINVAL', 'ELOOP'].includes(error?.code) ? error.code : 'OTHER'
+      }
     }
-    return codexLaunchResult(
+    return result(
       detectedPlan || invalidPlan || launchPlan('codex', 'unknown', false),
       'automatic',
       'not-configured',

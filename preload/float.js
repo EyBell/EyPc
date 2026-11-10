@@ -54,6 +54,8 @@ const CHANNELS = {
   taskPackage: 'eypc-float:task-package',
   taskPackageAck: 'eypc-float:task-package-ack',
   state: 'eypc-float:state',
+  renderObserved: 'eypc-float:render-observed',
+  interactionObserved: 'eypc-float:interaction-observed',
   activate: 'eypc-float:activate',
   expansion: 'eypc-float:expansion',
   returnFocus: 'eypc-float:return-focus',
@@ -94,6 +96,10 @@ let activeResizeInteractionId = ''
 let heartbeatSequence = 0
 let heartbeatTimer = null
 let lastHeartbeatAckAt = 0
+let observedExpansion = null
+let renderObservationSequence = 0
+let expansionRequestSequence = 0
+const interactionObservations = new Map()
 
 function nextInteractionId(kind) {
   interactionSequence = (interactionSequence + 1) % Number.MAX_SAFE_INTEGER
@@ -240,6 +246,41 @@ ipcRenderer.on(CHANNELS.state, (_event, state) => {
   for (const listener of stateListeners) {
     try { listener(lastState) } catch {}
   }
+  const observationContext = {
+    windowGeneration: Number.isSafeInteger(state.windowGeneration) ? state.windowGeneration : 0,
+    geometrySequence: Number.isSafeInteger(state.geometrySequence) ? state.geometrySequence : 0,
+    requestId: Number.isSafeInteger(state.expansionRequestId) ? state.expansionRequestId : 0
+  }
+  const observationKey = JSON.stringify([lastState.expanded, observationContext])
+  if (typeof process !== 'undefined' && process.platform === 'win32' && observedExpansion !== observationKey) {
+    observedExpansion = observationKey
+    const sequence = ++renderObservationSequence
+    setTimeout(() => {
+      if (sequence !== renderObservationSequence || typeof document === 'undefined') return
+      const panel = document.querySelector('.float-expanded-card')
+      const bounds = panel?.getBoundingClientRect()
+      const style = panel && typeof getComputedStyle === 'function' ? getComputedStyle(panel) : null
+      const panelX = bounds?.left ?? bounds?.x ?? 0
+      const panelY = bounds?.top ?? bounds?.y ?? 0
+      const panelOpacity = style ? Number(style.opacity || 1) : null
+      const documentVisible = document.visibilityState !== 'hidden'
+      const intersectsViewport = Boolean(bounds && bounds.width > 0 && bounds.height > 0
+        && panelX < window.innerWidth && panelY < window.innerHeight
+        && panelX + bounds.width > 0 && panelY + bounds.height > 0)
+      sendToParent(CHANNELS.renderObserved, {
+        ...observationContext,
+        expanded: lastState.expanded,
+        panelPresent: Boolean(panel),
+        compactPresent: Boolean(document.querySelector('.float-compact')),
+        panelVisible: Boolean(panel && intersectsViewport && documentVisible && panelOpacity > 0
+          && style?.display !== 'none' && style?.visibility !== 'hidden' && style?.visibility !== 'collapse'),
+        intersectsViewport, documentVisible, panelOpacity, panelX, panelY,
+        viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+        panelWidth: bounds?.width || 0, panelHeight: bounds?.height || 0
+      })
+    }, 120)
+  }
 })
 
 ipcRenderer.on(CHANNELS.activate, (_event, payload) => {
@@ -300,7 +341,25 @@ window.eypcFloat = {
     activationListeners.add(listener)
     return () => activationListeners.delete(listener)
   },
-  setExpansion: (expanded, pinned = false) => sendToParent(CHANNELS.expansion, { expanded: expanded === true, pinned: expanded === true && pinned === true }),
+  setExpansion: (expanded, pinned = false) => sendToParent(CHANNELS.expansion, {
+    expanded: expanded === true, pinned: expanded === true && pinned === true,
+    requestId: ++expansionRequestSequence
+  }),
+  observeInteraction: (event, details = {}) => {
+    if (typeof process === 'undefined' || process.platform !== 'win32') return false
+    if (!['compact-hover', 'expansion-intent', 'hover-leave'].includes(event)) return false
+    const observation = {
+      event, blocked: details.blocked === true, reason: details.reason,
+      expanded: details.expanded === true, hostExpanded: details.hostExpanded === true,
+      nextExpanded: details.nextExpanded === true, upperZone: details.upperZone === true
+    }
+    const signature = JSON.stringify(observation)
+    const previous = interactionObservations.get(event)
+    if (previous?.signature === signature && Date.now() - previous.at < 250) return false
+    interactionObservations.set(event, { signature, at: Date.now() })
+    if (event === 'hover-leave') interactionObservations.delete('compact-hover')
+    return sendToParent(CHANNELS.interactionObserved, observation)
+  },
   returnFocus: () => sendToParent(CHANNELS.returnFocus, {}),
   requestRecreate: (code) => sendToParent(CHANNELS.recreate, {
     code: typeof code === 'string' && /^[A-Za-z0-9:_-]{1,80}$/.test(code) ? code : 'identity-mismatch'

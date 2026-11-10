@@ -815,6 +815,8 @@ button.float-search-glyph { cursor: pointer; }
 .float-task-scroll.selection-mode.batch-toolbar-bottom { padding-bottom: 84px; scroll-padding-bottom: 84px; }
 .float-project-section { margin: 8px 2px 4px; color: var(--codex-muted); font-size: 10px; font-weight: 700; }
 .float-project-section:first-child { margin-top: 2px; }
+.float-project-section.collapsible { display: flex; align-items: center; }
+.float-project-section .status-section-toggle { min-height: 22px; font-size: inherit; font-weight: inherit; }
 
 .float-project-row,
 .float-task-row {
@@ -1389,10 +1391,9 @@ button.float-search-glyph { cursor: pointer; }
 /* Provider-aware project controls and cards. Ownership is always written in
    text; the 8/12% tints are a secondary scanning aid and keep row height fixed. */
 .float-project-provider-tabs {
-  display: grid;
+  display: flex;
   min-height: 30px;
   flex: none;
-  grid-template-columns: repeat(3, minmax(0, auto)) minmax(72px, 1fr);
   align-items: center;
   gap: 3px;
   margin: 0 9px 6px;
@@ -1400,6 +1401,12 @@ button.float-search-glyph { cursor: pointer; }
   border: 1px solid color-mix(in srgb, var(--codex-border) 58%, transparent);
   border-radius: 9px;
   background: var(--codex-surface-raised);
+}
+.float-project-provider-tabs [role="tablist"] {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  gap: 3px;
 }
 .float-project-provider-tabs button {
   min-height: 24px;
@@ -1416,7 +1423,24 @@ button.float-search-glyph { cursor: pointer; }
 .float-project-provider-tabs button:hover { border-color: var(--codex-border); color: var(--codex-fg); }
 .float-project-provider-tabs button.active { border-color: var(--codex-focus); background: var(--codex-surface); color: var(--codex-fg); }
 .float-project-provider-tabs button:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 1px; }
-.float-project-provider-tabs > span { overflow: hidden; color: var(--codex-muted); font-size: 8px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.float-project-provider-tabs > span { overflow: hidden; min-width: 0; flex: 1; color: var(--codex-muted); font-size: 8px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.project-collapse-all {
+  min-height: 24px;
+  flex: none;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--codex-muted);
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.project-collapse-all:hover { border-color: var(--codex-border); color: var(--codex-fg); }
+.project-collapse-all:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 1px; }
+.project-collapse-all:disabled { cursor: default; opacity: 0.45; }
+
 
 .float-task-row.provider-codex:not(.selected),
 .float-project-row.provider-codex { background: color-mix(in srgb, var(--codex-quota-codex) 8%, var(--codex-surface-raised)); }
@@ -1484,9 +1508,9 @@ button.float-search-glyph { cursor: pointer; }
 .project-provider-marker.provider-shared { color: var(--codex-fg); }
 
 @container (max-width: 330px) {
-  .float-project-provider-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .float-project-provider-tabs > span { display: none; }
-  .float-project-provider-tabs button { padding-inline: 3px; font-size: 8px; }
+  .float-project-provider-tabs [role="tab"],
+  .project-collapse-all { padding-inline: 3px; font-size: 8px; }
 }
 
 @media (forced-colors: active) {
