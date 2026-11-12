@@ -248,6 +248,8 @@ The bullets below retain source-specific evidence、quota、archive and presenta
 
 ## Codex Companion
 
+- Magpie Codex 周额度与余额继续共用原账户选择；水球网格左上在周额度可用时显示百分比，耗尽或缺失时保持 Token 回退。展开额度行复用 [Magpie 额度卡](../../src/domain/magpieQuota.ts#L563)，追加独立来源的 Magpie 周／Token 读数，保留原生窗口及过期提示。[当前范围与验证](../specs/261112/magpie-codex-weekly/task-card.md#L1)。
+
 - [Magpie quota projection](../../src/domain/magpieQuota.ts#L1) separates remote gateway key limit cards (`…/~keys`, `kind=plan`) from Codex／Grok／Cursor subscription readings. [The shared water-ball policy](../../src/domain/companionPresentation.ts#L1) uses a unique finite key limit only for confirmed free Codex accounts without native or supported agent readings and with all other task providers off. It selects the lowest unrounded remaining ratio, then supplies one rounded centre/ring value and a bounded source/amount/unit/reset/staleness hint to Float, settings and appearance previews; liquid ownership and task-provider identity stay unchanged. Unlimited, malformed, ambiguous and failed-first-read data do not create a substitute quota; existing stale snapshot behavior is retained. [Current requirement](../specs/260718/1148-codex-quota-float/spec.md#2026-11-10-远端-magpie-key-限额展示).
 
 - Codex Desktop 的 Plan 选择与提问使用同一个请求类型判定，同时生成 `plan-choice` 和待输入标记；计划实施沿用 `plan-implementation`。当前请求与 unread 同批到达时，交互账本先驱动根卡待输入，未读继续保留，不能仅凭 Plan artifact 猜测存在请求。[任务与验证](../specs/261030/codex-plan-input-priority/task-card.md#L1)。

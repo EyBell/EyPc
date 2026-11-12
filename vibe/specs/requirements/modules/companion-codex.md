@@ -197,6 +197,8 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 
 - [Side phase RAW-001](../codex-side-phase-raw-001.md#L1) — `active`
 
+- [Magpie Codex 周额度 RAW-001](../codex-magpie-weekly-raw-001.md#L1) — `active` · 水球及展开卡显示所选账户周额度，保留账户轮换和 Token 回退
+
 ## Related Requirements
 
 - 无。跨域引用在叶子的 `relations` 字段登记。

@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 370 leaves / 7 modules / 346 active / 22 superseded / 2 proposed / 0 conflicted |
+| 需求登记 | 371 leaves / 7 modules / 347 active / 22 superseded / 2 proposed / 0 conflicted |
 | 取代关系 | 22 whole / 153 scoped |
 | 原始来源 | 69 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-e10bb9c657ee5f82bcb5 / renderer-cf132ca8b5081c731135` · `artifact-ready` |
-| 当前构建时间 | `2026/11/12 10:52:26`（`2026-11-12T02:52:26.869Z`） |
+| 当前构建产物 | `host-a66e26394ffdc0435e96 / renderer-c53128355a63b011e817` · `artifact-ready` |
+| 当前构建时间 | `2026/11/12 15:38:09`（`2026-11-12T07:38:09.033Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,10 +34,10 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 370,
+    "leaves": 371,
     "modules": 7,
     "proposed": 2,
-    "active": 346,
+    "active": 347,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-e10bb9c657ee5f82bcb5",
-    "renderer_asset": "renderer-cf132ca8b5081c731135",
+    "host_asset": "host-a66e26394ffdc0435e96",
+    "renderer_asset": "renderer-c53128355a63b011e817",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-11-12T02:52:26.869Z",
-    "built_at_local": "2026/11/12 10:52:26",
+    "built_at": "2026-11-12T07:38:09.033Z",
+    "built_at_local": "2026/11/12 15:38:09",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "8a5b1a1848ee5845b07d567a1dbce65c8f75d21ecc447f4b96f007877afac469",
+    "requirement_registry": "a34c878ca11703b011238ecff0c68bed5d06b81f575586a13c71562e6afe62c4",
     "raw_sources": "1edc81b3b538a5c4e9a2fa41a6803e44f9b88e889a6acc076779289797407332",
     "source_anchor_catalog": "b5042020e6a15cf133d36e29759682ca4f07582db5daaf00ffd199f12a227eef",
-    "product_body": "0ab679dab55cdf5e39ab59cd88e07c3c85afe29f84a7865e6f3a46144179bddc",
-    "architecture": "b246b5e91f3db95e73467ba8a1df976578a4b8885071aa1740dd9eb0ebc4ae97",
-    "runtime_contract": "9c22f993db288ce47fab889e19f534b145ad9b6ded8b48d35681903265ebf0ba"
+    "product_body": "680f0afa0d09dda1478c66ec356aa531a8ef1ab1ace686c180940429ab473755",
+    "architecture": "d70b73c4a6482a88e18638aa3759d7c432c183be4da50f752dd0280024cf48b9",
+    "runtime_contract": "3655a4c7a5bc2afa3da7aab624bcf9cbf298098dc1c574df9410a31d8afcca6c"
   }
 }
 ```
@@ -282,6 +282,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 ## Codex Companion
 
+- Magpie 所选 Codex 账户有周额度时，水球左上显示周百分比，展开额度行追加标明 Magpie 来源的「M·周」；周额度耗尽后的 Token 回退及原账户轮换顺序保留。余额回退显示「M·Token」，提示和读屏保留完整来源与过期标记；暂不接入 `codex-2` 金额余额。[周额度显示条款](261112/magpie-codex-weekly/task-card.md#raw-001--已确认范围)。
 - 仅使用 Codex 与 Magpie、Codex 当前成功快照为免费账号且没有自身额度、Magpie 也没有应保留的具体 agent 读数时，水球外环与中间可展示唯一远端 key 的有限限额剩余百分比，并标注 Magpie。同 key 多个周期／Token／金额限额取剩余比例最低项，平手接口顺序；无限、明确额度（含 0%）、数据无效或多 key 歧义保持原显示。液面、原订阅轮换与 Token 回退不变；三个预览／悬浮入口同源，提示含已用／上限／单位／重置及过期状态。[限额展示条款](260718/1148-codex-quota-float/spec.md#2026-11-10-远端-magpie-key-限额展示)。
 - 外观编辑预览内切换水球、卡片与散开；右侧顺序为部件、主题、操作。预览和参数区使用紧凑的同级布局，保持预览区高度、模型大小和全局导航；部件名称在模型上仅于悬浮或聚焦时显示。部件和主题名称显示在各自选择框，部件与模型双向同步，参数区不重复部件名；所选主题有差异时标记「已修改」。操作支持悬停或点击展开，保存、另存以及只重命名已保存主题；历史备选数据保留。部件调整即时生效，切换主题前处理未保存调整；Esc 分层退出，用户可保存、恢复本次修改或继续编辑，恢复遇到外部新值时保留并提示。更多选择同一行右侧放水球、卡片、贴边线；窄窗口换行。新保存主题包含 Magpie 格标签，旧主题缺失时不覆盖当前标签。[外观编辑需求与验证](261030/codex-appearance-editor/spec.md#L1)。
 

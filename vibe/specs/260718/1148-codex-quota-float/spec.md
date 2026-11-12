@@ -12,6 +12,10 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
 
 Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
+## 2026-11-12 Magpie Codex 周额度显示
+
+水球左上和展开额度行显示现有账户选择得到的 Codex 周额度，保留账户轮换、Token 回退和原生来源；暂不接入 `codex-2` 金额余额。已确认条款、实现及真实宿主待验见[周额度任务](../../261112/magpie-codex-weekly/task-card.md#L1)。
+
 ## 2026-11-10 远端 Magpie key 限额展示
 
 决定状态：`explicit-current-request`，用户已确认并要求实施；真实远端机器验收仍待用户加载候选后执行。

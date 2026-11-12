@@ -3751,7 +3751,7 @@ onUnmounted(() => {
             @keydown.space.prevent="refreshQuotaFromChip(chip)"
           >
             <span class="sr-only">{{ quotaChipAria(chip) }}</span>
-            <span aria-hidden="true">{{ chip.shortLabel }}</span><strong aria-hidden="true">{{ chip.remainingPercent }}%</strong>
+            <span aria-hidden="true">{{ chip.shortLabel }}</span><strong aria-hidden="true">{{ chip.valueText ?? `${chip.remainingPercent}%` }}</strong>
           </div>
           <p v-if="group.emptyReason">{{ group.emptyReason }}</p>
           <!-- The row stays one line: an App-lane block is a marker whose reason

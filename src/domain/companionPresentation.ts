@@ -25,6 +25,7 @@ import {
   type CompanionWaterBallMapping
 } from './companionProvider'
 import {
+  buildMagpieQuotaExpandCards,
   formatMagpieRemoteLimitHint,
   hasMagpieAgentQuota,
   resolveCompactQuotaGridPresentation,
@@ -598,15 +599,12 @@ export interface CompanionQuotaChip {
   /** Full product title, moved into hover help and the accessible name. */
   label: string
   remainingPercent: number
+  valueText?: string
+  detail?: string
   resetAt: number | null
   source?: ClaudeQuotaSnapshot['source']
   updatedAt?: number
   freshness?: 'fresh' | 'stale' | 'unknown'
-  /**
-   * True when the reading is known to be stale. Only Claude chips carry the
-   * flag: the Codex chip shape must stay untouched so the Codex-only rendering
-   * remains byte-identical to the pre-companion float.
-   */
   stale?: boolean
   /** Claude-only remaining-capacity reminder; no system notification. */
   tone?: 'normal' | 'warning' | 'danger'
@@ -654,19 +652,39 @@ export function buildCompanionQuotaStrip(
   const groups: CompanionQuotaGroup[] = []
 
   if (codexEnabled) {
+    const chips: CompanionQuotaChip[] = codexWindows.map((item) => ({
+      key: item.key,
+      provider: 'codex',
+      spark: item.family === 'spark',
+      shortLabel: shortWindowLabel(item.window, item.family === 'spark'),
+      label: item.label,
+      remainingPercent: item.remainingPercent,
+      resetAt: item.resetAt
+    }))
+    const magpie = slice?.magpieQuota
+    if (magpie?.status === 'ok' || magpie?.status === 'stale') {
+      const card = buildMagpieQuotaExpandCards(magpie.providers).find((item) => item.key === 'magpie-codex-weekly')
+      if (card && card.percent !== null) {
+        const token = card.percent === 0 && card.valueText !== '0'
+        chips.push({
+          key: card.key,
+          provider: 'codex',
+          spark: false,
+          shortLabel: token ? 'M·Token' : 'M·周',
+          label: token ? 'Magpie Codex Token 余额' : 'Magpie Codex 周额度',
+          remainingPercent: card.percent,
+          valueText: token ? card.valueText : `${card.valueText}%`,
+          detail: `${card.detail}${magpie.status === 'stale' ? '；上次数据，可能过期' : ''}`,
+          resetAt: card.resetAt,
+          stale: magpie.status === 'stale'
+        })
+      }
+    }
     groups.push({
       provider: 'codex',
       caption: '',
-      chips: codexWindows.map((item) => ({
-        key: item.key,
-        provider: 'codex',
-        spark: item.family === 'spark',
-        shortLabel: shortWindowLabel(item.window, item.family === 'spark'),
-        label: item.label,
-        remainingPercent: item.remainingPercent,
-        resetAt: item.resetAt
-      })),
-      emptyReason: codexWindows.length ? '' : (codexEmptyReason || '服务端未返回额度窗口'),
+      chips,
+      emptyReason: chips.length ? '' : (codexEmptyReason || '服务端未返回额度窗口'),
       note: ''
     })
   }
@@ -719,6 +737,7 @@ export function companionQuotaChipHint(
 ): string {
   const head = withProvider ? `${COMPANION_PROVIDER_LABELS[chip.provider]} · ${chip.label}` : chip.label
   const parts = [head]
+  if (chip.detail) parts.push(chip.detail)
   if (resetText) parts.push(resetText)
   if (freshnessText) parts.push(freshnessText)
   return parts.join(' · ')
@@ -731,7 +750,7 @@ export function companionQuotaChipAriaLabel(
   freshnessText = ''
 ): string {
   const head = withProvider ? `${COMPANION_PROVIDER_LABELS[chip.provider]} ${chip.label}` : chip.label
-  return `${head}，剩余 ${chip.remainingPercent}%${resetText ? `，${resetText}` : ''}${freshnessText ? `，${freshnessText}` : ''}`
+  return `${head}，${chip.detail || `剩余 ${chip.remainingPercent}%`}${resetText ? `，${resetText}` : ''}${freshnessText ? `，${freshnessText}` : ''}`
 }
 
 /* ------------------------------------------------------------------ *

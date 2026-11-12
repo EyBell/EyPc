@@ -151,7 +151,7 @@ export function normalizeMagpieQuotaProviders(input: unknown): MagpieQuotaProvid
 }
 
 function percentCell(
-  key: Exclude<CompactQuotaGridCell['key'], 'token'>,
+  key: CompactQuotaGridCell['key'],
   label: string,
   percent: number,
   detail: string
@@ -464,8 +464,12 @@ export function resolveCompactQuotaGridPresentation(
   const tokenText = formatMagpieTokenBalance(tokenBalance)
   const tokenValue = parseMagpieTokenBalance(tokenBalance)
 
-  const tokenCell: CompactQuotaGridCell | null = shouldShowTokenBalance(tokenValue, codexWeekly)
+  const tokenCell: CompactQuotaGridCell | null = shouldShowPercentQuota(codexWeekly)
     ? {
+        ...percentCell('token', 'Codex', codexWeekly as number, `Magpie Codex 7 天剩余 ${codexWeekly}%`),
+        text: `${codexWeekly}%`
+      }
+    : shouldShowTokenBalance(tokenValue, codexWeekly) ? {
         key: 'token',
         label: 'Token',
         kind: 'token',
