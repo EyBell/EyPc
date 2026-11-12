@@ -461,6 +461,17 @@ function createCodexFloatBridge(dependencies = {}) {
     return clampCodexExpandedSize(preferred || { width: CODEX_FLOAT_EXPANDED_WIDTH, height: codexFloatExpandedHeight(snapshot) }, display)
   }
 
+  function windowsPopupSize(snapshot, display) {
+    const preferred = codexFloatExpandedPreference(display)
+    const contentHeight = codexFloatExpandedHeight(snapshot)
+    const base = !preferred
+      ? { width: CODEX_FLOAT_EXPANDED_WIDTH, height: contentHeight }
+      : preferred.height <= CODEX_FLOAT_EXPANDED_MAX_HEIGHT
+        ? preferred
+        : { width: preferred.width, height: contentHeight }
+    return clampCodexExpandedSize(base, display)
+  }
+
   function codexFloatResizeCorner(bounds, display, edge) {
     if (!isEdgeFloat() && codexFloatCorner) {
       return `${codexFloatCorner.startsWith('top') ? 'bottom' : 'top'}-${codexFloatCorner.endsWith('left') ? 'right' : 'left'}`
@@ -553,6 +564,14 @@ function createCodexFloatBridge(dependencies = {}) {
       if (!boundsMatch(actual, target)) {
         win.setBounds(target, false)
         actual = typeof win.getBounds === 'function' ? win.getBounds() : null
+      }
+      if (process.platform === 'win32') {
+        const sized = actual && actual.width === target.width && actual.height === target.height
+        if (sized && (actual.x !== target.x || actual.y !== target.y) && typeof win.setPosition === 'function') {
+          win.setPosition(target.x, target.y)
+          actual = typeof win.getBounds === 'function' ? win.getBounds() : null
+        }
+        return boundsMatch(actual, target)
       }
       return !actual || (actual.width === target.width && actual.height === target.height)
     } catch (error) {
@@ -1449,7 +1468,9 @@ function createCodexFloatBridge(dependencies = {}) {
       ? { x: collapsed.x + collapsed.width / 2, y: collapsed.y + collapsed.height / 2 }
       : { x: current.x + current.width / 2, y: current.y + current.height / 2 })
     const edge = validCodexFloatEdge(codexFloatEdge) ? codexFloatEdge : nearestFloatEdge(current, display)
-    const size = codexFloatDesiredSize(codexFloatSnapshot, expanded, display)
+    const size = expanded && process.platform === 'win32' && !isEdgeFloat()
+      ? windowsPopupSize(codexFloatSnapshot, display)
+      : codexFloatDesiredSize(codexFloatSnapshot, expanded, display)
     const cornerLayout = free ? placement.cornerLayout(codexFloatAnchor, display, size, codexFloatCorner) : null
     const resized = !expanded && codexFloatAnchor
       ? { bounds: { x: codexFloatAnchor.x - inset.x, y: codexFloatAnchor.y - inset.y, ...size }, edge }
@@ -1508,7 +1529,9 @@ function createCodexFloatBridge(dependencies = {}) {
     try {
       const current = codexFloatWindow.getBounds()
       const display = floatDisplayForPoint({ x: codexFloatAnchor.x + codexFloatAnchor.width / 2, y: codexFloatAnchor.y + codexFloatAnchor.height / 2 })
-      const size = codexFloatDesiredSize(codexFloatSnapshot, true, isEdgeFloat() ? currentFloatDisplay() : display)
+      const size = process.platform === 'win32' && !isEdgeFloat()
+        ? windowsPopupSize(codexFloatSnapshot, display)
+        : codexFloatDesiredSize(codexFloatSnapshot, true, isEdgeFloat() ? currentFloatDisplay() : display)
       const cornerLayout = isEdgeFloat() ? null : placement.cornerLayout(codexFloatAnchor, display, size, codexFloatCorner)
       const expandedBounds = isEdgeFloat()
         ? placement.railLayout(codexFloatAnchor, currentFloatDisplay(), codexFloatEdge, size).bounds
