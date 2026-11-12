@@ -166,4 +166,26 @@ function railLayout(anchor, display, edge, panelSize = null) {
   return { bounds, edge, rail: local(anchor), slot: local(slot), panel: local(panel) }
 }
 
-module.exports = { RAIL_LENGTH, RAIL_THICKNESS, areaOf, horizontal, anchorSize, anchorAt, edgeOffset, restoreAnchor, snapAnchor, snapCorner, savePosition, railLayout, preferredDisplay, resolveDisplay }
+function cornerLayout(anchor, display, preferredSize, previousCorner = null) {
+  const work = display.workArea || areaOf(display)
+  const width = Math.min(work.width, Math.max(1, Math.round(preferredSize.width), Math.round(anchor.width)))
+  const height = Math.min(work.height, Math.max(1, Math.round(preferredSize.height), Math.round(anchor.height)))
+  const previous = ['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(previousCorner) ? previousCorner : 'top-left'
+  const horizontalDifference = anchor.x + anchor.width / 2 - (work.x + work.width / 2)
+  const verticalDifference = anchor.y + anchor.height / 2 - (work.y + work.height / 2)
+  const right = horizontalDifference > 0 || (horizontalDifference === 0 && previous.endsWith('right'))
+  const bottom = verticalDifference > 0 || (verticalDifference === 0 && previous.startsWith('bottom'))
+  const corner = `${bottom ? 'bottom' : 'top'}-${right ? 'right' : 'left'}`
+  const x = right ? anchor.x + anchor.width - width : anchor.x
+  const y = bottom ? anchor.y + anchor.height - height : anchor.y
+  const bounds = rect(clamp(x, work.x, work.x + work.width - width), clamp(y, work.y, work.y + work.height - height), width, height)
+  const displacement = Math.abs(bounds.x - x) + Math.abs(bounds.y - y)
+  return {
+    bounds,
+    corner,
+    anchor: { x: anchor.x - bounds.x, y: anchor.y - bounds.y, width: anchor.width, height: anchor.height },
+    constrained: width < preferredSize.width || height < preferredSize.height || displacement > 0
+  }
+}
+
+module.exports = { RAIL_LENGTH, RAIL_THICKNESS, areaOf, horizontal, anchorSize, anchorAt, edgeOffset, restoreAnchor, snapAnchor, snapCorner, savePosition, railLayout, cornerLayout, preferredDisplay, resolveDisplay }

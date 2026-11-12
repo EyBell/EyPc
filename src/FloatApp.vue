@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type CSSProperties } from 'vue'
 import {
   Archive,
   ArrowLeft,
@@ -27,6 +27,7 @@ import {
 } from '@lucide/vue'
 import CodexWaterBall from './components/CodexWaterBall.vue'
 import CompanionEdgeRail from './components/CompanionEdgeRail.vue'
+import FloatSurface from './components/FloatSurface.vue'
 import OperationTooltipLayer from './components/OperationTooltipLayer.vue'
 import {
   buildCompanionQuotaStrip,
@@ -140,6 +141,7 @@ const floatRuntimeIdentity = ref<RuntimeIdentityHandshakeV1 | null>(null)
 const rootElement = ref<HTMLElement | null>(null)
 const quickJumpRegistry = createQuickJumpRegistryV7({ surfaceId: 'float', root: () => rootElement.value })
 const expanded = ref(false)
+const presentationPending = ref(true)
 const floatState = ref<CodexFloatWindowState>({ expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null })
 const searchText = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
@@ -226,15 +228,15 @@ let resize: { pointerId: number; corner: CodexFloatResizeCorner } | null = null
 let railHoverTimer: ReturnType<typeof setTimeout> | null = null
 let suppressRailHover = false
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
-let waterCollapseTimer: ReturnType<typeof setTimeout> | null = null
-let waterCollapsePending = false
-let waterCollapseGeneration = 0
-let waterCollapseFrame: number | null = null
+let transitionReadyFrame: number | null = null
+let transitionReadyKey = ''
+let presentationReadyFrame: number | null = null
+let presentationReadyKey = ''
+let presentationScheduledKey = ''
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 let lastHintAnchor: HTMLElement | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
 let searchLayoutObserver: ResizeObserver | null = null
-let desiredExpanded = false
 let hoverInside = false
 let focusWithin = false
 let ignoreCompactClick = false
@@ -327,6 +329,19 @@ function projectMatchesProvider(project: CodexProjectCard) {
 const primaryPercent = computed(() => compact.value.primary?.bucket.remainingPercent ?? 0)
 const selectedWeekly = computed(() => codexWeeklyReading(compact.value.primary, compact.value.secondary))
 const edgeStyle = computed(() => settings.value?.style === 'edge')
+const parkedDragStyle = computed(() => {
+  if (!floatState.value.parked || edgeStyle.value) return undefined
+  const card = settings.value?.style === 'card'
+  const offset = floatState.value.compactOffset
+  if (!offset) return undefined
+  const height = card ? 82 : 94
+  return {
+    left: `${offset.x}px`,
+    top: `${offset.y + height / 2}px`,
+    width: `${card ? 156 : 94}px`,
+    height: `${height / 2}px`
+  }
+})
 const edgePanelStyle = computed(() => rectStyle(floatState.value.placement?.panel))
 const edgeSlotStyle = computed(() => rectStyle(floatState.value.placement?.slot))
 function rectStyle(rect?: { x: number; y: number; width: number; height: number } | null) {
@@ -1524,19 +1539,6 @@ function action(actionId: string, args: Record<string, unknown> = {}) {
   return dispatched
 }
 
-function cancelWaterCollapseWait() {
-  waterCollapsePending = false
-  waterCollapseGeneration += 1
-  if (waterCollapseFrame !== null) {
-    cancelAnimationFrame(waterCollapseFrame)
-    waterCollapseFrame = null
-  }
-  if (waterCollapseTimer) {
-    clearTimeout(waterCollapseTimer)
-    waterCollapseTimer = null
-  }
-}
-
 function requestExpansion(nextExpanded: boolean) {
   const blocked = Boolean(floatState.value.resizing || resize || drag || floatState.value.dragging)
   window.eypcFloat?.observeInteraction?.('expansion-intent', {
@@ -1545,44 +1547,7 @@ function requestExpansion(nextExpanded: boolean) {
   })
   if (blocked) return
   if (collapseTimer) clearTimeout(collapseTimer)
-  cancelWaterCollapseWait()
-  desiredExpanded = nextExpanded
-  const collapseWater = nextExpanded === false && settings.value?.style === 'water' && !edgeStyle.value
-  if (!collapseWater) {
-    cancelWaterCollapseWait()
-    window.eypcFloat?.setExpansion(nextExpanded, nextExpanded && floatState.value.pinned)
-    return
-  }
-  waterCollapsePending = true
-  const generation = waterCollapseGeneration
-  expanded.value = false
-  const started = Date.now()
-  let frames = 0
-  let sent = false
-  const send = () => {
-    if (sent || generation !== waterCollapseGeneration || !waterCollapsePending || desiredExpanded !== false) return
-    sent = true
-    if (waterCollapseFrame !== null) {
-      cancelAnimationFrame(waterCollapseFrame)
-      waterCollapseFrame = null
-    }
-    if (waterCollapseTimer) {
-      clearTimeout(waterCollapseTimer)
-      waterCollapseTimer = null
-    }
-    window.eypcFloat?.setExpansion(false, false)
-  }
-  const step = () => {
-    if (sent || generation !== waterCollapseGeneration || !waterCollapsePending || desiredExpanded !== false) return
-    waterCollapseFrame = null
-    frames += 1
-    if (frames >= 2 || Date.now() - started >= 200) send()
-    else waterCollapseFrame = requestAnimationFrame(step)
-  }
-  if (waterCollapseTimer) clearTimeout(waterCollapseTimer)
-  waterCollapseTimer = setTimeout(send, 200)
-  if (typeof requestAnimationFrame === 'function') waterCollapseFrame = requestAnimationFrame(step)
-  else send()
+  window.eypcFloat?.setExpansion(nextExpanded, nextExpanded && floatState.value.pinned)
 }
 
 function compactSurfaceVerticalRatio(event: MouseEvent | PointerEvent, surface: HTMLElement) {
@@ -2972,10 +2937,59 @@ function onWindowBlur() {
 }
 
 function onWindowResize() {
+  queueFloatPresentationReady()
   scheduleBatchPlacement()
   if (shiftPreview.value) updateShiftPreview()
   if (quickJump.value.open) closeQuickJump(true)
 }
+
+let parkedPointerOver: boolean | null = null
+function syncParkedPointer(event: MouseEvent) {
+  if (!floatState.value.parked || edgeStyle.value || floatState.value.dragging || floatState.value.resizing) return
+  const shell = rootElement.value?.querySelector(expanded.value ? '.float-expanded-card' : '.float-compact-shell')
+  if (!(shell instanceof HTMLElement)) return
+  const bounds = shell.getBoundingClientRect()
+  const over = event.clientX >= bounds.left && event.clientX < bounds.right && event.clientY >= bounds.top && event.clientY < bounds.bottom
+  if (parkedPointerOver === over) return
+  parkedPointerOver = over
+  window.eypcFloat?.setMousePassthrough?.(!over)
+}
+
+function settleFloatPresentation() {
+  const state = floatState.value
+  const size = state.viewportSize
+  const preparing = state.transition?.phase === 'expanding' || state.transition?.phase === 'collapsing'
+  const ready = Boolean(snapshot.value && state.presentationId && state.windowGeneration && snapshot.value.style === state.style
+    && size && window.innerWidth === size.width && window.innerHeight === size.height)
+  presentationPending.value = !ready || (preparing && !edgeStyle.value)
+}
+
+function queueFloatPresentationReady() {
+  settleFloatPresentation()
+  const state = floatState.value
+  const id = state.presentationId
+  const generation = state.windowGeneration
+  const preparing = state.transition?.phase === 'expanding' || state.transition?.phase === 'collapsing'
+  const key = !presentationPending.value && !preparing && id && generation ? `${generation}:${id}` : ''
+  if (key && presentationScheduledKey === key) return
+  if (presentationReadyFrame !== null) cancelAnimationFrame(presentationReadyFrame)
+  presentationReadyFrame = null
+  presentationScheduledKey = ''
+  if (!key || !id || !generation) return
+  if (presentationReadyKey === key) return
+  presentationScheduledKey = key
+  presentationReadyFrame = requestAnimationFrame(() => {
+    presentationReadyFrame = requestAnimationFrame(() => {
+      presentationReadyFrame = null
+      presentationScheduledKey = ''
+      settleFloatPresentation()
+      if (presentationPending.value || floatState.value.presentationId !== id || floatState.value.windowGeneration !== generation) return
+      if (window.eypcFloat?.presentationReady?.(id, generation)) presentationReadyKey = key
+    })
+  })
+}
+
+watch([snapshot, floatState, presentationPending], queueFloatPresentationReady, { flush: 'post' })
 
 function onPointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement
@@ -3058,7 +3072,10 @@ function scheduleCollapse() {
 }
 
 function onMouseLeave() {
+  parkedPointerOver = null
+  if (floatState.value.parked) window.eypcFloat?.setMousePassthrough?.(true)
   window.eypcFloat?.observeInteraction?.('hover-leave', { expanded: expanded.value, hostExpanded: floatState.value.expanded })
+  const preparing = floatState.value.transition?.phase === 'expanding' || floatState.value.transition?.phase === 'collapsing'
   clearRailHover()
   if (!drag && !floatState.value.dragging) suppressRailHover = false
   hoverInside = false
@@ -3066,7 +3083,7 @@ function onMouseLeave() {
   clearActionHint()
   clearCompactCounterHint()
   updateShiftPreview()
-  scheduleCollapse()
+  if (!preparing) scheduleCollapse()
 }
 
 function onFocusIn() {
@@ -3411,9 +3428,10 @@ onMounted(() => {
   applySnapshot(window.eypcFloat?.getSnapshot() || null)
   floatState.value = window.eypcFloat?.getState() || floatState.value
   expanded.value = floatState.value.expanded
-  desiredExpanded = expanded.value
   stopSnapshot = window.eypcFloat?.onSnapshot((value) => { applySnapshot(value) }) || null
   stopState = window.eypcFloat?.onState((value) => {
+    const wasExpanded = expanded.value
+    const wasPreparing = floatState.value.transition?.phase === 'expanding' || floatState.value.transition?.phase === 'collapsing'
     if (value.style === 'edge' && !edgeStyle.value) {
       clearRailHover()
       suppressRailHover = true
@@ -3423,14 +3441,37 @@ onMounted(() => {
       drag = null
       if (rootElement.value?.hasPointerCapture?.(pointerId)) rootElement.value.releasePointerCapture(pointerId)
     }
-    const holdCollapsed = waterCollapsePending && value.expanded
-    floatState.value = holdCollapsed ? { ...value, expanded: false } : value
-    if (!holdCollapsed) {
-      expanded.value = value.expanded
-      desiredExpanded = value.expanded
-      if (!value.expanded) waterCollapsePending = false
+    floatState.value = value
+    const transition = value.transition
+    const preparing = transition?.phase === 'expanding' || transition?.phase === 'collapsing'
+    expanded.value = value.expanded
+    settleFloatPresentation()
+    if (!value.parked || value.expanded || edgeStyle.value) parkedPointerOver = null
+    if (preparing && transition) {
+      const key = `${transition.windowGeneration}:${transition.id}:${transition.phase}`
+      if (transitionReadyKey !== key) {
+        transitionReadyKey = key
+        if (transitionReadyFrame !== null) cancelAnimationFrame(transitionReadyFrame)
+        void nextTick(() => {
+          if (transitionReadyKey !== key) return
+          transitionReadyFrame = requestAnimationFrame(() => {
+            if (transitionReadyKey !== key) return
+            transitionReadyFrame = requestAnimationFrame(() => {
+              transitionReadyFrame = null
+              if (transitionReadyKey === key) window.eypcFloat?.transitionReady?.(transition.id, transition.windowGeneration)
+            })
+          })
+        })
+      }
+    } else {
+      transitionReadyKey = ''
+      if (wasPreparing && value.expanded && !hoverInside) scheduleCollapse()
     }
     if (!floatState.value.expanded) {
+      if (wasExpanded) {
+        clearActionHint(true)
+        clearCompactCounterHint()
+      }
       closeShiftPreview(true)
       closeQuickJump()
       // 快速筛选是展开列表上的模式；卡片收起后它没有载体，编号也不应留在紧凑面上。
@@ -3459,10 +3500,13 @@ onMounted(() => {
   window.addEventListener('pointercancel', onWindowPointerCancel)
   window.addEventListener('blur', onWindowBlur)
   window.addEventListener('resize', onWindowResize)
+  window.addEventListener('mousemove', syncParkedPointer, true)
 })
 
 onUnmounted(() => {
-  cancelWaterCollapseWait()
+  transitionReadyKey = ''
+  if (transitionReadyFrame !== null) cancelAnimationFrame(transitionReadyFrame)
+  if (presentationReadyFrame !== null) cancelAnimationFrame(presentationReadyFrame)
   if (quotaResetTimer) clearInterval(quotaResetTimer)
   clearRailHover()
   window.eypcFloat?.cancelInteraction?.()
@@ -3486,6 +3530,7 @@ onUnmounted(() => {
   window.removeEventListener('pointercancel', onWindowPointerCancel)
   window.removeEventListener('blur', onWindowBlur)
   window.removeEventListener('resize', onWindowResize)
+  window.removeEventListener('mousemove', syncParkedPointer, true)
   stopSnapshot?.()
   stopState?.()
   stopActivate?.()
@@ -3496,7 +3541,8 @@ onUnmounted(() => {
   <main
     ref="rootElement"
     class="codex-float-root"
-    :class="[{ expanded, resizing: floatState.resizing, card: settings?.style === 'card', water: settings?.style === 'water', edge: edgeStyle, dragging: floatState.dragging }, floatState.resizeCorner ? `resize-${floatState.resizeCorner}` : '']"
+    :class="[{ expanded, parked: floatState.parked && !edgeStyle, 'presentation-pending': presentationPending, resizing: floatState.resizing, card: settings?.style === 'card', water: settings?.style === 'water', edge: edgeStyle, dragging: floatState.dragging }, floatState.resizeCorner ? `resize-${floatState.resizeCorner}` : '']"
+    :aria-busy="presentationPending || undefined"
     :style="rootStyle"
     :data-companion-revision="renderedTaskRevision || undefined"
     tabindex="-1"
@@ -3527,8 +3573,8 @@ onUnmounted(() => {
       :edge="floatState.edge || 'right'" :codex-percent="companionSlice?.providers.codex === false ? null : selectedWeekly?.bucket.remainingPercent ?? null"
       :claude-percent="companionSlice?.providers.claude ? companionSlice.claudeQuota.weekly?.remainingPercent ?? null : null"
       :counts="compactCounts" @action="openCompactStatus" @hover="onRailHover" @leave="onRailLeave" @pointerenter="onMouseEnter" @pointerleave="onMouseLeave" />
-    <div v-if="!expanded && !edgeStyle" class="float-compact-drag-zone" aria-hidden="true" @click.stop />
-    <div v-if="!expanded && !edgeStyle" class="float-compact-shell" :class="settings?.style === 'card' ? 'card-shell' : 'water-shell'">
+    <div v-if="!expanded && !edgeStyle" class="float-compact-drag-zone" :class="{ 'park-limited': floatState.parked }" :style="parkedDragStyle" aria-hidden="true" @click.stop />
+    <FloatSurface v-if="!edgeStyle" v-show="!expanded" kind="compact" :card="settings?.style === 'card'" :offset="floatState.compactOffset">
       <button
         type="button"
         class="float-compact"
@@ -3586,9 +3632,9 @@ onUnmounted(() => {
       >{{ codexBadgeText(compactCounts.input) }}</button>
       <button v-if="compactCounts.active" type="button" class="float-counter companion-counter-geometry active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'active')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('active')">{{ codexBadgeText(compactCounts.active) }}</button>
       <button v-if="compactCounts.unread" type="button" class="float-counter companion-counter-geometry unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'unread')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('unread')">{{ codexBadgeText(compactCounts.unread) }}</button>
-    </div>
+    </FloatSurface>
 
-    <section v-if="expanded" class="float-expanded-card" :style="edgeStyle ? edgePanelStyle : undefined" aria-label="Codex Companion" @pointerenter="onMouseEnter" @pointerleave="onMouseLeave">
+    <FloatSurface v-if="expanded || (floatState.parked && !edgeStyle)" v-show="expanded || floatState.parked" kind="expanded" :class="{ 'is-preloaded': floatState.parked && !expanded && !edgeStyle }" :inert="floatState.parked && !expanded && !edgeStyle ? true : undefined" :aria-hidden="floatState.parked && !expanded && !edgeStyle ? 'true' : undefined" :style="edgeStyle ? edgePanelStyle : floatState.parked ? rectStyle(floatState.panel) : undefined" aria-label="Codex Companion" @pointerenter="onMouseEnter" @pointerleave="onMouseLeave">
       <header v-if="edgeStyle" class="float-edge-preview-header float-drag-handle">
         <span>Companion</span>
         <button type="button" :class="{ pinned: floatState.pinned }" :aria-pressed="floatState.pinned"
@@ -4214,7 +4260,7 @@ onUnmounted(() => {
         @pointercancel.stop="onResizePointerCancel"
         @keydown.stop="onResizeHandleKeydown($event, floatState.resizeCorner)"
       />
-    </section>
+    </FloatSurface>
 
     <OperationTooltipLayer ref="tooltipLayer" :automatic="false" scope-selector=".codex-float-root" />
   </main>

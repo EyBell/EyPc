@@ -7,10 +7,23 @@ export {}
 export type CodexFloatResizeCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 export interface FloatRect { x: number; y: number; width: number; height: number }
 export interface CodexFloatWindowState {
+  presentationId?: number
+  windowGeneration?: number
   style?: 'water' | 'card' | 'edge'
   dragging?: boolean
   edge?: 'left' | 'right' | 'top' | 'bottom'
+  corner?: CodexFloatResizeCorner
   placement?: { bounds: FloatRect; rail: FloatRect; slot: FloatRect; panel: FloatRect | null }
+  compactOffset?: { x: number; y: number }
+  panel?: FloatRect
+  parked?: boolean
+  viewportSize?: { width: number; height: number }
+  transition?: {
+    id: number
+    windowGeneration: number
+    phase: 'expanding' | 'collapsing' | 'expanded' | 'collapsed'
+    layout?: { anchor: FloatRect; expandedBounds: FloatRect; workArea: FloatRect; compactOffset: { x: number; y: number }; displayId: string; constrained: boolean; corner: CodexFloatResizeCorner | null }
+  }
   expanded: boolean
   pinned: boolean
   resizing: boolean
@@ -30,6 +43,9 @@ declare global {
       onState(listener: (state: CodexFloatWindowState) => void): () => void
       onActivate?(listener: (payload: { requestedAt?: number; command?: 'new-thread' | 'quick' }) => void): () => void
       setExpansion(expanded: boolean, pinned?: boolean): boolean
+      transitionReady?(id: number, windowGeneration: number): boolean
+      presentationReady?(id: number, windowGeneration: number): boolean
+      setMousePassthrough?(enabled: boolean): boolean
       observeInteraction?(event: 'compact-hover' | 'expansion-intent' | 'hover-leave', details: {
         blocked?: boolean; reason?: string; expanded?: boolean; hostExpanded?: boolean; nextExpanded?: boolean; upperZone?: boolean
       }): boolean

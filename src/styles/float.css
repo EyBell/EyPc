@@ -136,6 +136,19 @@ button { font: inherit; }
 
 .codex-float-root.expanded { padding: 6px; }
 
+.codex-float-root.presentation-pending > * {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.float-expanded-card.is-preloaded {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+
 .float-expanded-card {
   position: relative;
   display: flex;
@@ -1021,6 +1034,11 @@ button.float-search-glyph { cursor: pointer; }
   height: 94px;
 }
 .float-compact-shell.card-shell { width: 156px; height: 82px; }
+.float-compact-shell.collapse-anchored {
+  position: absolute;
+  left: var(--compact-offset-x);
+  top: var(--compact-offset-y);
+}
 .float-counter {
   position: absolute;
   z-index: 18;
@@ -1558,6 +1576,10 @@ button.float-search-glyph { cursor: pointer; }
 
 /* Collapsed water fills its window. Corners outside the circle stay unpainted. */
 .codex-float-root.water:not(.expanded) { padding: 0; }
+.codex-float-root.parked,
+.codex-float-root.parked.expanded { padding: 0; }
+.codex-float-root.parked .float-compact-shell { z-index: 1; pointer-events: auto; }
+.codex-float-root.parked .float-expanded-card { position: absolute; z-index: 2; inset: auto; width: auto; height: auto; }
 .codex-float-root.water:not(.expanded),
 .codex-float-root.water:not(.expanded) .float-compact-shell,
 .codex-float-root.water:not(.expanded) .float-compact.water-surface,
@@ -1566,6 +1588,7 @@ button.float-search-glyph { cursor: pointer; }
   border: 0;
   box-shadow: none;
 }
+.codex-float-root .float-compact-drag-zone.park-limited { right: auto; bottom: auto; }
 .float-task-row,
 .float-task-row:hover,
 .float-task-row:focus-visible,

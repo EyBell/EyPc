@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 69 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-276406b71202a45e4674 / renderer-813f05d5c341803fcad0` · `artifact-ready` |
-| 当前构建时间 | `2026/11/10 17:23:11`（`2026-11-10T09:23:11.104Z`） |
+| 当前构建产物 | `host-e10bb9c657ee5f82bcb5 / renderer-cf132ca8b5081c731135` · `artifact-ready` |
+| 当前构建时间 | `2026/11/12 10:52:26`（`2026-11-12T02:52:26.869Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-276406b71202a45e4674",
-    "renderer_asset": "renderer-813f05d5c341803fcad0",
+    "host_asset": "host-e10bb9c657ee5f82bcb5",
+    "renderer_asset": "renderer-cf132ca8b5081c731135",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-11-10T09:23:11.104Z",
-    "built_at_local": "2026/11/10 17:23:11",
+    "built_at": "2026-11-12T02:52:26.869Z",
+    "built_at_local": "2026/11/12 10:52:26",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "875fa4c60588480003121de55a1bffed6a6a01efac531ea81399503aa81f4aef",
+    "requirement_registry": "8a5b1a1848ee5845b07d567a1dbce65c8f75d21ecc447f4b96f007877afac469",
     "raw_sources": "1edc81b3b538a5c4e9a2fa41a6803e44f9b88e889a6acc076779289797407332",
     "source_anchor_catalog": "b5042020e6a15cf133d36e29759682ca4f07582db5daaf00ffd199f12a227eef",
-    "product_body": "d903584dba4303c04db8bb62ace46a152bbcaab62cef5f1baf4fba8b3e48e843",
-    "architecture": "5a48215cddcab35916a22175ad5bab66e3048f92c1c4113d0001f6737a85d3ec",
-    "runtime_contract": "70f70080291e18bf669d9ad623f19a8b5aafa90e6c49469bf1afb641948bbf79"
+    "product_body": "0ab679dab55cdf5e39ab59cd88e07c3c85afe29f84a7865e6f3a46144179bddc",
+    "architecture": "b246b5e91f3db95e73467ba8a1df976578a4b8885071aa1740dd9eb0ebc4ae97",
+    "runtime_contract": "9c22f993db288ce47fab889e19f534b145ad9b6ded8b48d35681903265ebf0ba"
   }
 }
 ```
@@ -364,7 +364,7 @@ Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-globa
 - Completed-unread requires both a completed newest Turn and current unread evidence. Exact live read-state events and current native/persisted snapshots are the only implemented read authorities；Host/OS Deep-Link dispatch never wins this lane。A current initial/refollow snapshot `false` may repair stale native-set membership after EyPc missed a disconnected read event；a parseable native set's membership/nonmembership still outranks snapshot `true`，and snapshots are the full fallback only when that native source is unavailable。Preload watches the native state directory read-only and publishes file changes as anonymous V2 `readStateOnly` entries；the private Kernel branch ledger keeps each main/Side unread observation separate until final all-bead projection。Every confirmed root/Side bead participates without the superseded main-completed-read gate；causally current exact interaction suppresses latent public unread，causally newer running suppresses older interaction and unread，and only no active/current interaction bead plus any current unread completion produces completed-unread。Every plugin card/counter/shortcut task-open path converges on the parent-only Host Deep Link：a cold shortcut first restores tasks-only inventory，and a stale card alias is rebuilt only for its same anonymous parent key；accepted dispatch keeps parent and known Side Chats unread until Codex native evidence changes them。It never writes Codex native unread or any local read receipt；hide/restore remains unrelated。The compact surface uses the atomic package's complete waiting-input count、configured recent-hours non-hidden active-group count and complete completed-unread count，capped at `99+`；stopped tasks do not enter any compact counter。
 - Single archive is exposed only for a completed newest Turn and accepts a short-lived action alias plus expected completed revision/latest-Turn/source fingerprint. It rereads identity/state/recency/Turn/native fingerprint, requires the same exact completed revision, archives, then verifies absence from `archived=false` and presence in `archived=true`. After verification it dispatches versioned `thread-archived` to the connected Codex Desktop; dispatch failure is reported but does not roll back verified persistence. Failure before verification never optimistically removes a row.
 - Project “归档已完成任务” ignores the display window and rescans all unarchived history for that project. It skips every non-completed, missing or malformed Turn as ongoing work and processes only completed candidates 20 per batch at concurrency two with per-task dual verification; partial failures remain visible with individual results. Real project-batch mutation requires separate temporary-project authorization.
-- All compact styles expose a rectangular full-width lower-half drag surface, including transparent corners and native padding, with grab/grabbing feedback. Numeric counters remain above that surface as independent buttons.
+- All compact styles expose a rectangular full-width lower-half drag surface, including transparent corners and native padding, with grab/grabbing feedback. Numeric counters remain above that surface as independent buttons. Water/card expansion directly replaces the compact view without first visibly moving it; durable anchors, existing expansion directions and drop positions remain unchanged. The macOS correction is tracked in [RAW-223](requirements/codex-raw-223.md#L1).
 - [RAW-223](requirements/codex-raw-223.md#L1) adds the selectable and automatically docked edge rail: two adjacent 4 DIP weekly-quota tracks, 8 DIP total by 120 DIP, with a joined narrow readout body containing the two weekly values and independently clickable colored-dot task counts, with existing counter actions and theme colors. It docks vertically at left/right and horizontally at top/bottom. Hover waits 200ms; press cancels hover, captures the pointer and drags after 5px; line clicks do nothing. Counters never initiate dragging and release outside cancels. The existing task preview expands inward while the rail remains mounted at the same paint anchor, closes after 220ms outside unless editing/focused/pinned, and has an independent pin button plus draggable header blank area. Drag temporarily collapses and restores pin state. Native successful drop readback alone commits display ownership and normalized edge offset; cancellation restores without saving. Missing preferred displays are borrowed without changing durable ownership and restored on reconnect. Successful water/card drags also switch to edge style, atomically saved with position; no-motion clicks, cancellation and native write failures retain the prior style. Near corners, outward motion selects an approached edge within 16 DIP, including the macOS work-area top boundary. Native style and geometry share one state message independently of quota revisions. The host reads back the actual reachable top; covering the system menu bar is not guaranteed. Native top-edge visibility and hit testing remain host acceptance gates.
 - RAW-223 的 2026-11-10 Windows 截图反馈补充：展开任务及项目列表不显示横向或纵向原生滚动条，禁止横向溢出；纵向内容仍可由滚轮、触控板及原有键盘导航到达，不改变拖动与尺寸保存。来源及实机限度见[续查记录](260915/float-edge-rail/windows-diagnostics-review.md#2026-11-10-拖拽展开滚动条与-ssh-续查)。
 - Twelve built-in appearance presets plus custom theme/water settings remain available. Water ball, expanded-card and status-signal colors persist and render directly through the appearance workbench; reduced motion removes wave movement.

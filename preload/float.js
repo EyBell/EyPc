@@ -54,6 +54,9 @@ const CHANNELS = {
   taskPackage: 'eypc-float:task-package',
   taskPackageAck: 'eypc-float:task-package-ack',
   state: 'eypc-float:state',
+  transitionReady: 'eypc-float:transition-ready',
+  presentationReady: 'eypc-float:presentation-ready',
+  mousePassthrough: 'eypc-float:mouse-passthrough',
   renderObserved: 'eypc-float:render-observed',
   interactionObserved: 'eypc-float:interaction-observed',
   activate: 'eypc-float:activate',
@@ -241,8 +244,29 @@ ipcRenderer.on(CHANNELS.state, (_event, state) => {
   const geometry = state.placement
   const placement = geometry && safeRect(geometry.bounds) && safeRect(geometry.rail) && safeRect(geometry.slot)
     ? { bounds: safeRect(geometry.bounds), rail: safeRect(geometry.rail), slot: safeRect(geometry.slot), panel: safeRect(geometry.panel) } : undefined
-  const extra = { ...(['water', 'card', 'edge'].includes(state.style) ? { style: state.style } : {}), ...(typeof state.dragging === 'boolean' ? { dragging: state.dragging } : {}), ...(['left', 'right', 'top', 'bottom'].includes(state.edge) ? { edge: state.edge } : {}), ...(placement ? { placement } : {}) }
-  lastState = { ...extra, expanded: state.expanded === true, pinned: state.pinned === true, resizing: state.resizing === true, resizeCorner, expandedSize }
+  const panel = safeRect(state.panel)
+  const compactOffset = state.compactOffset && Number.isFinite(state.compactOffset.x) && Number.isFinite(state.compactOffset.y)
+    ? { x: state.compactOffset.x, y: state.compactOffset.y } : undefined
+  const sourceTransition = state.transition
+  const sourceLayout = sourceTransition?.layout
+  const transitionLayout = sourceLayout && safeRect(sourceLayout.anchor) && safeRect(sourceLayout.expandedBounds) && safeRect(sourceLayout.workArea)
+    && sourceLayout.compactOffset && Number.isFinite(sourceLayout.compactOffset.x) && Number.isFinite(sourceLayout.compactOffset.y)
+    ? { anchor: safeRect(sourceLayout.anchor), expandedBounds: safeRect(sourceLayout.expandedBounds), workArea: safeRect(sourceLayout.workArea),
+      compactOffset: { x: sourceLayout.compactOffset.x, y: sourceLayout.compactOffset.y },
+      displayId: typeof sourceLayout.displayId === 'string' ? sourceLayout.displayId : '', constrained: sourceLayout.constrained === true,
+      corner: ['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(sourceLayout.corner) ? sourceLayout.corner : null } : undefined
+  const transition = sourceTransition && Number.isSafeInteger(sourceTransition.id) && Number.isSafeInteger(sourceTransition.windowGeneration)
+    && ['expanding', 'collapsing', 'expanded', 'collapsed'].includes(sourceTransition.phase)
+    ? { id: sourceTransition.id, windowGeneration: sourceTransition.windowGeneration, phase: sourceTransition.phase, ...(transitionLayout ? { layout: transitionLayout } : {}) } : undefined
+  const parked = state.parked === true
+  const presentation = Number.isSafeInteger(state.presentationId) && state.presentationId > 0
+    && Number.isSafeInteger(state.windowGeneration) && state.windowGeneration > 0
+    ? { presentationId: state.presentationId, windowGeneration: state.windowGeneration } : {}
+  const extra = { ...presentation, ...(panel ? { panel } : {}), ...(parked ? { parked: true } : {}), ...(['water', 'card', 'edge'].includes(state.style) ? { style: state.style } : {}), ...(typeof state.dragging === 'boolean' ? { dragging: state.dragging } : {}), ...(['left', 'right', 'top', 'bottom'].includes(state.edge) ? { edge: state.edge } : {}), ...(['top-left', 'top-right', 'bottom-left', 'bottom-right'].includes(state.corner) ? { corner: state.corner } : {}), ...(placement ? { placement } : {}), ...(compactOffset ? { compactOffset } : {}), ...(transition ? { transition } : {}) }
+  const viewportSize = state.viewportSize && Number.isFinite(state.viewportSize.width) && state.viewportSize.width > 0
+    && Number.isFinite(state.viewportSize.height) && state.viewportSize.height > 0
+    ? { width: state.viewportSize.width, height: state.viewportSize.height } : undefined
+  lastState = { ...extra, ...(viewportSize ? { viewportSize } : {}), expanded: state.expanded === true, pinned: state.pinned === true, resizing: state.resizing === true, resizeCorner, expandedSize }
   for (const listener of stateListeners) {
     try { listener(lastState) } catch {}
   }
@@ -345,6 +369,9 @@ window.eypcFloat = {
     expanded: expanded === true, pinned: expanded === true && pinned === true,
     requestId: ++expansionRequestSequence
   }),
+  transitionReady: (id, windowGeneration) => sendToParent(CHANNELS.transitionReady, { id, windowGeneration }),
+  presentationReady: (id, windowGeneration) => sendToParent(CHANNELS.presentationReady, { id, windowGeneration }),
+  setMousePassthrough: (enabled) => sendToParent(CHANNELS.mousePassthrough, { enabled: enabled === true }),
   observeInteraction: (event, details = {}) => {
     if (typeof process === 'undefined' || process.platform !== 'win32') return false
     if (!['compact-hover', 'expansion-intent', 'hover-leave'].includes(event)) return false

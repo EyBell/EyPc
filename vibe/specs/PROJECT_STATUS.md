@@ -1,5 +1,11 @@
 # EyPc Project Status Hub
 
+- 2026-11-12 10:52:26 水球收缩与启动残影续修候选：紧凑画面和拖动区使用实际锚点偏移，macOS 分开稳定预留视口与内容面板，取消最近角二次定位及缩放进入动画；首次显示等待当前窗口／呈现序号的页面首帧回执，收起裁空预加载卡片并请求重绘，重建重置穿透。语法、类型、合同、生产构建、源包保全、102组镜像、入口预算和需求真值检查通过，未跑测试套件或启动宿主。2026-11-12 用户确认卡片收缩残影没问题；重启第一帧、收缩时水球左侧闪现、内容刷新、透明区、手动缩放及 Windows／贴边条仍未验。EyPc V7 / host-e10bb9c657ee5f82bcb5 / renderer-cf132ca8b5081c731135。[完整插件入口](../../dist/plugin.json#L1) · [修复与人工验收](260915/float-edge-rail/windows-diagnostics-review.md#2026-11-12-收缩闪现与重启残影续修)。包含原工作区既有改动，未安装重载。
+
+- 2026-11-11 22:52:33 macOS 水球按角落展开候选：展开和收起不再移动窗口；水球钉在当前窗口里离锚点更近的角，面板从同一角铺开。类型、合同、生产构建和包校验通过；实机未验。EyPc V7 / host-9138a8fdc85abd54b9ad / renderer-f320c51205b562958815。[插件入口](../../dist/plugin.json#L1)。
+
+- 2026-11-10 22:31:15 macOS 水球原位展开候选：取消准备阶段强制切回水球，偏移取锚点减实际窗口原点；先透明准备，再提交窗口尺寸，目标视口匹配后显示目标界面，收起同序。语法、类型、合同、构建、uTools 包校验及既有 source/packaged 保全检查、入口预算和文档链接通过；未跑 Vitest 或启动宿主，macOS 像素与 Windows 共享路径回归未验。EyPc V7 / host-dafdd6c013ad329bfa29 / renderer-5d40833ee0d63b9664a7；[完整插件入口](../../dist/plugin.json#L1)及[方案与待验项](260915/float-edge-rail/windows-diagnostics-review.md#2026-11-10-macos-原位展开续修)。包含已有检出改动，未安装重载、未提交推送。
+
 - 2026-11-10 17:23:11 Windows 滚动条与安全查询修复候选：展开任务/项目列表隐藏双轴原生条形、禁横向溢出，保留纵向滚动；管道改用内核对象类型 6，ACE 标志位显式整数运算，失败原因细分。SSH kmserver01 已核为 Windows，完整脚本及真实 Node/execFile 工厂分别返回 secure / 1130ms、secure=true / 414ms。语法、合同、编译、镜像、运行身份和入口预算通过；未写或运行自动化测试。EyPc V7 / host-276406b71202a45e4674 / renderer-813f05d5c341803fcad0；[完整候选及现场记录](260915/float-edge-rail/windows-diagnostics-review.md#实现现场结果与当前候选)。新包加载、拖拽视觉、未读同步及完成回落未验；17:17:27 中间候选因枚举错误不作交付，旧故障证据保留。
 
 - 2026-11-10 16:46:58 Windows 未读通道续修候选：根据原生程序代码补 Windows 命名管道、异步所有者/写权限检查、连接单飞与断连绑定撤回；合法本地 v3 context 继续精确选桶并重放，不猜测两个身份桶。语法、类型/合同、生产编译、102 组 source/public/dist 资源、13 字段身份和需求静态校验通过；入口收紧为14782／278／160。静态未读 owner 基线随断连撤回变更更新，并增加 Windows 重置接线必备项。EyPc V7 / host-fac102c28780051c814f / renderer-a28e5b966d5d77d75547；[完整 dist](../../dist/plugin.json#L1)及[Windows 候选 ZIP](../../output/EyPc-Windows-unread-20261110-164641.zip)已生成，旧产物已保留。ZIP 文件名时间为打包标签，以包内上述构建时间为准。未写或运行自动化测试，Windows 权限 API、实时 context、未读→已读及结束回落待用户手测。上版16:10:35已获Windows任务识别/运行传播/Float applied回传，视觉与未读不随之通过。[实现、证据与手测步骤](261105/codex-unread-linkage/task-card.md#2026-11-10-windows-未读通道续修)。
