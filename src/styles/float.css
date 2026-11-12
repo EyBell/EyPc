@@ -1578,7 +1578,7 @@ button.float-search-glyph { cursor: pointer; }
 .codex-float-root.water:not(.expanded) { padding: 0; }
 .codex-float-root.parked,
 .codex-float-root.parked.expanded { padding: 0; }
-.codex-float-root.parked .float-compact-shell { z-index: 1; pointer-events: auto; }
+.codex-float-root.parked .float-compact-shell { pointer-events: auto; }
 .codex-float-root.parked .float-expanded-card { position: absolute; z-index: 2; inset: auto; width: auto; height: auto; }
 .codex-float-root.water:not(.expanded),
 .codex-float-root.water:not(.expanded) .float-compact-shell,
