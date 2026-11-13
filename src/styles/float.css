@@ -740,13 +740,14 @@ button.float-search-glyph { cursor: pointer; }
 .float-quota-group.provider-claude .float-quota-chip:focus-visible { border-radius: 4px; outline: 2px solid var(--codex-focus); outline-offset: 2px; }
 
 .float-magpie-reset-inline {
-  display: flex; min-width: 0; flex: 0 1 auto; align-items: center; gap: 6px;
+  display: flex; min-width: 0; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 6px;
   margin-left: auto; padding: 2px 0; border: 0; background: transparent;
   color: var(--codex-muted); font-size: 10px; line-height: 1.35;
-  white-space: nowrap; overflow: hidden; cursor: help;
+  cursor: help;
 }
-.float-magpie-reset-item { flex: none; white-space: nowrap; }
+.float-magpie-reset-item { flex: 0 1 auto; }
 .float-magpie-reset-item b { color: var(--codex-fg); }
+.float-magpie-stale { margin-left: 3px; color: var(--codex-warning); font-size: 9px; font-style: normal; }
 .float-magpie-reset-inline:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 2px; }
 /* Row-level provider marker.
    It rides the existing bottom metadata line rather than adding an element of

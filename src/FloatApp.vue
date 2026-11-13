@@ -48,7 +48,7 @@ import {
   companionQuotaRefreshReceiptText
 } from './domain/companionPresentation'
 import type { CompanionProjectMarker, CompanionQuotaChip, CompanionRowMarker } from './domain/companionPresentation'
-import { buildMagpieQuotaResetLines, formatMagpieQuotaResetInline, magpieResetCompactText } from './domain/magpieQuota'
+import { buildMagpieQuotaResetLines, formatMagpieQuotaResetInline, magpieResetCompactText, resolveMagpieQuotaSelection } from './domain/magpieQuota'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import {
   CODEX_THEME_PRESETS,
@@ -232,7 +232,7 @@ let stopSnapshot: (() => void) | null = null
 let stopState: (() => void) | null = null
 let stopActivate: (() => void) | null = null
 let drag: { x: number; y: number; moved: boolean; pointerId: number } | null = null
-let resize: { pointerId: number; corner: CodexFloatResizeCorner } | null = null
+let resize: { pointerId: number; corner: CodexFloatResizeCorner; captureTarget: HTMLElement } | null = null
 let railHoverTimer: ReturnType<typeof setTimeout> | null = null
 let suppressRailHover = false
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
@@ -282,22 +282,35 @@ const compact = computed(() => buildCodexCompactPresentation({
 }))
 const compactCounts = computed(() => compact.value.taskCounts)
 const companionSlice = computed(() => snapshot.value?.companion || null)
+const quotaResetClock = ref(Date.now())
+const magpieQuotaSelection = computed(() => {
+  const magpie = companionSlice.value?.magpieQuota
+  return resolveMagpieQuotaSelection(magpie?.providers, {
+    status: magpie?.status ?? 'idle',
+    updatedAt: magpie?.updatedAt ?? 0,
+    now: quotaResetClock.value
+  })
+})
 const companionWaterBall = computed(() => resolveCompanionWaterBallPresentation(companionSlice.value, {
   primary: compact.value.primary,
   secondary: compact.value.secondary,
   quota: quota.value
-}))
-const quotaResetClock = ref(Date.now())
+}, magpieQuotaSelection.value))
 let quotaResetTimer: ReturnType<typeof setInterval> | null = null
 const magpieQuotaResetLines = computed(() => {
   const magpie = companionSlice.value?.magpieQuota
   if (!magpie || magpie.status === 'idle') return []
-  return buildMagpieQuotaResetLines(magpie.providers)
+  return buildMagpieQuotaResetLines(magpie.providers, {
+    status: magpie.status,
+    updatedAt: magpie.updatedAt,
+    now: quotaResetClock.value,
+    selection: magpieQuotaSelection.value
+  })
 })
 const magpieQuotaResetInline = computed(() => formatMagpieQuotaResetInline(
   magpieQuotaResetLines.value,
   quotaResetClock.value
-))
+) + (magpieQuotaResetLines.value.length ? ' · 点击立即刷新' : ''))
 function taskFocusItem(task: CodexTaskCard): Extract<FocusItem, { kind: 'task' }> {
   return { kind: 'task', key: `task:${task.key}`, task, marker: resolveCompanionRowMarker(task)! }
 }
@@ -448,7 +461,7 @@ function quotaChipHint(chip: CompanionQuotaChip) {
   return `${quotaChipReadingHint(chip)} · 点击立即刷新`
 }
 /** A reading is also its own refresh trigger: one click forces both providers' quota lanes. */
-function refreshQuotaFromChip(chip: CompanionQuotaChip) {
+function refreshQuotaFromChip(chip: Pick<CompanionQuotaChip, 'provider'>) {
   if (!action('codex.quota.refresh', { source: 'float-quota-chip', provider: chip.provider })) return
   liveMessage.value = '正在刷新额度读数'
   quotaFeedback.value = '正在刷新额度读数…'
@@ -523,7 +536,9 @@ const searchLiveText = computed(() => {
 })
 const statusText = computed(() => searchLiveText.value || '等待真实会话预检')
 const compactAriaLabel = computed(() => {
-  const label = `${compact.value.ariaLabel}${companionWaterBall.value.remoteLimit ? companionWaterBall.value.ariaSuffix : ''}`
+  const label = settings.value?.style === 'card'
+    ? compact.value.ariaLabel
+    : `${compact.value.ariaLabel}${companionWaterBall.value.ariaSuffix}${companionWaterBall.value.quotaGrid.ariaSuffix}`
   if (snapshot.value && (taskState.value.compatibility === 'degraded' || quota.value?.status === 'stale' || quota.value?.status === 'error' || conversations.value?.status === 'stale' || conversations.value?.status === 'error')) return `${label}，${statusText.value}`
   return label
 })
@@ -2903,6 +2918,13 @@ function eventInsideRoot(event: Event) {
 
 /** 返回 true 表示事件已被 window 层完全消费，不再继续派发。 */
 function handleWindowLevelKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && resize) {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    clearResizeState()
+    window.eypcFloat?.resizeCancel()
+    return true
+  }
   if (event.key === 'Escape' && drag) {
     event.preventDefault(); event.stopImmediatePropagation()
     drag = null; window.eypcFloat?.cancelInteraction?.(); return true
@@ -2985,7 +3007,7 @@ function taskCanRestore(task: CodexTaskCard) {
 function onWindowBlur() {
   clearRailHover()
   drag = null
-  resize = null
+  clearResizeState()
   window.eypcFloat?.cancelInteraction?.()
   hoverInside = false
   focusWithin = false
@@ -3075,12 +3097,14 @@ function onPointerDown(event: PointerEvent) {
 }
 
 function onPointerMove(event: PointerEvent) {
+  if (resize?.pointerId === event.pointerId) return onResizePointerMove(event)
   if (!drag || drag.pointerId !== event.pointerId) return
   if (Math.hypot(event.screenX - drag.x, event.screenY - drag.y) >= 5) drag.moved = true
   if (drag.moved) window.eypcFloat?.dragMove(event.screenX, event.screenY)
 }
 
 function onPointerUp(event: PointerEvent) {
+  if (resize?.pointerId === event.pointerId) return onResizePointerUp(event)
   if (!drag || drag.pointerId !== event.pointerId) return
   ignoreCompactClick = drag.moved
   drag = null
@@ -3090,13 +3114,23 @@ function onPointerUp(event: PointerEvent) {
 }
 
 function onPointerCancel(event: PointerEvent) {
+  if (resize?.pointerId === event.pointerId) return onResizePointerCancel(event)
   if (!drag || drag.pointerId !== event.pointerId) return
   ignoreCompactClick = true
   drag = null
   window.eypcFloat?.cancelInteraction?.()
 }
 
-function onLostDragCapture(event: PointerEvent) {
+function onLostPointerCapture(event: PointerEvent) {
+  if (resize?.pointerId === event.pointerId) {
+    const captureTarget = rootElement.value || resize.captureTarget
+    if (captureTarget.hasPointerCapture?.(event.pointerId)) return
+    try {
+      captureTarget.setPointerCapture?.(event.pointerId)
+      resize.captureTarget = captureTarget
+    } catch {}
+    return
+  }
   if (!drag || drag.pointerId !== event.pointerId) return
   if (rootElement.value?.hasPointerCapture?.(event.pointerId)) return
   // Capture can transfer from a child or be released by a native bounds update.
@@ -3164,30 +3198,49 @@ function onResizePointerDown(event: PointerEvent, corner: CodexFloatResizeCorner
   if (!expanded.value || resize || drag) return
   event.preventDefault()
   if (!window.eypcFloat?.resizeStart(event.screenX, event.screenY, corner)) return
-  resize = { pointerId: event.pointerId, corner }
-  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+  const captureTarget = rootElement.value || event.currentTarget as HTMLElement
+  resize = { pointerId: event.pointerId, corner, captureTarget }
+  try { captureTarget.setPointerCapture?.(event.pointerId) } catch {}
+}
+
+function clearResizeState() {
+  const interaction = resize
+  resize = null
+  if (!interaction) return
+  try {
+    if (interaction.captureTarget.hasPointerCapture?.(interaction.pointerId)) {
+      interaction.captureTarget.releasePointerCapture(interaction.pointerId)
+    }
+  } catch {}
 }
 
 function onResizePointerMove(event: PointerEvent) {
-  if (resize?.pointerId === event.pointerId) window.eypcFloat?.resizeMove(event.screenX, event.screenY)
+  if (resize?.pointerId !== event.pointerId) return
+  event.stopPropagation()
+  window.eypcFloat?.resizeMove(event.screenX, event.screenY)
 }
 
 function onResizePointerUp(event: PointerEvent) {
   if (resize?.pointerId !== event.pointerId) return
-  resize = null
+  event.stopPropagation()
+  clearResizeState()
   window.eypcFloat?.resizeEnd()
 }
 
 function onResizePointerCancel(event: PointerEvent) {
   if (resize?.pointerId !== event.pointerId) return
-  resize = null
+  event.stopPropagation()
+  clearResizeState()
   window.eypcFloat?.resizeCancel()
 }
 
 function onResizeHandleKeydown(event: KeyboardEvent, corner: CodexFloatResizeCorner) {
   if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Escape'].includes(event.key)) return
   event.preventDefault()
-  if (event.key === 'Escape') return void window.eypcFloat?.resizeCancel()
+  if (event.key === 'Escape') {
+    clearResizeState()
+    return void window.eypcFloat?.resizeCancel()
+  }
   const step = event.shiftKey ? 32 : 8
   const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0
   const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0
@@ -3517,6 +3570,7 @@ onMounted(() => {
       drag = null
       if (rootElement.value?.hasPointerCapture?.(pointerId)) rootElement.value.releasePointerCapture(pointerId)
     }
+    if (floatState.value.resizing && !value.resizing) clearResizeState()
     floatState.value = value
     const transition = value.transition
     const preparing = transition?.phase === 'expanding' || transition?.phase === 'collapsing'
@@ -3632,7 +3686,7 @@ onUnmounted(() => {
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
     @pointercancel="onPointerCancel"
-    @lostpointercapture="onLostDragCapture"
+    @lostpointercapture="onLostPointerCapture"
     @pointerenter="onMouseEnter"
     @pointerleave="onMouseLeave"
     @focusin="onFocusIn"
@@ -3680,6 +3734,8 @@ onUnmounted(() => {
           :percent-provider-label="companionWaterBall.percentProviderLabel"
           :liquid-percent="companionWaterBall.liquidPercent"
           :ring-percent="companionWaterBall.ringPercent"
+          :ring-visible="companionWaterBall.ringVisible"
+          :quota-stale="companionWaterBall.quotaStale"
           :quota-grid="companionWaterBall.quotaGrid.enabled ? companionWaterBall.quotaGrid.cells : null"
           :quota-hint="companionWaterBall.quotaHint"
           @pointerenter="companionWaterBall.quotaHint && queueActionHint($event, companionWaterBall.quotaHint)"
@@ -3853,12 +3909,18 @@ onUnmounted(() => {
         <span
           v-if="magpieQuotaResetLines.length"
           class="float-magpie-reset-inline"
-          role="img"
-          :aria-label="`重置倒计时：${magpieQuotaResetInline}`"
+          role="button"
+          :aria-label="magpieQuotaResetInline"
+          tabindex="0"
           @pointerenter="queueActionHint($event, magpieQuotaResetInline)"
           @pointerleave="clearActionHint"
+          @focus="queueActionHint($event, magpieQuotaResetInline)"
+          @blur="clearActionHint"
+          @click="refreshQuotaFromChip({ provider: 'codex' })"
+          @keydown.enter.prevent="refreshQuotaFromChip({ provider: 'codex' })"
+          @keydown.space.prevent="refreshQuotaFromChip({ provider: 'codex' })"
         >
-          <span v-for="line in magpieQuotaResetLines" :key="line.key" class="float-magpie-reset-item" aria-hidden="true"><b>{{ line.label === 'Codex' ? 'C' : line.label === 'Grok' ? 'G' : 'U' }}</b> {{ magpieResetCompactText(line.resetAt, quotaResetClock) }}</span>
+          <span v-for="line in magpieQuotaResetLines" :key="line.key" class="float-magpie-reset-item" aria-hidden="true"><b>{{ line.compactLabel }}</b> {{ line.valueText }}<em v-if="line.stale" class="float-magpie-stale">过期</em> · {{ line.resetLabel }} {{ magpieResetCompactText(line.resetAt, quotaResetClock) }}</span>
         </span>
         <!-- Refresh receipt overlays the row for a few seconds instead of adding a line. -->
         <p v-if="quotaFeedback" class="float-quota-feedback" role="status">{{ quotaFeedback }}</p>

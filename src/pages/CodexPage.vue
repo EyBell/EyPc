@@ -29,9 +29,9 @@ import {
   quotaStatusColor,
   resolveCodexExpandedCardTheme
 } from '../domain/codexAppearance'
-import { buildCodexCompactPresentation, codexBadgeText, codexWeeklyReading } from '../domain/codexPresentation'
+import { buildCodexCompactPresentation, codexBadgeText } from '../domain/codexPresentation'
 import { codexConnectionStatusLabel } from '../domain/codexEnvironmentPresentation'
-import { resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
+import { buildCompanionPresentationSlice, resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
   CODEX_MAX_QUOTA_REFRESH_SECONDS,
@@ -202,18 +202,7 @@ const waterPreview = computed(() => buildCodexCompactPresentation({
  * from runtime.
  */
 const companionPreview = computed(() => resolveCompanionWaterBallPresentation({
-  providers: props.snapshot.settings.providers,
-  claudeQuota: props.snapshot.claudeQuota,
-  claudeEnvironment: props.snapshot.claudeEnvironment,
-  magpieQuota: props.snapshot.companion?.magpieQuota
-    ? {
-        ...props.snapshot.companion.magpieQuota,
-        gridLabels: {
-          cursorModels: props.snapshot.settings.magpieQuotaGridCursorPrimaryLabel,
-          cursorOther: props.snapshot.settings.magpieQuotaGridCursorSecondaryLabel
-        }
-      }
-    : undefined
+  ...buildCompanionPresentationSlice(props.snapshot)
 }, {
   primary: waterPreview.value.primary,
   secondary: waterPreview.value.secondary,
@@ -223,8 +212,9 @@ const companionPreview = computed(() => resolveCompanionWaterBallPresentation({
 const waterPreviewStyle = computed<Record<string, string>>(() => {
   const { inner, outer } = waterDraft.value
   const colors = props.snapshot.settings.colors
-  const weekly = codexWeeklyReading(waterPreview.value.primary, waterPreview.value.secondary)
-  const ringPercent = weekly?.bucket.remainingPercent ?? waterPreview.value.primary?.bucket.remainingPercent ?? 100
+  const ringPercent = companionPreview.value.ringVisible
+    ? companionPreview.value.ringPercent ?? 0
+    : 0
   return {
     '--appearance-water-base': colors.water,
     '--appearance-water-fill-color-a': inner.fillColorA,
@@ -1047,7 +1037,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         <div class="codex-appearance-zones" :class="{ 'card-only': appearanceMode === 'card' }">
           <section v-if="appearanceMode === 'water'" class="codex-appearance-zone codex-appearance-zone--water" aria-labelledby="water-appearance-title">
             <div class="codex-appearance-zone-head"><div><span>01 · 悬浮水球</span><h3 id="water-appearance-title">水球外观</h3></div><button type="button" class="codex-tip" aria-label="水球外观说明" data-operation-tooltip="水球外观说明" data-operation-description="预览与桌面水球共用渲染；可分别控制球体背景、液体、Weekly 进度环、百分比读数和三类数字角标。" data-tip="预览与桌面水球共用渲染；可分别控制球体背景、液体、Weekly 进度环、百分比读数和三类数字角标。">i</button></div>
-            <div class="codex-water-appearance-preview" :style="waterPreviewStyle" :role="companionPreview.remoteLimit ? 'img' : undefined" :aria-label="`与真实悬浮水球一致的颜色部位预览${companionPreview.remoteLimit ? companionPreview.ariaSuffix : ''}`">
+            <div class="codex-water-appearance-preview" :style="waterPreviewStyle" role="img" :aria-label="`与真实悬浮水球一致的颜色部位预览${companionPreview.ariaSuffix}${companionPreview.quotaGrid.ariaSuffix}`">
               <CodexWaterBall
                 :primary="waterPreview.primary"
                 :secondary="waterPreview.secondary"
@@ -1058,6 +1048,8 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 :percent-provider-label="companionPreview.percentProviderLabel"
                 :liquid-percent="companionPreview.liquidPercent"
                 :ring-percent="companionPreview.ringPercent"
+                :ring-visible="companionPreview.ringVisible"
+                :quota-stale="companionPreview.quotaStale"
                 :quota-grid="companionPreview.quotaGrid.enabled ? companionPreview.quotaGrid.cells : null"
                 :quota-hint="companionPreview.quotaHint"
                 :appearance="waterDraft"

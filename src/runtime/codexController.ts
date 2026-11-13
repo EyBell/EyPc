@@ -37,7 +37,7 @@ import {
   type ConversationSnapshotV1
 } from '../domain/codex'
 import { companionPinAppLabel, companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
-import type { CompanionQuotaRefreshReceipt, CompanionSnapshotSlice } from '../domain/companionPresentation'
+import { buildCompanionPresentationSlice, type CompanionQuotaRefreshReceipt, type CompanionSnapshotSlice } from '../domain/companionPresentation'
 import { fetchMagpieQuotaProviders, type MagpieQuotaProvider } from '../domain/magpieQuota'
 import {
   emptyClaudeEnvironment,
@@ -520,6 +520,25 @@ export function createCodexController(options: CodexControllerOptions) {
       },
       ...(magpieQuotaError ? { errorMessage: magpieQuotaError } : {})
     }
+  }
+  function companionPresentationSlice(): CompanionSnapshotSlice {
+    const settings = codexState().settings
+    return buildCompanionPresentationSlice({
+      settings,
+      claudeQuota,
+      claudeEnvironment,
+      companion: {
+        providers: settings.providers,
+        revision: claudeControllerRevision,
+        stateGeneration: lastClaudeStateGeneration,
+        unreadGeneration: lastClaudeUnreadGeneration,
+        claudeQuotaAccess,
+        claudeQuota,
+        claudeEnvironment,
+        ...(quotaRefreshReceipt ? { quotaRefreshReceipt } : {}),
+        magpieQuota: companionMagpieQuotaSlice()
+      }
+    })
   }
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
@@ -3961,18 +3980,7 @@ export function createCodexController(options: CodexControllerOptions) {
         orcaInventoryReason,
         claudeQuota,
         refreshing,
-        companion: {
-          providers: settings.providers,
-          claudeAppQuotaAccess: settings.claudeAppQuotaAccess,
-          revision: claudeControllerRevision,
-          stateGeneration: lastClaudeStateGeneration,
-          unreadGeneration: lastClaudeUnreadGeneration,
-          claudeQuotaAccess,
-          claudeQuota,
-          claudeEnvironment,
-          ...(quotaRefreshReceipt ? { quotaRefreshReceipt } : {}),
-          ...(companionMagpieQuotaSlice() ? { magpieQuota: companionMagpieQuotaSlice() } : {})
-        },
+        companion: companionPresentationSlice(),
         floatHost: {
           displayId,
           expandedWidth: preferred?.width || 360,
@@ -4013,18 +4021,7 @@ export function createCodexController(options: CodexControllerOptions) {
         dynamicTaskWindowHours: settings.dynamicTaskWindowHours,
         actionDefaultProjectKey: settings.actionDefaultProjectKey || '',
         keybindings,
-      companion: {
-        providers: settings.providers,
-        claudeAppQuotaAccess: settings.claudeAppQuotaAccess,
-        revision: claudeControllerRevision,
-        stateGeneration: lastClaudeStateGeneration,
-        unreadGeneration: lastClaudeUnreadGeneration,
-        claudeQuotaAccess,
-        claudeQuota,
-        claudeEnvironment,
-        ...(quotaRefreshReceipt ? { quotaRefreshReceipt } : {}),
-        ...(companionMagpieQuotaSlice() ? { magpieQuota: companionMagpieQuotaSlice() } : {})
-      },
+        companion: companionPresentationSlice(),
         generatedAt: 0
       }
       const fingerprint = codexFloatBaseSemanticFingerprint(candidate)

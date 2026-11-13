@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import type { CodexColorSettings, CodexWaterAppearanceSettings } from '../domain/codex'
 import { codexWaterAppearanceCssVars } from '../domain/codexAppearance'
 import { codexWeeklyReading, type CodexQuotaReading } from '../domain/codexPresentation'
-import { presentCompactQuotaGridCells, type CompactQuotaGridCell } from '../domain/magpieQuota'
+import { formatMagpiePercent, presentCompactQuotaGridCells, type CompactQuotaGridCell } from '../domain/magpieQuota'
 
 const props = withDefaults(defineProps<{
   primary: CodexQuotaReading | null
@@ -37,6 +37,10 @@ const props = withDefaults(defineProps<{
   liquidPercent?: number | null
   /** Same fallback for the outer weekly ring. */
   ringPercent?: number | null
+  /** Undefined keeps the legacy weekly-window decision; false explicitly hides the ring. */
+  ringVisible?: boolean
+  /** Marks the whole quota reading stale when no grid cell owns that state. */
+  quotaStale?: boolean
   /** When set, the centre renders a 2×2 Magpie quota grid instead of one percentage. */
   quotaGrid?: CompactQuotaGridCell[] | null
   quotaHint?: string
@@ -51,6 +55,8 @@ const props = withDefaults(defineProps<{
   percentProviderLabel: '',
   liquidPercent: null,
   ringPercent: null,
+  ringVisible: undefined,
+  quotaStale: false,
   quotaGrid: null,
   quotaHint: ''
 })
@@ -62,6 +68,11 @@ const hasLiquidOverride = computed(() => typeof props.liquidPercent === 'number'
 const liquidLevel = computed(() => hasLiquidOverride.value ? props.liquidPercent as number : percent.value)
 const hasPercentOverride = computed(() => typeof props.percentOverride === 'number' && Number.isFinite(props.percentOverride))
 const displayPercent = computed(() => hasPercentOverride.value ? props.percentOverride as number : props.primary?.bucket.remainingPercent ?? null)
+const magpieCentre = computed(() => props.percentProviderLabel === 'Magpie' && hasPercentOverride.value)
+const centreText = computed(() => {
+  if (displayPercent.value === null) return props.stateLabel
+  return magpieCentre.value ? formatMagpiePercent(displayPercent.value) : `${displayPercent.value}%`
+})
 // A pair only renders when both halves are real readings; a lone scoped value
 // would be an unlabelled number over an unrelated liquid level.
 const dualReading = computed(() => hasPercentOverride.value
@@ -76,7 +87,12 @@ const gridLayout = computed(() => gridPresentation.value.layout)
 const weekly = computed(() => codexWeeklyReading(props.primary, props.secondary))
 const hasRingOverride = computed(() => typeof props.ringPercent === 'number' && Number.isFinite(props.ringPercent))
 const weeklyPercent = computed(() => hasRingOverride.value ? props.ringPercent as number : weekly.value?.bucket.remainingPercent ?? 0)
-const ringVisible = computed(() => weekly.value !== null || hasRingOverride.value)
+const ringVisible = computed(() => props.ringVisible === false
+  ? false
+  : props.ringVisible === true || weekly.value !== null || hasRingOverride.value)
+const cellIsStale = (cell: CompactQuotaGridCell) => cell.stale === true
+const staleCells = computed(() => gridMode.value ? gridPresentation.value.cells.filter(cellIsStale) : [])
+const showGlobalStale = computed(() => staleCells.value.length === 0 && props.quotaStale)
 const activeWeeklySegments = computed(() => Math.ceil(weeklyPercent.value / 5))
 const wavePath = 'M0 12 C12.5 0 37.5 0 50 12 S87.5 24 100 12 C112.5 0 137.5 0 150 12 S187.5 24 200 12 L200 24 L0 24 Z'
 const percentTextIsBold = computed(() => props.appearance.inner.percentTextStyle === 'bold' || props.appearance.inner.percentTextStyle === 'bold-italic')
@@ -159,17 +175,19 @@ const style = computed(() => ({
           >
             <span class="codex-water-ball__grid-label">{{ cell.label }}</span>
             <strong class="codex-water-ball__grid-value">{{ cell.text }}</strong>
+            <small v-if="cell.stale" class="codex-water-ball__stale">旧</small>
           </div>
         </div>
       </div>
       <template v-else>
         <span v-if="primary?.family === 'spark' && !hasLiquidOverride" class="codex-water-ball__spark" aria-hidden="true">S</span>
         <strong v-if="dualReading" class="codex-water-ball__pair">
-          <span>{{ dualReading.scoped }}</span><i aria-hidden="true">/</i><span>{{ dualReading.primary }}</span>
+          <span>{{ magpieCentre ? formatMagpiePercent(dualReading.scoped) : dualReading.scoped }}</span><i aria-hidden="true">/</i><span>{{ magpieCentre ? formatMagpiePercent(dualReading.primary) : dualReading.primary }}</span>
         </strong>
-        <strong v-else>{{ displayPercent === null ? stateLabel : `${displayPercent}%` }}</strong>
+        <strong v-else>{{ centreText }}</strong>
         <em v-if="hasPercentOverride && percentProviderLabel" class="codex-water-ball__percent-source">{{ percentProviderLabel }}</em>
       </template>
+      <small v-if="showGlobalStale" class="codex-water-ball__stale codex-water-ball__stale--global">旧</small>
     </div>
   </div>
 </template>
@@ -531,6 +549,19 @@ const style = computed(() => ({
 }
 .codex-water-ball__grid-cell.kind-missing .codex-water-ball__grid-value {
   opacity: .58;
+}
+.codex-water-ball__stale {
+  margin-left: 2px;
+  color: inherit;
+  font-size: .58em;
+  font-weight: 700;
+  line-height: 1;
+  opacity: .78;
+}
+.codex-water-ball__stale--global {
+  position: absolute;
+  top: -0.35em;
+  right: -0.55em;
 }
 
 @keyframes codex-water-wave-left {

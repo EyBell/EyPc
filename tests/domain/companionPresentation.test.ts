@@ -462,8 +462,6 @@ describe('water ball Magpie remote limit fallback', () => {
   })
 
   it.each([
-    ['codex', '7 days'],
-    ['remote-magpie/codex', '7 days'],
     ['grok', '7 days'],
     ['remote-magpie/grok', '7 days'],
     ['cursor', 'Cursor Models'],
@@ -480,6 +478,70 @@ describe('water ball Magpie remote limit fallback', () => {
         }
       }))
     }
+  })
+
+  it.each(['codex', 'remote-magpie/codex'])('keeps a zero %s weekly from replacing the ball', (provider) => {
+    expectLegacyPresentation(remoteSlice({
+      magpieQuota: {
+        providers: [keyCard, { provider, windows: [{ name: '7 days', remaining: 0 }] }],
+        status: 'ok',
+        updatedAt: 1
+      }
+    }))
+  })
+
+  it.each(['codex', 'remote-magpie/codex'])('fills only an empty ring from a visible %s weekly percent', (provider) => {
+    const snapshot = remoteSlice({
+      magpieQuota: {
+        providers: [keyCard, { provider, windows: [{ name: '7 days', remaining: 50 }] }],
+        status: 'ok',
+        updatedAt: 1
+      }
+    })
+    for (const codex of [
+      freeCodex,
+      { ...freeCodex, primary: codexReading('weekly', 0) },
+      { ...freeCodex, secondary: codexReading('weekly', 0) }
+    ]) {
+      const result = resolveCompanionWaterBallPresentation(snapshot, codex)
+      expect(result.percentOverride).toBeNull()
+      expect(result.liquidPercent).toBeNull()
+      expect(result.remoteLimit).toBeNull()
+      expect(result.ariaSuffix).toBe('，Magpie Codex 7 天剩余 50%')
+      expect(result.quotaHint).toBe('')
+      expect(result.ringPercent).toBe(50)
+      expect(result.quotaGrid.cells.find((cell) => cell.key === 'token')).toBeUndefined()
+      expect(result.quotaGrid.ariaSuffix).not.toContain('Codex')
+    }
+  })
+
+  it('keeps a native weekly reading ahead of the centre Magpie Codex percent', () => {
+    const result = resolveCompanionWaterBallPresentation(remoteSlice({
+      magpieQuota: {
+        providers: [keyCard, { provider: 'codex', windows: [{ name: '7 days', remaining: 100 }] }],
+        status: 'ok',
+        updatedAt: 1
+      }
+    }), { ...freeCodex, secondary: codexReading('weekly', 40) })
+    expect(result.percentOverride).toBeNull()
+    expect(result.liquidPercent).toBeNull()
+    expect(result.remoteLimit).toBeNull()
+    expect(result.ringPercent).toBeNull()
+    expect(result.quotaGrid.cells.find((cell) => cell.key === 'token')).toMatchObject({ kind: 'percent', percent: 100 })
+  })
+
+  it('does not replace a Claude ring with the centre Magpie Codex percent', () => {
+    const result = resolveCompanionWaterBallPresentation(slice({
+      magpieQuota: {
+        providers: [{ provider: 'codex', windows: [{ name: '7 days', remaining: 100 }] }],
+        status: 'ok',
+        updatedAt: 1
+      }
+    }))
+    expect(result.ringPercent).toBe(45)
+    expect(result.liquidPercent).toBe(70)
+    expect(result.percentOverride).toBe(45)
+    expect(result.quotaGrid.cells.find((cell) => cell.key === 'token')).toMatchObject({ kind: 'percent', percent: 100 })
   })
 
   it.each(['codex', 'remote-magpie/codex'])('blocks replacement for a %s token balance including real zero', (provider) => {
@@ -829,6 +891,33 @@ describe('single-row quota strip', () => {
     expect(strip.groups[0].caption).toBe('')
     expect(strip.groups[0].chips.map((chip) => chip.shortLabel)).toEqual(['5h', '周', 'S周'])
     expect(strip.groups[0].chips.map((chip) => chip.spark)).toEqual([false, false, true])
+  })
+
+  it('omits the left Magpie weekly chip when the Codex reset line already carries that window', () => {
+    const strip = buildCompanionQuotaStrip(
+      [{ key: 'normal-weekly', label: '周限额', family: 'normal', window: 'weekly', remainingPercent: 0, resetAt: 20 }],
+      slice({
+        providers: { codex: true, claude: false, cursor: false },
+        magpieQuota: {
+          providers: [{ provider: 'codex', windows: [{ name: '7 days', remaining: 97, resetsAt: '2026-11-18T00:00:00Z' }] }],
+          status: 'ok',
+          updatedAt: 1
+        }
+      })
+    )
+    expect(strip.groups[0].chips.map((chip) => chip.shortLabel)).toEqual(['周'])
+  })
+
+  it('keeps the Magpie token fallback when the weekly percent is exhausted', () => {
+    const strip = buildCompanionQuotaStrip([], slice({
+      providers: { codex: true, claude: false, cursor: false },
+      magpieQuota: {
+        providers: [{ provider: 'codex', balance: '12000 credits', windows: [{ name: '7 days', remaining: 0, resetsAt: '2026-11-18T00:00:00Z' }] }],
+        status: 'ok',
+        updatedAt: 1
+      }
+    }))
+    expect(strip.groups[0].chips.map((chip) => chip.shortLabel)).toEqual(['M·Token'])
   })
 
   it('joins both providers into one ordered strip once claude is enabled', () => {

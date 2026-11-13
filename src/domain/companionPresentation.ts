@@ -1,4 +1,4 @@
-import type { CodexhostEnvironmentV1, CodexQuotaSnapshotV1 } from './codex'
+import type { CodexhostEnvironmentV1, CodexQuotaSnapshotV1, CodexSettings } from './codex'
 import { CLAUDE_QUOTA_WINDOW_LABELS } from './generated/claudeQuotaVocabulary'
 import {
   claudePrimaryQuotaWindow,
@@ -25,13 +25,15 @@ import {
   type CompanionWaterBallMapping
 } from './companionProvider'
 import {
-  buildMagpieQuotaExpandCards,
   formatMagpieRemoteLimitHint,
   hasMagpieAgentQuota,
+  omitCompactQuotaGridCells,
   resolveCompactQuotaGridPresentation,
+  resolveMagpieQuotaSelection,
   resolveMagpieRemoteLimit,
   type CompactQuotaGridPresentation,
   type MagpieQuotaGridLabelOptions,
+  type MagpieQuotaSelection,
   type MagpieQuotaProvider,
   type MagpieRemoteLimitReading
 } from './magpieQuota'
@@ -64,6 +66,31 @@ export interface CompanionSnapshotSlice {
     updatedAt: number
     errorMessage?: string
     gridLabels?: MagpieQuotaGridLabelOptions
+  }
+}
+
+export function buildCompanionPresentationSlice(snapshot: {
+  settings: Pick<CodexSettings, 'providers' | 'claudeAppQuotaAccess' | 'magpieQuotaAccess' | 'magpieQuotaGridCursorPrimaryLabel' | 'magpieQuotaGridCursorSecondaryLabel'>
+  claudeQuota: ClaudeQuotaSnapshot
+  claudeEnvironment: ClaudeEnvironmentSnapshot
+  companion?: CompanionSnapshotSlice
+}): CompanionSnapshotSlice {
+  const { settings, companion } = snapshot
+  return {
+    ...companion,
+    providers: settings.providers,
+    claudeAppQuotaAccess: settings.claudeAppQuotaAccess,
+    claudeQuota: snapshot.claudeQuota,
+    claudeEnvironment: snapshot.claudeEnvironment,
+    magpieQuota: settings.magpieQuotaAccess && companion?.magpieQuota
+      ? {
+          ...companion.magpieQuota,
+          gridLabels: {
+            cursorModels: settings.magpieQuotaGridCursorPrimaryLabel,
+            cursorOther: settings.magpieQuotaGridCursorSecondaryLabel
+          }
+        }
+      : undefined
   }
 }
 
@@ -166,8 +193,11 @@ export interface CompanionWaterBallPresentation {
    * reading and the channel fell back to the centre owner.
    */
   liquidPercent: number | null
-  /** Same fallback for the outer weekly ring; null keeps the Codex ring. */
   ringPercent: number | null
+  ringVisible: boolean
+  ringSource: 'codex' | 'claude' | 'magpie' | 'remote-key' | null
+  ringReason: string
+  quotaStale: boolean
   /** Accessible suffix describing the override; empty when not overridden. */
   ariaSuffix: string
   /** 2×2 centre grid sourced from Magpie when enabled. */
@@ -191,6 +221,10 @@ const EMPTY_PRESENTATION: CompanionWaterBallPresentation = {
   percentProviderLabel: '',
   liquidPercent: null,
   ringPercent: null,
+  ringVisible: false,
+  ringSource: null,
+  ringReason: 'no-weekly-reading',
+  quotaStale: false,
   ariaSuffix: '',
   quotaGrid: resolveCompactQuotaGridPresentation(null, { enabled: false }),
   remoteLimit: null,
@@ -201,6 +235,31 @@ function clampQuotaPercent(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)))
 }
 
+function withEmptyMagpieCodexRing(
+  presentation: CompanionWaterBallPresentation,
+  codexEnabled: boolean
+): CompanionWaterBallPresentation {
+  if (!codexEnabled || presentation.mapping.ring !== 'codex'
+    || presentation.ringSource === 'claude' || presentation.ringSource === 'remote-key'
+    || (presentation.ringPercent ?? 0) > 0) return presentation
+  const cell = presentation.quotaGrid.cells.find((entry) => entry.key === 'token' && entry.kind === 'percent' && typeof entry.percent === 'number' && entry.percent > 0)
+  if (!cell || typeof cell.percent !== 'number') return presentation
+  const ariaSuffix = presentation.ariaSuffix.includes(cell.detail)
+    ? presentation.ariaSuffix
+    : `${presentation.ariaSuffix}，${cell.detail}`
+  return {
+    ...presentation,
+    ringPercent: cell.percent,
+    ringVisible: true,
+    ringSource: 'magpie',
+    ringReason: presentation.ringSource === 'codex' ? 'native-weekly-exhausted' : 'native-weekly-missing',
+    quotaStale: cell.stale === true,
+    quotaHint: cell.detail,
+    ariaSuffix,
+    quotaGrid: omitCompactQuotaGridCells(presentation.quotaGrid, (entry) => entry === cell)
+  }
+}
+
 /**
  * Resolves what the collapsed water ball should show.
  *
@@ -209,51 +268,73 @@ function clampQuotaPercent(value: number): number {
  */
 export function resolveCompanionWaterBallPresentation(
   slice: CompanionSnapshotSlice | null | undefined,
-  codex: CompanionWaterBallCodexReadings = {}
+  codex: CompanionWaterBallCodexReadings = {},
+  selection?: MagpieQuotaSelection
 ): CompanionWaterBallPresentation {
+  const magpie = slice?.magpieQuota
+  const magpieSelection = selection ?? resolveMagpieQuotaSelection(magpie?.providers, {
+    status: magpie?.status ?? 'idle',
+    updatedAt: magpie?.updatedAt ?? 0
+  })
   const quotaGrid = resolveCompactQuotaGridPresentation(slice?.magpieQuota?.providers ?? null, {
     enabled: Boolean(slice?.magpieQuota && slice.magpieQuota.status !== 'idle'),
     status: slice?.magpieQuota?.status || 'idle',
     updatedAt: slice?.magpieQuota?.updatedAt || 0,
     errorMessage: slice?.magpieQuota?.errorMessage,
-    labels: slice?.magpieQuota?.gridLabels
+    labels: slice?.magpieQuota?.gridLabels,
+    selection: magpieSelection
   })
-  if (!slice) return { ...EMPTY_PRESENTATION, quotaGrid }
-  const appQuotaReadable = claudeAppQuotaReadable(slice)
-  const claudeLive = slice.providers.claude === true
-    && (isClaudeAvailable(slice.claudeEnvironment) || appQuotaReadable)
-  const mapping = resolveCompanionWaterBallMapping(slice.providers, { claude: claudeLive })
-  const magpie = slice.magpieQuota
+  const codexEnabled = !slice || slice.providers.codex === true
+  const claudeLive = slice?.providers.claude === true
+    && (isClaudeAvailable(slice.claudeEnvironment) || claudeAppQuotaReadable(slice))
+  const mapping = slice
+    ? resolveCompanionWaterBallMapping(slice.providers, { claude: claudeLive })
+    : EMPTY_PRESENTATION.mapping
+  const nativeWeekly = codexEnabled ? codexWeeklyReading(codex.primary, codex.secondary) : null
+  const claudeWeekly = slice?.providers.claude ? slice.claudeQuota.weekly : null
+  const ring = mapping.ring === 'claude' ? claudeWeekly : codexEnabled ? nativeWeekly?.bucket : null
+  const base: CompanionWaterBallPresentation = {
+    ...EMPTY_PRESENTATION,
+    mapping,
+    quotaGrid,
+    ringPercent: ring?.remainingPercent ?? null,
+    ringVisible: Boolean(ring),
+    ringSource: ring ? mapping.ring === 'claude' ? 'claude' : 'codex' : null,
+    ringReason: ring ? 'native-weekly' : 'no-weekly-reading',
+    liquidPercent: !codexEnabled && mapping.liquid === 'claude'
+      ? slice?.claudeQuota.short?.remainingPercent ?? claudeWeekly?.remainingPercent ?? 0
+      : null,
+    quotaHint: quotaGrid.cells.map((cell) => cell.detail).join('；')
+  }
+  if (!slice) return base
   if (slice.providers.codex && !slice.providers.claude && !slice.providers.cursor && !slice.providers.orca
     && codex.quota?.status === 'ok' && codex.quota.plan.trim().toLowerCase() === 'free'
     && !codex.primary && !codex.secondary && magpie && !hasMagpieAgentQuota(magpie.providers)) {
     const remoteLimit = resolveMagpieRemoteLimit(magpie.providers, { status: magpie.status, updatedAt: magpie.updatedAt })
     if (remoteLimit) {
-      const percent = clampQuotaPercent(remoteLimit.remainingPercent)
+      const percent = Math.max(0, Math.min(100, remoteLimit.remainingPercent))
       const quotaHint = formatMagpieRemoteLimitHint(remoteLimit)
-      return {
-        ...EMPTY_PRESENTATION,
-        mapping,
-        quotaGrid,
+      return withEmptyMagpieCodexRing({
+        ...base,
         percentOverride: percent,
         ringPercent: percent,
+        ringVisible: true,
+        ringSource: 'remote-key',
+        ringReason: 'free-codex-key-limit',
+        quotaStale: remoteLimit.stale,
         percentProviderLabel: 'Magpie',
         remoteLimit,
         quotaHint,
         ariaSuffix: `，${quotaHint}`
-      }
+      }, codexEnabled)
     }
   }
-  if (mapping.percent !== 'claude') return { ...EMPTY_PRESENTATION, mapping, quotaGrid }
+  if (mapping.percent !== 'claude') return withEmptyMagpieCodexRing(base, codexEnabled)
   const window = claudePrimaryQuotaWindow(slice.claudeQuota)
-  if (!window) return { ...EMPTY_PRESENTATION, mapping, quotaGrid }
+  if (!window) return withEmptyMagpieCodexRing(base, codexEnabled)
   const percent = clampQuotaPercent(window.remainingPercent)
-  // A channel whose mapped provider has no positive reading falls back to the
-  // centre owner instead of leaving dead glass under a foreign number. The
-  // early return above already proves Claude is live, so the fallback can
-  // never leak a disabled provider into the ball.
   const channel = (provider: CompanionProviderId, quotaWindow: ClaudeQuotaWindow | null | undefined, label: string): CompanionQuotaChannelReading | null => (
-    quotaWindow && quotaWindow.remainingPercent > 0
+    quotaWindow && Number.isFinite(quotaWindow.remainingPercent)
       ? { provider, remainingPercent: quotaWindow.remainingPercent, resetAt: quotaWindow.resetAt, label }
       : null
   )
@@ -261,7 +342,7 @@ export function resolveCompanionWaterBallPresentation(
     short: channel('claude', slice.claudeQuota.short, '5h'),
     weekly: channel('claude', slice.claudeQuota.weekly, '周')
   }
-  const codexPrimary = codex.primary ?? null
+  const codexPrimary = codexEnabled ? codex.primary ?? null : null
   // A 0% reading is real data — the quota is exhausted — not an absent reading.
   // The channel stays with the mapped provider at 0; fallback is only for a
   // provider with no reading object at all.
@@ -270,7 +351,7 @@ export function resolveCompanionWaterBallPresentation(
       ? { provider: 'codex' as const, remainingPercent: codexPrimary.bucket.remainingPercent, resetAt: null, label: codexPrimary.label }
       : null,
     weekly: (() => {
-      const weekly = codexWeeklyReading(codexPrimary, codex.secondary ?? null)
+      const weekly = nativeWeekly
       return weekly
         ? { provider: 'codex' as const, remainingPercent: weekly.bucket.remainingPercent, resetAt: null, label: weekly.label }
         : null
@@ -279,37 +360,32 @@ export function resolveCompanionWaterBallPresentation(
   const resolved = resolveCompanionWaterBallReadings(mapping, { codex: codexChannels, claude: claudeChannels })
   const foreignPercent = (reading: CompanionQuotaChannelReading | null) =>
     reading && reading.provider !== 'codex' ? clampQuotaPercent(reading.remainingPercent) : null
-  const liquidPercent = foreignPercent(resolved.liquid ?? claudeChannels.short ?? claudeChannels.weekly)
-  const ringPercent = foreignPercent(resolved.ring ?? claudeChannels.weekly ?? claudeChannels.short)
+  const liquidPercent = foreignPercent(resolved.liquid ?? claudeChannels.short ?? claudeChannels.weekly) ?? base.liquidPercent
   // The scoped reading joins the centre only when the trailing number really is
   // the plain weekly window. Pairing it with the 5-hour fallback would put two
   // different window lengths behind one slash and read as one comparison.
   const scoped = slice.claudeQuota.weekly ? claudeScopedWeeklyQuotaWindow(slice.claudeQuota) : null
   if (!scoped) {
-    return {
-      ...EMPTY_PRESENTATION,
-      mapping,
+    return withEmptyMagpieCodexRing({
+      ...base,
       percentOverride: percent,
       percentProviderLabel: COMPANION_PROVIDER_LABELS.claude,
       liquidPercent,
-      ringPercent,
       ariaSuffix: `，Claude 剩余 ${percent}%`,
       quotaGrid
-    }
+    }, codexEnabled)
   }
   const scopedPercent = clampQuotaPercent(scoped.remainingPercent)
-  return {
-    ...EMPTY_PRESENTATION,
-    mapping,
+  return withEmptyMagpieCodexRing({
+    ...base,
     percentOverride: percent,
     scopedPercent,
     scopedLabel: scoped.scope,
     percentProviderLabel: COMPANION_PROVIDER_LABELS.claude,
     liquidPercent,
-    ringPercent,
     ariaSuffix: `，Claude ${scoped.scope}周限额剩余 ${scopedPercent}%，普通周限额剩余 ${percent}%`,
     quotaGrid
-  }
+  }, codexEnabled)
 }
 
 /* ------------------------------------------------------------------ *
@@ -661,25 +737,6 @@ export function buildCompanionQuotaStrip(
       remainingPercent: item.remainingPercent,
       resetAt: item.resetAt
     }))
-    const magpie = slice?.magpieQuota
-    if (magpie?.status === 'ok' || magpie?.status === 'stale') {
-      const card = buildMagpieQuotaExpandCards(magpie.providers).find((item) => item.key === 'magpie-codex-weekly')
-      if (card && card.percent !== null) {
-        const token = card.percent === 0 && card.valueText !== '0'
-        chips.push({
-          key: card.key,
-          provider: 'codex',
-          spark: false,
-          shortLabel: token ? 'M·Token' : 'M·周',
-          label: token ? 'Magpie Codex Token 余额' : 'Magpie Codex 周额度',
-          remainingPercent: card.percent,
-          valueText: token ? card.valueText : `${card.valueText}%`,
-          detail: `${card.detail}${magpie.status === 'stale' ? '；上次数据，可能过期' : ''}`,
-          resetAt: card.resetAt,
-          stale: magpie.status === 'stale'
-        })
-      }
-    }
     groups.push({
       provider: 'codex',
       caption: '',

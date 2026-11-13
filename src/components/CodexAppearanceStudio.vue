@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import CodexWaterBall from './CodexWaterBall.vue'
-import { buildCodexCompactPresentation, codexWeeklyReading } from '../domain/codexPresentation'
-import { resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
+import { buildCodexCompactPresentation } from '../domain/codexPresentation'
+import { buildCompanionPresentationSlice, resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
 import { codexThemeCssVars, resolveCodexExpandedCardTheme } from '../domain/codexAppearance'
 import type { CodexColorSettings, CodexCounterColors, CodexExpandedCardAppearanceSettings, CodexSettings } from '../domain/codex'
 import type { CodexRuntimeView } from '../runtime/codexController'
@@ -61,10 +61,10 @@ function sampleLayer(id: string) {
   const p = realBallProps.value
   if (!expanded.value.has(id)) return false
   if (id === 'liquid') return p.liquidPercent == null && !p.primary
-  if (id === 'ring' || id === 'track') return p.ringPercent == null && !codexWeeklyReading(p.primary, p.secondary)
+  if (id === 'ring' || id === 'track') return p.ringVisible !== true
   return false
 }
-function layerProps(id: string) { const p = realBallProps.value; return sampleLayer(id) ? { ...p, ...(id === 'liquid' ? { liquidPercent: 62 } : { ringPercent: 62 }) } : p }
+function layerProps(id: string) { const p = realBallProps.value; return sampleLayer(id) ? { ...p, ...(id === 'liquid' ? { liquidPercent: 62 } : { ringPercent: 62, ringVisible: true }) } : p }
 function counterTransform(id: string) { const offsets: Record<string,string> = { input: 'translate3d(-42px,18px,65px)', active: 'translate3d(42px,-8px,65px)', unread: 'translate3d(42px,18px,65px)' }; return expanded.value.has(id) ? offsets[id] : 'translate3d(0,0,0)' }
 const hue = ref(0)
 const saturation = ref(0)
@@ -106,9 +106,9 @@ watch(selected, (part) => emit('update:selectedPart', part))
 function clearSelection() { selected.value = '' }
 defineExpose({ clearSelection })
 const compact = computed(() => buildCodexCompactPresentation({ quota: props.snapshot.quota, compactFields: props.snapshot.settings.compactFields, conversationInboxEnabled: props.snapshot.settings.conversationInboxEnabled, taskCounts: props.snapshot.taskState.dynamic.compactCounts }))
-const companion = computed(() => resolveCompanionWaterBallPresentation({ providers: props.snapshot.settings.providers, claudeQuota: props.snapshot.claudeQuota, claudeEnvironment: props.snapshot.claudeEnvironment, magpieQuota: props.snapshot.companion?.magpieQuota }, { primary: compact.value.primary, secondary: compact.value.secondary, quota: props.snapshot.quota }))
+const companion = computed(() => resolveCompanionWaterBallPresentation(buildCompanionPresentationSlice(props.snapshot), { primary: compact.value.primary, secondary: compact.value.secondary, quota: props.snapshot.quota }))
 const cardStyle = computed(() => codexThemeCssVars(resolveCodexExpandedCardTheme(props.snapshot.settings.colors, props.snapshot.settings.expandedCardAppearance, compact.value.primary?.bucket.remainingPercent ?? 100)))
-const realBallProps = computed(() => ({ primary: compact.value.primary, secondary: compact.value.secondary, stateLabel: compact.value.stateLabel, label: `${compact.value.ariaLabel}${companion.value.ariaSuffix}${companion.value.quotaGrid.ariaSuffix}`, appearance: props.snapshot.settings.waterAppearance, colors: props.snapshot.settings.colors, percentOverride: companion.value.percentOverride, scopedPercent: companion.value.scopedPercent, percentProviderLabel: companion.value.percentProviderLabel, liquidPercent: companion.value.liquidPercent, ringPercent: companion.value.ringPercent, quotaGrid: companion.value.quotaGrid.enabled ? companion.value.quotaGrid.cells : null, quotaHint: companion.value.quotaHint, decorative: true }))
+const realBallProps = computed(() => ({ primary: compact.value.primary, secondary: compact.value.secondary, stateLabel: compact.value.stateLabel, label: `${compact.value.ariaLabel}${companion.value.ariaSuffix}${companion.value.quotaGrid.ariaSuffix}`, appearance: props.snapshot.settings.waterAppearance, colors: props.snapshot.settings.colors, percentOverride: companion.value.percentOverride, scopedPercent: companion.value.scopedPercent, percentProviderLabel: companion.value.percentProviderLabel, liquidPercent: companion.value.liquidPercent, ringPercent: companion.value.ringPercent, ringVisible: companion.value.ringVisible, quotaStale: companion.value.quotaStale, quotaGrid: companion.value.quotaGrid.enabled ? companion.value.quotaGrid.cells : null, quotaHint: companion.value.quotaHint, decorative: true }))
 const layers = [ { id: 'base', name: '球体与高光', x: -62, y: -10, z: -40 }, { id: 'liquid', name: '水波', x: 64, y: 6, z: 35 }, { id: 'track', name: '外环轨道', x: -34, y: -68, z: 8 }, { id: 'ring', name: '额度环', x: 52, y: -66, z: 65 }, { id: 'reading', name: '读数', x: 0, y: 42, z: 90 } ] as const
 function update(patch: Partial<CodexSettings>) { emit('dispatch', 'codex.settings.update', { settings: patch }) }
 function updateInner(key: string, value: string | number | boolean) { const water = props.snapshot.settings.waterAppearance; update({ waterAppearance: { ...water, inner: { ...water.inner, [key]: value } } }) }
@@ -149,7 +149,7 @@ function spectrumKey(event: KeyboardEvent) { if (props.mode === 'card' && select
 
 <template>
   <div class="appearance-studio">
-      <div class="appearance-studio-stage" tabindex="0" :aria-label="`模型预览，方向键旋转，Home 恢复视角，双击散开或聚合${mode === 'water' && companion.remoteLimit ? companion.ariaSuffix : ''}`" @keydown="stageKey" @dblclick="toggleAll" @pointerdown="dragStart" @pointermove="onStagePointerMove" @pointerup="pointerStart = null" @pointerleave="onStagePointerLeave">
+      <div class="appearance-studio-stage" tabindex="0" :aria-label="`模型预览，方向键旋转，Home 恢复视角，双击散开或聚合${mode === 'water' ? `${companion.ariaSuffix}${companion.quotaGrid.ariaSuffix}` : ''}`" @keydown="stageKey" @dblclick="toggleAll" @pointerdown="dragStart" @pointermove="onStagePointerMove" @pointerup="pointerStart = null" @pointerleave="onStagePointerLeave">
         <div class="appearance-studio-tabs" @pointerdown.stop @pointermove.stop @pointerup.stop @click.stop @dblclick.stop @keydown.stop>
           <button type="button" :class="{ active: mode === 'water' }" :aria-pressed="mode === 'water'" @click="emit('update:mode','water')">水球</button>
           <button type="button" :class="{ active: mode === 'card' }" :aria-pressed="mode === 'card'" @click="emit('update:mode','card')">卡片</button>

@@ -380,7 +380,7 @@ export function resolveCompanionWaterBallReadings(
   }
   return {
     liquid: pick(mapping.liquid, 'short'),
-    ring: pick(mapping.ring, 'weekly'),
+    ring: mapping.ring ? readings[mapping.ring]?.weekly ?? null : null,
     percent: pick(mapping.percent, 'short')
   }
 }
