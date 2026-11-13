@@ -33,6 +33,8 @@ Windows 二次悬浮偏移及不展示仍待真实宿主验收；上述几何行
 
 Windows 的原生 CLI 发现也覆盖官方独立安装默认目录；旧自动候选均不可用时，异步查询当前用户注册的 Codex 桌面包，并检查有限的随包 CLI 位置。查询单飞、限时并短暂缓存；手动路径和原候选优先级保留，连接关闭会使在途启动准备失效。原生程序不探测外部 Node，JS 入口继续使用原兼容分支。`codex-startup` 关联实际启动请求与初始化结果；诊断模块未加载时，失败仍记录模块状态。绘制观察覆盖 water／card／edge，捕获忙时只保留最新待采请求；模块加载及调试门槛／采样上限／超时停采／过期等跳过原因可区分。相关代码与验证见同一份 [Windows 诊断复核](../specs/260915/float-edge-rail/windows-diagnostics-review.md#L7)，这些改动仍待 Windows 现场确认。
 
+2026-11-13 候选将上述预留视口扩展到 Windows 水球／卡片，取代 Windows 独有的旧高度过滤与常规透明准备路径。初次创建、显示器重配、重建和恢复自适应共用几何入口；自动面板仍以 460 DIP 为内容高度上限，手动尺寸仅按最小 340×280 DIP 和工作区扣边距夹紧。停驻需要原生透明区穿透；方法缺失、调用失败或停驻矩形写入失败时禁用本桥接生命周期的停驻布局，保留锚点并尝试旧路径。关闭穿透或旧几何无法确认成功时，不报几何就绪，使用单个延迟重建请求恢复。缩放使用可缩放状态临时切换、位置／大小重试和原生读回；仅实际尺寸改变才保存，取消恢复原视口，失败走同一降级路径。页面根节点与窗口事件接续失捕获的指针，并在 Esc、失焦和卸载时清理。Windows 诊断记录停驻展开／收起及每次缩放开始、首次有效移动、结束／取消和失败，不逐帧记录，也不保存正文或命令。实现与人工验收见[Windows 原位展开与手动缩放](../specs/260915/float-edge-rail/windows-diagnostics-review.md#2026-11-13-windows-原位展开与手动缩放)；本轮尚无 Windows 实机结论。
+
 ## Core Invariants
 
 - Action Runtime is the only user-visible mutation entry.
@@ -248,7 +250,9 @@ The bullets below retain source-specific evidence、quota、archive and presenta
 
 ## Codex Companion
 
-- Magpie Codex 周额度与余额继续共用原账户选择；水球网格左上在周额度可用时显示百分比，耗尽或缺失时保持 Token 回退。展开额度行复用 [Magpie 额度卡](../../src/domain/magpieQuota.ts#L563)，追加独立来源的 Magpie 周／Token 读数，保留原生窗口及过期提示。[当前范围与验证](../specs/261112/magpie-codex-weekly/task-card.md#L1)。
+- [Magpie 数据投影](../../src/domain/magpieQuota.ts#L1)拥有本地／远端各自非 free Codex 普通 `7days` 周均值、六层来源候选排序与单账号余额回退。真实 0 参与均值，非法与缺失不当 0，不跨源混账号；余额不求和，promax→last→原序。汇总携带参与账号 freshness、部分数据与最近重置，失败保留最近成功快照，过 reset 标待刷新。零值格隐藏不改变均值或远端 key 准入。完整语义与历史局部取代范围见[有效条款](../specs/261112/magpie-codex-weekly/task-card.md#2026-11-13-有效变更条款)，证据仅见[验证结论](../specs/261112/magpie-codex-weekly/task-card.md#本次验证结论)。
+
+- [展示投影](../../src/domain/companionPresentation.ts#L1)统一周读数与普通周环仲裁：grid 优先、移环去重，Codex 正周保持，0／缺失可补 Magpie 正周；Claude 0 不替代，Claude-only 缺普通周隐藏，短窗／scoped 不补周环。液面／卡片形态／贴边线保持原生。[Controller](../../src/runtime/codexController.ts#L1)以共用 builder 组装含 Claude 权限与 Magpie 关闭门的完整 snapshot，供设置与外观预览消费；[Float](../../src/FloatApp.vue#L1)以同一 selection 驱动球和右栏，并由时钟推进过期。右栏完整来源＋值＋最近 reset，左侧去重，匿名提示与父 aria 涵盖部分／过期；整组点击及 Enter／Space 沿用 `codex.quota.refresh`。原生块保持单行，[float.css](../../src/styles/float.css#L1)允许 Magpie 右侧在窄宽换行。
 
 - [Magpie quota projection](../../src/domain/magpieQuota.ts#L1) separates remote gateway key limit cards (`…/~keys`, `kind=plan`) from Codex／Grok／Cursor subscription readings. [The shared water-ball policy](../../src/domain/companionPresentation.ts#L1) uses a unique finite key limit only for confirmed free Codex accounts without native or supported agent readings and with all other task providers off. It selects the lowest unrounded remaining ratio, then supplies one rounded centre/ring value and a bounded source/amount/unit/reset/staleness hint to Float, settings and appearance previews; liquid ownership and task-provider identity stay unchanged. Unlimited, malformed, ambiguous and failed-first-read data do not create a substitute quota; existing stale snapshot behavior is retained. [Current requirement](../specs/260718/1148-codex-quota-float/spec.md#2026-11-10-远端-magpie-key-限额展示).
 
