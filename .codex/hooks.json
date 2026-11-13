@@ -1,0 +1,18 @@
+{
+  "description": "EyPc development closeout build",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/scripts/codex-build-stop.mjs\"",
+            "timeout": 660,
+            "statusMessage": "Checking EyPc build",
+            "async": false
+          }
+        ]
+      }
+    ]
+  }
+}
