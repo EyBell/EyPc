@@ -190,7 +190,7 @@
     },
     {
       "code": "eypc-codex-input",
-      "explain": "最新优先，连续打开待输入",
+      "explain": "最新优先，循环打开；新增待输入后重新开始",
       "mainHide": true,
       "cmds": ["打开 Codex 待输入任务", "Codex待输入"]
     },

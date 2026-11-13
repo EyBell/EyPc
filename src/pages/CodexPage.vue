@@ -119,7 +119,7 @@ const hotkeyRows: CodexHotkeyRow[] = [
   { title: '悬浮球开关', summary: '显示或隐藏悬浮球', configureAction: 'codex.float.toggle.hotkey.configure', bindLabel: '切换 Codex 悬浮球' },
   { title: '直接展开卡片', summary: '展开并聚焦会话列表', configureAction: 'codex.hotkey.configure', bindLabel: '直接展开 Codex 卡片', runAction: 'codex.float.activate', runLabel: '立即展开', runShortcutLabel: formatShortcutLabel('Ctrl+Alt+Enter') },
   { title: '快速任务查看', summary: '展开动态列表并编号筛选', configureAction: 'codex.quick.hotkey.configure', bindLabel: '快速任务查看', runAction: 'codex.quick.activate', runLabel: '立即进入', runShortcutLabel: formatShortcutLabel('Ctrl+Alt+K') },
-  { title: '待输入任务', summary: '最新优先，连续打开待输入', configureAction: 'codex.input.hotkey.configure', bindLabel: '打开 Codex 待输入任务' },
+  { title: '待输入任务', summary: '最新优先，循环打开；新增待输入后重新开始', configureAction: 'codex.input.hotkey.configure', bindLabel: '打开 Codex 待输入任务' },
   { title: '已完成未读任务', summary: '最新优先，连续打开已完成未读', configureAction: 'codex.completed-unread.hotkey.configure', bindLabel: '依次打开 Codex 已完成未读任务' },
   { title: '上一个 Codex 任务', summary: '循环到上一个可切换任务', configureAction: 'codex.task.previous.hotkey.configure', bindLabel: '上一个 Codex 任务' },
   { title: '下一个 Codex 任务', summary: '循环到下一个可切换任务', configureAction: 'codex.task.next.hotkey.configure', bindLabel: '下一个 Codex 任务' },

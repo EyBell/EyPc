@@ -6,6 +6,9 @@ domain: companion-shared
 authority: user-stated
 source_annotations: "implementation-landed / focused-automated-verified / artifact-ready / host-pending / exclusive-unread-pin-fallback / stable-attention-round"
 scoped_relations:
+  - kind: refined-by
+    target: eypc-req-task-recovery-input-cycle-raw-003
+    scope: "仅input新增实例重启整轮，替代插队后续旧轮；completedUnread及置顶兜底保持本条原行为"
   - kind: refines
     target: eypc-req-shared-raw-183
     scope: "改写已完成未读专用入口的候选选择并明确 attention 稳定轮次：真实未读非空时置顶不得进入同一序列，真实未读为空时才启用置顶兜底；metadata-only 重排不得移动本轮旧实例，新生命周期实例插队，整轮结束后才采纳最新顺序"

@@ -1583,7 +1583,7 @@ function onCompactClick(event: MouseEvent) {
 
 function compactCounterHint(kind: 'input' | 'active' | 'unread') {
   const count = compactCounts.value[kind]
-  if (kind === 'input') return `待输入 ${count} · 最新优先，连续触发依次打开`
+  if (kind === 'input') return `待输入 ${count} · 最新优先，循环打开；新增待输入后重新开始`
   if (kind === 'active') return `进行中 ${count}`
   return `未读 ${count} · 最新优先，连续触发依次打开`
 }

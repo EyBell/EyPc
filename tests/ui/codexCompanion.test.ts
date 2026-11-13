@@ -1829,7 +1829,7 @@ describe('Codex Companion V4 UI contract', () => {
     const input = wrapper.get('.float-counter.input')
     const active = wrapper.get('.float-counter.active')
     const unread = wrapper.get('.float-counter.unread')
-    expect(input.attributes('aria-label')).toBe('待输入 1 · 最新优先，连续触发依次打开')
+    expect(input.attributes('aria-label')).toBe('待输入 1 · 最新优先，循环打开；新增待输入后重新开始')
     expect(active.attributes('aria-label')).toBe('进行中 1')
     expect(unread.attributes('aria-label')).toBe('未读 1 · 最新优先，连续触发依次打开')
 
@@ -1843,7 +1843,7 @@ describe('Codex Companion V4 UI contract', () => {
     expect(wrapper.find('.float-compact-counter-hint').exists()).toBe(false)
 
     for (const [counter, label] of [
-      [input, '待输入 1 · 最新优先，连续触发依次打开'],
+      [input, '待输入 1 · 最新优先，循环打开；新增待输入后重新开始'],
       [active, '进行中 1'],
       [unread, '未读 1 · 最新优先，连续触发依次打开']
     ] as const) {

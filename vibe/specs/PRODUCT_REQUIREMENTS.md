@@ -16,8 +16,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 371 leaves / 7 modules / 347 active / 22 superseded / 2 proposed / 0 conflicted |
-| 取代关系 | 22 whole / 153 scoped |
+| 需求登记 | 372 leaves / 7 modules / 348 active / 22 superseded / 2 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 157 scoped |
 | 原始来源 | 69 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
@@ -34,15 +34,15 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 371,
+    "leaves": 372,
     "modules": 7,
     "proposed": 2,
-    "active": 347,
+    "active": 348,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
     "whole_supersession_edges": 22,
-    "scoped_relations": 153
+    "scoped_relations": 157
   },
   "source_anchor_catalog": {
     "documents": 69,
@@ -70,10 +70,10 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "a34c878ca11703b011238ecff0c68bed5d06b81f575586a13c71562e6afe62c4",
+    "requirement_registry": "25bae37cd2bc2e3234976c83cef1823f98fdaa5fc9aa5a9ddc734440c07edd21",
     "raw_sources": "1edc81b3b538a5c4e9a2fa41a6803e44f9b88e889a6acc076779289797407332",
     "source_anchor_catalog": "b5042020e6a15cf133d36e29759682ca4f07582db5daaf00ffd199f12a227eef",
-    "product_body": "680f0afa0d09dda1478c66ec356aa531a8ef1ab1ace686c180940429ab473755",
+    "product_body": "e9a26f2f2f0c4560fb095b5b1e441851b64740235c5b6e7b6532ae3a688612c0",
     "architecture": "d70b73c4a6482a88e18638aa3759d7c432c183be4da50f752dd0280024cf48b9",
     "runtime_contract": "2c408d7d68b3a592cece3ca60c98566f03686e4f3da2dcd83ce8cb194fdceafa"
   }
@@ -403,6 +403,10 @@ Current cross-source runtime authority: [RAW-179 / EyPc V7](260824/eypc-v7-globa
 [本轮RAW-001–003](261014/core-regression-capability/raw-requirement.md#L1)要求自动验证、变更触发和规则脚本形成一条可执行链。现行需求身份仍由需求登记唯一拥有；[验证映射](../knowledge/verification-map.md#变更触发与执行入口)把需求和受影响代码连接到独立门禁、定向测试及负例，未知核心变更必须显式补图。通过结果只覆盖实际检查范围，不代替真实宿主、所有原始条款或远端CI验收。
 
 Codex / Claude / Cursor / Orca的程序身份、声明结构及运行能力分层记录；上游变化触发可定位复核，未知结构不能冒充空成功，版本号不得直接使能力失效。探测器仅读程序元数据或显式脱敏结构，不读会话/凭据、不执行供应方代码，不自动改baseline或运行能力。Orca库存成功信封缺required数组/布局类型失配保守报告不可用，明确空数组保持有效。
+
+### 2026-11-13：待输入点击与快捷键共用循环
+
+2026-11-13 [待输入共用循环 RAW-003](requirements/task-recovery-input-cycle-raw-003.md#L1)：待输入角标点击与专用快捷键共用最新优先的循环进度；新增待输入任务、同任务新增真实请求或重新进入时重启整轮，下次触发从当前最新项开始，旧已访问项重新参与。只重置进度，不自动跳转；普通元数据与无关子任务刷新不重置，退出项直接移除，旧轮回执不消耗新轮。失败重试、任务状态、未读统计、未读循环和既有绑定不变。此项仅替代 RAW-149 / RAW-188 中 input 新实例插队后续旧轮的行为。
 
 ### 2026-11-06：Plan 待决策状态的限定修订
 

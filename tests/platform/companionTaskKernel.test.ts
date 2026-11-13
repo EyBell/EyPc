@@ -2862,7 +2862,7 @@ describe('CompanionTaskKernel', () => {
     expect(opened).toEqual(['codex-a', 'codex-b', 'codex-c', 'codex-c'])
   })
 
-  it('lets a new attention instance preempt queued opens and then resumes surviving order', async () => {
+  it('restarts the input round for a new instance without consuming it with an older open receipt', async () => {
     const opened: string[] = []
     let releaseFirst!: () => void
     let signalFirstStarted!: () => void
@@ -2916,7 +2916,7 @@ describe('CompanionTaskKernel', () => {
     await Promise.all([first, second, third])
     await kernel.dispatch({ action: 'open-attention', kind: 'input' })
 
-    expect(opened).toEqual(['codex-a', 'codex-new', 'codex-b', 'codex-c'])
+    expect(opened).toEqual(['codex-a', 'codex-new', 'codex-c', 'codex-a'])
   })
 
   it('drops pin progress while unread exists and restarts pin fallback after it clears', async () => {

@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "automated-verified-host-pending / supersedes-RAW-146-attention-order / permission-attention-and-latest-first-progress"
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-task-recovery-input-cycle-raw-003
+    scope: "仅待输入新增实例改为重启整轮；普通刷新保持进度，未读专用入口不变"
 ---
 
 # RAW-149 · companion-codex

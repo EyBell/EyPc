@@ -924,13 +924,17 @@ function createCompanionTaskKernel(dependencies = {}) {
     input: new Set(),
     completedUnread: new Set()
   }
-  // One attention round owns a stable instance order. Published views remain
-  // latest-first for presentation, but metadata refreshes must not move an
-  // already-known instance underneath a user who is walking that round.
   const attentionWalks = {
     input: [],
     completedUnread: []
   }
+  const attentionRounds = {
+    input: 0
+  }
+  const inputAttentionStates = new Map()
+  const inputAttentionTokens = new Map()
+  let inputOpenReceipt = null
+  let inputAttentionOperationSequence = 0
   const readAcknowledgements = new Map()
   const shortcutReads = createShortcutReadReceipts()
   let shortcutReadInputs = new Map()
@@ -967,6 +971,14 @@ function createCompanionTaskKernel(dependencies = {}) {
       const before = shortcutReadInputs.get(target.key)
       const source = request?.source || 'task-cycle'
       const token = shortcutReads.capture(before?.task, before?.members, source)
+      const operationId = typeof request?.operationId === 'string' ? request.operationId : ''
+      const queuedInput = operationId ? inputAttentionTokens.get(operationId) : null
+      let capturedInput = queuedInput || null
+      if (!capturedInput) {
+        const openingTask = taskForKey(target.key)
+        const instance = openingTask ? attentionInstance('input', openingTask) : ''
+        if (instance) capturedInput = { round: attentionRounds.input, instance, key: target.key }
+      }
       const result = await actions.open({
         key: target.key,
         target,
@@ -984,6 +996,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       } else if (!disposed && !isShortcutSource(source)) {
         acknowledgeOpenedTask(before?.task, result)
       }
+      inputOpenReceipt = capturedInput
       return result
     }
   })
@@ -996,6 +1009,8 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   beginNavigation()
   navigation.onResult((event) => {
+    const inputReceipt = inputOpenReceipt
+    inputOpenReceipt = null
     if (event.outcome !== 'opened' && event.outcome !== 'dispatched') return
     const key = typeof event.key === 'string' ? event.key : ''
     const task = taskForKey(key)
@@ -1008,7 +1023,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       'local-shortcut',
       'task-cycle'
     ])
-    markAttentionOpened(task, { rotate: rotateSources.has(event.source) })
+    markAttentionOpened(task, { rotate: rotateSources.has(event.source), inputReceipt })
     if (currentPackage.focusedKey === key) return
     currentPackage = { ...currentPackage, focusedKey: key }
     const semantic = semanticPackage(currentPackage)
@@ -1236,8 +1251,56 @@ function createCompanionTaskKernel(dependencies = {}) {
    * "something changed" counter carrying no instance meaning — drops to a last
    * resort so the key can never be empty.
    */
+  function inputAttentionSignals(key) {
+    const inputs = shortcutReadInputs.get(key)
+    const members = inputs?.members
+    const nodes = Array.isArray(members) ? members : []
+    const requests = new Set()
+    const waiting = new Map()
+    for (const node of nodes) {
+      if (!isAttentionTaskPhase(node.phase)) continue
+      const interactions = taskOpenInteractions(node)
+      waiting.set(node.key, {
+        anchor: Math.max(finiteInteger(node.statusEnteredAt), finiteInteger(node.turnStartedAt)),
+        exact: interactions.length > 0
+      })
+      for (const interaction of interactions) {
+        requests.add(JSON.stringify([interactionStoreKey(interaction), finiteInteger(interaction.turnEpoch)]))
+      }
+    }
+    const root = nodes.find((node) => node.key === key)
+    const planRevision = root?.planReady === true && (!waiting.size || root.planImplementation === true)
+      ? finiteInteger(root.planLifecycleRevision)
+      : 0
+    return { requests, waiting, planRevision }
+  }
+
+  function syncInputAttentionStates(packageValue = currentPackage) {
+    const keys = new Set(packageValue.views?.attentionKeys?.input || [])
+    for (const key of inputAttentionStates.keys()) if (!keys.has(key)) inputAttentionStates.delete(key)
+    for (const key of keys) {
+      const signals = inputAttentionSignals(key)
+      const previous = inputAttentionStates.get(key)
+      if (!previous) {
+        inputAttentionStates.set(key, { generation: 1, ...signals })
+        continue
+      }
+      const addedRequest = [...signals.requests].some((signal) => !previous.requests.has(signal))
+      const addedPlan = signals.planRevision > 0 && signals.planRevision !== previous.planRevision
+      const addedWaiting = [...signals.waiting].some(([memberKey, waiting]) => (
+        !waiting.exact && (!previous.waiting.has(memberKey) || waiting.anchor > previous.waiting.get(memberKey).anchor)
+      ))
+      const generation = previous.generation + (addedRequest || addedPlan || addedWaiting ? 1 : 0)
+      inputAttentionStates.set(key, { generation, ...signals })
+    }
+  }
+
   function attentionInstance(kind, task) {
     if (!task) return ''
+    if (kind === 'input') {
+      const state = inputAttentionStates.get(task.key)
+      return state ? `input:${task.key}:${state.generation}` : ''
+    }
     if (task.dynamicGroup === 'pinned') return `${kind}:${task.key}:pinned`
     const lifecycleAt = Math.max(
       finiteInteger(task.statusEnteredAt),
@@ -1268,20 +1331,24 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function reconcileAttentionProgress(packageValue = currentPackage) {
+    syncInputAttentionStates(packageValue)
     for (const kind of ['input', 'completedUnread']) {
       const current = attentionEntries(kind, packageValue)
       const currentByInstance = new Map(current.map((entry) => [entry.instance, entry]))
       const valid = new Set(currentByInstance.keys())
       for (const instance of attentionSeen[kind]) if (!valid.has(instance)) attentionSeen[kind].delete(instance)
 
-      // A genuinely new lifecycle instance is urgent and joins at the head in
-      // current latest-first order. Survivors keep the relative order in which
-      // this round started, even if lastQuestionAt re-sorts the public view.
       const retained = attentionWalks[kind]
         .filter((entry) => currentByInstance.has(entry.instance))
         .map((entry) => currentByInstance.get(entry.instance))
       const retainedInstances = new Set(retained.map((entry) => entry.instance))
       const added = current.filter((entry) => !retainedInstances.has(entry.instance))
+      if (kind === 'input' && added.length) {
+        attentionSeen.input.clear()
+        attentionWalks.input = current
+        attentionRounds.input += 1
+        continue
+      }
       attentionWalks[kind] = [...added, ...retained]
     }
   }
@@ -1290,6 +1357,11 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (!task) return
     for (const kind of ['input', 'completedUnread']) {
       if (!currentPackage.views.attentionKeys[kind].includes(task.key)) continue
+      if (kind === 'input') {
+        const receipt = options.inputReceipt
+        const instance = attentionInstance('input', task)
+        if (!receipt || receipt.key !== task.key || receipt.round !== attentionRounds.input || !instance || receipt.instance !== instance) continue
+      }
       const instance = attentionInstance(kind, task)
       if (!instance) continue
       attentionSeen[kind].add(instance)
@@ -1520,6 +1592,10 @@ function createCompanionTaskKernel(dependencies = {}) {
     attentionSeen.completedUnread.clear()
     attentionWalks.input = []
     attentionWalks.completedUnread = []
+    attentionRounds.input += 1
+    inputAttentionStates.clear()
+    inputAttentionTokens.clear()
+    inputOpenReceipt = null
     readAcknowledgements.clear()
     shortcutReads.clear()
     shortcutReadInputs.clear()
@@ -2795,19 +2871,38 @@ function createCompanionTaskKernel(dependencies = {}) {
       })
       if (!task) {
         attentionSeen[kind].clear()
+        if (kind === 'input') attentionRounds.input += 1
         // A completed round adopts the latest published order exactly once;
         // the new round is then stable until it too is exhausted.
         resetAttentionWalk(kind)
         candidates = attentionWalks[kind].map((entry) => taskForKey(entry.key)).filter(Boolean)
         task = candidates[0]
       }
-      const result = await navigation.open({
-        key: task.key,
-        target: actionTargetForTask(task),
-        source: input.source || 'attention-shortcut',
-        operationId: input.operationId
-      })
-      return result
+      const suppliedOperationId = typeof input.operationId === 'string' && /^[a-z0-9:_-]{6,160}$/i.test(input.operationId)
+        ? input.operationId
+        : ''
+      let operationId = suppliedOperationId
+      if (kind === 'input') {
+        if (!operationId) {
+          inputAttentionOperationSequence += 1
+          operationId = `inattn-${attentionRounds.input}-${inputAttentionOperationSequence}`
+        }
+        inputAttentionTokens.set(operationId, {
+          round: attentionRounds.input,
+          instance: attentionInstance('input', task),
+          key: task.key
+        })
+      }
+      try {
+        return await navigation.open({
+          key: task.key,
+          target: actionTargetForTask(task),
+          source: input.source || 'attention-shortcut',
+          operationId: operationId || input.operationId
+        })
+      } finally {
+        if (kind === 'input' && operationId) inputAttentionTokens.delete(operationId)
+      }
     })
     attentionQueues[kind] = run.then(() => undefined, () => undefined)
     return run

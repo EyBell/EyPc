@@ -14,6 +14,8 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 
 ## Primary Requirements
 
+- [待输入共用循环 RAW-003](../task-recovery-input-cycle-raw-003.md#L1) — `active`
+
 - [待继续可见性与搜索提示 RAW-002](../task-recovery-visibility-raw-002.md#L1) — `active`
 
 - [任务继续与计划实施 RAW-001](../task-recovery-actions-raw-001.md#L1) — `active`
