@@ -97,8 +97,21 @@ function createCodexRuntimeDiagnostics(dependencies) {
       nativeCode: nativeCodes.includes(error?.code) ? error.code : '',
       phase: ['startup', 'thread-list'].includes(error?.diagnosticPhase) ? error.diagnosticPhase : 'inventory',
       rpcCode: Number.isInteger(error?.rpcCode) ? error.rpcCode : null,
+      rpcReason: ['thread-already-active', 'model-provider-mismatch', 'method-unavailable', 'invalid-params', 'request-rejected'].includes(error?.rpcReason)
+        ? error.rpcReason : '',
       ...(diagnosticFor(error) ? { diagnostic: diagnosticFor(error) } : {})
     }
+  }
+
+  function rpcFailure(value) {
+    const rpcCode = Number.isInteger(value?.code) ? value.code : null
+    const text = typeof value?.message === 'string' ? value.message.slice(0, 4096) : ''
+    const rpcReason = rpcCode === -32600 && /thread\b[^\n]*\balready active\b/i.test(text)
+      ? 'thread-already-active'
+      : value?.data?.type === 'modelProviderMismatch' ? 'model-provider-mismatch'
+        : rpcCode === -32601 ? 'method-unavailable'
+          : rpcCode === -32602 ? 'invalid-params' : 'request-rejected'
+    return { rpcCode, rpcReason }
   }
 
   function snapshotFailure(error) {
@@ -197,6 +210,12 @@ function createCodexRuntimeDiagnostics(dependencies) {
       return await sendCodexRpc(method, params, timeoutMs)
     } catch (error) {
       const failure = captureFailure(error, { stage: 'app-server', category: 'request-failed' })
+      if (['thread/resume', 'turn/start', 'thread/goal/set'].includes(method)) {
+        runtimeDiagnostics.record({
+          level: 'info', scope: 'task-action', event: 'codex-action-rpc', outcome: 'failed',
+          details: { method, ...errorDetails(failure) }
+        })
+      }
       if (method === 'thread/list') {
         try { failure.diagnosticPhase = phase } catch {}
       }
@@ -204,7 +223,7 @@ function createCodexRuntimeDiagnostics(dependencies) {
     }
   }
 
-  return { errorResult, captureFailure, snapshotFailure, preflightRead, coldPreflight, captureLaunch, inventoryFailure, processEnd, startup, request }
+  return { errorResult, captureFailure, snapshotFailure, preflightRead, coldPreflight, captureLaunch, inventoryFailure, processEnd, startup, request, rpcFailure }
 }
 
 module.exports = { createCodexRuntimeDiagnostics }

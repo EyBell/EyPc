@@ -247,10 +247,44 @@ for (const marker of [
 for (const marker of [
   'EXECUTE_PLAN_PROMPT_V1',
   "requestCodexRpc('collaborationMode/list'",
-  "requestCodexRpc('thread/resume'",
-  "requestCodexRpc('turn/start'"
+  "codexCliModules.load('desktop-task-turn.cjs', 'createCodexDesktopTaskTurn'",
+  'codexDesktopTaskTurn?.canStart(threadId) === true',
+  "requestCodexRpc(useDesktopOwner ? 'thread/read' : 'thread/resume'",
+  'codexDesktopTaskTurn.startTurn(threadId, turnStartParams)',
+  "requestCodexRpc('turn/start', turnStartParams)",
+  "mode: 'default'",
+  'reasoning_effort: settings.reasoningEffort',
+  'codexDesktopTaskTurn?.handleMessage(message)',
+  'codexDesktopTaskTurn?.clear()',
+  'codexDesktopTaskTurn?.confirmStarted(threadId)',
+  'startDesktopTurn: (threadId, params) => codexDesktopTaskTurn.startTurn(threadId, params)'
 ]) {
   assert(canonicalMainPreload.includes(marker), `RAW-160 main preload contract is missing: ${marker}`)
+}
+const desktopTaskTurnSource = preloadModuleSources.get('codex/desktop-task-turn.cjs') || ''
+for (const marker of [
+  'createCodexDesktopTaskTurn',
+  "const METHOD = 'thread-follower-start-turn'",
+  'targetClientId: entry.ownerClientId',
+  'method: METHOD, version: 2',
+  'conversationId: threadId',
+  'inheritThreadSettings: true',
+  'request.input = request.input.map',
+  "typeof item.text !== 'string'",
+  '!Array.isArray(item.text_elements)',
+  'text_elements: item.text_elements ?? []',
+  'message.result.result.result.turn',
+  'pending.get(message.requestId)',
+  'threads.get(threadId)?.indeterminate !== true'
+]) {
+  assert(desktopTaskTurnSource.includes(marker), `RAW-160 desktop task turn contract is missing: ${marker}`)
+}
+const continueTaskSource = preloadModuleSources.get('codex/continue-task.cjs') || ''
+for (const marker of [
+  '!pausedGoal(goal) && deps.canStartDesktop?.(threadId) === true',
+  'deps.startDesktopTurn(threadId, params)'
+]) {
+  assert(continueTaskSource.includes(marker), `RAW-160 continue task contract is missing: ${marker}`)
 }
 // task-package-ack / stage-applied / requestCodexFloatRecreate moved into
 // preload/codex/float-bridge.cjs under RAW-169's route-3 closure rewrite.

@@ -2048,6 +2048,9 @@ try {
 const codexRuntimeDiagnostics = codexCliModules.load('runtime-diagnostics.cjs', 'createCodexRuntimeDiagnostics', {
   runtimeDiagnostics, startCodexServer, sendCodexRpc, process, modules: codexCliModules.summary
 }, true)
+const codexDesktopTaskTurn = codexCliModules.load('desktop-task-turn.cjs', 'createCodexDesktopTaskTurn', {
+  getBridge: () => codexEnsureDesktopBridge(), crypto, setTimeout, clearTimeout
+}, true)
 runtimeDiagnostics.record({
   level: codexCliModules.summary().some((entry) => entry.state !== 'loaded') ? 'error' : 'info',
   scope: 'task-recovery', event: 'codex-cli-modules', outcome: 'observed',
@@ -5214,6 +5217,8 @@ class CodexDesktopCompanionBridge {
 
   scheduleWaitingEdgeRefresh(threadId) {
     if (!validCodexThreadId(threadId) || this.closed) return false
+    const shadow = this.shadows.get(threadId) || this.sideShadows.get(threadId)
+    if (shadow) shadow.executionSettings = null
     this.cancelWaitingEdgeRefresh(threadId)
     const refresh = { startedAt: Date.now(), timers: new Set() }
     this.waitingEdgeRefreshes.set(threadId, refresh)
@@ -5981,6 +5986,7 @@ class CodexDesktopCompanionBridge {
 
   handleMessage(value) {
     const message = codexRecord(value)
+    if (codexDesktopTaskTurn?.handleMessage(message)) return
     if (message.type === 'client-discovery-request') {
       if (typeof message.requestId === 'string') {
         this.send({ type: 'client-discovery-response', requestId: message.requestId, response: { canHandle: false } })
@@ -6802,6 +6808,7 @@ class CodexDesktopCompanionBridge {
 
   markOwnerDisconnected(shadow, known) {
     if (!shadow) return
+    shadow.executionSettings = null
     codexRecordDesktopShadowInventoryBaseline(shadow, known)
     shadow.ownerDisconnectedAt = Date.now()
   }
@@ -7247,6 +7254,7 @@ class CodexDesktopCompanionBridge {
   }
 
   failConnection(state) {
+    codexDesktopTaskTurn?.clear()
     this.resetLiveAuthority()
     this.setState(state)
     try { this.socket?.destroy() } catch {}
@@ -7254,6 +7262,7 @@ class CodexDesktopCompanionBridge {
 
   handleClose(socket) {
     if (this.socket !== socket) return
+    codexDesktopTaskTurn?.clear()
     if (this.initializeTimer) clearTimeout(this.initializeTimer)
     this.initializeTimer = null
     this.socket = null
@@ -7268,6 +7277,7 @@ class CodexDesktopCompanionBridge {
   }
 
   dispose() {
+    codexDesktopTaskTurn?.clear()
     this.closed = true
     this.endpointCheck = null
     this.clearLatestTurnRefreshes()
@@ -8145,6 +8155,7 @@ function handleCodexStdout(chunk) {
       const error = codexError('protocol-error', 'Codex App Server request failed')
       const rpcCode = Number(codexRecord(message.error).code)
       if (Number.isFinite(rpcCode)) error.rpcCode = rpcCode
+      Object.assign(error, codexRuntimeDiagnostics?.rpcFailure?.(message.error))
       pending.reject(error)
     } else pending.resolve(codexRecord(message.result))
   }
@@ -10836,7 +10847,7 @@ function codexPrivateThreadSettings(...values) {
   return { model: '', reasoningEffort: null }
 }
 
-function markCodexPlanExecutionStarted(threadId, turnValue) {
+function markCodexTaskTurnStarted(threadId, turnValue) {
   const known = codexActivityInventory.get(threadId)
   if (!known) return
   known.planReady = false
@@ -10845,8 +10856,6 @@ function markCodexPlanExecutionStarted(threadId, turnValue) {
   known.connectorPlanReady = false
   known.connectorPlanLifecycleRevision = 0
   known.connectorPlanImplementationOnly = false
-  known.turnMode = 'default'
-  known.connectorTurnMode = 'default'
   const bridge = codexEnsureDesktopBridge()
   if (!codexApplyStartedTurnNotification(bridge, known, threadId, turnValue)) {
     known.status = 'active'
@@ -10861,6 +10870,14 @@ function markCodexPlanExecutionStarted(threadId, turnValue) {
   }
 }
 
+function markCodexPlanExecutionStarted(threadId, turnValue) {
+  const known = codexActivityInventory.get(threadId)
+  if (!known) return
+  known.turnMode = 'default'
+  known.connectorTurnMode = 'default'
+  markCodexTaskTurnStarted(threadId, turnValue)
+}
+
 async function confirmCodexPlanExecutionStarted(threadId, beforeTurn) {
   try {
     const reread = sanitizeCodexTurnStatusPage(await requestCodexRpc('thread/turns/list', {
@@ -10872,6 +10889,7 @@ async function confirmCodexPlanExecutionStarted(threadId, beforeTurn) {
     const newTurn = reread?.id && reread.id !== beforeTurn?.id
       && reread.startedAt >= Number(beforeTurn?.startedAt || 0)
     if (!newTurn || reread.status !== 'inProgress') return false
+    codexDesktopTaskTurn?.confirmStarted(threadId)
     markCodexPlanExecutionStarted(threadId, reread)
     return true
   } catch {
@@ -10903,7 +10921,12 @@ try {
     open: (target) => companionOpenReadiness
       ? companionOpenReadiness.wrapOpen('codex', openCompanionCodexTarget)(target)
       : openCompanionCodexTarget(target),
-    markStarted: markCodexPlanExecutionStarted,
+    markStarted: (threadId, turn) => {
+      codexDesktopTaskTurn?.confirmStarted(threadId)
+      markCodexTaskTurnStarted(threadId, turn)
+    },
+    canStartDesktop: (threadId) => codexDesktopTaskTurn?.canStart(threadId) === true,
+    startDesktopTurn: (threadId, params) => codexDesktopTaskTurn.startTurn(threadId, params),
     markGoalActive: (threadId, goal) => {
       const evidence = sanitizeCodexThreadGoal(goal)
       if (evidence) codexSetThreadGoalEvidence(threadId, evidence, { publish: true })
@@ -10925,28 +10948,127 @@ async function executeCompanionCodexPlan(target, request = {}) {
     return { outcome: 'failed', errorCode: 'target-missing', message: '未找到同一任务，未执行其它任务' }
   }
   publishCompanionCodexAlias(key, resolved.alias, target, resolved.metadata)
+  const threadId = resolved.entry.threadId
   const currentPlanTask = () => companionTaskKernel?.getLatest?.().tasks?.find((task) => task.key === target.key)
     || companionTaskKernel?.getPackage?.().tasks?.find((task) => task.key === target.key)
+  const inputFlagsOnly = (flags) => Array.isArray(flags) && flags.length > 0
+    && flags.every((flag) => flag === 'waitingOnUserInput')
+  const rootPlanConfirmation = (task) => {
+    const known = codexActivityInventory.get(threadId)
+    const shadow = codexDesktopBridge?.shadows?.get(threadId)
+    if (task?.key !== key || task.phase !== 'waiting-input' || task.planImplementation !== true
+      || !Number.isSafeInteger(target.planLifecycleRevision) || target.planLifecycleRevision <= 0
+      || task.planLifecycleRevision !== target.planLifecycleRevision
+      || known?.key !== key
+      || Number(known.planLifecycleRevision) > 0 && known.planLifecycleRevision !== target.planLifecycleRevision
+      || known.planImplementationOnly !== true || !inputFlagsOnly(known.activeFlags)
+      || shadow?.sideConversation === true || shadow?.requestSetComplete !== true
+      || shadow.nativeTurnSubmissions?.some((terminal) => terminal !== true)) return null
+    const rootBranch = codexPrivateBranchEvidence(threadId, known)?.branches
+      ?.find((branch) => branch.branchKind === 'main')
+    if (rootBranch?.status !== 'active' || rootBranch.planImplementationOnly !== true
+      || !inputFlagsOnly(rootBranch.activeFlags)
+      || (shadow.runtime?.activeFlags || []).some((flag) => flag !== 'waitingOnUserInput')) return null
+    const observation = codexBranchObservationV7(rootBranch)
+    if (observation.interactionKind !== 'plan-implementation' || observation.planActionable !== true
+      || !observation.candidates.some((candidate) => candidate.exact === true && candidate.kind === 'turn-completed')) return null
+    const rootTurn = shadow.asyncTurns?.at(-1) || shadow.currentCanonicalTurn
+    const turnRef = rootTurn?.turnRef || ''
+    const startedAt = Number(rootTurn?.startedAt) || 0
+    if (startedAt > target.planLifecycleRevision) return null
+    const requests = (shadow.requests || []).filter((request) => (
+      !['resolved', 'cancelled', 'execution-started'].includes(request.interactionState)
+      && codexWaitingEvidenceVisible(shadow.waitingState, codexDesktopRequestFlag(request), request.observedSequence)
+    ))
+    if (requests.length !== 1 || requests.some((request) => (
+      !codexDesktopIsPlanImplementationRequest(request)
+      || codexDesktopRequestFlag(request) !== 'waitingOnUserInput'
+      || !/^[a-f0-9]{16,64}$/i.test(request.interactionRef || '')
+      || !Number.isSafeInteger(request.observedSequence) || request.observedSequence <= 0
+      || request.identityExact !== true && !(Number.isSafeInteger(shadow.requestSetRevision) && shadow.requestSetRevision > 0)
+      || request.startedAt > 0 && request.startedAt < startedAt
+    ))) return null
+    return {
+      turnRef,
+      startedAt,
+      signature: JSON.stringify([turnRef, startedAt,
+        requests.map((request) => [request.interactionRef, request.observedSequence,
+          request.type, request.method, request.startedAt || 0,
+          request.identityExact === true ? 0 : shadow.requestSetRevision]).sort()])
+    }
+  }
+  const initialTask = currentPlanTask()
+  const expectedConfirmation = rootPlanConfirmation(initialTask)
+  const samePlanConfirmation = (task) => {
+    const confirmation = rootPlanConfirmation(task)
+    return expectedConfirmation && confirmation?.signature === expectedConfirmation.signature ? confirmation : null
+  }
   const planTaskAllowed = (task) => task?.planReady === true
     && task.planLifecycleRevision === target.planLifecycleRevision
     && task.capabilities?.executePlan === true
-    && !task.topology?.attentionCount && !task.topology?.liveCount
+    && ((!task.topology?.attentionCount && !task.topology?.liveCount)
+      || task.topology?.attentionCount === 1 && task.topology?.liveCount === 1 && Boolean(samePlanConfirmation(task)))
     && (isSettledTaskPhase(task.phase) || task.phase === 'waiting-input')
-  const initialTask = currentPlanTask()
   if (!planTaskAllowed(initialTask)) {
     return { outcome: 'failed', errorCode: 'state-changed', message: 'Plan 生命周期已变化，未启动执行' }
   }
   const expectedRevision = initialTask.revisionAt
-  const activityBlocked = (thread, turn) => {
-    const known = codexActivityInventory.get(resolved.entry.threadId)
-    const flags = [...(known?.activeFlags || []), ...(thread?.status?.activeFlags || [])]
-    return turn?.status === 'inProgress' || flags.length > 0
-      || known?.status === 'active' || thread?.status?.type === 'active'
+  const activityBlockReason = (thread, turn, task) => {
+    const known = codexActivityInventory.get(threadId)
+    if (!known || known.key !== key) return 'target-changed'
+    if (!planTaskAllowed(task)) return 'plan-changed'
+    if (task.revisionAt !== expectedRevision) return 'revision-changed'
+    const branches = codexPrivateBranchEvidence(threadId, known)?.branches || []
+    if (branches.some((branch) => branch.branchKind === 'side' && (
+      branch.status === 'active' || branch.activeFlags?.length > 0
+      || branch.lastTurnStatus === 'inProgress' || branch.goalStatus === 'active'
+    ))) return 'side-active'
+    const confirmation = samePlanConfirmation(task)
+    const samePlanTurn = Boolean(confirmation && turn?.id
+      && (!confirmation.turnRef || codexDesktopRequestCorrelation({ id: turn.id }) === confirmation.turnRef)
+      && (confirmation.turnRef || confirmation.startedAt > 0 && turn.startedAt === confirmation.startedAt)
+      && (turn.status === 'completed' || turn.status === 'inProgress'
+        && Boolean(confirmation.turnRef || confirmation.startedAt)))
+    if (expectedConfirmation && !samePlanTurn) return 'confirmation-turn-changed'
+    const rootBranch = branches.find((branch) => branch.branchKind === 'main')
+    const knownFlags = known.activeFlags || []
+    const nativeFlags = thread?.status?.activeFlags || []
+    const rootFlags = rootBranch?.activeFlags || []
+    const flags = [...knownFlags, ...nativeFlags, ...rootFlags]
+    if (turn?.status === 'inProgress' && !(samePlanTurn && inputFlagsOnly(nativeFlags))) return 'turn-active'
+    if (flags.length > 0 && !(samePlanTurn && inputFlagsOnly(flags))) return 'other-request'
+    if (known.status === 'active' && !(samePlanTurn && inputFlagsOnly(knownFlags))) return 'inventory-active'
+    if (thread?.status?.type === 'active' && !(samePlanTurn && inputFlagsOnly(nativeFlags))) return 'native-active'
+    if (rootBranch?.status === 'active' && !(samePlanTurn && rootBranch.planImplementationOnly === true
+      && inputFlagsOnly(rootFlags))) return 'root-active'
+    return ''
   }
 
   let stage = 'preflight'
   let beforeTurn = null
-  const threadId = resolved.entry.threadId
+  const stateChanged = (reason) => {
+    const messages = {
+      'target-changed': '目标线程身份已变化，未启动执行',
+      'plan-changed': 'Plan 版本或实施确认已变化，未启动执行',
+      'revision-changed': '任务版本已更新，请核对当前 Plan 后再实施',
+      'side-active': '子任务仍有运行、待决请求或活动 Goal，未启动执行',
+      'confirmation-turn-changed': '实施确认与当前轮次身份不一致，未启动执行',
+      'turn-active': '当前轮次仍在运行，未启动执行',
+      'other-request': '目标线程存在实施确认之外的待决请求，未启动执行',
+      'inventory-active': '任务活动状态尚未收敛为同一实施确认，未启动执行',
+      'native-active': '原生线程仍有其它活动，未启动执行',
+      'root-active': '主任务仍有实施确认之外的活动，未启动执行',
+      'turn-unavailable': '未能读取当前轮次，未启动执行',
+      'newer-turn': 'Plan 生成后已有新轮次，未启动执行',
+      'resume-turn-changed': '恢复期间当前轮次已变化，未启动执行'
+    }
+    runtimeDiagnostics.record({
+      level: 'info', scope: 'task-action', event: 'plan-execution-gate', outcome: 'blocked',
+      provider: 'codex', taskRef: companionDiagnosticTaskRef('codex', key),
+      operationId: request.operationId, details: { stage, gate: reason }
+    })
+    return { outcome: 'failed', errorCode: 'state-changed', message: messages[reason] || '任务状态已变化，未启动执行' }
+  }
   try {
     const capabilityPromise = inspectCodexNativePlanExecutionCapability()
     const [threadResult, turnPage] = await Promise.all([
@@ -10960,9 +11082,14 @@ async function executeCompanionCodexPlan(target, request = {}) {
     ])
     const thread = codexRecord(codexRecord(threadResult).thread)
     beforeTurn = sanitizeCodexTurnStatusPage(turnPage)
-    if (thread.id !== threadId || !beforeTurn || activityBlocked(thread, beforeTurn)
-      || beforeTurn.startedAt > target.planLifecycleRevision) {
-      return { outcome: 'failed', errorCode: 'state-changed', message: '目标任务已有更新活动或其它待决请求' }
+    if (thread.id !== threadId) return stateChanged('target-changed')
+    if (!beforeTurn) return stateChanged('turn-unavailable')
+    const beforeBlockReason = activityBlockReason(thread, beforeTurn, currentPlanTask())
+    if (beforeBlockReason) return stateChanged(beforeBlockReason)
+    if (beforeTurn.startedAt > target.planLifecycleRevision) return stateChanged('newer-turn')
+    const capability = await capabilityPromise
+    if (capability.available !== true) {
+      return { outcome: 'failed', errorCode: 'default-mode-unavailable', message: '未确认 Codex 支持切换执行模式，未发送实施指令' }
     }
 
     stage = 'open'
@@ -10971,38 +11098,50 @@ async function executeCompanionCodexPlan(target, request = {}) {
       return { outcome: 'failed', errorCode: opened?.errorCode || 'open-failed', message: opened?.message || '原 Codex 对话未能打开，未发送执行指令' }
     }
 
-    stage = 'resume'
-    const resumed = codexRecord(await requestCodexRpc('thread/resume', {
+    const useDesktopOwner = codexDesktopTaskTurn?.canStart(threadId) === true
+    stage = useDesktopOwner ? 'desktop-preflight' : 'resume'
+    runtimeDiagnostics.record({
+      level: 'info', scope: 'task-action', event: 'plan-execution-route', outcome: 'selected',
+      provider: 'codex', taskRef: companionDiagnosticTaskRef('codex', key),
+      operationId: request.operationId, details: { route: useDesktopOwner ? 'desktop-owner' : 'app-server' }
+    })
+    const resumed = codexRecord(await requestCodexRpc(useDesktopOwner ? 'thread/read' : 'thread/resume', {
       threadId,
-      excludeTurns: true
+      ...(useDesktopOwner ? { includeTurns: false } : { excludeTurns: true })
     }))
-    const settings = codexPrivateThreadSettings(resumed, threadResult)
-    const capability = await capabilityPromise
     const latestTurn = sanitizeCodexTurnStatusPage(await requestCodexRpc('thread/turns/list', {
       threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded'
     }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS))
     const latestTask = currentPlanTask()
-    if (resumed.thread?.id !== threadId || !planTaskAllowed(latestTask) || latestTask.revisionAt !== expectedRevision
-      || !latestTurn || latestTurn.id !== beforeTurn.id || latestTurn.status !== beforeTurn.status
-      || latestTurn.startedAt !== beforeTurn.startedAt || activityBlocked(resumed.thread, latestTurn)) {
-      return { outcome: 'failed', errorCode: 'state-changed', message: '恢复期间任务已有新活动，未启动执行' }
+    if (resumed.thread?.id !== threadId) return stateChanged('target-changed')
+    if (!latestTurn) return stateChanged('turn-unavailable')
+    if (latestTurn.id !== beforeTurn.id || latestTurn.status !== beforeTurn.status
+      || latestTurn.startedAt !== beforeTurn.startedAt) return stateChanged('resume-turn-changed')
+    const latestBlockReason = activityBlockReason(resumed.thread, latestTurn, latestTask)
+    if (latestBlockReason) return stateChanged(latestBlockReason)
+    const settings = useDesktopOwner
+      ? codexRecord(codexDesktopBridge?.shadows.get(threadId)?.executionSettings)
+      : codexPrivateThreadSettings(resumed, threadResult)
+    if (!settings.model) {
+      return { outcome: 'failed', errorCode: 'execution-settings-unavailable', message: '未取得原任务模型及思考强度，无法保留原设置切换执行模式，未发送实施指令' }
     }
-    const useNativeDefaultMode = capability.available === true && Boolean(settings.model)
 
     stage = 'turn-start'
     const turnStartParams = {
       threadId,
       input: [{ type: 'text', text: EXECUTE_PLAN_PROMPT_V1 }],
-      ...(useNativeDefaultMode ? { collaborationMode: {
+      collaborationMode: {
         mode: 'default',
         settings: {
           model: settings.model,
           reasoning_effort: settings.reasoningEffort,
           developer_instructions: null
         }
-      } } : {})
+      }
     }
-    const started = codexRecord(await requestCodexRpc('turn/start', turnStartParams))
+    const started = codexRecord(await (useDesktopOwner
+      ? codexDesktopTaskTurn.startTurn(threadId, turnStartParams)
+      : requestCodexRpc('turn/start', turnStartParams)))
     const turn = codexRecord(started.turn)
     if (typeof turn.id !== 'string' || !turn.id || turn.id === beforeTurn.id || turn.status !== 'inProgress') {
       if (await confirmCodexPlanExecutionStarted(threadId, beforeTurn)) {
@@ -11014,11 +11153,20 @@ async function executeCompanionCodexPlan(target, request = {}) {
     return {
       outcome: 'executed',
       operationId: request.operationId,
-      message: useNativeDefaultMode ? '已按原 Plan 启动执行' : '已向原任务发送执行 Plan 指令'
+      message: '已按原 Plan 启动执行'
     }
   } catch (error) {
     const code = typeof codexRecord(error).code === 'string' ? codexRecord(error).code : 'execute-failed'
-    if (code !== 'timeout' && code !== 'process-exited') {
+    if (stage === 'resume' && error?.rpcReason === 'thread-already-active') {
+      return { outcome: 'failed', errorCode: 'resume-thread-already-active', message: '原线程已由 Codex 持有，独立执行进程无法恢复；尚未发送实施指令' }
+    }
+    if (error?.rpcReason === 'model-provider-mismatch') {
+      return { outcome: 'failed', errorCode: `${stage}-model-provider-mismatch`, message: '执行进程与原任务的模型提供方不一致，未启动执行' }
+    }
+    if (['desktop-owner-unavailable', 'desktop-send-failed', 'desktop-turn-rejected'].includes(code)) {
+      return { outcome: 'failed', errorCode: code, message: '桌面原会话未接收实施请求，未改用其它通路重发' }
+    }
+    if (code !== 'timeout' && code !== 'process-exited' && error?.indeterminate !== true) {
       return { outcome: 'failed', errorCode: `${stage}-${code}`.slice(0, 80), message: `Plan 执行在 ${stage} 阶段失败` }
     }
     if (stage === 'turn-start' && await confirmCodexPlanExecutionStarted(threadId, beforeTurn)) {

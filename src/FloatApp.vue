@@ -83,7 +83,7 @@ import { normalizeCodexQuota, orderCodexAttentionTasks, orderCodexTasksForDispla
 import { companionPinAppLabel, companionPinNativeLabel, companionTaskProvider, COMPANION_PROVIDER_IDS, COMPANION_PROVIDER_LABELS, DEFAULT_COMPANION_ENABLEMENT, isCompanionProviderEnabled, type CompanionProviderId } from './domain/companionProvider'
 import { COMMAND_MODIFIER_LABEL, hasCommandModifier } from './ui/commandModifier'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
-import type { CodexFloatSnapshotV1 } from './runtime/codexController'
+import type { CodexFloatSnapshotV1, CodexTaskActionReceipt } from './runtime/codexController'
 import type { RuntimeIdentityHandshakeV1 } from './platform/eypcPlatform'
 
 type RenderRow =
@@ -176,6 +176,14 @@ const pendingConfirm = ref<{
   source: 'archive-button' | 'batch-archive' | 'project-archive' | 'manual-row-open'
 } | null>(null)
 const liveMessage = ref('')
+const pendingTaskActions = new Map<string, {
+  key: string
+  label: string
+  status: string
+  timer: ReturnType<typeof setTimeout> | null
+}>()
+let taskActionSequence = 0
+let taskActionFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 const drawerActiveIndex = ref(0)
 const highlightOwner = ref<'mouse' | 'keyboard'>('mouse')
 const hoveredTaskKey = ref('')
@@ -1688,7 +1696,7 @@ function togglePlanPause(task: CodexTaskCard) {
 
 function requestTaskContinue(task: CodexTaskCard) {
   if (task.companionCapabilities?.continueTask !== true) return
-  action('codex.task.continueTask', { key: task.key, revisionAt: task.revisionAt })
+  requestTaskAction(task, 'continue-task')
 }
 
 function requestPlanExecute(task: CodexTaskCard) {
@@ -1696,7 +1704,61 @@ function requestPlanExecute(task: CodexTaskCard) {
     liveMessage.value = planActionBlockedReason(task, '执行')
     return
   }
-  action('codex.task.executePlan', { key: task.key, revisionAt: task.revisionAt })
+  requestTaskAction(task, 'execute-plan')
+}
+
+function showTaskActionFeedback(key: string, message: string) {
+  liveMessage.value = message
+  if (taskActionFeedbackTimer) clearTimeout(taskActionFeedbackTimer)
+  taskActionFeedbackTimer = null
+  void nextTick(() => {
+    if (!rootElement.value?.isConnected || !expanded.value || pendingConfirm.value || liveMessage.value !== message) return
+    const row = rootElement.value?.querySelector<HTMLElement>(`[data-focus-key="task:${CSS.escape(key)}"]`)
+    const anchor = row?.querySelector<HTMLElement>('.action-continue, .action-create')
+      || rootElement.value?.querySelector<HTMLElement>('.float-expanded-card') || null
+    showActionHint(anchor, message, { sticky: true })
+    taskActionFeedbackTimer = setTimeout(() => {
+      taskActionFeedbackTimer = null
+      if (liveMessage.value === message && !pendingConfirm.value && tooltipLayer.value?.hasStickyHint()) clearActionHint(true)
+    }, 10_000)
+  })
+}
+
+function requestTaskAction(task: CodexTaskCard, command: CodexTaskActionReceipt['command']) {
+  const label = taskDisplayLabel(task)
+  if ([...pendingTaskActions.values()].some((item) => item.key === task.key)) {
+    showTaskActionFeedback(task.key, `${label}：请求仍在处理中，请勿重复发送`)
+    return
+  }
+  taskActionSequence += 1
+  const operationId = `float-${command}-${Date.now().toString(36)}-${taskActionSequence.toString(36)}`
+  const pending = { key: task.key, label, status: '', timer: null as ReturnType<typeof setTimeout> | null }
+  pendingTaskActions.set(operationId, pending)
+  let dispatched = false
+  try {
+    dispatched = action(command === 'execute-plan' ? 'codex.task.executePlan' : 'codex.task.continueTask', {
+      key: task.key, revisionAt: task.revisionAt, operationId
+    })
+  } catch {
+    liveMessage.value = '浮窗操作结果未确认，请核对原任务；未自动重发'
+  }
+  if (!dispatched) {
+    pendingTaskActions.delete(operationId)
+    showTaskActionFeedback(task.key, liveMessage.value)
+    return
+  }
+  showTaskActionFeedback(task.key, `${label}：正在等待主插件核对任务`)
+  pending.timer = setTimeout(() => {
+    pending.timer = null
+    showTaskActionFeedback(task.key, `${label}：尚未收到最终结果，请核对原任务；未自动重发`)
+  }, 90_000)
+}
+
+function taskActionHint(task: CodexTaskCard, command: CodexTaskActionReceipt['command']) {
+  const receipt = [...(snapshot.value?.taskActionReceipts || [])].reverse().find((item) => (
+    item.key === task.key && item.command === command && item.revisionAt === task.revisionAt
+  ))
+  return receipt?.message || (command === 'execute-plan' ? planActionBlockedReason(task, '执行') : '继续任务')
 }
 
 function taskSecondaryActionHint(task: CodexTaskCard) {
@@ -3227,6 +3289,20 @@ function queueActionHint(event: Event, label: string) {
   showActionHint(target, label, { delay: 200 })
 }
 
+watch(() => snapshot.value?.taskActionReceipts, (receipts) => {
+  for (const receipt of receipts || []) {
+    const pending = pendingTaskActions.get(receipt.operationId)
+    if (!pending || pending.key !== receipt.key) continue
+    if (pending.status !== receipt.status) {
+      pending.status = receipt.status
+      showTaskActionFeedback(receipt.key, `${pending.label}：${receipt.message}`)
+    }
+    if (receipt.status === 'pending') continue
+    if (pending.timer) clearTimeout(pending.timer)
+    pendingTaskActions.delete(receipt.operationId)
+  }
+})
+
 function taskStateLabel(task: CodexTaskCard) {
   const label = task.companionPhase === 'waiting-input'
     ? '等待输入'
@@ -3504,11 +3580,17 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (taskActionFeedbackTimer) clearTimeout(taskActionFeedbackTimer)
+  for (const pending of pendingTaskActions.values()) {
+    if (pending.timer) clearTimeout(pending.timer)
+  }
+  pendingTaskActions.clear()
   transitionReadyKey = ''
   if (transitionReadyFrame !== null) cancelAnimationFrame(transitionReadyFrame)
   if (presentationReadyFrame !== null) cancelAnimationFrame(presentationReadyFrame)
   if (quotaResetTimer) clearInterval(quotaResetTimer)
   clearRailHover()
+  clearResizeState()
   window.eypcFloat?.cancelInteraction?.()
   if (collapseTimer) clearTimeout(collapseTimer)
   clearActionHint()
@@ -4001,9 +4083,9 @@ onUnmounted(() => {
                   :aria-label="`继续任务 ${taskDisplayLabel(row.task)}`"
                   data-quick-jump-target
                   data-quick-jump-label="继续任务"
-                  @pointerenter="queueActionHint($event, '继续任务')"
+                  @pointerenter="queueActionHint($event, taskActionHint(row.task, 'continue-task'))"
                   @pointerleave="clearActionHint"
-                  @focus="queueActionHint($event, '继续任务')"
+                  @focus="queueActionHint($event, taskActionHint(row.task, 'continue-task'))"
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; requestTaskContinue(row.task)"
                 ><CirclePlay :size="13" aria-hidden="true" /></button>
@@ -4014,9 +4096,9 @@ onUnmounted(() => {
                     data-quick-jump-target
                     :data-quick-jump-label="row.task.planReady ? planActionBlockedReason(row.task, '执行') : taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
                     :disabled="row.task.planReady ? row.task.companionCapabilities?.executePlan !== true : !taskCanCreateInProject(row.task, taskProject(row.task))"
-                    @pointerenter="queueActionHint($event, row.task.planReady ? planActionBlockedReason(row.task, '执行') : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
+                    @pointerenter="queueActionHint($event, row.task.planReady ? taskActionHint(row.task, 'execute-plan') : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
                   @pointerleave="clearActionHint"
-                  @focus="queueActionHint($event, row.task.planReady ? planActionBlockedReason(row.task, '执行') : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
+                  @focus="queueActionHint($event, row.task.planReady ? taskActionHint(row.task, 'execute-plan') : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; row.task.planReady ? requestPlanExecute(row.task) : taskProject(row.task) && openComposer(taskProject(row.task)!)"
                 ><CirclePlay v-if="row.task.planReady" :size="13" aria-hidden="true" /><Plus v-else :size="14" aria-hidden="true" /></button>

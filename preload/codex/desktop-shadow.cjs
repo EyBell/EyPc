@@ -461,6 +461,18 @@ function createCodexDesktopShadow(dependencies = {}) {
     return result
   }
 
+  function executionSettings(state) {
+    const candidates = [state.latestThreadSettings?.collaborationMode?.settings, state.latestCollaborationMode?.settings]
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate.model !== 'string' || !candidate.model.trim()
+        || candidate.model.length > 120 || !Object.hasOwn(candidate, 'reasoning_effort')) continue
+      const effort = candidate.reasoning_effort
+      if (effort !== null && (typeof effort !== 'string' || !effort.trim() || effort.length > 80)) continue
+      return { model: candidate.model.trim(), reasoningEffort: effort === null ? null : effort.trim() }
+    }
+    return null
+  }
+
   function codexDesktopShadowFromSnapshot(change, previousShadow = null, waitingState = null) {
     const state = record(change.conversationState)
     const revision = Number.isInteger(change.revision) && change.revision >= 0 ? change.revision : -1
@@ -490,6 +502,7 @@ function createCodexDesktopShadow(dependencies = {}) {
       activityRevision: revision,
       activityEvidence: 'initial-snapshot',
       runtime,
+      executionSettings: executionSettings(state),
       sideConversation: state.sideConversation === true,
       threadSourceKind: threadSourceKind(state.threadSource),
       ephemeral: typeof state.ephemeral === 'boolean' ? state.ephemeral : undefined,
@@ -577,6 +590,10 @@ function createCodexDesktopShadow(dependencies = {}) {
     const patchPath = Array.isArray(source.path) ? source.path : null
     if (!['add', 'replace', 'remove'].includes(operation) || !patchPath || patchPath.length === 0 || patchPath.length > 64) return false
     const root = patchPath[0]
+    if (root === 'latestThreadSettings' || root === 'latestCollaborationMode') {
+      shadow.executionSettings = null
+      return false
+    }
     // Desktop streams the whole private conversation state. The Companion keeps
     // only the finite runtime/request/read subset; unrelated well-formed patches
     // still advance the stream revision and must not tear down live authority.

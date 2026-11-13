@@ -144,6 +144,16 @@ export interface CodexRuntimeView {
   }
 }
 
+export interface CodexTaskActionReceipt {
+  operationId: string
+  key: string
+  revisionAt: number
+  command: 'continue-task' | 'execute-plan'
+  status: 'pending' | 'executed' | 'failed' | 'indeterminate'
+  message: string
+  errorCode?: string
+}
+
 export interface CodexFloatSnapshotV1 {
   version: 1 | 2
   /** Base/settings/quota lane; independent from taskSnapshot.packageRevision. */
@@ -169,6 +179,7 @@ export interface CodexFloatSnapshotV1 {
   newThreadModelPolicy: CodexSettings['newThreadModelPolicy']
   newThreadPreferredModel: string
   taskArchive: { key: string; status: 'idle' | 'archiving' | 'error'; message: string }
+  taskActionReceipts?: CodexTaskActionReceipt[]
   /** Process-local action state; cards remain visible until verified removal. */
   archivingTaskKeys?: string[]
   projectArchive: { key: string; status: 'idle' | 'archiving' | 'error'; message: string }
@@ -524,6 +535,7 @@ export function createCodexController(options: CodexControllerOptions) {
   let taskInventoryPublishSequence = 0
   let taskArchive = { key: '', status: 'idle' as 'idle' | 'archiving' | 'error', message: '' }
   let projectArchive = { key: '', status: 'idle' as 'idle' | 'archiving' | 'error', message: '' }
+  let taskActionReceipts: CodexTaskActionReceipt[] = []
   let floatBaseRevision = 0
   let floatBaseFingerprint = ''
   let floatBaseSnapshot: CodexFloatSnapshotV1 | null = null
@@ -3397,49 +3409,81 @@ export function createCodexController(options: CodexControllerOptions) {
     return setPlanPaused(key, recency, false, source)
   }
 
-  async function continueTask(key: string, recency?: number, source = 'continue-task-button') {
-    if (disposed || !Number.isFinite(recency) || !companionKernel) {
-      options.setMessage('任务继续服务尚未就绪')
-      return false
-    }
-    const task = allTasks().find((item) => item.key === key && item.revisionAt === recency)
-    if (task?.companionCapabilities?.continueTask !== true) {
-      options.setMessage('当前任务不可直接继续，请查看原始任务状态')
-      return false
-    }
-    const result = await dispatchCompanionCommand('continue-task', { key: task.key }, source, { revisionAt: task.revisionAt })
-    const accepted = result.outcome === 'executed'
-    if (disposed) return accepted
-    options.setMessage(result.message || (result.outcome === 'indeterminate'
-      ? '结果未确认，请核对原任务，未自动重发'
-      : accepted ? '已发起继续任务' : '继续任务失败'))
+  function publishTaskActionReceipt(receipt: CodexTaskActionReceipt) {
+    if (disposed) return
+    const remaining = taskActionReceipts.filter((item) => item.operationId !== receipt.operationId)
+    const next = [...remaining, receipt]
+    const completed = new Set(next.filter((item) => item.status !== 'pending').slice(-20).map((item) => item.operationId))
+    taskActionReceipts = next.filter((item) => item.status === 'pending' || completed.has(item.operationId))
+    options.setMessage(receipt.message)
     options.notify()
-    return accepted
   }
 
-  async function executePlan(key: string, recency?: number, source = 'execute-plan-button') {
-    if (!Number.isFinite(recency) || !companionKernel) {
-      options.setMessage('Plan 执行服务尚未就绪')
+  function taskActionFailureMessage(errorCode?: string) {
+    const messages: Record<string, string> = {
+      'state-changed': '任务状态已变化，请核对原任务后再操作',
+      'identity-mismatch': '原任务身份未能确认，未启动其它任务',
+      'target-missing': '未找到同一任务，未启动其它任务',
+      'goal-limited': '任务受额度或预算限制，未发起继续',
+      'already-in-progress': '同一任务的操作仍在处理中，请勿重复发送',
+      'open-failed': '原任务未能打开，未发送执行指令',
+      'resume-failed': '原任务未能恢复，未发送执行指令',
+      'unsupported': '当前宿主不支持此操作，请重载插件后核对',
+      'goal-set-failed': '原任务目标未能恢复，请查看原任务',
+      'turn-start-failed': '原任务未能启动，请查看原任务'
+    }
+    return errorCode ? messages[errorCode] : undefined
+  }
+
+  async function runTaskAction(
+    command: CodexTaskActionReceipt['command'], key: string, recency: number | undefined,
+    source: string, providedOperationId?: string
+  ) {
+    if (disposed) return false
+    const operationId = companionOperationId(command, providedOperationId)
+    const identity = { operationId, key, revisionAt: typeof recency === 'number' && Number.isFinite(recency) ? recency : 0, command }
+    const isPlan = command === 'execute-plan'
+    const reject = (message: string, errorCode: string) => {
+      publishTaskActionReceipt({ ...identity, status: 'failed', message, errorCode })
       return false
+    }
+    if (!Number.isFinite(recency) || !companionKernel) {
+      return reject(isPlan ? 'Plan 执行服务尚未就绪' : '任务继续服务尚未就绪', 'not-ready')
+    }
+    if (!taskOperationsAllowed()) {
+      return reject(options.platform.runtimeIdentityStatus?.message || '运行版本不一致，请重载插件后操作', 'reload-required')
     }
     const task = allTasks().find((item) => item.key === key && item.revisionAt === recency)
-    if (!task?.planReady || !task.planLifecycleRevision || task.companionCapabilities?.executePlan !== true) {
-      options.setMessage('当前 Plan 尚未完成，或任务已有其它待决状态')
+    if (!task || (isPlan
+      ? !task.planReady || !task.planLifecycleRevision || task.companionCapabilities?.executePlan !== true
+      : task.companionCapabilities?.continueTask !== true)) {
+      return reject(isPlan ? '当前 Plan 尚未完成，或任务已有其它待决状态' : '当前任务不可直接继续，请查看原始任务状态', 'state-changed')
+    }
+    publishTaskActionReceipt({ ...identity, status: 'pending', message: isPlan ? '正在核对计划并请求实施' : '正在核对并请求继续任务' })
+    try {
+      const result = await dispatchCompanionCommand(command, { key: task.key }, source,
+        isPlan ? { planLifecycleRevision: task.planLifecycleRevision } : { revisionAt: task.revisionAt }, operationId)
+      const status = result.outcome === 'executed' || result.outcome === 'indeterminate' ? result.outcome : 'failed'
+      const message = status === 'indeterminate'
+        ? '结果未确认，请核对原任务，未自动重发'
+        : result.message || (status === 'executed'
+          ? isPlan ? '已按原 Plan 启动执行' : '已发起继续任务'
+          : taskActionFailureMessage(result.errorCode) || (isPlan ? 'Plan 执行失败' : '继续任务失败'))
+      publishTaskActionReceipt({ ...identity, status, message, ...(result.errorCode ? { errorCode: result.errorCode } : {}) })
+      return status === 'executed'
+    } catch {
+      publishTaskActionReceipt({ ...identity, status: 'indeterminate', errorCode: 'action-result-unknown',
+        message: '结果未确认，请核对原任务，未自动重发' })
       return false
     }
-    const result = await dispatchCompanionCommand(
-      'execute-plan',
-      { key: task.key },
-      source,
-      { planLifecycleRevision: task.planLifecycleRevision }
-    )
-    if (disposed) return result.outcome === 'executed'
-    const accepted = result.outcome === 'executed'
-    options.setMessage(result.message || (result.outcome === 'indeterminate'
-      ? '结果未确认，请核对原任务，未自动重发'
-      : accepted ? '已按原 Plan 启动执行' : 'Plan 执行失败'))
-    options.notify()
-    return accepted
+  }
+
+  function continueTask(key: string, recency?: number, source = 'continue-task-button', operationId?: string) {
+    return runTaskAction('continue-task', key, recency, source, operationId)
+  }
+
+  function executePlan(key: string, recency?: number, source = 'execute-plan-button', operationId?: string) {
+    return runTaskAction('execute-plan', key, recency, source, operationId)
   }
 
   /** Every root task, including Cursor, is owned by the V6 Kernel snapshot. */
@@ -3962,6 +4006,7 @@ export function createCodexController(options: CodexControllerOptions) {
         newThreadModelPolicy: settings.newThreadModelPolicy,
         newThreadPreferredModel: settings.newThreadPreferredModel,
         taskArchive,
+        taskActionReceipts,
         archivingTaskKeys: [...archivingKeys],
         projectArchive,
         timeWindowDays: settings.timeWindowDays,

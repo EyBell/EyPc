@@ -150,14 +150,18 @@ export function registerCodexActions(host: FeatureActionHostV7): void {
       const key = typeof args?.key === 'string' ? args.key : ''
       const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
       if (!key || revisionAt === undefined) return false
-      void host.codexController.continueTask(key, revisionAt)
+      const operationId = typeof args?.operationId === 'string' ? args.operationId : undefined
+      if (operationId) void host.codexController.continueTask(key, revisionAt, 'continue-task-button', operationId)
+      else void host.codexController.continueTask(key, revisionAt)
       return true
     } })
     register({ id: 'codex.task.executePlan', title: '实施 Codex 计划', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
       const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
       if (!key || revisionAt === undefined) return false
-      void host.codexController.executePlan(key, revisionAt)
+      const operationId = typeof args?.operationId === 'string' ? args.operationId : undefined
+      if (operationId) void host.codexController.executePlan(key, revisionAt, 'execute-plan-button', operationId)
+      else void host.codexController.executePlan(key, revisionAt)
       return true
     } })
     for (const [actionId, paused] of [['codex.tasks.pausePlan', true], ['codex.tasks.resumePlan', false]] as const) {

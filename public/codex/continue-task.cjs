@@ -4,7 +4,7 @@ const CONTINUE_TEXT = '继续当前任务，从上次中断处接着执行。'
 const GOAL_STATES = new Set(['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'])
 const pausedGoal = (goal) => goal?.status === 'paused' || goal?.status === 'blocked'
 const unsupported = (error) => error?.code === -32601
-const uncertain = (error) => ['timeout', 'ETIMEDOUT', 'process-exited', 'connection-closed'].includes(error?.code)
+const uncertain = (error) => error?.indeterminate === true || ['timeout', 'ETIMEDOUT', 'process-exited', 'connection-closed'].includes(error?.code)
 const validId = (id) => typeof id === 'string' && id.length > 0
 const result = (outcome, errorCode) => ({ outcome, ...(errorCode ? { errorCode } : {}) })
 class ContinueTaskError extends Error {
@@ -100,8 +100,11 @@ function createCodexContinueTask(deps) {
       stage = 'open'
       const opened = await deps.open({ ...selected, actionAlias: alias })
       if (!['opened', 'dispatched'].includes(opened?.outcome)) return result('failed', 'open-failed')
-      stage = 'resume'
-      checkThread(await deps.rpc('thread/resume', { threadId, excludeTurns: true }))
+      const useDesktopOwner = !pausedGoal(goal) && deps.canStartDesktop?.(threadId) === true
+      stage = useDesktopOwner ? 'desktop-preflight' : 'resume'
+      checkThread(await deps.rpc(useDesktopOwner ? 'thread/read' : 'thread/resume', {
+        threadId, ...(useDesktopOwner ? { includeTurns: false } : { excludeTurns: true })
+      }))
 
       const revalidate = async () => {
         await checkTask()
@@ -164,17 +167,27 @@ function createCodexContinueTask(deps) {
       }
       stage = 'turn-start'
       try {
-        const response = await deps.rpc('turn/start', {
-          threadId, input: [{ type: 'text', text: CONTINUE_TEXT }]
-        })
+        const params = { threadId, input: [{ type: 'text', text: CONTINUE_TEXT }] }
+        const response = await (useDesktopOwner
+          ? deps.startDesktopTurn(threadId, params)
+          : deps.rpc('turn/start', params))
         const turn = response?.turn
         if (validId(turn?.id) && turn.id !== beforeTurn.id && turn.status === 'inProgress') return await markTurn(turn)
         return await confirmTurn()
       } catch (error) {
         if (uncertain(error)) return await confirmTurn()
+        if (['desktop-owner-unavailable', 'desktop-send-failed', 'desktop-turn-rejected'].includes(error?.code)) {
+          return { outcome: 'failed', errorCode: error.code, message: '桌面原会话未接收继续请求，未改用其它通路重发' }
+        }
         return result('failed', 'turn-start-failed')
       }
     } catch (error) {
+      if (stage === 'resume' && error?.rpcReason === 'thread-already-active') {
+        return { outcome: 'failed', errorCode: 'resume-thread-already-active', message: '原线程已由 Codex 持有，独立执行进程无法恢复；尚未发送继续指令' }
+      }
+      if (error?.rpcReason === 'model-provider-mismatch') {
+        return { outcome: 'failed', errorCode: `${stage}-model-provider-mismatch`, message: '执行进程与原任务的模型提供方不一致，未继续任务' }
+      }
       return result('failed', error instanceof ContinueTaskError ? error.continueCode : `${stage}-failed`)
     } finally {
       if (lockedId) inFlight.delete(lockedId)
