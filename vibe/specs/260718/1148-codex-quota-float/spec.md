@@ -14,7 +14,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 ## 2026-11-12 Magpie Codex 周额度显示
 
-水球左上和展开额度行显示现有账户选择得到的 Codex 周额度，保留账户轮换、Token 回退和原生来源；暂不接入 `codex-2` 金额余额。已确认条款、实现及真实宿主待验见[周额度任务](../../261112/magpie-codex-weekly/task-card.md#L1)。
+水球和展开卡显示现有账户选择得到的 Codex 周额度，保留账户轮换与 Token 回退。外环没有大于 0 的额度时使用该百分比并移出球心，原生周额度 0% 同样补上；大于 0 的原生来源不替换。展开卡右侧已有重置倒计时时，左侧不重复「M·周」。暂不接入 `codex-2` 金额余额。已确认条款、实现及真实宿主待验见[周额度任务](../../261112/magpie-codex-weekly/task-card.md#L1)。
 
 ## 2026-11-10 远端 Magpie key 限额展示
 
