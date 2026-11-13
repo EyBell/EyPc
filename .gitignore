@@ -30,3 +30,4 @@ _to_delete
 
 # Linked Git worktree hubs (never commit nested checkouts)
 .Worktrees/
+/.codex/build-hook/

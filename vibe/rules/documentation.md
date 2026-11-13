@@ -59,9 +59,19 @@ EyPc **核心版本**（当前架构代际，如 `EyPc V7` / `V7`）由 [eypc-co
 
 任何会改变 Runtime Identity 输入或生产/uTools 产物的迭代（`src/`、`preload/`、`contracts/`、`public/` 预加载镜像、`vite` 构建边界、Companion 合同生成）在收尾前必须完成版本同步，不得只改代码不更新真值。
 
+### 项目级同步 Hook 自动构建核验
+
+用户于2026-11-13选择以项目级同步 Hook 自动运行 `npm run build`，取代同日先前的 Grok 子 Agent 路线；构建无需模型执行，也无需逐轮询问。此处“打包核验”指运行项目的 build 脚本，不额外生成 asar、替换安装包、加载插件或重启宿主；这些动作不在本条授权内。
+
+1. 入口为 [.codex/hooks.json](../../.codex/hooks.json#L1) 的同步 Stop command Hook，执行 [构建检查器](../../scripts/codex-build-stop.mjs#L1)。Stop 是回合结束事件，不能据此认定整个任务完成。检查器按检出根目录串行执行，初次建立成功基线；之后按构建输入和产物指纹复用结果。纯文档或规则修改不影响这些输入时跳过构建。
+2. 检查器从当前检出根目录运行 `npm run build`，沿用 [package.json](../../package.json#L12) 中的合同检查、类型检查、Vite 构建、uTools runtime 准备与 `validate:utools` 完整链路。不得以单独 prepare、语法检查或旧 dist 的校验代替当前源码构建，也不得删减门禁来取得成功。构建期间输入变化或产物缺失不计成功。
+3. 构建失败时以 Stop 的 block/reason 将原因交回当前 Agent；修复判断仍由主控负责。相同失败输入不自动重跑，Hook 已续接的回合不再无限 block；同会话最多两次自动续接，失败仍须明确报告。缓存只保存摘要、退出结果对应的状态和成功产物身份，不保存原始构建输出、聊天或凭据。锁占用或 Hook 异常不计构建通过。
+4. 成功时回传 `core / host / renderer / builtAt`；主控核对结果后才接受构建交付。输入未变且已有检查器成功结果时复用，不重复运行同一链路。此项授权不扩大到全量测试套件、真实宿主操作或发布；构建成功不能替代真实任务执行与宿主验收。新定义须经 Codex 原生 Hook 审阅与信任，配置存在不等于事件已运行。
+5. 每次本项目 Stop 检查在 `.codex/build-hook/receipts/` 写独立回执，最多保留最近100份；记录开始与结束时间、匿名会话摘要、入口来源及 `running / rebuilt / reused / failed / locked` 状态，附构建是否尝试、退出码及成功产物身份。命令入口标记 `hook`，直接调用处理器默认标记 `manual`，不得混作自动触发证据；入口来源不单独证明宿主确实发出了 Stop。中途退出保留 `running`，不能当作成功。回执不保存原始事件、聊天、命令或构建输出，写入失败须报告 Hook 未完成；范围外的事件不建回执。
+
 ### 收尾门禁
 
-1. 运行 `pnpm run build`（或至少 `node scripts/prepare-utools-runtime.mjs` 且 `dist/` 已存在）。
+1. 按上节由项目级同步 Hook 自动运行 `npm run build` 并通过完整构建链路；Hook 尚未获信任或不可用时，主控直接运行同一命令核验并报告接入缺口，不另派构建 Agent。
 2. 运行 `node scripts/validate-requirements.mjs --write-current-truth` 回写 [PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1) 全局真值快照（核心版本、构建产物、`builtAt`、登记统计）。
 3. 若本轮为实质交付，在 [PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1) 用同一 `host / renderer / builtAt` 更新当前产物句，并提醒用户重新接入 uTools 开发插件或安装新包。
 4. 架构代际跃迁（如 V7→V8）时，先改 [eypc-core-version.mjs](../../scripts/eypc-core-version.mjs#L1)，再同步合同、登记与帮助文档。

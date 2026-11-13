@@ -8,6 +8,8 @@ design-preference-gate: accepted
 
 Local build route: [project runtime adapter](project-runtime.md#L1).
 
+开发任务收尾由项目级同步 Hook 自动执行 `npm run build`，不要求 Grok 或其它构建 Agent；授权、触发条件和结果要求见 [Build And Core Version Sync](documentation.md#build-and-core-version-sync-required)。无需逐轮请用户确认构建；安装加载仍由用户处理。
+
 For code, UI, data, build, deployment or runtime work, read the relevant [local context](local-context.md) and its linked owner before acting. It retains this project's SQL, environment, browser identity, preview and real-acceptance constraints. Commands do not grant permission to start services or mutate data. Simple questions need no process preflight.
 
 - durable documentation or recovery: [documentation.md](documentation.md).
