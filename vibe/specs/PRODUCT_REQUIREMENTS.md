@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 69 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-792c101e812567f159e2 / renderer-a231c1aa0813d0e7c024` · `artifact-ready` |
-| 当前构建时间 | `2026/11/14 14:45:24`（`2026-11-14T06:45:24.329Z`） |
+| 当前构建产物 | `host-46e2d9b53fc524f3409c / renderer-84aa25e1092762ee1804` · `artifact-ready` |
+| 当前构建时间 | `2026/11/14 20:52:06`（`2026-11-14T12:52:06.897Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-792c101e812567f159e2",
-    "renderer_asset": "renderer-a231c1aa0813d0e7c024",
+    "host_asset": "host-46e2d9b53fc524f3409c",
+    "renderer_asset": "renderer-84aa25e1092762ee1804",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-11-14T06:45:24.329Z",
-    "built_at_local": "2026/11/14 14:45:24",
+    "built_at": "2026-11-14T12:52:06.897Z",
+    "built_at_local": "2026/11/14 20:52:06",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "40a9c6415f07d031f5d156ff9b8b209a2647a6e2219919c16ed2a440903f3f39",
+    "requirement_registry": "9f535e649d1a6205cc7042ae9b3911e6479d0c3a808343f76b7b409e882813a9",
     "raw_sources": "1edc81b3b538a5c4e9a2fa41a6803e44f9b88e889a6acc076779289797407332",
     "source_anchor_catalog": "b5042020e6a15cf133d36e29759682ca4f07582db5daaf00ffd199f12a227eef",
-    "product_body": "9ec2ad46137522c041aea66a3a9b07ad1f17ae63e08260990969ec4b16a23806",
+    "product_body": "4a9e330c69b5d56621914244627d59966a83575c85e5ef069dbff0ad756ecd44",
     "architecture": "a233d645edb3030202574d577c4c6c3405ac876d405881e6b857f506289c9045",
-    "runtime_contract": "72b499af76c8c2bc0720e1cdbfd2ad25096157818d842414ca7b031a2839d716"
+    "runtime_contract": "89d84e7d8030c9025f238c16e70e3222abc1a06759200e8a4b2a03ed10000551"
   }
 }
 ```
@@ -284,8 +284,8 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 - Magpie Codex 周额度按本地／远端各自排除 free 账号后，对所有有效普通 `7days` 周窗口取均值；真实 0 参与，缺失、NaN、Infinity、unlimited、text 不按 0。单账号第一项／last 不替代均值，不跨来源混账号。验收算例 `0+85=42.5%`，Token 344.98 不抢占正周；最终最多一位小数，`0<p<1` 显示 `<1%`。来源候选为 fresh 正周＞fresh 正 Token＞stale 正周＞stale 正 Token＞明确零＞缺失，同层远端优先。周为零或缺失时余额只选单账号、不求和，按 promax→last→原序兜底。
 - 球心格、允许补环、实际展开卡、设置／外观预览共用同一 Magpie 周读数与完整 snapshot（含 Claude 权限）。grid 优先，Magpie 正周允许补入 Codex 0／缺失的普通周环，移环后球心去重，零值格收缩隐藏不改变均值；Codex 原生正周和 Claude 真实 0 不替代，Claude-only 缺普通周隐藏轨道；Claude 短周期／scoped、Token／Grok／Cursor 不驱动环。液面、卡片形态与贴边线仍用原生。
-- 展开卡右侧按 Codex、Grok、Cursor 和获准 Claude 显示重置，不重复额度、不写来源；点击、Enter、Space 仍刷新。历史提示来源见 [提示精简](261113/magpie-reset-hint/spec.md#requirements)。
-- 2026-11-14 账号去重局部取代来源文案、展开重复额度和整组长提示：右侧按类别显示重置，旧均值、仲裁、缓存和唯一 key 保留。[追加条款](261112/magpie-codex-weekly/task-card.md#2026-11-14-账号去重追加条款)。 2026-11-14 14:31 生产投影：当前 c222 周 99%，排除两个重复 Codex 窗口，其余 Codex 61%，Cursor Models 45.4%；Cursor Grok Bot 留在 Cursor。宿主手测未验，最终构建身份由 current-truth 生成。
+- 展开卡右侧按 Codex、Grok、Cursor 和获准 Claude 显示重置，不重复额度、不写来源；点击、Enter、Space 仍刷新。常态只用 5D、3H、25M 这类最大单位。Codex 按账号分行，账号显示邮箱名前四位加完整域名并去掉末尾 .com，悬停显示上海时间 MMDD-HHMM；重名序号放在时间末尾。Cursor 常态只用账号月周期，悬停分月与 Bot。实际 Magpie 快照投影为 Cursor 常态 2D，月为 261117-135221，Bot 为 261116-135353；未载本机额度，不代表宿主或当前账号完整链路已验。历史提示来源见 [提示精简](261113/magpie-reset-hint/spec.md#requirements)。20:52 自然 Hook 回执已覆盖此前源码与本轮 Hook 文案：V7 / host-46e2d9b53fc524f3409c / renderer-84aa25e1092762ee1804 / builtAt 2026-11-14T12:52:06.897Z；这不是真实插件验收。
+- 2026-11-14 账号去重局部取代来源文案、展开重复额度和整组长提示：右侧按类别显示重置，旧均值、仲裁、缓存和唯一 key 保留。[追加条款](261112/magpie-codex-weekly/task-card.md#2026-11-14-账号去重追加条款)。 2026-11-14 14:31 生产投影：当前 c222 周 99%，排除两个重复 Codex 窗口，其余 Codex 61%，Cursor Models 45.4%；Cursor Grok Bot 留在 Cursor。宿主手测未验，最终构建身份由 current-truth 生成。同日规则裁决：收尾构建只由同步 Stop Hook 执行；未回结果不手动 build，也不编造新产物身份。
 - 任参与账号过期即汇总过期，缺有效周账号标「部分数据」；失败保留最近成功快照，关闭立即隐藏，过重置标「待刷新」而不推 100%。本次明确用户决定局部取代旧单账号周选择与轮换等冲突语义；[有效变更](261112/magpie-codex-weekly/task-card.md#2026-11-13-有效变更条款)及[现有登记 leaf](requirements/codex-magpie-weekly-raw-001.md#当前有效变更)保留来源，证据集中于[验证结论](261112/magpie-codex-weekly/task-card.md#本次验证结论)。不接入 `codex-2` 金额余额。
 - 仅使用 Codex 与 Magpie、Codex 当前成功快照为免费账号且没有自身额度、Magpie 也没有应保留的具体 agent 读数时，水球外环与中间可展示唯一远端 key 的有限限额剩余百分比，不标注来源。同 key 多个周期／Token／金额限额取剩余比例最低项，平手接口顺序；无限、明确额度（含 0%）、数据无效或多 key 歧义保持原显示。液面、原订阅轮换与 Token 回退不变；三个预览／悬浮入口同源，提示含已用／上限／单位／重置及过期状态。[限额展示条款](260718/1148-codex-quota-float/spec.md#2026-11-10-远端-magpie-key-限额展示)。
 - 外观编辑预览内切换水球、卡片与散开；右侧顺序为部件、主题、操作。预览和参数区使用紧凑的同级布局，保持预览区高度、模型大小和全局导航；部件名称在模型上仅于悬浮或聚焦时显示。部件和主题名称显示在各自选择框，部件与模型双向同步，参数区不重复部件名；所选主题有差异时标记「已修改」。操作支持悬停或点击展开，保存、另存以及只重命名已保存主题；历史备选数据保留。部件调整即时生效，切换主题前处理未保存调整；Esc 分层退出，用户可保存、恢复本次修改或继续编辑，恢复遇到外部新值时保留并提示。更多选择同一行右侧放水球、卡片、贴边线；窄窗口换行。新保存主题包含 Magpie 格标签，旧主题缺失时不覆盖当前标签。[外观编辑需求与验证](261030/codex-appearance-editor/spec.md#L1)。

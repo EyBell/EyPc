@@ -13,6 +13,12 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 - 产品语义：[PRODUCT_REQUIREMENTS](../../PRODUCT_REQUIREMENTS.md#L1)
 
 ## Primary Requirements
+2026-11-14 Hook 规则裁决：收尾构建只由同步 Stop Hook 执行。未回结果只报缺口，模型不手动 build，不伪装调用处理器。真实失败后才修复并交自然 Stop 重验。本条不产生新产物身份。
+
+2026-11-14 显示标签增量：账号显示邮箱名前四位加完整域名，仅去掉末尾 .com；重名序号仍放在时间末尾。SHA-256 去重不变，完整邮箱不落盘。20:52 自然 Hook 回执已覆盖此前源码与本轮 Hook 文案：V7 / host-46e2d9b53fc524f3409c / renderer-84aa25e1092762ee1804 / builtAt 2026-11-14T12:52:06.897Z；这不是真实插件验收，也不覆盖此后新增的 Hook 文案。
+
+2026-11-14 显示收敛：常态只显示最大时间单位，如 5D、3H、25M；悬停只显示上海时间 MMDD-HHMM。Codex 每账号一行，Cursor 常态只用账号月周期，悬停分月与 Bot。上次数据和部分数据保留，13 类宿主手测未验。该轮不代表本次标签增量。
+
 
 2026-11-14 14:31 生产投影：当前 c222 周 99%，排除两个重复 Codex 窗口，其余 Codex 61%，Cursor Models 45.4%；Cursor Grok Bot 留在 Cursor。最终构建已通过，宿主手测未验。
 

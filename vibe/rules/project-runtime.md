@@ -9,7 +9,7 @@
 | 操作 | 能力 | 入口与证据 |
 | --- | --- | --- |
 | status | 不支持宿主状态判断 | 用户可在 uTools 内核对实际加载的版本；文件存在不等于运行。 |
-| build | 支持 | 开发收尾由同步 Hook 从检出根目录执行 `npm run build`，证据为完整链路退出成功及产物身份；不自动生成 asar 或加载。 |
+| build | 支持 | 开发收尾只由同步 Hook 从检出根目录执行 `npm run build`。Hook 未回结果、未获信任、锁占用或未知时只报告缺口；模型不手动构建，也不伪装调用处理器。证据仅为 Hook 完整链路退出成功及产物身份；不自动生成 asar 或加载。 |
 | 隔离构建 | 支持，按明确需要选择 | `sh scripts/build-isolated-utools.sh` 使用临时目录，不改写检出的 `public/` 或 `dist/`；输出 `ARTIFACT` / `ASAR`。不作为自动 Hook 默认入口。 |
 | 本地替换 | 支持，须单次授权 | [替换入口](../../scripts/apply-local-utools.mjs#L1)要求明确提供候选包、已安装包及两者 SHA-256；身份和原生模块一致、旧包无人占用后才备份并原子替换。`--check` 只读，`--apply` 写入；不关闭宿主。 |
 | start | 仅 macOS 宿主 | 用户明确要求加载本地插件时，可用 `open -a /Applications/uTools.app` 启动已安装的 uTools；无项目端口。进程与实际插件加载需另行核对，启动命令成功不等于插件可用。 |

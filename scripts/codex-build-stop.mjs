@@ -158,7 +158,7 @@ export async function handleStop(event, options = {}) {
     if (state.success?.input === before && state.success.node === process.version
       && state.success.artifact === artifactDigest(root)) return finish('reused', {}, 'successful-cache', state.success.identity)
     if (failure?.input === before) {
-      return finish('failed', { systemMessage: 'EyPc 相同输入的构建已失败，未重复运行；修复原因后重新核验，不得报告构建通过。' }, 'unchanged-failed-input')
+      return finish('failed', { systemMessage: 'EyPc 相同输入的构建已失败，未重复运行；修复原因后交回 Hook，由自然 Stop 重新核验，不得报告构建通过。' }, 'unchanged-failed-input')
     }
     buildAttempted = true
     record({ status: 'running', buildAttempted })
@@ -182,7 +182,7 @@ export async function handleStop(event, options = {}) {
       : `npm run build 失败（${result.reason}，exit=${result.code}）`
     const followups = failure?.followups || 0
     const response = failureResult(event,
-      `EyPc ${reason}。处理失败原因后重新核验；不要跳过 build 门禁。${result.output ? `\n构建末尾输出（仅本次回传）：\n${result.output}` : ''}`, followups)
+      `EyPc ${reason}。处理失败原因后交回 Hook，由自然 Stop 重新核验；不要跳过 build 门禁，也不要手动运行 build。${result.output ? `\n构建末尾输出（仅本次回传）：\n${result.output}` : ''}`, followups)
     state.failures = [...state.failures.filter((entry) => entry.session !== session),
       { session, input: before, followups: followups + (response.decision === 'block' ? 1 : 0) }].slice(-16)
     delete state.success
@@ -210,7 +210,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const response = await handleStop(event, { source: 'hook' })
     process.stdout.write(`${JSON.stringify(response)}\n`)
   } catch {
-    const reason = 'EyPc 构建 Hook 未完成，不能视为构建通过；请检查 Hook 环境后运行 npm run build。'
+    const reason = 'EyPc 构建 Hook 未完成，不能视为构建通过；请报告接入缺口并等待 Hook 核验，不手动运行 npm run build，也不把直接调用处理器伪装成 Stop。'
     const response = event?.hook_event_name === 'Stop' ? failureResult(event, reason, 0) : { systemMessage: reason }
     process.stdout.write(`${JSON.stringify(response)}\n`)
   }
