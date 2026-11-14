@@ -49,6 +49,7 @@ const arrowLeft = ref(0)
 const placement = ref<'above' | 'below'>('above')
 const manualKind = ref<'float' | 'compact' | null>(null)
 const sticky = ref(false)
+const preserveLines = ref(false)
 const maxWidth = ref('')
 const tooltip = ref<HTMLElement | null>(null)
 
@@ -63,8 +64,10 @@ let mutationObserver: MutationObserver | null = null
 const suppressedTitles = new Map<Element, string>()
 const describedByBefore = new Map<Element, string | null>()
 
-function normalizedText(value: string | null | undefined) {
-  return (value || '').replace(/\s+/g, ' ').trim()
+function normalizedText(value: string | null | undefined, preserveLines = false) {
+  const text = value || ''
+  if (!preserveLines) return text.replace(/\s+/g, ' ').trim()
+  return text.split('\n').map((line) => line.replace(/[ ]+/g, ' ').trim()).join('\n').trim()
 }
 
 function operationTarget(value: Element | null) {
@@ -121,7 +124,7 @@ function targetDetail(target: Element) {
   const ownTitle = parsedTitle(target).label
   const parentLabel = target.closest('label')
   const inheritedTitle = parentLabel && parentLabel !== target ? titleValue(parentLabel) : ''
-  return normalizedText(target.getAttribute('data-operation-description'))
+  return normalizedText(target.getAttribute('data-operation-description'), target.hasAttribute('data-operation-preserve-lines'))
     || normalizedText(target.getAttribute('data-tip'))
     || (ownTitle && ownTitle !== targetLabel(target) ? ownTitle : '')
     || (inheritedTitle && inheritedTitle !== targetLabel(target) ? inheritedTitle : '')
@@ -246,6 +249,7 @@ function showTooltip(target: Element) {
   maxWidth.value = ''
   label.value = targetLabel(target)
   detail.value = targetDetail(target)
+  preserveLines.value = target.hasAttribute('data-operation-preserve-lines')
   shortcut.value = targetShortcut(target)
   describeTarget(target)
   visible.value = true
@@ -342,6 +346,7 @@ function showManual(target: Element | null, text: string, options: {
     manualKind.value = options.kind
     manualBoundary = options.boundary || null
     sticky.value = Boolean(options.sticky)
+    preserveLines.value = target.hasAttribute('data-operation-preserve-lines')
     label.value = text
     detail.value = ''
     shortcut.value = ''
@@ -453,7 +458,7 @@ onUnmounted(() => {
       :id="TOOLTIP_ID"
       ref="tooltip"
       class="operation-tooltip"
-      :class="[`operation-tooltip--${placement}`, manualKind ? `operation-tooltip--${manualKind}` : '', { 'operation-tooltip--sticky': sticky }]"
+      :class="[`operation-tooltip--${placement}`, preserveLines ? 'operation-tooltip--preserve-lines' : '', manualKind ? `operation-tooltip--${manualKind}` : '', { 'operation-tooltip--sticky': sticky }]"
       :style="{ left: `${left}px`, top: `${top}px`, maxWidth: maxWidth || undefined, '--operation-tooltip-arrow-left': `${arrowLeft}px` }"
       role="tooltip"
     >

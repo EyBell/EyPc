@@ -6,6 +6,7 @@ import { COMPANION_V7_REVISIONS } from './generated/companionContractsV7'
 // module, so this value edge is one-directional at runtime: the type import is
 // erased and the emitted `codexAppearance` module has no imports at all.
 import { defaultCompanionQuotaTones } from './codexAppearance'
+import { acceptCompanionQuotaDisplayLabel } from './companionQuotaDisplayLabel'
 
 export type CodexDisplayStyle = 'water' | 'card' | 'edge'
 export const CODEX_DEFAULT_QUOTA_REFRESH_SECONDS = 5 * 60
@@ -1598,7 +1599,7 @@ export function normalizeCodexQuota(value: unknown): CodexQuotaSnapshotV2 {
 export function normalizeCodexQuotaAccount(value: unknown): CodexQuotaAccountContext | null {
   const source = record(value)
   const emailDigest = typeof source.emailDigest === 'string' && /^[a-f0-9]{64}$/.test(source.emailDigest) ? source.emailDigest : ''
-  const label = typeof source.label === 'string' ? [...source.label.trim()].slice(0, 4).join('') : ''
+  const label = acceptCompanionQuotaDisplayLabel(typeof source.label === 'string' ? source.label : '')
   if (!emailDigest || !label) return null
   const workspaceName = typeof source.workspaceName === 'string' ? source.workspaceName.trim().slice(0, 160) : ''
   return { emailDigest, label, ...(workspaceName ? { workspaceName } : {}) }

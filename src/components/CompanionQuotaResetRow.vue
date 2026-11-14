@@ -5,8 +5,7 @@ defineProps<{ items: readonly CompanionResetButton[] }>()
 const emit = defineEmits<{ hint: [event: Event, text: string]; clear: []; refresh: []; activate: [] }>()
 
 function hintText(item: CompanionResetButton) {
-  const marks = [item.stale ? '上次数据' : '', item.partial ? '部分数据' : ''].filter(Boolean).join('·')
-  return [item.detail, marks].filter(Boolean).join('·')
+  return item.detail
 }
 </script>
 
@@ -18,6 +17,7 @@ function hintText(item: CompanionResetButton) {
       type="button"
       class="companion-reset-button"
       :data-operation-tooltip="item.label"
+      data-operation-preserve-lines
       :data-operation-description="hintText(item)"
       :aria-label="companionResetAccessibleText(item)"
       @pointerenter="emit('hint', $event, hintText(item))"

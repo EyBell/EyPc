@@ -28,6 +28,17 @@ function companionQuotaEmailDigest(email, digest) {
   return typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash) ? hash : ''
 }
 
+function companionQuotaDisplayLabel(email) {
+  const at = email.lastIndexOf('@')
+  if (at <= 0 || at !== email.indexOf('@')) return ''
+  const local = [...email.slice(0, at)].slice(0, 4).join('')
+  let domain = email.slice(at + 1)
+  if (domain.toLowerCase().endsWith('.com')) domain = domain.slice(0, -4)
+  if (!local || !domain || domain.includes('@') || /\s/.test(domain)) return ''
+  const label = `${local}@${domain}`
+  return [...label].length <= 258 ? label : ''
+}
+
 function sanitizeCodexQuotaAccount(accountResult, digest) {
   const source = accountResult && typeof accountResult === 'object' ? accountResult : null
   const nested = source && source.account && typeof source.account === 'object' ? source.account : null
@@ -38,7 +49,7 @@ function sanitizeCodexQuotaAccount(accountResult, digest) {
   const workspaceName = account && typeof account.workspaceName === 'string' ? account.workspaceName.trim().slice(0, 160) : ''
   return {
     emailDigest,
-    label: [...email].slice(0, 4).join(''),
+    label: companionQuotaDisplayLabel(email),
     ...(workspaceName ? { workspaceName } : {})
   }
 }
@@ -50,7 +61,7 @@ function sanitizeMagpieQuotaIdentity(provider, digest) {
   const workspaceName = provider && typeof provider.workspaceName === 'string' ? provider.workspaceName.trim().slice(0, 160) : ''
   return {
     emailDigest,
-    label: [...email].slice(0, 4).join(''),
+    label: companionQuotaDisplayLabel(email),
     ...(workspaceName ? { workspaceName } : {})
   }
 }

@@ -18,6 +18,7 @@ import {
   type CompanionQuotaCursorReading,
   type CompanionQuotaSelection
 } from './companionQuota'
+import { companionQuotaDisplayLabel } from './companionQuotaDisplayLabel'
 
 export type MagpieQuotaProviderId = 'codex' | 'grok' | 'cursor'
 
@@ -471,7 +472,7 @@ export async function resolveMagpieQuotaIdentities(
     const workspaceName = typeof provider.workspaceName === 'string' ? provider.workspaceName.trim().slice(0, 160) : ''
     return {
       emailDigest,
-      label: [...email].slice(0, 4).join(''),
+      label: companionQuotaDisplayLabel(email),
       ...(workspaceName ? { workspaceName } : {})
     }
   }))

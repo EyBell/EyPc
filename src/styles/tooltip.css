@@ -106,3 +106,5 @@
 .operation-tooltip--sticky .operation-tooltip-label { font-weight: 800; }
 .operation-tooltip--compact { padding: 5px 7px; font-size: 10px; line-height: 1.2; white-space: nowrap; }
 .operation-tooltip--compact::after { display: none; }
+
+.operation-tooltip--preserve-lines .operation-tooltip-label, .operation-tooltip--preserve-lines .operation-tooltip-detail { white-space: pre-line; text-align: left; }

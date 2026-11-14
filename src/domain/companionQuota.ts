@@ -1,6 +1,7 @@
 import type { CodexQuotaAccountContext, CodexQuotaPool, CodexQuotaSnapshotV1 } from './codex'
 import type { ClaudeQuotaSnapshot, ClaudeQuotaWindowEntry } from './claude'
 import type { MagpieQuotaProvider, MagpieQuotaWindow } from './magpieQuota'
+import { acceptCompanionQuotaDisplayLabel } from './companionQuotaDisplayLabel'
 
 export const COMPANION_QUOTA_EMAIL_NAMESPACE = 'eypc-companion-quota-identity/v1/codex'
 
@@ -21,6 +22,8 @@ export interface CompanionQuotaWindowFact {
   emailDigest: string
   workspaceName: string
   label: string
+  baseLabel?: string
+  displayIndex?: number
   window: CompanionQuotaWindowKind
   windowLabel: string
   percent: number | null
@@ -72,6 +75,8 @@ export interface CompanionQuotaSelection {
 export interface CompanionQuotaResetDetail {
   key: string
   label: string
+  baseLabel?: string
+  displayIndex?: number
   windowLabel: string
   resetAt: number | null
   stale: boolean
@@ -190,17 +195,20 @@ function categoryOf(provider: string): 'codex' | 'grok' | 'cursor' | null {
 }
 function clock(value: number): string {
   const date = new Date(value + 8 * 3_600_000)
-  return `${date.getUTCMonth() + 1}月${date.getUTCDate()}日 ${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`
+  const part = (size: number) => String(size).padStart(2, '0')
+  return `${part(date.getUTCMonth() + 1)}${part(date.getUTCDate())}-${part(date.getUTCHours())}${part(date.getUTCMinutes())}`
 }
 export function companionResetText(resetAt: number | null, now: number, stale = false): string {
-  if (resetAt === null) return '重置时间未提供'
+  if (resetAt === null) return '—'
   if (resetAt <= now) return '待刷新'
-  const minutes = Math.max(1, Math.ceil((resetAt - now) / 60_000))
-  return minutes < 60 ? `${minutes}分后重置` : minutes < 1440 ? `${Math.floor(minutes / 60)}小时后重置` : `${Math.floor(minutes / 1440)}天后重置`
+  const duration = resetAt - now
+  if (duration >= 86_400_000) return `${Math.floor(duration / 86_400_000)}D`
+  if (duration >= 3_600_000) return `${Math.floor(duration / 3_600_000)}H`
+  return `${Math.max(1, Math.floor(duration / 60_000))}M`
 }
 export function companionResetDetailText(resetAt: number | null, now: number): string {
-  if (resetAt === null) return '重置时间未提供'
-  return `${clock(resetAt)} · ${companionResetText(resetAt, now)}`
+  if (resetAt === null) return '—'
+  return clock(resetAt)
 }
 function rank(reading: CompanionQuotaReading): number {
   if (reading.kind === 'percent' && (reading.percent ?? -1) > 0) return reading.stale ? 2 : 0
@@ -261,7 +269,11 @@ function assignLabels(facts: CompanionQuotaWindowFact[]) {
   facts.forEach((fact) => {
     const identities = groups.get(fact.label)
     const index = identities && identities.length > 1 ? identities.indexOf(identityOf(fact)) : -1
-    if (index >= 0) fact.label = `${fact.label}·${index + 1}`
+    fact.baseLabel = fact.label
+    if (index >= 0) {
+      fact.displayIndex = index + 1
+      fact.label = `${fact.label}·${fact.displayIndex}`
+    }
   })
   const anonymous = new Map<string, string>()
   let next = 1
@@ -344,7 +356,7 @@ function nativeFacts(quota: CodexQuotaSnapshotV1 | Pick<CodexQuotaSnapshotV1, 'p
   })
 }
 function detail(fact: CompanionQuotaWindowFact, now: number): CompanionQuotaResetDetail {
-  return { key: `${fact.category}:${fact.accountKey}:${fact.window}:${fact.windowLabel}`, label: fact.label, windowLabel: fact.windowLabel, resetAt: fact.resetAt, stale: fact.stale, text: companionResetText(fact.resetAt, now, fact.stale) }
+  return { key: `${fact.category}:${fact.accountKey}:${fact.window}:${fact.windowLabel}`, label: fact.label, baseLabel: fact.baseLabel, displayIndex: fact.displayIndex, windowLabel: fact.windowLabel, resetAt: fact.resetAt, stale: fact.stale, text: companionResetText(fact.resetAt, now, fact.stale) }
 }
 function group(category: CompanionQuotaCategory, label: string, facts: CompanionQuotaWindowFact[], now: number, ambiguous: ReadonlySet<string>, partial = false): CompanionQuotaResetGroup | null {
   const seen = new Set<string>()
@@ -356,14 +368,32 @@ function group(category: CompanionQuotaCategory, label: string, facts: Companion
     return true
   })
   if (!rows.length) return null
-  const details = rows.map((fact) => ({ ...detail(fact, now), text: fact.stale ? `${companionResetDetailText(fact.resetAt, now)} · 上次数据` : companionResetDetailText(fact.resetAt, now) }))
+  const accountRows = category === 'codex'
+    ? [...rows.reduce((accounts, fact) => {
+        const current = accounts.get(fact.accountKey)
+        if (!current || ((fact.resetAt ?? Number.MAX_SAFE_INTEGER) < (current.resetAt ?? Number.MAX_SAFE_INTEGER))) accounts.set(fact.accountKey, fact)
+        return accounts
+      }, new Map<string, CompanionQuotaWindowFact>()).values()]
+    : rows
+  const monthNames = new Set(['Other Models', 'Free usage', 'Total'])
+  const monthRow = category === 'cursor'
+    ? rows.find((fact) => fact.windowLabel === 'Cursor Models' && fact.resetAt !== null)
+      || rows.find((fact) => monthNames.has(fact.windowLabel) && fact.resetAt !== null)
+      || rows.find((fact) => fact.windowLabel === 'Cursor Models')
+      || null
+    : null
+  const botRow = category === 'cursor' ? rows.find((fact) => fact.windowLabel === 'Grok Bot') || null : null
+  const compactRows = category === 'cursor' ? [monthRow, botRow].filter((fact): fact is CompanionQuotaWindowFact => fact != null) : accountRows
+  const summaryRows = category === 'cursor' ? (monthRow ? [monthRow] : []) : compactRows
+  const details = compactRows.map((fact) => ({ ...detail(fact, now), text: companionResetDetailText(fact.resetAt, now) }))
   const stale = rows.some((fact) => fact.stale)
   const groupPartial = partial || rows.some((fact) => fact.partial)
-  const known = details.filter((item) => item.resetAt !== null)
-  const expired = known.some((item) => (item.resetAt as number) <= now)
-  const future = known.map((item) => item.resetAt as number).filter((value) => value > now)
-  const summary = expired ? '待刷新' : future.length ? companionResetText(Math.min(...future), now) : '重置时间未提供'
-  return { category, label, summary, details, detailText: details.map((item) => `${item.label} ${item.windowLabel} ${item.text}`).join('；'), stale, partial: groupPartial }
+  const known = summaryRows.filter((fact) => fact.resetAt !== null)
+  const expired = known.some((fact) => (fact.resetAt as number) <= now)
+  const future = known.map((fact) => fact.resetAt as number).filter((value) => value > now)
+  const summary = !summaryRows.length && category === 'cursor' ? '—' : expired ? '待刷新' : future.length ? companionResetText(Math.min(...future), now) : '—'
+  const suffix = (item: CompanionQuotaResetDetail) => item.displayIndex ? ` ·${item.displayIndex}` : ''
+  return { category, label, summary, details, detailText: details.map((item) => category === 'cursor' ? `${item.windowLabel === 'Grok Bot' ? 'Bot' : '月'} ${item.text}${suffix(item)}` : `${item.baseLabel || item.label} ${item.text}${suffix(item)}`).join('\n'), stale, partial: groupPartial }
 }
 function claudeFacts(quota: ClaudeQuotaSnapshot | null | undefined, ready: boolean, usageApiAllowed: boolean, now: number): CompanionQuotaWindowFact[] {
   if (!ready || !quota) return []
@@ -456,8 +486,7 @@ export function resolveCompanionQuota(input: CompanionQuotaInput): CompanionQuot
     if (category === 'grok' || category === 'cursor') seen.add(`${category}:${source}`)
     const identity = input.magpieIdentities?.[index]
     const emailDigest = identity && /^[a-f0-9]{64}$/.test(identity.emailDigest) ? identity.emailDigest : ''
-    const suppliedLabel = identity?.label?.trim() || ''
-    const label = suppliedLabel && [...suppliedLabel].length <= 4 ? suppliedLabel : ''
+    const label = acceptCompanionQuotaDisplayLabel(identity?.label || '')
     const workspaceName = identity?.workspaceName?.trim().slice(0, 160) || ''
     const readAt = timeOf(provider.readAt) || timeOf(provider.asOf) || 0
     const accountKey = `${category}:${source}:${index}`
