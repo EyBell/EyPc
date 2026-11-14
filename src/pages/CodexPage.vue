@@ -19,6 +19,7 @@ import {
 import CodexStyleSwitch from '../components/CodexStyleSwitch.vue'
 import CodexAppearanceStudio from '../components/CodexAppearanceStudio.vue'
 import CodexWaterBall from '../components/CodexWaterBall.vue'
+import CompanionQuotaResetRow from '../components/CompanionQuotaResetRow.vue'
 import DialogShell from '../components/DialogShell.vue'
 import { CodexAppearanceSession } from '../domain/codexAppearanceSession'
 import { blockHandledShortcutEvent } from '../runtime/keyboardEvent'
@@ -31,7 +32,7 @@ import {
 } from '../domain/codexAppearance'
 import { buildCodexCompactPresentation, codexBadgeText } from '../domain/codexPresentation'
 import { codexConnectionStatusLabel } from '../domain/codexEnvironmentPresentation'
-import { buildCompanionPresentationSlice, resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
+import { buildCompanionPresentationSlice, companionResetButtons, resolveCompanionQuotaSurface } from '../domain/companionPresentation'
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
   CODEX_MAX_QUOTA_REFRESH_SECONDS,
@@ -201,13 +202,15 @@ const waterPreview = computed(() => buildCodexCompactPresentation({
  * show a centre reading the preview never shows, and the preview would drift
  * from runtime.
  */
-const companionPreview = computed(() => resolveCompanionWaterBallPresentation({
-  ...buildCompanionPresentationSlice(props.snapshot)
-}, {
+const previewQuotaSurface = computed(() => resolveCompanionQuotaSurface(buildCompanionPresentationSlice(props.snapshot), {
   primary: waterPreview.value.primary,
   secondary: waterPreview.value.secondary,
-  quota: props.snapshot.quota
+  quota: props.snapshot.quota,
+  quotaAccount: props.snapshot.quotaAccount
 }))
+const companionPreview = computed(() => previewQuotaSurface.value.presentation)
+const previewResetItems = computed(() => companionResetButtons(previewQuotaSurface.value.result.resets))
+const emptyHint = ''
 
 const waterPreviewStyle = computed<Record<string, string>>(() => {
   const { inner, outer } = waterDraft.value
@@ -1051,7 +1054,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 :ring-visible="companionPreview.ringVisible"
                 :quota-stale="companionPreview.quotaStale"
                 :quota-grid="companionPreview.quotaGrid.enabled ? companionPreview.quotaGrid.cells : null"
-                :quota-hint="companionPreview.quotaHint"
+                :quota-hint="emptyHint"
                 :appearance="waterDraft"
                 :colors="snapshot.settings.colors"
                 decorative
@@ -1089,7 +1092,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <div class="codex-expanded-card-preview" :style="cardPreviewStyle" aria-label="悬浮展开卡片颜色部位预览">
               <div class="expanded-card-preview-tabs"><b><i>3</i>动态</b><span>已完成</span><span>已隐藏</span><span>项目</span></div>
               <div class="expanded-card-preview-search"><i /><span>别名|任务|项目</span><small>最近 30 天的 42 条</small></div>
-              <div class="expanded-card-preview-quota"><span>5 小时限额</span><strong>72%</strong><i><b /></i></div>
+              <CompanionQuotaResetRow class="expanded-card-preview-quota" :items="previewResetItems" @refresh="emit('dispatch', 'codex.quota.refresh', { source: 'settings-preview' })" />
               <div class="expanded-card-preview-task"><i /><span>进行中的 Codex 会话</span><small>2 分钟前</small></div>
               <div class="expanded-card-preview-map"><span><b>层次</b>主背景、内层块与边框</span><span><b>内容</b>主/次文字、选中和焦点</span><span><b>状态</b>进行中与完成未读</span></div>
             </div>

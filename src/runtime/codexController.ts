@@ -12,6 +12,7 @@ import {
   normalizeCodexEnvironment,
   normalizeCodexFirstPromptTimes,
   normalizeCodexQuota,
+  normalizeCodexQuotaAccount,
   normalizeCodexSettings,
   normalizeCodexVisibleTaskTab,
   projectConversations,
@@ -29,6 +30,7 @@ import {
   type CodexManualPhaseValue,
   type CodexModelCatalogSnapshotV1,
   type CodexProjectCard,
+  type CodexQuotaAccountContext,
   type CodexQuotaSnapshotV1,
   type CodexSettings,
   type CodexState,
@@ -38,7 +40,8 @@ import {
 } from '../domain/codex'
 import { companionPinAppLabel, companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
 import { buildCompanionPresentationSlice, type CompanionQuotaRefreshReceipt, type CompanionSnapshotSlice } from '../domain/companionPresentation'
-import { fetchMagpieQuotaProviders, type MagpieQuotaProvider } from '../domain/magpieQuota'
+import { fetchMagpieQuotaProviders, redactMagpieQuotaProviders, resolveMagpieQuotaIdentities, type MagpieQuotaProvider } from '../domain/magpieQuota'
+import type { CompanionQuotaIdentityRef } from '../domain/companionQuota'
 import {
   emptyClaudeEnvironment,
   emptyClaudeQuota,
@@ -104,6 +107,7 @@ export interface CodexRuntimeView {
   settings: CodexSettings
   environment: CodexEnvironmentSnapshotV1
   quota: CodexQuotaSnapshotV1
+  quotaAccount?: CodexQuotaAccountContext | null
   config: CodexConfigSnapshotV1
   modelCatalog: CodexModelCatalogSnapshotV1
   newThreadContextFingerprint: string
@@ -173,6 +177,7 @@ export interface CodexFloatSnapshotV1 {
   expandedCardAppearance?: CodexSettings['expandedCardAppearance']
   expandedSizes: CodexSettings['expandedSizes']
   quota: CodexQuotaSnapshotV1
+  quotaAccount?: CodexQuotaAccountContext | null
   config: CodexConfigSnapshotV1
   modelCatalog: CodexModelCatalogSnapshotV1
   newThreadContextFingerprint: string
@@ -411,6 +416,7 @@ export function createCodexController(options: CodexControllerOptions) {
     ? options.platform.companionKernel
     : null
   let quota = normalizeCodexQuota(options.getAppState().codex.cachedQuota)
+  let quotaAccount: CodexQuotaAccountContext | null = null
   if (quota.updatedAt > 0 && quota.status === 'ok') quota = { ...quota, status: 'stale' }
   let config = normalizeCodexConfig(options.getAppState().codex.cachedConfig)
   let modelCatalog = emptyCodexModelCatalog()
@@ -465,9 +471,11 @@ export function createCodexController(options: CodexControllerOptions) {
   let lastClaudeQuotaRead: NonNullable<CompanionQuotaRefreshReceipt['claude']> | null = null
   let quotaRefreshReceipt: CompanionQuotaRefreshReceipt | null = null
   let magpieQuotaProviders: MagpieQuotaProvider[] = []
+  let magpieQuotaIdentities: Array<CompanionQuotaIdentityRef | null> = []
   let magpieQuotaStatus: NonNullable<CompanionSnapshotSlice['magpieQuota']>['status'] = 'idle'
   let magpieQuotaUpdatedAt = 0
   let magpieQuotaError = ''
+  let magpieQuotaGeneration = 0
   let cursorSessions: CursorAgentObservation[] = []
   let cursorAvailable = false
   let cursorInventoryReason = ''
@@ -489,22 +497,38 @@ export function createCodexController(options: CodexControllerOptions) {
 
   async function refreshMagpieQuota(now = Date.now()) {
     if (!codexState().settings.magpieQuotaAccess) {
-      magpieQuotaProviders = []
-      magpieQuotaStatus = 'idle'
-      magpieQuotaUpdatedAt = 0
-      magpieQuotaError = ''
+      clearMagpieQuota()
       return
     }
+    const generation = ++magpieQuotaGeneration
+    const current = () => !disposed && generation === magpieQuotaGeneration && codexState().settings.magpieQuotaAccess
     try {
-      magpieQuotaProviders = await fetchMagpieQuotaProviders()
+      const providers = await fetchMagpieQuotaProviders()
+      const identities = await resolveMagpieQuotaIdentities(providers)
+      if (!current()) return
+      magpieQuotaProviders = redactMagpieQuotaProviders(providers)
+      magpieQuotaIdentities = identities
       magpieQuotaStatus = 'ok'
       magpieQuotaUpdatedAt = now
       magpieQuotaError = ''
     } catch (error) {
+      if (!current()) return
       magpieQuotaStatus = magpieQuotaUpdatedAt > 0 ? 'stale' : 'error'
       magpieQuotaError = error instanceof Error ? error.message : 'magpie unavailable'
-      if (magpieQuotaUpdatedAt <= 0) magpieQuotaProviders = []
+      if (magpieQuotaUpdatedAt <= 0) {
+        magpieQuotaProviders = []
+        magpieQuotaIdentities = []
+      }
     }
+  }
+
+  function clearMagpieQuota() {
+    magpieQuotaGeneration += 1
+    magpieQuotaProviders = []
+    magpieQuotaIdentities = []
+    magpieQuotaStatus = 'idle'
+    magpieQuotaUpdatedAt = 0
+    magpieQuotaError = ''
   }
 
   function companionMagpieQuotaSlice(): CompanionSnapshotSlice['magpieQuota'] | undefined {
@@ -512,6 +536,7 @@ export function createCodexController(options: CodexControllerOptions) {
     const settings = codexState().settings
     return {
       providers: magpieQuotaProviders,
+      identities: magpieQuotaIdentities,
       status: magpieQuotaStatus,
       updatedAt: magpieQuotaUpdatedAt,
       gridLabels: {
@@ -2098,7 +2123,10 @@ export function createCodexController(options: CodexControllerOptions) {
       if (quotaResult) {
         const quotaReceivedAt = quotaResult.receivedAt || receivedAt
         if (quotaResult.ok) {
-          if (quotaResult.value.quota) quota = normalizeCodexQuota({ version: 1, status: 'ok', ...quotaResult.value.quota, updatedAt: quotaReceivedAt })
+          if (quotaResult.value.quota) {
+            quota = normalizeCodexQuota({ version: 1, status: 'ok', ...quotaResult.value.quota, updatedAt: quotaReceivedAt })
+            quotaAccount = normalizeCodexQuotaAccount(quotaResult.value.quotaAccount)
+          }
           if (quotaResult.value.config) config = normalizeCodexConfig({ version: 1, ...quotaResult.value.config, updatedAt: quotaReceivedAt })
           if (Array.isArray(quotaResult.value.models)) {
             modelCatalog = normalizeCodexModelCatalog({
@@ -2116,6 +2144,7 @@ export function createCodexController(options: CodexControllerOptions) {
             : ''
         } else {
           quota = { ...quota, status: quota.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.error.code, errorMessage: quotaResult.error.message }
+          if (quota.updatedAt <= 0) quotaAccount = null
           modelCatalog = { ...modelCatalog, status: modelCatalog.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.error.code }
         }
         lastQuotaReadAt = quotaReceivedAt
@@ -2366,8 +2395,8 @@ export function createCodexController(options: CodexControllerOptions) {
       || current.magpieQuotaAccess !== next.magpieQuotaAccess
     if (providerEnablementChanged) beginCompanionNavigation()
     syncActivation(taskAuthorityChanged)
+    if (!next.magpieQuotaAccess && current.magpieQuotaAccess) clearMagpieQuota()
     if (quotaPolicyChanged && shouldRun()) {
-      if (!next.magpieQuotaAccess) void refreshMagpieQuota()
       void refresh({ forceQuota: true })
     }
     // A provider toggle must take effect now: disabling should clear the lane
@@ -3950,6 +3979,7 @@ export function createCodexController(options: CodexControllerOptions) {
         settings,
         environment,
         quota,
+        quotaAccount,
         config,
         modelCatalog,
         newThreadContextFingerprint,
@@ -4008,6 +4038,7 @@ export function createCodexController(options: CodexControllerOptions) {
         expandedCardAppearance: settings.expandedCardAppearance,
         expandedSizes: settings.expandedSizes,
         quota,
+        quotaAccount,
         config,
         modelCatalog,
         newThreadContextFingerprint,

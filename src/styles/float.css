@@ -739,16 +739,15 @@ button.float-search-glyph { cursor: pointer; }
 .float-quota-chip.is-danger:not(.is-stale) strong { color: var(--codex-critical); }
 .float-quota-group.provider-claude .float-quota-chip:focus-visible { border-radius: 4px; outline: 2px solid var(--codex-focus); outline-offset: 2px; }
 
-.float-magpie-reset-inline {
-  display: flex; min-width: 0; flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px 6px;
-  margin-left: auto; padding: 2px 0; border: 0; background: transparent;
-  color: var(--codex-muted); font-size: 10px; line-height: 1.35;
-  cursor: help;
-}
-.float-magpie-reset-item { flex: 0 1 auto; }
-.float-magpie-reset-item b { color: var(--codex-fg); }
-.float-magpie-stale { margin-left: 3px; color: var(--codex-warning); font-size: 9px; font-style: normal; }
-.float-magpie-reset-inline:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 2px; }
+.companion-reset-row { display: flex; min-width: 0; flex: 1 1 auto; justify-content: flex-end; align-items: center; gap: 6px; margin-left: auto; overflow: hidden; }
+.companion-reset-button { display: flex; min-width: 0; max-width: 100%; align-items: baseline; gap: 4px; padding: 0; border: 0; background: transparent; color: var(--codex-muted); font-size: 10px; white-space: nowrap; cursor: pointer; }
+.companion-reset-button b, .companion-reset-button em { flex: none; color: var(--codex-fg); font-style: normal; font-weight: 750; }
+.companion-reset-button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.companion-reset-button:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 2px; }
+.expanded-card-preview-quota.companion-reset-row, .appearance-card-quota.companion-reset-row { position: absolute; left: 12px; right: 12px; display: flex; align-items: center; justify-content: flex-end; min-width: 0; overflow: hidden; }
+.appearance-card-quota.companion-reset-row { top: 92px; border: 0; border-radius: 6px; background: var(--codex-surface-raised); padding: 8px; transition: transform .5s; }
+.appearance-card-quota.companion-reset-row.selected, .appearance-card-quota.companion-reset-row.pointed { outline: 3px solid #e4163d; outline-offset: 2px; }
+
 /* Row-level provider marker.
    It rides the existing bottom metadata line rather than adding an element of
    its own: the dense list's row height and learned spatial rhythm must not

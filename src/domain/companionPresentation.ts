@@ -1,7 +1,8 @@
-import type { CodexhostEnvironmentV1, CodexQuotaSnapshotV1, CodexSettings } from './codex'
+import type { CodexhostEnvironmentV1, CodexQuotaAccountContext, CodexQuotaSnapshotV1, CodexSettings } from './codex'
 import { CLAUDE_QUOTA_WINDOW_LABELS } from './generated/claudeQuotaVocabulary'
 import {
   claudePrimaryQuotaWindow,
+  withClaudeQuotaWindows,
   type ClaudeQuotaAccessStatus,
   claudeScopedWeeklyQuotaWindow,
   isClaudeAvailable,
@@ -37,6 +38,13 @@ import {
   type MagpieQuotaProvider,
   type MagpieRemoteLimitReading
 } from './magpieQuota'
+import {
+  resolveCompanionQuota,
+  companionResetText,
+  type CompanionQuotaIdentityRef,
+  type CompanionQuotaResetGroup,
+  type CompanionQuotaResult
+} from './companionQuota'
 
 /**
  * Companion presentation.
@@ -62,6 +70,7 @@ export interface CompanionSnapshotSlice {
   /** Optional Magpie gateway quota payload for the collapsed water-ball grid. */
   magpieQuota?: {
     providers: MagpieQuotaProvider[]
+    identities?: ReadonlyArray<CompanionQuotaIdentityRef | null>
     status: CompactQuotaGridPresentation['status']
     updatedAt: number
     errorMessage?: string
@@ -210,7 +219,98 @@ export interface CompanionWaterBallPresentation {
 export interface CompanionWaterBallCodexReadings {
   primary?: CodexQuotaReading | null
   secondary?: CodexQuotaReading | null
-  quota?: Pick<CodexQuotaSnapshotV1, 'plan' | 'status'>
+  quota?: Pick<CodexQuotaSnapshotV1, 'plan' | 'status'> | CodexQuotaSnapshotV1 | null
+  quotaAccount?: CodexQuotaAccountContext | null
+  now?: number
+}
+
+export interface CompanionQuotaSurface {
+  result: CompanionQuotaResult
+  presentation: CompanionWaterBallPresentation
+}
+
+export interface CompanionResetButton {
+  category: CompanionQuotaResetGroup['category']
+  label: string
+  summary: string
+  detail: string
+  stale: boolean
+  partial: boolean
+}
+
+export function companionResetButtons(groups: readonly CompanionQuotaResetGroup[]): CompanionResetButton[] {
+  return groups.map((group) => ({
+    category: group.category,
+    label: group.label,
+    summary: group.summary,
+    detail: group.detailText,
+    stale: group.stale,
+    partial: group.partial
+  }))
+}
+
+export function companionResetAccessibleText(button: CompanionResetButton): string {
+  const state = [button.stale ? '上次数据' : '', button.partial ? '部分数据' : ''].filter(Boolean).join('，')
+  return `${button.label}重置 ${button.summary}${button.detail ? `。${button.detail}` : ''}${state ? `。${state}` : ''}`
+}
+
+export { companionResetText }
+
+
+function authorizedClaudeQuota(slice: CompanionSnapshotSlice | null | undefined): ClaudeQuotaSnapshot | null {
+  if (!slice || slice.providers.claude !== true || !(isClaudeAvailable(slice.claudeEnvironment) || claudeAppQuotaReadable(slice))) return null
+  const quota = slice.claudeQuota
+  if (!quota.windows?.length || slice.claudeAppQuotaAccess === true) return quota
+  const windows = quota.windows.filter((entry) => entry.source !== 'usage-api')
+  return windows.length === quota.windows.length ? quota : withClaudeQuotaWindows(quota, windows)
+}
+
+export function resolveCompanionQuotaSurface(
+  slice: CompanionSnapshotSlice | null | undefined,
+  codex: CompanionWaterBallCodexReadings = {}
+): CompanionQuotaSurface {
+  const magpie = slice?.magpieQuota
+  const now = codex.now ?? Date.now()
+  const result = resolveCompanionQuota({
+    quota: codex.quota,
+    quotaAccount: codex.quotaAccount,
+    magpieProviders: magpie?.providers,
+    magpieIdentities: magpie?.identities,
+    magpieEnabled: Boolean(magpie),
+    magpieStatus: magpie?.status ?? 'idle',
+    magpieUpdatedAt: magpie?.updatedAt ?? 0,
+    claudeQuota: authorizedClaudeQuota(slice),
+    claudeReady: Boolean(slice?.providers.claude === true && (isClaudeAvailable(slice.claudeEnvironment) || claudeAppQuotaReadable(slice))),
+    claudeUsageApiAllowed: slice?.claudeAppQuotaAccess === true,
+    providers: slice?.providers,
+    ringOwner: slice && resolveCompanionWaterBallMapping(slice.providers, { claude: Boolean(slice.providers.claude === true && (isClaudeAvailable(slice.claudeEnvironment) || claudeAppQuotaReadable(slice))) }).ring === 'claude' ? 'claude' : 'codex',
+    now
+  })
+  return { result, presentation: resolveCompanionWaterBallPresentation(slice, codex, result) }
+}
+
+function applyCompanionRing(
+  presentation: CompanionWaterBallPresentation,
+  companion: CompanionQuotaResult | null,
+  mappingRing: CompanionWaterBallPresentation['mapping']['ring']
+): CompanionWaterBallPresentation {
+  if (!companion?.ring.visible || companion.ring.owner === null || (mappingRing === 'claude' && companion.ring.owner !== 'claude') || (mappingRing === 'codex' && companion.ring.owner === 'claude')) {
+    return { ...presentation, ringPercent: null, ringVisible: false, ringSource: null, ringReason: companion?.ring.reason || 'no-weekly-reading', quotaStale: false }
+  }
+  const quotaGrid = companion.ring.owner === 'magpie' && companion.centreCodexOrder !== null
+    ? omitCompactQuotaGridCells(presentation.quotaGrid, (entry) => entry.key === 'token' && entry.kind === 'percent')
+    : presentation.quotaGrid
+  const ringText = `周环 ${companion.ring.percent ?? 0}%${companion.ring.stale ? '，上次数据' : ''}`
+  return {
+    ...presentation,
+    ringPercent: companion.ring.percent ?? 0,
+    ringVisible: true,
+    ariaSuffix: presentation.ariaSuffix.includes(ringText) ? presentation.ariaSuffix : `${presentation.ariaSuffix}，${ringText}`,
+    ringSource: companion.ring.owner === 'magpie' ? 'magpie' : companion.ring.owner === 'claude' ? 'claude' : companion.ring.reason === 'free-codex-key-limit' ? 'remote-key' : 'codex',
+    ringReason: companion.ring.reason,
+    quotaStale: companion.ring.stale,
+    quotaGrid
+  }
 }
 
 const EMPTY_PRESENTATION: CompanionWaterBallPresentation = {
@@ -235,31 +335,6 @@ function clampQuotaPercent(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)))
 }
 
-function withEmptyMagpieCodexRing(
-  presentation: CompanionWaterBallPresentation,
-  codexEnabled: boolean
-): CompanionWaterBallPresentation {
-  if (!codexEnabled || presentation.mapping.ring !== 'codex'
-    || presentation.ringSource === 'claude' || presentation.ringSource === 'remote-key'
-    || (presentation.ringPercent ?? 0) > 0) return presentation
-  const cell = presentation.quotaGrid.cells.find((entry) => entry.key === 'token' && entry.kind === 'percent' && typeof entry.percent === 'number' && entry.percent > 0)
-  if (!cell || typeof cell.percent !== 'number') return presentation
-  const ariaSuffix = presentation.ariaSuffix.includes(cell.detail)
-    ? presentation.ariaSuffix
-    : `${presentation.ariaSuffix}，${cell.detail}`
-  return {
-    ...presentation,
-    ringPercent: cell.percent,
-    ringVisible: true,
-    ringSource: 'magpie',
-    ringReason: presentation.ringSource === 'codex' ? 'native-weekly-exhausted' : 'native-weekly-missing',
-    quotaStale: cell.stale === true,
-    quotaHint: cell.detail,
-    ariaSuffix,
-    quotaGrid: omitCompactQuotaGridCells(presentation.quotaGrid, (entry) => entry === cell)
-  }
-}
-
 /**
  * Resolves what the collapsed water ball should show.
  *
@@ -269,12 +344,31 @@ function withEmptyMagpieCodexRing(
 export function resolveCompanionWaterBallPresentation(
   slice: CompanionSnapshotSlice | null | undefined,
   codex: CompanionWaterBallCodexReadings = {},
-  selection?: MagpieQuotaSelection
+  resolved?: CompanionQuotaResult | MagpieQuotaSelection
 ): CompanionWaterBallPresentation {
   const magpie = slice?.magpieQuota
-  const magpieSelection = selection ?? resolveMagpieQuotaSelection(magpie?.providers, {
+  const companion = resolved && 'ring' in resolved ? resolved : resolveCompanionQuota({
+    quota: codex.quota,
+    quotaAccount: codex.quotaAccount,
+    magpieProviders: magpie?.providers,
+    magpieIdentities: magpie?.identities,
+    magpieEnabled: Boolean(magpie),
+    magpieStatus: magpie?.status ?? 'idle',
+    magpieUpdatedAt: magpie?.updatedAt ?? 0,
+    claudeQuota: authorizedClaudeQuota(slice),
+    claudeReady: Boolean(slice?.providers.claude === true && (isClaudeAvailable(slice.claudeEnvironment) || claudeAppQuotaReadable(slice))),
+    claudeUsageApiAllowed: slice?.claudeAppQuotaAccess === true,
+    providers: slice?.providers,
+    ringOwner: slice && resolveCompanionWaterBallMapping(slice.providers, { claude: Boolean(slice.providers.claude === true && (isClaudeAvailable(slice.claudeEnvironment) || claudeAppQuotaReadable(slice))) }).ring === 'claude' ? 'claude' : 'codex',
+    now: codex.now
+  })
+  const magpieSelection = companion?.selection ?? (resolved && 'codex' in resolved ? resolved : null) ?? resolveMagpieQuotaSelection(magpie?.providers, {
     status: magpie?.status ?? 'idle',
-    updatedAt: magpie?.updatedAt ?? 0
+    updatedAt: magpie?.updatedAt ?? 0,
+    identities: magpie?.identities,
+    quota: codex.quota,
+    quotaAccount: codex.quotaAccount,
+    now: codex.now
   })
   const quotaGrid = resolveCompactQuotaGridPresentation(slice?.magpieQuota?.providers ?? null, {
     enabled: Boolean(slice?.magpieQuota && slice.magpieQuota.status !== 'idle'),
@@ -291,47 +385,46 @@ export function resolveCompanionWaterBallPresentation(
     ? resolveCompanionWaterBallMapping(slice.providers, { claude: claudeLive })
     : EMPTY_PRESENTATION.mapping
   const nativeWeekly = codexEnabled ? codexWeeklyReading(codex.primary, codex.secondary) : null
-  const claudeWeekly = slice?.providers.claude ? slice.claudeQuota.weekly : null
-  const ring = mapping.ring === 'claude' ? claudeWeekly : codexEnabled ? nativeWeekly?.bucket : null
-  const base: CompanionWaterBallPresentation = {
+  const base: CompanionWaterBallPresentation = applyCompanionRing({
     ...EMPTY_PRESENTATION,
     mapping,
     quotaGrid,
-    ringPercent: ring?.remainingPercent ?? null,
-    ringVisible: Boolean(ring),
-    ringSource: ring ? mapping.ring === 'claude' ? 'claude' : 'codex' : null,
-    ringReason: ring ? 'native-weekly' : 'no-weekly-reading',
+    ringPercent: null,
+    ringVisible: false,
+    ringSource: null,
+    ringReason: 'no-weekly-reading',
+    quotaStale: false,
     liquidPercent: !codexEnabled && mapping.liquid === 'claude'
-      ? slice?.claudeQuota.short?.remainingPercent ?? claudeWeekly?.remainingPercent ?? 0
+      ? authorizedClaudeQuota(slice)?.short?.remainingPercent ?? authorizedClaudeQuota(slice)?.weekly?.remainingPercent ?? 0
       : null,
     quotaHint: quotaGrid.cells.map((cell) => cell.detail).join('；')
-  }
+  }, companion, mapping.ring)
   if (!slice) return base
-  if (slice.providers.codex && !slice.providers.claude && !slice.providers.cursor && !slice.providers.orca
-    && codex.quota?.status === 'ok' && codex.quota.plan.trim().toLowerCase() === 'free'
-    && !codex.primary && !codex.secondary && magpie && !hasMagpieAgentQuota(magpie.providers)) {
-    const remoteLimit = resolveMagpieRemoteLimit(magpie.providers, { status: magpie.status, updatedAt: magpie.updatedAt })
-    if (remoteLimit) {
-      const percent = Math.max(0, Math.min(100, remoteLimit.remainingPercent))
+  if (companion?.remoteKey && mapping.ring === 'codex') {
+    const selected = companion.remoteKey
+    if (selected) {
+      const remoteLimit = { remainingPercent: selected.percent, used: selected.used, limit: selected.limit, unit: selected.unit, name: selected.name, resetAt: selected.resetAt, stale: selected.stale }
+      const percent = Math.max(0, Math.min(100, selected.percent))
       const quotaHint = formatMagpieRemoteLimitHint(remoteLimit)
-      return withEmptyMagpieCodexRing({
+      return {
         ...base,
         percentOverride: percent,
         ringPercent: percent,
         ringVisible: true,
         ringSource: 'remote-key',
         ringReason: 'free-codex-key-limit',
-        quotaStale: remoteLimit.stale,
-        percentProviderLabel: 'Magpie',
+        quotaStale: selected.stale,
+        percentProviderLabel: '',
         remoteLimit,
         quotaHint,
         ariaSuffix: `，${quotaHint}`
-      }, codexEnabled)
+      }
     }
   }
-  if (mapping.percent !== 'claude') return withEmptyMagpieCodexRing(base, codexEnabled)
-  const window = claudePrimaryQuotaWindow(slice.claudeQuota)
-  if (!window) return withEmptyMagpieCodexRing(base, codexEnabled)
+  if (mapping.percent !== 'claude') return base
+  const claudeQuota = authorizedClaudeQuota(slice) || slice.claudeQuota
+  const window = claudePrimaryQuotaWindow(claudeQuota)
+  if (!window) return base
   const percent = clampQuotaPercent(window.remainingPercent)
   const channel = (provider: CompanionProviderId, quotaWindow: ClaudeQuotaWindow | null | undefined, label: string): CompanionQuotaChannelReading | null => (
     quotaWindow && Number.isFinite(quotaWindow.remainingPercent)
@@ -339,8 +432,8 @@ export function resolveCompanionWaterBallPresentation(
       : null
   )
   const claudeChannels = {
-    short: channel('claude', slice.claudeQuota.short, '5h'),
-    weekly: channel('claude', slice.claudeQuota.weekly, '周')
+    short: channel('claude', claudeQuota.short, '5h'),
+    weekly: channel('claude', claudeQuota.weekly, '周')
   }
   const codexPrimary = codexEnabled ? codex.primary ?? null : null
   // A 0% reading is real data — the quota is exhausted — not an absent reading.
@@ -357,35 +450,35 @@ export function resolveCompanionWaterBallPresentation(
         : null
     })()
   }
-  const resolved = resolveCompanionWaterBallReadings(mapping, { codex: codexChannels, claude: claudeChannels })
+  const channelReadings = resolveCompanionWaterBallReadings(mapping, { codex: codexChannels, claude: claudeChannels })
   const foreignPercent = (reading: CompanionQuotaChannelReading | null) =>
     reading && reading.provider !== 'codex' ? clampQuotaPercent(reading.remainingPercent) : null
-  const liquidPercent = foreignPercent(resolved.liquid ?? claudeChannels.short ?? claudeChannels.weekly) ?? base.liquidPercent
+  const liquidPercent = foreignPercent(channelReadings.liquid ?? claudeChannels.short ?? claudeChannels.weekly) ?? base.liquidPercent
   // The scoped reading joins the centre only when the trailing number really is
   // the plain weekly window. Pairing it with the 5-hour fallback would put two
   // different window lengths behind one slash and read as one comparison.
-  const scoped = slice.claudeQuota.weekly ? claudeScopedWeeklyQuotaWindow(slice.claudeQuota) : null
+  const scoped = claudeQuota.weekly ? claudeScopedWeeklyQuotaWindow(claudeQuota) : null
   if (!scoped) {
-    return withEmptyMagpieCodexRing({
+    return {
       ...base,
       percentOverride: percent,
       percentProviderLabel: COMPANION_PROVIDER_LABELS.claude,
       liquidPercent,
-      ariaSuffix: `，Claude 剩余 ${percent}%`,
-      quotaGrid
-    }, codexEnabled)
+      ariaSuffix: `${base.ariaSuffix}，Claude 剩余 ${percent}%`,
+      quotaGrid: base.quotaGrid
+    }
   }
   const scopedPercent = clampQuotaPercent(scoped.remainingPercent)
-  return withEmptyMagpieCodexRing({
+  return {
     ...base,
     percentOverride: percent,
     scopedPercent,
     scopedLabel: scoped.scope,
     percentProviderLabel: COMPANION_PROVIDER_LABELS.claude,
     liquidPercent,
-    ariaSuffix: `，Claude ${scoped.scope}周限额剩余 ${scopedPercent}%，普通周限额剩余 ${percent}%`,
-    quotaGrid
-  }, codexEnabled)
+    ariaSuffix: `${base.ariaSuffix}，Claude ${scoped.scope}周限额剩余 ${scopedPercent}%，普通周限额剩余 ${percent}%`,
+    quotaGrid: base.quotaGrid
+  }
 }
 
 /* ------------------------------------------------------------------ *

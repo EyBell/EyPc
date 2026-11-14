@@ -8,6 +8,17 @@
 
 export const MAGPIE_QUOTA_ENDPOINT = 'http://127.0.0.1:3425/v1/magpie/quotas'
 
+import {
+  formatCompanionPercent,
+  resolveCompanionQuota,
+  resolveCompanionRemoteKeyLimit,
+  COMPANION_QUOTA_EMAIL_NAMESPACE,
+  type CompanionQuotaIdentityRef,
+  type CompanionQuotaReading,
+  type CompanionQuotaCursorReading,
+  type CompanionQuotaSelection
+} from './companionQuota'
+
 export type MagpieQuotaProviderId = 'codex' | 'grok' | 'cursor'
 
 export interface MagpieQuotaWindow {
@@ -28,6 +39,8 @@ export interface MagpieQuotaProvider {
   plan?: string | null
   last?: boolean
   balance?: string | null
+  user?: string | null
+  workspaceName?: string | null
   windows?: MagpieQuotaWindow[]
   readAt?: string
   kind?: string
@@ -195,43 +208,17 @@ function compareTokenCodex(
   return left.index - right.index
 }
 
-export interface MagpieQuotaReading {
-  kind: 'percent' | 'token'
-  percent: number | null
-  valueText: string
-  detail: string
-  resetAt: number | null
-  stale: boolean
-  source: 'local' | 'remote'
-  accountCount: number
-  candidateCount: number
-  partial: boolean
-}
-
-export interface MagpieCursorQuotaReading {
-  models: MagpieQuotaReading | null
-  other: MagpieQuotaReading | null
-  valueText: string
-  detail: string
-  resetAt: number | null
-  stale: boolean
-  source: 'local' | 'remote'
-  partial: boolean
-}
-
-export interface MagpieQuotaSelection {
-  codex: MagpieQuotaReading | null
-  grok: MagpieQuotaReading | null
-  cursor: MagpieCursorQuotaReading | null
-  status: CompactQuotaGridPresentation['status']
-  updatedAt: number
-  now: number
-}
+export type MagpieQuotaReading = CompanionQuotaReading
+export type MagpieCursorQuotaReading = CompanionQuotaCursorReading
+export type MagpieQuotaSelection = CompanionQuotaSelection
 
 export interface MagpieQuotaSelectionOptions {
   status?: CompactQuotaGridPresentation['status']
   updatedAt?: number
   now?: number
+  identities?: ReadonlyArray<CompanionQuotaIdentityRef | null>
+  quota?: Parameters<typeof resolveCompanionQuota>[0]['quota']
+  quotaAccount?: Parameters<typeof resolveCompanionQuota>[0]['quotaAccount']
 }
 
 export interface MagpieQuotaProjectionOptions extends MagpieQuotaSelectionOptions {
@@ -272,154 +259,20 @@ function nearestReset(resets: Array<number | null>): number | null {
   return known.length ? Math.min(...known) : null
 }
 
-function readingRank(reading: MagpieQuotaReading): number {
-  if (reading.kind === 'token') return reading.stale ? 3 : 1
-  if (reading.percent !== null && reading.percent > 0) return reading.stale ? 2 : 0
-  return 4
-}
-
-function chooseReading<Reading extends { source: 'local' | 'remote' }>(
-  readings: Array<Reading | null>,
-  rank: (reading: Reading) => number
-): Reading | null {
-  return readings.filter((reading): reading is Reading => reading !== null)
-    .sort((left, right) => rank(left) - rank(right)
-      || Number(right.source === 'remote') - Number(left.source === 'remote'))[0] ?? null
-}
-
-function codexReadings(
-  entries: MagpieQuotaProvider[],
-  source: 'local' | 'remote',
-  options: MagpieQuotaSelectionOptions
-): MagpieQuotaReading[] {
-  const candidates = entries.filter((entry) => !isFreeCodexPlan(entry))
-  const now = options.now ?? Date.now()
-  const accounts = candidates.map((entry, index) => {
-    const usable = usableQuotaEntry(entry)
-    const windows = Array.isArray(entry.windows) ? entry.windows.filter((window) => window?.name === '7 days') : []
-    const window = usable ? windows.find((item) => validWindowPercent(item) !== null) : undefined
-    const percent = validWindowPercent(window)
-    const resetAt = parseMagpieResetAt(window?.resetsAt)
-    const tokenWindow = window ?? windows.find((item) => !item.unlimited && !item.text)
-    const tokenResetAt = parseMagpieResetAt(tokenWindow?.resetsAt)
-    return {
-      entry,
-      index,
-      usable,
-      percent,
-      resetAt,
-      tokenResetAt,
-      stale: entryStale(entry, resetAt, options),
-      tokenStale: entryStale(entry, tokenResetAt, options),
-      balance: usable ? parseMagpieTokenBalance(entry.balance) : null
-    }
-  })
-  const partial = accounts.some((account) => account.percent === null)
-  const sourceText = source === 'remote' ? '远端' : '本地'
-  const accountDetails = accounts.map((account) => {
-    if (!account.usable) return `账号${account.index + 1}：无有效读数或缓存证据，未参与汇总或余额选择`
-    const values = account.percent === null
-      ? `周额度缺失，${resetDetail(account.tokenResetAt, now)}`
-      : `${formatMagpiePercent(account.percent)}，${resetDetail(account.resetAt, now)}`
-    const token = account.balance === null ? 'Token缺失' : `Token ${account.balance}`
-    return `账号${account.index + 1}：${values}；${token}；${account.tokenStale ? '已过期／上次数据' : '最新读数'}`
-  }).join('；')
-  const participants = accounts.filter((account) => account.percent !== null)
-  const values = participants.map((account) => account.percent as number)
-  const readings: MagpieQuotaReading[] = []
-  if (values.length) {
-    const percent = values.reduce((total, value) => total + value, 0) / values.length
-    const stale = participants.some((account) => account.stale)
-    readings.push({
-      kind: 'percent', percent, valueText: formatMagpiePercent(percent),
-      detail: `Magpie ${sourceText} Codex 多账号平均剩余 ${formatMagpiePercent(percent)}，参与账号 ${participants.length} 个（有效${participants.length}/候选${accounts.length}）${partial ? '；部分窗口缺失' : ''}；${stale ? '已过期／上次数据' : '最新读数'}；${accountDetails}`,
-      resetAt: nearestReset(participants.map((account) => account.resetAt)),
-      stale, source, accountCount: participants.length, candidateCount: accounts.length, partial
-    })
-  }
-  const funded = accounts.filter((account) => account.balance !== null)
-    .sort((left, right) => Number(left.tokenStale) - Number(right.tokenStale) || compareTokenCodex(left, right))
-  const fundedAccount = funded[0]
-  if (fundedAccount) {
-    const valueText = formatMagpieTokenBalance(fundedAccount.entry.balance)
-    readings.push({
-      kind: 'token', percent: null, valueText,
-      detail: `Magpie ${sourceText} Codex Token ${valueText}；选账号${fundedAccount.index + 1}，余额不合计；${fundedAccount.tokenStale ? '已过期／上次数据' : '最新读数'}${partial ? '；部分周窗口缺失' : ''}；${accountDetails}`,
-      resetAt: fundedAccount.tokenResetAt, stale: fundedAccount.tokenStale, source,
-      accountCount: 1, candidateCount: accounts.length, partial
-    })
-  }
-  return readings
-}
-
-function singleWindowReading(
-  entry: MagpieQuotaProvider | undefined,
-  name: string,
-  label: string,
-  source: 'local' | 'remote',
-  options: MagpieQuotaSelectionOptions
-): MagpieQuotaReading | null {
-  if (!usableQuotaEntry(entry)) return null
-  const window = Array.isArray(entry.windows)
-    ? entry.windows.find((item) => item?.name === name && validWindowPercent(item) !== null)
-    : undefined
-  const percent = validWindowPercent(window)
-  if (!entry || percent === null) return null
-  const resetAt = parseMagpieResetAt(window?.resetsAt)
-  const stale = entryStale(entry, resetAt, options)
-  return {
-    kind: 'percent', percent, valueText: formatMagpiePercent(percent),
-    detail: `Magpie ${source === 'remote' ? '远端' : '本地'} ${label} ${formatMagpiePercent(percent)}；${resetDetail(resetAt, options.now ?? Date.now())}；${stale ? '已过期／上次数据' : '最新读数'}`,
-    resetAt, stale, source, accountCount: 1, candidateCount: 1, partial: false
-  }
-}
-
-function cursorReading(
-  entry: MagpieQuotaProvider | undefined,
-  source: 'local' | 'remote',
-  options: MagpieQuotaSelectionOptions
-): MagpieCursorQuotaReading | null {
-  let models = singleWindowReading(entry, 'Cursor Models', 'Cursor Models', source, options)
-  let other = singleWindowReading(entry, 'Other Models', 'Cursor Other', source, options)
-  if (!models && !other) return null
-  const stale = Boolean(models?.stale || other?.stale)
-  const partial = !models || !other
-  const state = `${stale ? '已过期／上次数据' : '最新读数'}${partial ? '；部分窗口缺失' : ''}`
-  if (models) models = { ...models, stale, partial, detail: `${models.detail}；整组${state}` }
-  if (other) other = { ...other, stale, partial, detail: `${other.detail}；整组${state}` }
-  return {
-    models, other, source, stale, partial,
-    valueText: `C ${models?.valueText ?? '—'} / O ${other?.valueText ?? '—'}`,
-    detail: [models?.detail ?? 'Cursor Models 窗口缺失', other?.detail ?? 'Cursor Other 窗口缺失'].join('；'),
-    resetAt: nearestReset([models?.resetAt ?? null, other?.resetAt ?? null])
-  }
-}
-
 export function resolveMagpieQuotaSelection(
   providers: MagpieQuotaProvider[] | null | undefined,
   options: MagpieQuotaSelectionOptions = {}
 ): MagpieQuotaSelection {
-  const list = normalizeMagpieQuotaProviders(providers)
-  const context = { ...options, now: finiteNumber(options.now) ?? Date.now() }
-  const codex = chooseReading([
-    ...codexReadings(entriesByProvider(list, 'codex'), 'local', context),
-    ...codexReadings(entriesByProvider(list, REMOTE_CODEX_PROVIDER), 'remote', context)
-  ], readingRank)
-  const grok = chooseReading([
-    singleWindowReading(entriesByProvider(list, 'grok')[0], '7 days', 'Grok 7天', 'local', context),
-    singleWindowReading(entriesByProvider(list, REMOTE_GROK_PROVIDER)[0], '7 days', 'Grok 7天', 'remote', context)
-  ], readingRank)
-  const cursor = chooseReading([
-    cursorReading(entriesByProvider(list, 'cursor')[0], 'local', context),
-    cursorReading(entriesByProvider(list, REMOTE_CURSOR_PROVIDER)[0], 'remote', context)
-  ], (reading) => {
-    const positive = (reading.models?.percent ?? 0) > 0 || (reading.other?.percent ?? 0) > 0
-    return positive ? (reading.stale ? 2 : 0) : 4
-  })
-  return {
-    codex, grok, cursor, now: context.now,
-    status: options.status ?? 'ok', updatedAt: options.updatedAt ?? 0
-  }
+  return resolveCompanionQuota({
+    magpieProviders: normalizeMagpieQuotaProviders(providers),
+    magpieIdentities: options.identities,
+    magpieEnabled: true,
+    magpieStatus: options.status ?? 'ok',
+    magpieUpdatedAt: options.updatedAt ?? 0,
+    quota: options.quota,
+    quotaAccount: options.quotaAccount,
+    now: finiteNumber(options.now) ?? Date.now()
+  }).selection
 }
 
 function projectionSelection(
@@ -430,17 +283,7 @@ function projectionSelection(
 }
 
 export function hasMagpieAgentQuota(providers: MagpieQuotaProvider[] | null | undefined): boolean {
-  return normalizeMagpieQuotaProviders(providers).some((entry) => {
-    if (!usableQuotaEntry(entry)) return false
-    const provider = entry?.provider
-    if (provider === 'codex' || provider === REMOTE_CODEX_PROVIDER) {
-      return (Array.isArray(entry.windows) && entry.windows.some((window) => window?.name === '7 days' && validWindowPercent(window) !== null))
-        || tokenBalanceNumber(entry.balance) !== null
-    }
-    if (provider === 'grok' || provider === REMOTE_GROK_PROVIDER) return windowRemaining(entry, '7 days') !== null
-    return (provider === 'cursor' || provider === REMOTE_CURSOR_PROVIDER)
-      && (windowRemaining(entry, 'Cursor Models') !== null || windowRemaining(entry, 'Other Models') !== null)
-  })
+  return resolveCompanionQuota({ magpieProviders: providers, magpieEnabled: true }).agentEvidence
 }
 
 export function resolveMagpieRemoteLimit(
@@ -448,43 +291,8 @@ export function resolveMagpieRemoteLimit(
   options: { status?: CompactQuotaGridPresentation['status']; updatedAt?: number } = {}
 ): MagpieRemoteLimitReading | null {
   const status = options.status ?? 'ok'
-  if (status !== 'ok' && status !== 'stale') return null
-  const cards = normalizeMagpieQuotaProviders(providers)
-    .filter((entry) => typeof entry?.provider === 'string' && entry.provider.endsWith('/~keys'))
-  if (cards.length !== 1) return null
-  const card = cards[0]
-  if (card.kind !== 'plan' || !Array.isArray(card.windows)) return null
-  const asOf = parseMagpieResetAt(card.asOf)
-  if (card.asOf !== undefined && asOf === null || card.error && asOf === null) return null
-  let selected: MagpieRemoteLimitReading | null = null
-  for (const window of card.windows) {
-    if (!window || typeof window !== 'object' || window.unlimited === true || window.text === true
-      || window.unlimited !== undefined && typeof window.unlimited !== 'boolean'
-      || window.text !== undefined && typeof window.text !== 'boolean'
-      || window.unit !== 'tokens' && window.unit !== 'USD') continue
-    const used = finiteNumber(window.amount)
-    const limit = finiteNumber(window.limit)
-    if (window.amount !== undefined && (used === null || used < 0)
-      || window.limit !== undefined && (limit === null || limit <= 0)) continue
-    let remainingPercent = finiteNumber(window.remaining)
-    if (window.remaining !== undefined && (remainingPercent === null || remainingPercent < 0 || remainingPercent > 100)) continue
-    if (remainingPercent === null && used !== null && limit !== null) {
-      remainingPercent = Math.max(0, Math.min(100, (1 - used / limit) * 100))
-    }
-    if (remainingPercent === null) continue
-    if (!selected || remainingPercent < selected.remainingPercent) {
-      selected = {
-        remainingPercent,
-        used,
-        limit,
-        unit: window.unit,
-        name: typeof window.name === 'string' ? window.name.trim().slice(0, 80) : '',
-        resetAt: parseMagpieResetAt(window.resetsAt),
-        stale: status === 'stale' || asOf !== null
-      }
-    }
-  }
-  return selected
+  const selected = resolveCompanionRemoteKeyLimit(normalizeMagpieQuotaProviders(providers), status, Date.now())
+  return selected ? { remainingPercent: selected.percent, used: selected.used, limit: selected.limit, unit: selected.unit, name: selected.name, resetAt: selected.resetAt, stale: selected.stale } : null
 }
 
 export function formatMagpieRemoteLimitHint(reading: MagpieRemoteLimitReading): string {
@@ -492,7 +300,7 @@ export function formatMagpieRemoteLimitHint(reading: MagpieRemoteLimitReading): 
     ? '未提供'
     : new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 6 }).format(value)
   const parts = [
-    `Magpie${reading.name ? ` ${reading.name}` : ''} 剩余 ${formatMagpiePercent(reading.remainingPercent)}`,
+    `限额剩余 ${formatMagpiePercent(reading.remainingPercent)}`,
     `已用 ${numberText(reading.used)} ${reading.unit}`,
     `上限 ${numberText(reading.limit)} ${reading.unit}`,
     reading.resetAt === null ? '重置时间未提供' : `重置 ${new Date(reading.resetAt).toLocaleString('zh-CN', { hour12: false })}`
@@ -636,6 +444,37 @@ export async function fetchMagpieQuotaProviders(
     throw new Error('magpie quota invalid response')
   }
   return normalizeMagpieQuotaProviders(payload)
+}
+
+export function redactMagpieQuotaProviders(providers: readonly MagpieQuotaProvider[]): MagpieQuotaProvider[] {
+  return providers.map((provider) => {
+    const { user: _user, ...rest } = provider
+    return rest
+  })
+}
+
+function normalizedCompanionEmail(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const email = value.trim().toLowerCase()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
+}
+
+export async function resolveMagpieQuotaIdentities(
+  providers: readonly MagpieQuotaProvider[] | null | undefined
+): Promise<Array<CompanionQuotaIdentityRef | null>> {
+  const subtle = globalThis.crypto?.subtle
+  return Promise.all((providers || []).map(async (provider) => {
+    const email = normalizedCompanionEmail(provider?.user)
+    if (!email || !subtle) return null
+    const bytes = await subtle.digest('SHA-256', new TextEncoder().encode(`${COMPANION_QUOTA_EMAIL_NAMESPACE}\n${email}`))
+    const emailDigest = [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+    const workspaceName = typeof provider.workspaceName === 'string' ? provider.workspaceName.trim().slice(0, 160) : ''
+    return {
+      emailDigest,
+      label: [...email].slice(0, 4).join(''),
+      ...(workspaceName ? { workspaceName } : {})
+    }
+  }))
 }
 
 export interface MagpieQuotaExpandCard {
@@ -829,3 +668,5 @@ export function formatMagpieQuotaResetInline(
     .map((line) => `${line.label} ${line.valueText} · ${line.resetLabel} ${magpieResetCountdownText(line.resetAt, now)}${line.stale ? ' · 上次数据' : ''}；${line.detail}`)
     .join(' · ')
 }
+
+export { formatCompanionPercent }

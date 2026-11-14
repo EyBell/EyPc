@@ -13,12 +13,54 @@
  */
 
 const CODEX_QUOTA_SANITIZER_REVISION = 'codex-quota-sanitizer-v1'
+const CODEX_QUOTA_IDENTITY_NAMESPACE = 'eypc-companion-quota-identity/v1/codex'
+
+function normalizeCompanionQuotaEmail(value) {
+  if (typeof value !== 'string') return ''
+  const email = value.trim().toLowerCase()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
+}
+
+function companionQuotaEmailDigest(email, digest) {
+  const normalized = normalizeCompanionQuotaEmail(email)
+  if (!normalized || typeof digest !== 'function') return ''
+  const hash = digest(`${CODEX_QUOTA_IDENTITY_NAMESPACE}\n${normalized}`)
+  return typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash) ? hash : ''
+}
+
+function sanitizeCodexQuotaAccount(accountResult, digest) {
+  const source = accountResult && typeof accountResult === 'object' ? accountResult : null
+  const nested = source && source.account && typeof source.account === 'object' ? source.account : null
+  const account = nested || source
+  const email = normalizeCompanionQuotaEmail(account && account.email)
+  const emailDigest = companionQuotaEmailDigest(email, digest)
+  if (!emailDigest) return null
+  const workspaceName = account && typeof account.workspaceName === 'string' ? account.workspaceName.trim().slice(0, 160) : ''
+  return {
+    emailDigest,
+    label: [...email].slice(0, 4).join(''),
+    ...(workspaceName ? { workspaceName } : {})
+  }
+}
+
+function sanitizeMagpieQuotaIdentity(provider, digest) {
+  const email = normalizeCompanionQuotaEmail(provider && provider.user)
+  const emailDigest = companionQuotaEmailDigest(email, digest)
+  if (!emailDigest) return null
+  const workspaceName = provider && typeof provider.workspaceName === 'string' ? provider.workspaceName.trim().slice(0, 160) : ''
+  return {
+    emailDigest,
+    label: [...email].slice(0, 4).join(''),
+    ...(workspaceName ? { workspaceName } : {})
+  }
+}
 
 function createCodexQuotaSanitizer(dependencies = {}) {
   const record = dependencies.record
   const percent = dependencies.percent
   const number = dependencies.number
   const timestampMs = dependencies.timestampMs
+  const digest = dependencies.digest
   if (typeof record !== 'function' || typeof percent !== 'function' || typeof number !== 'function' || typeof timestampMs !== 'function') {
     throw new TypeError('codex quota sanitizer requires record, percent, number and timestampMs')
   }
@@ -90,7 +132,9 @@ function createCodexQuotaSanitizer(dependencies = {}) {
   return {
     revision: CODEX_QUOTA_SANITIZER_REVISION,
     sanitizeCodexQuotaWindow,
-    sanitizeCodexQuota
+    sanitizeCodexQuota,
+    sanitizeCodexQuotaAccount: (accountResult) => sanitizeCodexQuotaAccount(accountResult, digest),
+    sanitizeMagpieQuotaIdentity: (provider) => sanitizeMagpieQuotaIdentity(provider, digest)
   }
 }
 

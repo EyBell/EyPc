@@ -110,9 +110,14 @@ EyPc **核心版本**（当前架构代际，如 `EyPc V7` / `V7`）由 [eypc-co
 
 ## Closeout
 
+2026-11-14 14:31 生产投影：当前 c222 周 99%，排除两个重复 Codex 窗口，其余 Codex 61%，Cursor Models 45.4%；Cursor Grok Bot 留在 Cursor。宿主手测未验，最终构建为 V7 / host-792c101e812567f159e2 / renderer-a231c1aa0813d0e7c024 / builtAt 2026-11-14T06:45:24.329Z。
+
+
 - 需求条款有新增或变更时，先完成上述 [需求登记收尾门禁](#收尾门禁)。
 - Medium and larger tasks update the process hub and task verification record.
 - Stable implementation decisions update architecture knowledge.
 - Verification records must list commands, results, and unverified gaps.
 - Keep project-specific facts in this repository; cross-project principles stay in CodeNote.
 - For uTools host/preload/window/HMR/packaging/Esc/`mainHide`/hotkey technical archival: write the durable guide or error record into the CodeNote uTools module. Task folders keep only raw requirement and verify evidence. Local `vibe/knowledge/error-memory/utools-*.md` files remain thin pointers, not second full copies.
+
+- 2026-11-14 账号去重与重置展示的用户说明已同步 [Codex 帮助](../../src/help/guides/codex.md#悬浮球与展开卡片)；需求登记与状态说明同步，最终构建已通过，宿主手测未验。

@@ -27,16 +27,13 @@ import {
 } from '@lucide/vue'
 import CodexWaterBall from './components/CodexWaterBall.vue'
 import CompanionEdgeRail from './components/CompanionEdgeRail.vue'
+import CompanionQuotaResetRow from './components/CompanionQuotaResetRow.vue'
 import FloatSurface from './components/FloatSurface.vue'
 import OperationTooltipLayer from './components/OperationTooltipLayer.vue'
 import {
-  buildCompanionQuotaStrip,
   buildCompanionTaskMetaLine,
   claudeRealtimeGapNote,
   companionQuotaChipAriaLabel,
-  companionQuotaChipHint,
-  companionQuotaFreshnessText,
-  companionResetDetailText,
   companionSearchAlertText,
   companionSearchHintOverlaps,
   companionSearchIconHint,
@@ -44,11 +41,11 @@ import {
   companionSearchPlaceholder,
   resolveCompanionProjectMarker,
   resolveCompanionRowMarker,
-  resolveCompanionWaterBallPresentation,
+  companionResetButtons,
+  resolveCompanionQuotaSurface,
   companionQuotaRefreshReceiptText
 } from './domain/companionPresentation'
 import type { CompanionProjectMarker, CompanionQuotaChip, CompanionRowMarker } from './domain/companionPresentation'
-import { buildMagpieQuotaResetLines, formatMagpieQuotaResetInline, magpieResetCompactText, resolveMagpieQuotaSelection } from './domain/magpieQuota'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import {
   CODEX_THEME_PRESETS,
@@ -283,34 +280,16 @@ const compact = computed(() => buildCodexCompactPresentation({
 const compactCounts = computed(() => compact.value.taskCounts)
 const companionSlice = computed(() => snapshot.value?.companion || null)
 const quotaResetClock = ref(Date.now())
-const magpieQuotaSelection = computed(() => {
-  const magpie = companionSlice.value?.magpieQuota
-  return resolveMagpieQuotaSelection(magpie?.providers, {
-    status: magpie?.status ?? 'idle',
-    updatedAt: magpie?.updatedAt ?? 0,
-    now: quotaResetClock.value
-  })
-})
-const companionWaterBall = computed(() => resolveCompanionWaterBallPresentation(companionSlice.value, {
+const companionQuotaSurface = computed(() => resolveCompanionQuotaSurface(companionSlice.value, {
   primary: compact.value.primary,
   secondary: compact.value.secondary,
-  quota: quota.value
-}, magpieQuotaSelection.value))
+  quota: quota.value,
+  quotaAccount: snapshot.value?.quotaAccount,
+  now: quotaResetClock.value
+}))
+const companionWaterBall = computed(() => companionQuotaSurface.value.presentation)
+const companionResetItems = computed(() => companionResetButtons(companionQuotaSurface.value.result.resets))
 let quotaResetTimer: ReturnType<typeof setInterval> | null = null
-const magpieQuotaResetLines = computed(() => {
-  const magpie = companionSlice.value?.magpieQuota
-  if (!magpie || magpie.status === 'idle') return []
-  return buildMagpieQuotaResetLines(magpie.providers, {
-    status: magpie.status,
-    updatedAt: magpie.updatedAt,
-    now: quotaResetClock.value,
-    selection: magpieQuotaSelection.value
-  })
-})
-const magpieQuotaResetInline = computed(() => formatMagpieQuotaResetInline(
-  magpieQuotaResetLines.value,
-  quotaResetClock.value
-) + (magpieQuotaResetLines.value.length ? ' · 点击立即刷新' : ''))
 function taskFocusItem(task: CodexTaskCard): Extract<FocusItem, { kind: 'task' }> {
   return { kind: 'task', key: `task:${task.key}`, task, marker: resolveCompanionRowMarker(task)! }
 }
@@ -411,55 +390,6 @@ watch(rootStyle, (tokens) => {
   for (const [name, value] of Object.entries(tokens)) document.documentElement.style.setProperty(name, String(value))
 }, { immediate: true })
 
-const expandedQuota = computed(() => {
-  const normalized = normalizeCodexQuota(quota.value || { version: 1, status: 'idle', plan: '', short: null, weekly: null, updatedAt: 0 })
-  const result: Array<{ key: string; label: string; family: 'normal' | 'spark'; window: 'short' | 'weekly'; bucket: CodexQuotaBucket }> = []
-  if (normalized.normal.short) result.push({ key: 'normal-short', label: '5 小时限额', family: 'normal', window: 'short', bucket: normalized.normal.short })
-  if (normalized.normal.weekly) result.push({ key: 'normal-weekly', label: '周限额', family: 'normal', window: 'weekly', bucket: normalized.normal.weekly })
-  for (const pool of normalized.spark) {
-    if (pool.short) result.push({ key: `${pool.limitId}-short`, label: 'Spark 额度', family: 'spark', window: 'short', bucket: pool.short })
-    if (pool.weekly) result.push({ key: `${pool.limitId}-weekly`, label: 'Spark 周额度', family: 'spark', window: 'weekly', bucket: pool.weekly })
-  }
-  return result
-})
-
-/**
- * The whole quota area is one row: both providers, ordered, with the provider
- * caption and Spark subordination already resolved by the domain.
- */
-const quotaStrip = computed(() => buildCompanionQuotaStrip(
-  expandedQuota.value.map((item) => ({
-    key: item.key,
-    label: item.label,
-    family: item.family,
-    window: item.window,
-    remainingPercent: item.bucket.remainingPercent,
-    resetAt: item.bucket.resetAt
-  })),
-  companionSlice.value,
-  compact.value.stateLabel
-))
-/**
- * Claude chips get the precise reset moment plus reading freshness in the hint
- * and accessible name (user decision 2026-08-06); Codex chips keep the original
- * `formatReset` strings byte-for-byte.
- */
-function quotaChipReadingHint(chip: CompanionQuotaChip) {
-  if (chip.provider === 'claude') {
-    const now = Date.now()
-    return companionQuotaChipHint(
-      chip,
-      companionResetDetailText(chip.resetAt, now),
-      quotaStrip.value.multiProvider,
-      companionQuotaFreshnessText(chip, now)
-    )
-  }
-  return companionQuotaChipHint(chip, formatReset(chip.resetAt), quotaStrip.value.multiProvider)
-}
-/** The reading's own hint ends with the one action the chip offers (RAW-201). */
-function quotaChipHint(chip: CompanionQuotaChip) {
-  return `${quotaChipReadingHint(chip)} · 点击立即刷新`
-}
 /** A reading is also its own refresh trigger: one click forces both providers' quota lanes. */
 function refreshQuotaFromChip(chip: Pick<CompanionQuotaChip, 'provider'>) {
   if (!action('codex.quota.refresh', { source: 'float-quota-chip', provider: chip.provider })) return
@@ -486,18 +416,6 @@ watch(() => companionSlice.value?.quotaRefreshReceipt?.at ?? 0, (at) => {
   if (quotaFeedbackTimer) clearTimeout(quotaFeedbackTimer)
   quotaFeedbackTimer = setTimeout(() => { quotaFeedback.value = '' }, 8_000)
 })
-function quotaChipAria(chip: CompanionQuotaChip) {
-  if (chip.provider === 'claude') {
-    const now = Date.now()
-    return companionQuotaChipAriaLabel(
-      chip,
-      companionResetDetailText(chip.resetAt, now),
-      quotaStrip.value.multiProvider,
-      companionQuotaFreshnessText(chip, now)
-    )
-  }
-  return companionQuotaChipAriaLabel(chip, formatReset(chip.resetAt), quotaStrip.value.multiProvider)
-}
 const searchPlaceholder = computed(() => companionSearchPlaceholder(quickMode.value))
 const searchAlertText = computed(() => companionSearchAlertText({
   compatibility: taskState.value.compatibility,
@@ -3726,7 +3644,7 @@ onUnmounted(() => {
           :primary="compact.primary"
           :secondary="compact.secondary"
           :state-label="compact.stateLabel"
-          :label="`${compact.ariaLabel}${companionWaterBall.ariaSuffix}${companionWaterBall.quotaGrid.ariaSuffix}`"
+          :label="`${compact.ariaLabel}${companionWaterBall.ariaSuffix}`"
           :appearance="settings?.waterAppearance || fallbackWaterAppearance"
           :colors="settings?.colors || fallbackColors"
           :percent-override="companionWaterBall.percentOverride"
@@ -3737,9 +3655,7 @@ onUnmounted(() => {
           :ring-visible="companionWaterBall.ringVisible"
           :quota-stale="companionWaterBall.quotaStale"
           :quota-grid="companionWaterBall.quotaGrid.enabled ? companionWaterBall.quotaGrid.cells : null"
-          :quota-hint="companionWaterBall.quotaHint"
-          @pointerenter="companionWaterBall.quotaHint && queueActionHint($event, companionWaterBall.quotaHint)"
-          @pointerleave="clearActionHint"
+          :quota-hint="''"
           decorative
         />
         <template v-else>
@@ -3864,64 +3780,8 @@ onUnmounted(() => {
       <!-- One row for every enabled provider. The full title and the reset time
            live in the shared 200ms child hint and in each chip's accessible name,
            so the row itself stays a single line of readings. -->
-      <section class="float-quota-text" aria-label="实际额度窗口">
-        <div
-          v-for="(group, groupIndex) in quotaStrip.groups"
-          :key="group.provider"
-          class="float-quota-group"
-          :class="[`provider-${group.provider}`, { divided: groupIndex > 0 }]"
-        >
-          <h3 v-if="group.caption" class="float-quota-provider">{{ group.caption }}</h3>
-          <div
-            v-for="chip in group.chips"
-            :key="chip.key"
-            class="float-quota-chip"
-            :class="{ spark: chip.spark, 'is-stale': chip.stale === true, 'is-warning': chip.tone === 'warning', 'is-danger': chip.tone === 'danger' }"
-            :tabindex="chip.provider === 'claude' ? 0 : undefined"
-            :role="chip.provider === 'claude' ? 'button' : undefined"
-            :aria-label="chip.provider === 'claude' ? quotaChipAria(chip) : undefined"
-            @pointerenter="queueActionHint($event, quotaChipHint(chip))"
-            @pointerleave="clearActionHint"
-            @focus="queueActionHint($event, quotaChipHint(chip))"
-            @blur="clearActionHint"
-            @click="refreshQuotaFromChip(chip)"
-            @keydown.enter.prevent="refreshQuotaFromChip(chip)"
-            @keydown.space.prevent="refreshQuotaFromChip(chip)"
-          >
-            <span class="sr-only">{{ quotaChipAria(chip) }}</span>
-            <span aria-hidden="true">{{ chip.shortLabel }}</span><strong aria-hidden="true">{{ chip.valueText ?? `${chip.remainingPercent}%` }}</strong>
-          </div>
-          <p v-if="group.emptyReason">{{ group.emptyReason }}</p>
-          <!-- The row stays one line: an App-lane block is a marker whose reason
-               lives in the 200ms hint and the accessible name, never inline text. -->
-          <span
-            v-else-if="group.note"
-            class="float-quota-note"
-            role="img"
-            :aria-label="group.note"
-            tabindex="0"
-            @pointerenter="queueActionHint($event, group.note)"
-            @pointerleave="clearActionHint"
-            @focus="queueActionHint($event, group.note)"
-            @blur="clearActionHint"
-          >!</span>
-        </div>
-        <span
-          v-if="magpieQuotaResetLines.length"
-          class="float-magpie-reset-inline"
-          role="button"
-          :aria-label="magpieQuotaResetInline"
-          tabindex="0"
-          @pointerenter="queueActionHint($event, magpieQuotaResetInline)"
-          @pointerleave="clearActionHint"
-          @focus="queueActionHint($event, magpieQuotaResetInline)"
-          @blur="clearActionHint"
-          @click="refreshQuotaFromChip({ provider: 'codex' })"
-          @keydown.enter.prevent="refreshQuotaFromChip({ provider: 'codex' })"
-          @keydown.space.prevent="refreshQuotaFromChip({ provider: 'codex' })"
-        >
-          <span v-for="line in magpieQuotaResetLines" :key="line.key" class="float-magpie-reset-item" aria-hidden="true"><b>{{ line.compactLabel }}</b> {{ line.valueText }}<em v-if="line.stale" class="float-magpie-stale">过期</em> · {{ line.resetLabel }} {{ magpieResetCompactText(line.resetAt, quotaResetClock) }}</span>
-        </span>
+      <section class="float-quota-text" aria-label="额度重置">
+        <CompanionQuotaResetRow :items="companionResetItems" @hint="queueActionHint" @clear="clearActionHint" @refresh="refreshQuotaFromChip({ provider: 'codex' })" />
         <!-- Refresh receipt overlays the row for a few seconds instead of adding a line. -->
         <p v-if="quotaFeedback" class="float-quota-feedback" role="status">{{ quotaFeedback }}</p>
       </section>

@@ -4,6 +4,10 @@ qualified_source: SPEC-261112-MAGPIE-CODEX-WEEKLY::RAW-001
 status: active
 domain: companion-codex
 authority: user-stated
+scoped_relations:
+  - target: SPEC-261113-MAGPIE-RESET-HINT::RAW-001
+    relation: superseded_by
+    scope: Magpie 悬浮提示与展开卡文案
 ---
 
 # RAW-001 · Magpie Codex 周额度
@@ -16,10 +20,16 @@ authority: user-stated
 
 ## 当前有效变更
 
+2026-11-14 14:31 生产投影：当前 c222 周 99%，排除两个重复 Codex 窗口，其余 Codex 61%，Cursor Models 45.4%；Cursor Grok Bot 留在 Cursor。宿主手测未验，最终构建身份待 Root 重建。
+
+
 2026-11-13 用户明确批准完整方案，decision_status=`explicit-current-request`，决定 `DEC-MAGPIE-WEEKLY-20261113`。继续修订本 leaf，不新增 RAW 身份或 module；[有效变更条款、BusinessChangeReview 与 VerificationImpactTrace](../261112/magpie-codex-weekly/task-card.md#2026-11-13-有效变更条款)承载完整范围，active 仅表示需求有效；证据与未验项见[验证结论](../261112/magpie-codex-weekly/task-card.md#本次验证结论)。
 
 - 局部取代：单账号周选择及 F1 原轮换改为每个来源内非 free 账号全部有效普通 `7days` 周窗口均值，0 参与、非法或缺失不当 0；本次算例 `0+85=42.5%`，Token 344.98 不抢占。余额仍单账号兜底、不求和，顺序为 promax→last→原序。
 - 来源候选依次为 fresh 正周、fresh 正 Token、stale 正周、stale 正 Token、明确零、缺失，同层远端优先且不跨来源混账号。参与过期使汇总过期，缺有效周账号标部分数据；失败保留最近成功快照，关闭立即隐藏，过 reset 待刷新、不推 100%。
 - 各 Magpie 周入口使用同一读数，最终最多一位小数，`0<p<1` 显示 `<1%`。环仅普通周，Codex 正周保持、0／缺失可补 Magpie 正周；Claude 0 不替代，Claude-only 缺普通周隐藏轨道，不以短窗／scoped 或跨平台补环。grid 优先，移环去重；Token／Grok／Cursor 不驱动环，液面／卡片／贴边线保留原生。
 - 展开卡右侧完整来源＋值＋最近参与账号重置，左侧不重复 M·周／M·Token；原生块单行，Magpie 右侧窄窗可换行，整组点击及 Enter／Space 沿用同一额度刷新命令。匿名提示及父 aria 包含账号明细、部分与过期。设置／外观预览复用含 Claude 权限的完整 snapshot；零值格隐藏不改变均值。
+- 2026-11-13 局部取代：悬浮提示与展开卡文案改由 [重置提示精简](codex-magpie-reset-hint-raw-001.md#当前有效变更) 承载；本条其余均值、来源、环仲裁和缓存仍有效。
 - 保留：唯一 finite 远端 key 仅在 Codex-only、明确 free、无原生窗口且无任何 agent 读数时启用；agent 0 也阻断；不接入 codex-2 金额。
+
+- 2026-11-14 局部取代：来源标签、展开卡左侧原生额度、右侧重复额度和整组长提示改为单行分类重置。旧均值、六层仲裁、缓存和唯一 key 保留；key 仍由去重前的具体 agent 证据阻断，真实 0 也阻断。

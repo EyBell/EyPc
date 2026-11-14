@@ -835,7 +835,8 @@ try {
       record: codexRecord,
       percent: codexPercent,
       number: codexNumber,
-      timestampMs: codexTimestampMs
+      timestampMs: codexTimestampMs,
+      digest: (value) => crypto.createHash('sha256').update(value).digest('hex')
     })
   }
 } catch { codexQuotaSanitizer = null }
@@ -8320,6 +8321,18 @@ function sanitizeCodexQuota(rateResult, accountResult) {
     : { plan: '', short: null, weekly: null, normal: { limitId: 'codex', limitName: 'Codex', family: 'normal', short: null, weekly: null }, spark: [] }
 }
 
+function sanitizeCodexQuotaAccount(accountResult) {
+  return codexQuotaSanitizer && typeof codexQuotaSanitizer.sanitizeCodexQuotaAccount === 'function'
+    ? codexQuotaSanitizer.sanitizeCodexQuotaAccount(accountResult)
+    : null
+}
+
+function sanitizeMagpieQuotaIdentity(provider) {
+  return codexQuotaSanitizer && typeof codexQuotaSanitizer.sanitizeMagpieQuotaIdentity === 'function'
+    ? codexQuotaSanitizer.sanitizeMagpieQuotaIdentity(provider)
+    : null
+}
+
 function sanitizeCodexModelList(value) {
   const source = codexRecord(value)
   const rows = Array.isArray(source.data) ? source.data : Array.isArray(source.models) ? source.models : []
@@ -10212,12 +10225,17 @@ async function readCodexSnapshot(options) {
     if (includeThreads) ensureCodexInventoryMembershipWatchers({ reconcile: false })
     const value = { version: 2, receivedAt: Date.now() }
     if (includeQuota) {
-      const [rateResult, accountResult] = await Promise.all([
-        requestCodexRpc('account/rateLimits/read', {}),
-        requestCodexRpc('account/read', { refreshToken: false })
-      ])
-      if (codexRecord(accountResult).requiresOpenaiAuth === true && !codexRecord(accountResult).account) throw codexError('not-authenticated', 'Codex authentication required')
-      value.quota = sanitizeCodexQuota(rateResult, accountResult)
+      const accountBefore = await requestCodexRpc('account/read', { refreshToken: false })
+      const rateResult = await requestCodexRpc('account/rateLimits/read', {})
+      const accountAfter = await requestCodexRpc('account/read', { refreshToken: false })
+      const beforeAccount = sanitizeCodexQuotaAccount(accountBefore)
+      const afterAccount = sanitizeCodexQuotaAccount(accountAfter)
+      const identityBound = Boolean(beforeAccount && afterAccount
+        && beforeAccount.emailDigest === afterAccount.emailDigest
+        && (beforeAccount.workspaceName || '') === (afterAccount.workspaceName || ''))
+      if (codexRecord(accountAfter).requiresOpenaiAuth === true && !codexRecord(accountAfter).account) throw codexError('not-authenticated', 'Codex authentication required')
+      value.quota = sanitizeCodexQuota(rateResult, accountAfter)
+      if (identityBound) value.quotaAccount = afterAccount
     }
     if (includeConfig) {
       value.config = sanitizeCodexConfig(await requestCodexRpc('config/read', { includeLayers: false }))

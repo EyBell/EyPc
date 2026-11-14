@@ -113,7 +113,7 @@ function claudeQuotaMergedStatus(windows: readonly ClaudeQuotaWindowEntry[], now
 
 function markExpiredClaudeQuotaWindows(windows: readonly ClaudeQuotaWindowEntry[], now: number): ClaudeQuotaWindowEntry[] {
   return windows.map((entry) => entry.resetAt !== null && entry.resetAt <= now
-    ? { ...entry, resetAt: null, freshness: 'stale' as const }
+    ? { ...entry, freshness: 'stale' as const }
     : entry)
 }
 

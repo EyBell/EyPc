@@ -88,6 +88,12 @@ export interface CodexQuotaSnapshotV2 {
   errorCode?: string
   errorMessage?: string
 }
+/** Process-local sibling of one quota sample. Never persisted inside cachedQuota. */
+export interface CodexQuotaAccountContext {
+  emailDigest: string
+  label: string
+  workspaceName?: string
+}
 
 /** Compatibility name retained for existing consumers while V2 rolls out. */
 export type CodexQuotaSnapshotV1 = CodexQuotaSnapshotLegacyV1 | CodexQuotaSnapshotV2
@@ -355,6 +361,7 @@ export interface CodexHostSnapshotV1 {
   modelCatalogFingerprint?: string
   modelCatalogErrorCode?: string
   newThreadContextFingerprint?: string
+  quotaAccount?: CodexQuotaAccountContext | null
 }
 
 export interface CodexHostSnapshotV2 {
@@ -380,6 +387,7 @@ export interface CodexHostSnapshotV2 {
   modelCatalogFingerprint?: string
   modelCatalogErrorCode?: string
   newThreadContextFingerprint?: string
+  quotaAccount?: CodexQuotaAccountContext | null
 }
 
 export type CodexHostSnapshot = CodexHostSnapshotV1 | CodexHostSnapshotV2
@@ -1583,8 +1591,17 @@ export function normalizeCodexQuota(value: unknown): CodexQuotaSnapshotV2 {
     spark,
     updatedAt: numberValue(source.updatedAt, 0),
     ...(typeof source.errorCode === 'string' ? { errorCode: source.errorCode.slice(0, 80) } : {}),
-    ...(typeof source.errorMessage === 'string' ? { errorMessage: source.errorMessage.slice(0, 180) } : {})
+    ...(typeof source.errorMessage === 'string' ? { errorMessage: source.errorMessage.slice(0, 180) } : {}),
   }
+}
+
+export function normalizeCodexQuotaAccount(value: unknown): CodexQuotaAccountContext | null {
+  const source = record(value)
+  const emailDigest = typeof source.emailDigest === 'string' && /^[a-f0-9]{64}$/.test(source.emailDigest) ? source.emailDigest : ''
+  const label = typeof source.label === 'string' ? [...source.label.trim()].slice(0, 4).join('') : ''
+  if (!emailDigest || !label) return null
+  const workspaceName = typeof source.workspaceName === 'string' ? source.workspaceName.trim().slice(0, 160) : ''
+  return { emailDigest, label, ...(workspaceName ? { workspaceName } : {}) }
 }
 
 export function normalizeCodexConfig(value: unknown): CodexConfigSnapshotV1 {

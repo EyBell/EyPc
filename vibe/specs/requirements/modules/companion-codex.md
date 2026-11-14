@@ -14,6 +14,9 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 
 ## Primary Requirements
 
+2026-11-14 14:31 生产投影：当前 c222 周 99%，排除两个重复 Codex 窗口，其余 Codex 61%，Cursor Models 45.4%；Cursor Grok Bot 留在 Cursor。最终构建已通过，宿主手测未验。
+
+
 - [待输入共用循环 RAW-003](../task-recovery-input-cycle-raw-003.md#L1) — `active`
 
 - [待继续可见性与搜索提示 RAW-002](../task-recovery-visibility-raw-002.md#L1) — `active`
@@ -199,7 +202,8 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 
 - [Side phase RAW-001](../codex-side-phase-raw-001.md#L1) — `active`
 
-- [Magpie Codex 周额度 RAW-001](../codex-magpie-weekly-raw-001.md#L1) — `active` · 水球及展开卡显示所选账户周额度，保留账户轮换和 Token 回退
+- [Magpie Codex 周额度 RAW-001](../codex-magpie-weekly-raw-001.md#L1) — `active` · 统一额度计算、账号去重和分类重置；旧均值与 key 特例保留
+- [Magpie 悬浮重置提示 RAW-001](../codex-magpie-reset-hint-raw-001.md#L1) — `active` · 右侧分类重置，不重复额度和来源
 
 ## Related Requirements
 

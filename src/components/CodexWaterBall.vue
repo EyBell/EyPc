@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import type { CodexColorSettings, CodexWaterAppearanceSettings } from '../domain/codex'
 import { codexWaterAppearanceCssVars } from '../domain/codexAppearance'
 import { codexWeeklyReading, type CodexQuotaReading } from '../domain/codexPresentation'
-import { formatMagpiePercent, presentCompactQuotaGridCells, type CompactQuotaGridCell } from '../domain/magpieQuota'
+import { formatCompanionPercent, presentCompactQuotaGridCells, type CompactQuotaGridCell } from '../domain/magpieQuota'
 
 const props = withDefaults(defineProps<{
   primary: CodexQuotaReading | null
@@ -68,11 +68,7 @@ const hasLiquidOverride = computed(() => typeof props.liquidPercent === 'number'
 const liquidLevel = computed(() => hasLiquidOverride.value ? props.liquidPercent as number : percent.value)
 const hasPercentOverride = computed(() => typeof props.percentOverride === 'number' && Number.isFinite(props.percentOverride))
 const displayPercent = computed(() => hasPercentOverride.value ? props.percentOverride as number : props.primary?.bucket.remainingPercent ?? null)
-const magpieCentre = computed(() => props.percentProviderLabel === 'Magpie' && hasPercentOverride.value)
-const centreText = computed(() => {
-  if (displayPercent.value === null) return props.stateLabel
-  return magpieCentre.value ? formatMagpiePercent(displayPercent.value) : `${displayPercent.value}%`
-})
+const centreText = computed(() => displayPercent.value === null ? props.stateLabel : formatCompanionPercent(displayPercent.value))
 // A pair only renders when both halves are real readings; a lone scoped value
 // would be an unlabelled number over an unrelated liquid level.
 const dualReading = computed(() => hasPercentOverride.value
@@ -116,7 +112,6 @@ const style = computed(() => ({
     :role="decorative ? undefined : 'img'"
     :aria-hidden="decorative ? 'true' : undefined"
     :aria-label="decorative ? undefined : label"
-    :data-operation-tooltip="quotaHint || undefined"
   >
     <div class="codex-water-ball__surface" aria-hidden="true" :data-operation-tooltip="partHints?.base">
       <i class="refraction refraction-a" />
@@ -138,7 +133,6 @@ const style = computed(() => ({
           class="segment"
           :class="{ active: index <= activeWeeklySegments }"
           :data-operation-tooltip="index <= activeWeeklySegments ? partHints?.ring : partHints?.track"
-          :data-operation-description="quotaHint || undefined"
           x1="50"
           y1="5"
           x2="50"
@@ -147,8 +141,8 @@ const style = computed(() => ({
         />
       </template>
       <template v-else>
-        <circle class="track" cx="50" cy="50" r="45" :data-operation-tooltip="partHints?.track" :data-operation-description="quotaHint || undefined" />
-        <circle class="value" cx="50" cy="50" r="45" :data-operation-tooltip="partHints?.ring" :data-operation-description="quotaHint || undefined" />
+        <circle class="track" cx="50" cy="50" r="45" :data-operation-tooltip="partHints?.track" />
+        <circle class="value" cx="50" cy="50" r="45" :data-operation-tooltip="partHints?.ring" />
       </template>
     </svg>
 
@@ -156,7 +150,6 @@ const style = computed(() => ({
       v-if="!primary || appearance.inner.showPercent"
       class="codex-water-ball__value"
       :data-operation-tooltip="partHints?.reading"
-      :data-operation-description="quotaHint || undefined"
       :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary && !hasPercentOverride, 'has-grid': gridMode }]"
     >
       <div v-if="gridMode" class="codex-water-ball__grid" :class="`layout-${gridLayout}`" aria-hidden="true">
@@ -171,7 +164,7 @@ const style = computed(() => ({
             :key="cell.key"
             class="codex-water-ball__grid-cell"
             :class="[`kind-${cell.kind}`, `slot-${cell.key}`]"
-            :data-operation-tooltip="partHints || suppressGridHints ? undefined : cell.detail"
+            :data-operation-tooltip="partHints ? undefined : cell.label"
           >
             <span class="codex-water-ball__grid-label">{{ cell.label }}</span>
             <strong class="codex-water-ball__grid-value">{{ cell.text }}</strong>
@@ -182,7 +175,7 @@ const style = computed(() => ({
       <template v-else>
         <span v-if="primary?.family === 'spark' && !hasLiquidOverride" class="codex-water-ball__spark" aria-hidden="true">S</span>
         <strong v-if="dualReading" class="codex-water-ball__pair">
-          <span>{{ magpieCentre ? formatMagpiePercent(dualReading.scoped) : dualReading.scoped }}</span><i aria-hidden="true">/</i><span>{{ magpieCentre ? formatMagpiePercent(dualReading.primary) : dualReading.primary }}</span>
+          <span>{{ formatCompanionPercent(dualReading.scoped) }}</span><i aria-hidden="true">/</i><span>{{ formatCompanionPercent(dualReading.primary) }}</span>
         </strong>
         <strong v-else>{{ centreText }}</strong>
         <em v-if="hasPercentOverride && percentProviderLabel" class="codex-water-ball__percent-source">{{ percentProviderLabel }}</em>
