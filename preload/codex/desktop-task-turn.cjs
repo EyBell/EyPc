@@ -65,6 +65,7 @@ function createCodexDesktopTaskTurn(dependencies = {}) {
     if (existing) throw failure(existing.indeterminate ? 'process-exited' : 'desktop-turn-rejected', existing.indeterminate === true)
     const available = owner(threadId)
     if (!available) throw failure('desktop-owner-unavailable')
+    if (available.bridge.streamStateReliable?.(threadId) === false) throw failure('desktop-owner-unavailable')
     let request
     let requestId
     try {
@@ -96,6 +97,10 @@ function createCodexDesktopTaskTurn(dependencies = {}) {
         return
       }
       if (!current(entry)) {
+        finish(entry, failure('desktop-owner-unavailable'))
+        return
+      }
+      if (entry.bridge.streamStateReliable?.(threadId) === false) {
         finish(entry, failure('desktop-owner-unavailable'))
         return
       }

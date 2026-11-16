@@ -160,6 +160,42 @@ function codexDesktopBindingFields(binding) {
   return { identityKey, executionHostKey }
 }
 
+function codexDesktopOwnerDigest(value) {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) ? value : ''
+}
+
+function codexDesktopStartupReadBinding(rootValue) {
+  try {
+    const root = nativeRecord(rootValue)
+    const owner = codexDesktopOwnerDigest(root?.['electron-renderer-content-owner'])
+    const state = nativeRecord(nativeDecoded(root?.['electron-thread-read-state-v1']))
+    const identities = nativeRecord(state?.unreadByIdentity)
+    const migration = nativeRecord(state?.legacyMigration)
+    const nativeLocalKey = `local:${require('node:crypto').createHash('sha256')
+      .update(JSON.stringify(['local', 'local', null])).digest('hex')}`
+    if (!root || !owner || state?.version !== 1 || !identities
+      || migration?.adoptedHostIds?.local !== nativeLocalKey) return null
+    const catalogs = []
+    for (const key of ['environment-catalog-cache-v2', 'environment-catalog-cache-v1']) {
+      if (!Object.prototype.hasOwnProperty.call(root, key)) continue
+      const catalog = nativeRecord(nativeDecoded(root[key]))
+      const accountId = catalog?.accountId
+      const userId = catalog?.userId
+      const valid = text => typeof text === 'string' && text.length > 0 && text.length <= 256 && !/[\u0000-\u001f]/.test(text)
+      if (!catalog || !valid(accountId) || !valid(userId)) continue
+      const catalogOwner = require('node:crypto').createHash('sha256')
+        .update(JSON.stringify([userId, accountId])).digest('hex')
+      if (catalogOwner !== owner) continue
+      catalogs.push(require('node:crypto').createHash('sha256')
+        .update(JSON.stringify(['chatgpt', accountId, userId])).digest('hex'))
+    }
+    if (catalogs.length !== 1 && new Set(catalogs).size !== 1) return null
+    return catalogs.length ? { identityKey: catalogs[0], executionHostKey: nativeLocalKey } : null
+  } catch {
+    return null
+  }
+}
+
 function createCodexDesktopUnreadRecovery(dependencies = {}) {
   const record = dependencies.record
   const isExternalThreadId = dependencies.isExternalThreadId
@@ -181,7 +217,7 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
     if (!bridge || typeof bridge !== 'object') return null
     const existing = codexDesktopUnreadRecoveryBridges.get(bridge)
     if (existing || !create) return existing || null
-    const created = { fingerprint: '', pending: new Map() }
+    const created = { fingerprint: '', handled: new Set(), pending: new Map() }
     codexDesktopUnreadRecoveryBridges.set(bridge, created)
     return created
   }
@@ -258,6 +294,7 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
       outcome = 'dispatch-failed'
     }
     if (outcome === 'dispatch-failed') state.pending.delete(threadId)
+    if (state.handled instanceof Set) state.handled.add(threadId)
     safeRecord({ level: 'info', scope: 'codex-read-recovery', provider: 'codex',
       event: 'desktop-read-recovery', outcome, taskRef: threadId,
       details: { reason: 'binding-unavailable', side } })
@@ -278,6 +315,22 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
 
   function prune(bridge, state) {
     const at = clock()
+    const trackedIds = new Set()
+    if (bridge.inventory instanceof Set) {
+      for (const threadId of bridge.inventory) if (typeof threadId === 'string') trackedIds.add(threadId)
+    }
+    if (bridge.sideShadows instanceof Map) {
+      for (const threadId of bridge.sideShadows.keys()) if (typeof threadId === 'string') trackedIds.add(threadId)
+    }
+    const mapped = relations()
+    if (mapped) {
+      for (const threadId of mapped.keys()) if (typeof threadId === 'string') trackedIds.add(threadId)
+    }
+    if (state.handled instanceof Set) {
+      for (const threadId of state.handled) {
+        if (!trackedIds.has(threadId) || excluded(threadId)) state.handled.delete(threadId)
+      }
+    }
     for (const [threadId, pending] of [...state.pending]) {
       const expired = !Number.isFinite(pending.time) || at - pending.time > CODEX_DESKTOP_UNREAD_RECOVERY_MS
       if (expired || !tracked(bridge, threadId)) settlePending(bridge, state, threadId, pending)
@@ -370,10 +423,12 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
     if (!bridge || typeof bridge !== 'object' || !next) return false
     const previous = codexDesktopBindingFields(bridge.readStateBinding)
     if (previous && previous.identityKey === next.identityKey && previous.executionHostKey === next.executionHostKey) {
+      if (bridge.readStateBootstrapOwner !== undefined) delete bridge.readStateBootstrapOwner
       return false
     }
     const previousBindingKnown = previous !== null
     bridge.readStateBinding = next
+    if (bridge.readStateBootstrapOwner !== undefined) delete bridge.readStateBootstrapOwner
     codexDesktopUnreadRecoveryBridges.delete(bridge)
     clearPersistedBaseline(bridge)
     if (previousBindingKnown) clearReboundEvidence(bridge)
@@ -388,6 +443,62 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
     return true
   }
 
+  function revokeStartupBinding(bridge, reason) {
+    delete bridge.readStateBinding
+    delete bridge.readStateBootstrapOwner
+    codexDesktopUnreadRecoveryBridges.delete(bridge)
+    clearPersistedBaseline(bridge)
+    clearReboundEvidence(bridge)
+    safeRecord({
+      level: 'info',
+      scope: 'codex-read-recovery',
+      provider: 'codex',
+      event: 'desktop-read-binding',
+      outcome: 'invalidated',
+      details: { source: 'startup', ownerChanged: reason === 'owner-changed', candidateValid: false }
+    })
+  }
+
+  function bootstrapBinding(bridge, rootValue) {
+    if (!bridge || typeof bridge !== 'object') return false
+    const candidate = codexDesktopStartupReadBinding(rootValue)
+    const root = nativeRecord(rootValue)
+    const owner = codexDesktopOwnerDigest(root?.['electron-renderer-content-owner'])
+    if (bridge.readStateBootstrapOwner === undefined) {
+      if (codexDesktopBindingFields(bridge.readStateBinding) || !candidate) return false
+      if (bindingChanged(bridge, candidate) !== true) return false
+      bridge.readStateBootstrapOwner = owner
+      safeRecord({
+        level: 'info',
+        scope: 'codex-read-recovery',
+        provider: 'codex',
+        event: 'desktop-read-binding',
+        outcome: 'bootstrapped',
+        details: { source: 'startup', ownerChanged: false, candidateValid: true }
+      })
+      return true
+    }
+    const current = codexDesktopBindingFields(bridge.readStateBinding)
+    const same = Boolean(candidate && current
+      && candidate.identityKey === current.identityKey
+      && candidate.executionHostKey === current.executionHostKey
+      && bridge.readStateBootstrapOwner === owner)
+    if (same) return false
+    const ownerChanged = Boolean(owner) && bridge.readStateBootstrapOwner !== owner
+    revokeStartupBinding(bridge, ownerChanged ? 'owner-changed' : 'candidate-invalid')
+    if (!candidate || bindingChanged(bridge, candidate) !== true) return false
+    bridge.readStateBootstrapOwner = owner
+    safeRecord({
+      level: 'info',
+      scope: 'codex-read-recovery',
+      provider: 'codex',
+      event: 'desktop-read-binding',
+      outcome: 'bootstrapped',
+      details: { source: 'startup', ownerChanged, candidateValid: true }
+    })
+    return true
+  }
+
   function persistenceFailed(bridge, error, emit) {
     if (emit !== true || bridge?.state !== 'connected' || !error || typeof error !== 'object') return
     if (error.unreadFailureReason !== 'binding-unavailable') return
@@ -395,22 +506,30 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
     if (typeof sourceFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(sourceFingerprint)) return
     const state = recoveryState(bridge, true)
     prune(bridge, state)
-    if (state.fingerprint === sourceFingerprint) return
-    state.fingerprint = sourceFingerprint
+    const fingerprintChanged = state.fingerprint !== sourceFingerprint
+    if (fingerprintChanged) {
+      state.fingerprint = sourceFingerprint
+      state.handled = new Set()
+    }
     if (typeof knownThread !== 'function' || !(bridge.inventory instanceof Set) || typeof bridge.followAny !== 'function') return
     const seen = new Set()
     for (const rootThreadId of bridge.inventory) {
       if (seen.has(rootThreadId) || excluded(rootThreadId)) continue
       let known = null
       try { known = knownThread(rootThreadId) } catch { continue }
-      if (!known || known.hasUnreadTurn !== true) continue
+      const unreadKnown = known?.unreadAuthority === 'desktop-live' || known?.unreadAuthority === 'desktop-persisted'
+      const unread = unreadKnown && known.hasUnreadTurn === true
+      const unavailable = Boolean(known) && !unreadKnown
+      if (!unread && !unavailable) continue
       const targets = [rootThreadId]
       for (const threadId of sideIds(bridge, rootThreadId)) targets.push(threadId)
       for (const threadId of targets) {
         if (seen.has(threadId) || excluded(threadId)) continue
         seen.add(threadId)
+        if (state.handled.has(threadId)) continue
         const pending = state.pending.get(threadId)
-        if (pending) {
+        if (pending && !fingerprintChanged) continue
+        if (pending && fingerprintChanged) {
           pending.refreshAgain = true
           safeRecord({ level: 'debug', scope: 'codex-read-recovery', provider: 'codex',
             event: 'desktop-read-recovery', outcome: 'coalesced', taskRef: threadId,
@@ -522,8 +641,12 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
   function clear(bridge, revokeBinding = false) {
     if (!bridge || typeof bridge !== 'object') return
     codexDesktopUnreadRecoveryBridges.delete(bridge)
-    if (revokeBinding !== true || !bridge.readStateBinding) return
+    if (revokeBinding !== true || !bridge.readStateBinding) {
+      if (revokeBinding === true && bridge.readStateBootstrapOwner !== undefined) delete bridge.readStateBootstrapOwner
+      return
+    }
     delete bridge.readStateBinding
+    if (bridge.readStateBootstrapOwner !== undefined) delete bridge.readStateBootstrapOwner
     clearPersistedBaseline(bridge)
     clearReboundEvidence(bridge)
     safeRecord({ level: 'info', scope: 'codex-read-recovery', provider: 'codex',
@@ -534,6 +657,7 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
   return {
     fingerprint,
     bindingChanged,
+    bootstrapBinding,
     persistenceFailed,
     notificationAccepted,
     snapshotAllowed,
@@ -576,6 +700,7 @@ module.exports = {
   codexReadStateContextBinding,
   codexDesktopReadNotificationDecision,
   codexDesktopUnreadReadFailureReason,
+  codexDesktopStartupReadBinding,
   createCodexDesktopUnreadRecovery,
   desktopReadEvidence,
   persistedConnectorUnread

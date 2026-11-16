@@ -751,12 +751,87 @@ function createCodexDesktopShadow(dependencies = {}) {
     codexReadStateContextBinding,
     codexDesktopReadNotificationDecision,
     codexDesktopUnreadReadFailureReason,
-    createCodexDesktopUnreadRecovery
+    createCodexDesktopUnreadRecovery,
+    cloneCodexDesktopValue,
+    commitCodexDesktopShadowCandidate
   }
 }
 
 module.exports = {
   CODEX_DESKTOP_SHADOW_REVISION,
   CODEX_DESKTOP_WAITING_REQUEST_HISTORY_LIMIT,
-  createCodexDesktopShadow
+  createCodexDesktopShadow,
+  cloneCodexDesktopValue,
+  commitCodexDesktopShadowCandidate
+}
+
+function brandedCollection(value, prototype, method) {
+  if (!value || typeof value !== 'object' && typeof value !== 'function') return false
+  try {
+    prototype[method].call(value, undefined)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function plainDesktopValue(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype === null) return true
+  return Object.getPrototypeOf(prototype) === null && Object.prototype.toString.call(value) === '[object Object]'
+}
+
+function cloneCodexDesktopValue(value, seen = new WeakMap()) {
+  if (value === null || typeof value !== 'object' && typeof value !== 'function') return value
+  if (typeof value === 'function') return value
+  const existing = seen.get(value)
+  if (existing) return existing
+  if (brandedCollection(value, Date.prototype, 'getTime')) {
+    const copy = new Date(Date.prototype.getTime.call(value))
+    seen.set(value, copy)
+    return copy
+  }
+  if (brandedCollection(value, Map.prototype, 'has')) {
+    const copy = new Map()
+    seen.set(value, copy)
+    for (const [key, item] of Map.prototype.entries.call(value)) {
+      copy.set(cloneCodexDesktopValue(key, seen), cloneCodexDesktopValue(item, seen))
+    }
+    return copy
+  }
+  if (brandedCollection(value, Set.prototype, 'has')) {
+    const copy = new Set()
+    seen.set(value, copy)
+    for (const item of Set.prototype.values.call(value)) copy.add(cloneCodexDesktopValue(item, seen))
+    return copy
+  }
+  if (Array.isArray(value)) {
+    const copy = []
+    seen.set(value, copy)
+    for (const item of value) copy.push(cloneCodexDesktopValue(item, seen))
+    return copy
+  }
+  if (plainDesktopValue(value)) {
+    const copy = {}
+    seen.set(value, copy)
+    for (const key of Object.keys(value)) copy[key] = cloneCodexDesktopValue(value[key], seen)
+    return copy
+  }
+  return value
+}
+
+function commitCodexDesktopShadowCandidate(live, candidate) {
+  if (!live || typeof live !== 'object' || !candidate || typeof candidate !== 'object') return live
+  const waitingState = Object.hasOwn(live, 'waitingState') ? live.waitingState : undefined
+  for (const key of Object.keys(live)) {
+    if (key === 'waitingState' || Object.hasOwn(candidate, key)) continue
+    delete live[key]
+  }
+  for (const key of Object.keys(candidate)) {
+    if (key === 'waitingState') continue
+    live[key] = candidate[key]
+  }
+  if (Object.hasOwn(live, 'waitingState') || waitingState !== undefined) live.waitingState = waitingState
+  return live
 }

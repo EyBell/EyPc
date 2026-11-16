@@ -34,15 +34,11 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.throws(() => parse({ 'electron-thread-read-state-v1': { ...state, legacyMigration: { ...state.legacyMigration, cleared: true } } }), /identity/)
   assert.throws(() => parse({ 'electron-thread-read-state-v1': { ...state, version: 2 } }), /invalid/)
   assert.deepEqual(parse({ 'electron-thread-read-state-v1': { version: 1, unreadByIdentity: {} } }, binding), [], 'native exact-context empty bucket is read')
+  const { codexDesktopIpcVersionAccepted } = require('./codex/desktop-protocol.cjs')
   const file = resolve(assetRoot, assetRoot.endsWith('preload') ? 'index.js' : 'preload.js')
   const source = readFileSync(file, 'utf8')
-  const start = source.indexOf('const CODEX_DESKTOP_IPC_VERSIONS =')
-  const end = source.indexOf('const WINDOW_BRIDGE_TIMEOUT_MS', start)
-  assert(start >= 0 && end > start)
-  const context = vm.createContext({})
-  vm.runInContext(source.slice(start, end), context)
-  for (const version of [1, 2, 3]) assert(context.codexDesktopIpcVersionAccepted('thread-read-state-changed', version), `native unread protocol v${version}`)
-  assert(!context.codexDesktopIpcVersionAccepted('thread-read-state-changed', 4), 'unknown unread protocol abstains')
+  for (const version of [1, 2, 3]) assert(codexDesktopIpcVersionAccepted('thread-read-state-changed', version), `native unread protocol v${version}`)
+  assert(!codexDesktopIpcVersionAccepted('thread-read-state-changed', 4), 'unknown unread protocol abstains')
   // Execute the real member request projector with privacy-safe synthetic shadows.
   const { createCodexDesktopRequestProjection } = require('./codex/desktop-request-projection.cjs')
   const projector = createCodexDesktopRequestProjection({ record: value => value && typeof value === 'object' ? value : {},
@@ -69,6 +65,7 @@ export function checkCompanionNativeUnread(assetRoot) {
   const applyEnd = source.indexOf('\nfunction ', applyStart + 1)
   let published
   const applyContext = vm.createContext({ Date,
+    codexDesktopBridge: null,
     codexRecord: value => value || {}, companionEvidenceSequenceV7: (...values) => Math.max(0, ...values.map(value => Number(value) || 0)),
     companionTaskKernel: { getPackage: () => ({ complete: true, providers: { codex: true }, sourceLaneGenerations: {}, packageRevision: 1 }) },
     companionPersistedTaskState: () => ({}), companionTaskConfiguration: () => ({ dynamicTaskWindowHours: 24 }),

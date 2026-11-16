@@ -124,26 +124,23 @@ const CODEX_INVENTORY_MEMBERSHIP_RECOVERY_INTERVAL_MS = 1_000
 // boundary so a newer renderer can mark long-lived preload evidence degraded.
 const CODEX_TASK_STATE_REVISION = 'task-state-v12'
 const EXECUTE_PLAN_PROMPT_V1 = '请按已完成的 Plan 开始执行。'
-const CODEX_DESKTOP_IPC_VERSIONS = {
-  'client-status-changed': 0,
-  'ipc-connection-reset': 1,
-  'thread-stream-state-changed': 11,
-  'thread-stream-following-changed': 1,
-  'thread-stream-following-status-requested': 1,
-  'thread-read-state-changed': 3,
-  'thread-archived': 2,
-  'thread-unarchived': 1
-}
+let codexDesktopProtocol = null
+try {
+  let desktopProtocolModule = null
+  try { desktopProtocolModule = require('./codex/desktop-protocol.cjs') } catch {}
+  if (!desktopProtocolModule) {
+    const bases = [typeof __dirname === 'string' ? __dirname : '', process.cwd(), path.join(process.cwd(), 'preload'), path.join(process.cwd(), 'public')].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try { desktopProtocolModule = require(path.join(base, 'codex', 'desktop-protocol.cjs')); break } catch {}
+    }
+  }
+  if (typeof desktopProtocolModule?.codexDesktopStreamMessageDecision === 'function'
+    && typeof desktopProtocolModule?.codexDesktopIpcVersionAccepted === 'function') codexDesktopProtocol = desktopProtocolModule
+} catch { codexDesktopProtocol = null }
 
+const CODEX_DESKTOP_IPC_VERSIONS = codexDesktopProtocol?.CODEX_DESKTOP_IPC_VERSIONS || {}
 function codexDesktopIpcVersionAccepted(method, version) {
-  const expectedVersion = CODEX_DESKTOP_IPC_VERSIONS[method]
-  if (!Number.isInteger(expectedVersion)) return true
-  // Older installed Codex editor extensions publish unrevisioned stream-state
-  // v6 and read-state v1/v2; the current Desktop/editor protocol uses v11/v3.
-  return version === expectedVersion
-    || method === 'thread-stream-state-changed' && version === 6
-    || method === 'thread-read-state-changed' && version === 1
-    || method === 'thread-read-state-changed' && version === 2
+  return codexDesktopProtocol?.codexDesktopIpcVersionAccepted(method, version) === true
 }
 const WINDOW_BRIDGE_TIMEOUT_MS = 5_000
 const WINDOW_BRIDGE_OUTPUT_LIMIT = 1024 * 1024
@@ -4920,12 +4917,123 @@ class CodexDesktopCompanionBridge {
     this.endpointCheck = null
     this.endpointReason = ''
     this.bridgeStateLine = ''
+    this.streamGeneration = 0
+    this.streamProtocols = new Map()
     this.unreadRecovery = codexDesktopShadow?.createCodexDesktopUnreadRecovery?.({
       record: recordCompanionDiagnosticEvent, knownThread: (id) => codexActivityInventory.get(id),
       sideRelations: codexAllSideRelations, now: Date.now,
       isExternalThreadId: (id) => codexhostDiscovery?.isExternalThreadId?.(id) === true,
       isMachineThreadId: (id) => codexSubagentDiscovery?.codexIsMachineRunThread?.(id) === true
     })
+  }
+
+
+  streamProtocolFor(threadId) {
+    return validCodexThreadId(threadId) ? this.streamProtocols.get(threadId) : null
+  }
+
+  streamWriteContext(threadId) {
+    const shadow = validCodexThreadId(threadId) ? this.shadows.get(threadId) || this.sideShadows.get(threadId) : null
+    return {
+      streamGeneration: this.streamGeneration,
+      socket: this.socket || null,
+      clientId: this.clientId,
+      ownerClientId: typeof shadow?.ownerClientId === 'string' ? shadow.ownerClientId : '',
+      ownerDisconnectedAt: shadow?.ownerDisconnectedAt || 0,
+      parentThreadId: shadow?.sideConversation ? shadow.parentThreadId || '' : ''
+    }
+  }
+
+  streamWriteCurrent(threadId, context) {
+    if (!context || this.streamGeneration !== context.streamGeneration || this.socket !== context.socket || this.clientId !== context.clientId) return false
+    const current = this.streamWriteContext(threadId)
+    return current.ownerClientId === context.ownerClientId
+      && current.ownerDisconnectedAt === context.ownerDisconnectedAt
+      && current.parentThreadId === context.parentThreadId
+  }
+
+  forgetStreamProtocol(threadId) {
+    const previousDegraded = this.hasDegradedStreams()
+    if (validCodexThreadId(threadId)) this.streamProtocols.delete(threadId)
+    this.publishStreamHealth(previousDegraded)
+  }
+
+  clearStreamProtocols(ownerClientId = '') {
+    const previousDegraded = this.hasDegradedStreams()
+    if (!ownerClientId) {
+      this.streamGeneration += 1
+      this.streamProtocols.clear()
+      this.publishStreamHealth(previousDegraded)
+      return
+    }
+    for (const [threadId, profile] of this.streamProtocols) {
+      if (profile.ownerClientId === ownerClientId) this.streamProtocols.delete(threadId)
+    }
+    this.publishStreamHealth(previousDegraded)
+  }
+
+  streamStateReliable(threadId) {
+    const profile = this.streamProtocolFor(threadId)
+    return !profile || profile.available !== false
+  }
+
+  hasDegradedStreams() {
+    for (const profile of this.streamProtocols.values()) if (profile.available === false) return true
+    return false
+  }
+
+  streamProviderHealth(currentHealth) {
+    const current = currentHealth && typeof currentHealth === 'object' ? currentHealth : {}
+    const degraded = this.hasDegradedStreams()
+    const owned = current.status === 'degraded' && current.errorCode === 'desktop-stream-unavailable'
+    if (degraded && current.status === 'ready') {
+      return { ...current, status: 'degraded', errorCode: 'desktop-stream-unavailable' }
+    }
+    if (!degraded && owned) return { ...current, status: 'ready', errorCode: '' }
+    return currentHealth
+  }
+
+  publishStreamHealth(previousDegraded = this.hasDegradedStreams()) {
+    if (previousDegraded === this.hasDegradedStreams()) return false
+    return emitCodexActivityDelta([], false)
+  }
+
+  noteStreamProfile(threadId, ownerClientId, fields = {}) {
+    if (!validCodexThreadId(threadId)) return null
+    const current = this.streamProtocols.get(threadId)
+    const profile = {
+      ownerClientId,
+      method: 'thread-stream-state-changed',
+      generation: this.streamGeneration,
+      version: fields.version,
+      profile: fields.profile || '',
+      available: fields.available !== false,
+      reason: fields.reason || '',
+      recoveryIssued: fields.available === false
+        && current?.available === false
+        && current.ownerClientId === ownerClientId
+        && current.generation === this.streamGeneration
+        && current.recoveryIssued === true,
+      trustedRevision: current?.ownerClientId === ownerClientId && current.generation === this.streamGeneration
+        ? current.trustedRevision : null
+    }
+    if (Number.isSafeInteger(fields.trustedRevision) && fields.trustedRevision >= 0) profile.trustedRevision = fields.trustedRevision
+    this.streamProtocols.set(threadId, profile)
+    return profile
+  }
+
+  recoverStreamTarget(threadId, ownerClientId, reason, trustedRevision = null) {
+    const previousDegraded = this.hasDegradedStreams()
+    const activeRecovery = this.waitingEdgeRefreshes.get(threadId)
+    const profile = this.noteStreamProfile(threadId, ownerClientId, {
+      available: false,
+      reason,
+      trustedRevision
+    })
+    if (!profile || profile.recoveryIssued || activeRecovery) return
+    profile.recoveryIssued = true
+    this.publishStreamHealth(previousDegraded)
+    this.scheduleWaitingEdgeRefresh(threadId)
   }
 
   cancelLatestTurnRefreshByKey(refreshKey) {
@@ -5222,12 +5330,16 @@ class CodexDesktopCompanionBridge {
     if (shadow) shadow.executionSettings = null
     this.cancelWaitingEdgeRefresh(threadId)
     const refresh = { startedAt: Date.now(), timers: new Set() }
+    const context = this.streamWriteContext(threadId)
     this.waitingEdgeRefreshes.set(threadId, refresh)
     codexNoteActivityDecision('waitingEdgeResubscribe')
     for (const delay of CODEX_WAITING_EDGE_REFRESH_DELAYS_MS) {
       const timer = setTimeout(() => {
         refresh.timers.delete(timer)
-        if (this.closed || this.waitingEdgeRefreshes.get(threadId) !== refresh) return
+        if (this.closed || this.waitingEdgeRefreshes.get(threadId) !== refresh || !this.streamWriteCurrent(threadId, context)) {
+          if (this.waitingEdgeRefreshes.get(threadId) === refresh) this.waitingEdgeRefreshes.delete(threadId)
+          return
+        }
         if (Date.now() - refresh.startedAt > CODEX_WAITING_EDGE_REFRESH_DEADLINE_MS) return
         if (delay === 0) this.resubscribe(threadId)
         else {
@@ -5241,6 +5353,10 @@ class CodexDesktopCompanionBridge {
     const deadlineTimer = setTimeout(() => {
       refresh.timers.delete(deadlineTimer)
       if (this.waitingEdgeRefreshes.get(threadId) !== refresh) return
+      if (!this.streamWriteCurrent(threadId, context)) {
+        this.waitingEdgeRefreshes.delete(threadId)
+        return
+      }
       this.waitingEdgeRefreshes.delete(threadId)
       codexNoteActivityDecision('waitingEdgeRecoveryExpired')
       emitCodexActivityDelta([], false)
@@ -5527,6 +5643,7 @@ class CodexDesktopCompanionBridge {
       attempt: 0,
       deadlineAt: Date.now() + CODEX_DESKTOP_TURN_REFRESH_DEADLINE_MS
     }
+    const context = this.streamWriteContext(threadId)
     this.unreadRefreshes.set(threadId, refresh)
     const finish = () => {
       if (refresh.timer) clearTimeout(refresh.timer)
@@ -5535,8 +5652,10 @@ class CodexDesktopCompanionBridge {
     }
     const run = () => {
       refresh.timer = null
+      if (this.unreadRefreshes.get(threadId) !== refresh) return
       const latest = codexActivityInventory.get(threadId)
-      if (refresh.cancelled || !latest) {
+      if (refresh.cancelled || !latest || !this.streamWriteCurrent(threadId, context)) {
+        if (this.unreadRefreshes.get(threadId) === refresh) this.unreadRefreshes.delete(threadId)
         finish()
         return
       }
@@ -5546,6 +5665,10 @@ class CodexDesktopCompanionBridge {
           return
         }
         const becameUnread = this.applyFreshCompletionUnread(latest, threadId)
+        if (this.unreadRefreshes.get(threadId) !== refresh || !this.streamWriteCurrent(threadId, context)) {
+          if (this.unreadRefreshes.get(threadId) === refresh) this.unreadRefreshes.delete(threadId)
+          return
+        }
         if (becameUnread) {
           emitCodexActivityDelta([{ ...latest, readStateOnly: true }], false)
           finish()
@@ -5637,6 +5760,7 @@ class CodexDesktopCompanionBridge {
         ? CODEX_COMPLETION_EVENT_REFRESH_DELAYS_MS
         : CODEX_DESKTOP_TURN_REFRESH_DELAYS_MS
     }
+    const context = this.streamWriteContext(queryThreadId)
     this.turnRefreshes.set(refreshKey, refresh)
 
     const finish = (inventoryChanged = false) => {
@@ -5651,8 +5775,10 @@ class CodexDesktopCompanionBridge {
     }
     const run = async () => {
       refresh.timer = null
+      if (this.turnRefreshes.get(refreshKey) !== refresh) return
       const known = codexActivityInventory.get(threadId)
-      if (refresh.cancelled || !known) {
+      if (refresh.cancelled || !known || !this.streamWriteCurrent(queryThreadId, context)) {
+        if (this.turnRefreshes.get(refreshKey) === refresh) this.turnRefreshes.delete(refreshKey)
         finish(false)
         return
       }
@@ -5707,7 +5833,8 @@ class CodexDesktopCompanionBridge {
           ? Math.max(100, Math.min(350, remaining))
           : Math.max(250, Math.min(1_000, remaining)))
         const latestKnown = codexActivityInventory.get(threadId)
-        if (refresh.cancelled || latestKnown !== known) {
+        if (this.turnRefreshes.get(refreshKey) !== refresh || refresh.cancelled || latestKnown !== known || !this.streamWriteCurrent(queryThreadId, context)) {
+          if (this.turnRefreshes.get(refreshKey) === refresh) this.turnRefreshes.delete(refreshKey)
           finish(false)
           return
         }
@@ -5891,9 +6018,12 @@ class CodexDesktopCompanionBridge {
           }
           return
         }
-      } catch {}
+      } catch {
+        if (this.turnRefreshes.get(refreshKey) !== refresh) return
+      }
 
       const nextDelay = refresh.refreshDelays[refresh.attempt]
+      if (this.turnRefreshes.get(refreshKey) !== refresh) return
       if (typeof nextDelay !== 'number' || Date.now() + nextDelay >= refresh.deadlineAt) {
         finish(true)
         return
@@ -6015,6 +6145,10 @@ class CodexDesktopCompanionBridge {
     }
     if (codexDesktopRequestProjection?.codexDesktopHandleOwnerDiscoveryResponse?.(this, message)) return
     if (message.type !== 'broadcast' || typeof message.method !== 'string') return
+    if (message.method === 'thread-stream-state-changed') {
+      this.handleStreamState(message)
+      return
+    }
     if (Array.isArray(message.targetClientIds) && !message.targetClientIds.includes(this.clientId)) return
     if (!codexDesktopIpcVersionAccepted(message.method, message.version)) {
       if (message.method === 'thread-read-state-changed') this.handleReadState(codexRecord(message.params), message.sourceClientId, message.version)
@@ -6028,6 +6162,7 @@ class CodexDesktopCompanionBridge {
         if (params.status === 'connected' || params.connected === true) this.followAll(true, [clientId])
         else if (params.status === 'disconnected' || params.status === 'closed' || params.connected === false) {
           this.dropOwner(clientId)
+          this.clearStreamProtocols(clientId)
           this.followAll(true)
         }
       }
@@ -6097,6 +6232,7 @@ class CodexDesktopCompanionBridge {
         if (ownsShadow) {
           this.shadows.delete(threadId)
           this.sideShadows.delete(threadId)
+          this.forgetStreamProtocol(threadId)
         }
         if (ownsUnread) this.liveUnread.delete(threadId)
         const known = codexActivityInventory.get(threadId)
@@ -6123,10 +6259,6 @@ class CodexDesktopCompanionBridge {
       // `following=true` announces the sender's own follower state; it is not
       // a request for our state. Only `thread-stream-following-status-requested`
       // asks us to re-announce, otherwise two followers can echo forever.
-      return
-    }
-    if (message.method === 'thread-stream-state-changed') {
-      this.handleStreamState(params, message.sourceClientId, message.version)
       return
     }
     if (message.method === 'thread-read-state-changed') {
@@ -6158,6 +6290,7 @@ class CodexDesktopCompanionBridge {
         }
         this.shadows.delete(params.conversationId)
         this.sideShadows.delete(params.conversationId)
+        this.forgetStreamProtocol(params.conversationId)
         this.liveUnread.delete(params.conversationId)
         if (sideShadow?.parentThreadId) this.emitParentActivity(sideShadow.parentThreadId)
         codexhostDiscovery?.codexhostForgetThread?.(params.conversationId)
@@ -6171,24 +6304,50 @@ class CodexDesktopCompanionBridge {
     }
   }
 
-  handleStreamState(params, ownerClientId, protocolVersion) {
-    if (params.hostId !== 'local' || !validCodexThreadId(params.conversationId)) return
+  handleStreamState(message) {
+    const params = codexRecord(message?.params)
+    const ownerClientId = typeof message?.sourceClientId === 'string' ? message.sourceClientId : ''
+    const protocolVersion = message?.version
+    const threadId = params.conversationId
+    const previousForDecision = this.shadows.get(threadId) || this.sideShadows.get(threadId)
+    const decision = codexDesktopProtocol?.codexDesktopStreamMessageDecision(message, {
+      clientId: this.clientId, validThreadId: validCodexThreadId, previousShadow: previousForDecision,
+      requestSupported: (request) => Boolean(codexDesktopRequestFlag(codexRecord(request)))
+    })
+    if (!decision || decision.kind === 'ignore') return
+    const currentProfile = this.streamProtocolFor(threadId)
+    const trustedRevision = currentProfile?.ownerClientId === ownerClientId && currentProfile.generation === this.streamGeneration ? currentProfile.trustedRevision : null
+    const observedRevision = Number.isSafeInteger(decision.revision) && decision.revision >= 0 ? decision.revision : null
+    const requiredRevision = [trustedRevision, observedRevision].filter((value) => Number.isSafeInteger(value)).reduce((highest, value) => Math.max(highest, value), null)
+    if (decision.kind === 'recover') { this.recoverStreamTarget(threadId, ownerClientId, decision.reason, requiredRevision); return }
+    if (currentProfile?.available === false && !(decision.kind === 'snapshot' && (!Number.isSafeInteger(trustedRevision) || decision.revision >= trustedRevision))) {
+      this.recoverStreamTarget(threadId, ownerClientId, currentProfile.reason, trustedRevision); return
+    }
+    if (decision.kind === 'snapshot' && Number.isSafeInteger(trustedRevision) && decision.revision < trustedRevision) return
     const change = codexRecord(params.change)
-    if (change.type === 'snapshot') {
-      const previousShadow = this.shadows.get(params.conversationId) || this.sideShadows.get(params.conversationId)
-      const waitingState = this.waitingStateFor(params.conversationId)
-      const normalizedChange = protocolVersion === 6 && !Number.isInteger(change.revision)
-        ? { ...change, revision: previousShadow?.ownerClientId === ownerClientId ? previousShadow.revision + 1 : 1 }
-        : change
-      if (this.unreadRecovery?.snapshotAllowed(this, params.conversationId, normalizedChange, previousShadow, ownerClientId, protocolVersion === 6 && !Number.isInteger(change.revision)) === false) return
+    if (change.type === 'snapshot' && decision.kind === 'snapshot') {
+      const previousShadow = previousForDecision
+      const waitingState = this.waitingStateFor(threadId)
+      const isolatedWaitingState = typeof codexDesktopShadow?.cloneCodexDesktopValue === 'function' ? codexDesktopShadow.cloneCodexDesktopValue(waitingState) : null
+      const normalizedChange = decision.legacyUnrevisioned ? { ...change, revision: decision.revision } : change
+      if (!isolatedWaitingState) { this.recoverStreamTarget(threadId, ownerClientId, 'waiting-isolation-unavailable', requiredRevision); return }
+      if (this.unreadRecovery?.snapshotAllowed(this, params.conversationId, normalizedChange, previousShadow, ownerClientId, decision.legacyUnrevisioned) === false) return
       if (previousShadow?.ephemeral === true && previousShadow.sideConversation
         && previousShadow.ownerClientId === ownerClientId && normalizedChange.revision < previousShadow.revision) return
-      const shadow = codexDesktopShadowFromSnapshot(normalizedChange, previousShadow, waitingState)
+      const shadow = codexDesktopShadowFromSnapshot(normalizedChange, previousShadow, isolatedWaitingState)
       if (!shadow) {
-        this.scheduleWaitingEdgeRefresh(params.conversationId)
+        this.recoverStreamTarget(threadId, ownerClientId, 'snapshot-unparsed', requiredRevision)
         return
       }
-      if (codexRejectInternalReviewThread(params.conversationId, shadow.threadSourceKind)) return
+      if (codexRejectInternalReviewThread(threadId, shadow.threadSourceKind)) { this.forgetStreamProtocol(threadId); return }
+      if (waitingState && isolatedWaitingState && isolatedWaitingState !== waitingState) {
+        waitingState.runtimeWaitingSequences = isolatedWaitingState.runtimeWaitingSequences
+        waitingState.requestHistory = isolatedWaitingState.requestHistory
+      }
+      shadow.waitingState = waitingState
+      const previousDegraded = this.hasDegradedStreams()
+      this.noteStreamProfile(threadId, ownerClientId, { version: protocolVersion, profile: decision.profile, available: true, trustedRevision: decision.revision })
+      this.publishStreamHealth(previousDegraded)
       this.retainCausallyOpenWaitingRequests(params.conversationId, previousShadow, shadow)
       const requestClearSequence = this.recordRemovedWaitingRequests(
         params.conversationId,
@@ -6288,16 +6447,14 @@ class CodexDesktopCompanionBridge {
       }
       return
     }
-    if (change.type !== 'patches') return
-    const shadow = this.shadows.get(params.conversationId) || this.sideShadows.get(params.conversationId)
-    const legacyUnrevisioned = protocolVersion === 6
-      && !Number.isInteger(change.baseRevision)
-      && !Number.isInteger(change.revision)
-    const baseRevision = legacyUnrevisioned ? shadow?.revision : change.baseRevision
-    const revision = legacyUnrevisioned && Number.isInteger(shadow?.revision)
-      ? shadow.revision + 1
-      : change.revision
-    if (!shadow
+    if (change.type !== 'patches' || decision.kind !== 'patches') return
+    const liveShadow = previousForDecision
+    let shadow = typeof codexDesktopShadow?.cloneCodexDesktopValue === 'function' ? codexDesktopShadow.cloneCodexDesktopValue(liveShadow) : null
+    if (!shadow) { this.recoverStreamTarget(threadId, ownerClientId, 'candidate-unavailable', requiredRevision); return }
+    const legacyUnrevisioned = decision.legacyUnrevisioned
+    const baseRevision = decision.baseRevision
+    const revision = decision.revision
+    if (!liveShadow
       || shadow.ownerClientId !== ownerClientId
       || !Number.isInteger(baseRevision)
       || baseRevision !== shadow.revision
@@ -6308,19 +6465,19 @@ class CodexDesktopCompanionBridge {
       this.scheduleWaitingEdgeRefresh(params.conversationId)
       return
     }
-    const previousShadow = { ...shadow }
-    const previousActivity = codexDesktopShadowActivity(shadow)
+    const previousShadow = { ...liveShadow }
+    const previousActivity = codexDesktopShadowActivity(liveShadow)
     const wasActive = previousActivity?.status === 'active'
-    const previousRuntime = shadow.runtime
-      ? { type: shadow.runtime.type, activeFlags: [...(shadow.runtime.activeFlags || [])] }
+    const previousRuntime = liveShadow.runtime
+      ? { type: liveShadow.runtime.type, activeFlags: [...(liveShadow.runtime.activeFlags || [])] }
       : null
-    const previousRuntimeFlags = [...(shadow.runtime?.activeFlags || [])]
+    const previousRuntimeFlags = [...(liveShadow.runtime?.activeFlags || [])]
     const previousRequestState = {
-      requests: [...(shadow.requests || [])],
+      requests: [...(liveShadow.requests || [])],
       runtime: previousRuntime,
-      requestSetRevision: shadow.requestSetRevision,
-      requestSetComplete: shadow.requestSetComplete,
-      requestSetAuthority: shadow.requestSetAuthority
+      requestSetRevision: liveShadow.requestSetRevision,
+      requestSetComplete: liveShadow.requestSetComplete,
+      requestSetAuthority: liveShadow.requestSetAuthority
     }
     let containsReadStatePatch = false
     let containsActivityPatch = false
@@ -6336,14 +6493,20 @@ class CodexDesktopCompanionBridge {
         refreshRuntimeWaitingSequences = true
       }
       if (!codexApplyDesktopShadowPatch(shadow, patch)) {
-        this.scheduleWaitingEdgeRefresh(params.conversationId)
+        this.recoverStreamTarget(threadId, ownerClientId, 'patch-unparsed', requiredRevision)
         return
       }
       if (patchPath[0] === 'threadRuntimeStatus' || patchPath[0] === 'requests' || shadow.asyncRequestSetChanged || shadow.liveTurnActivityChanged) containsActivityPatch = true
       if (patchPath[0] === 'requests' || shadow.asyncRequestSetChanged) containsRequestSetPatch = true
       containsCanonicalRunningProgress ||= shadow.canonicalRunningProgress === true
     }
-    if (codexRejectInternalReviewThread(params.conversationId, shadow.threadSourceKind)) return
+    if ((shadow.requests || []).some((request) => !codexDesktopRequestFlag(request))) {
+      this.recoverStreamTarget(threadId, ownerClientId, 'request-unsupported', requiredRevision)
+      return
+    }
+    if (codexRejectInternalReviewThread(threadId, shadow.threadSourceKind)) { this.forgetStreamProtocol(threadId); return }
+    codexDesktopShadow?.commitCodexDesktopShadowCandidate(liveShadow, shadow)
+    shadow = liveShadow
     const parentThreadId = shadow.sideConversation ? shadow.parentThreadId : params.conversationId
     const currentKnown = codexActivityInventory.get(parentThreadId)
     const canonicalRunningWitness = codexDesktopActivityResolution?.codexDesktopCanonicalRunningWitness(
@@ -6440,6 +6603,8 @@ class CodexDesktopCompanionBridge {
     if (containsReadStatePatch) this.unreadRecovery?.notificationAccepted(this, params.conversationId)
     const readStateOnly = containsReadStatePatch && !containsActivityPatch
       && !change.patches.some((patch) => ['turnHistory', 'turns', 'threadGoal', 'ephemeral', 'unconfirmedTurnSubmissions'].includes(patch.path?.[0]))
+    this.noteStreamProfile(params.conversationId, ownerClientId, { version: protocolVersion, profile: decision.profile, available: true, trustedRevision: revision })
+    this.publishStreamHealth()
     if (this.sideShadows.has(params.conversationId)) {
       this.reconcileDesktopBranchTerminal(params.conversationId, shadow, previousShadow)
       this.publishSideShadow(params.conversationId, shadow, readStateOnly, wasActive && !isActive)
@@ -7096,6 +7261,7 @@ class CodexDesktopCompanionBridge {
   }
 
   resetLiveAuthority() {
+    this.clearStreamProtocols()
     this.unreadRecovery?.clear(this, process.platform === 'win32')
     this.clearLatestTurnRefreshes()
     this.clearWaitingEdgeRefreshes()
@@ -7105,14 +7271,20 @@ class CodexDesktopCompanionBridge {
       if (codexDesktopHasStickyPendingRequest(shadow)) {
         this.markOwnerDisconnected(shadow, known)
         retainedParents.add(threadId)
-      } else this.shadows.delete(threadId)
+      } else {
+        this.shadows.delete(threadId)
+        this.forgetStreamProtocol(threadId)
+      }
     }
     for (const [threadId, shadow] of this.sideShadows) {
       const known = codexActivityInventory.get(shadow.parentThreadId)
       if (codexDesktopHasStickyPendingRequest(shadow)) {
         this.markOwnerDisconnected(shadow, known)
         if (shadow.parentThreadId) retainedParents.add(shadow.parentThreadId)
-      } else this.sideShadows.delete(threadId)
+      } else {
+        this.sideShadows.delete(threadId)
+        this.forgetStreamProtocol(threadId)
+      }
     }
     this.sideRecoveryPending.clear()
     this.liveUnread.clear()
@@ -7139,7 +7311,10 @@ class CodexDesktopCompanionBridge {
       if (next.has(threadId)) continue
       const pendingLiveRegistration = !previous.has(threadId)
         && codexDesktopShadowActivity(shadow)?.status === 'active'
-      if (!pendingLiveRegistration) this.shadows.delete(threadId)
+      if (!pendingLiveRegistration) {
+        this.shadows.delete(threadId)
+        this.forgetStreamProtocol(threadId)
+      }
     }
     for (const threadId of this.liveUnread.keys()) if (!next.has(threadId)) this.liveUnread.delete(threadId)
     for (const threadId of this.persistedUnread.keys()) {
@@ -7161,6 +7336,7 @@ class CodexDesktopCompanionBridge {
     for (const [threadId, shadow] of this.sideShadows) {
       if (next.has(shadow.parentThreadId)) continue
       this.sideShadows.delete(threadId)
+      this.forgetStreamProtocol(threadId)
       this.sideRecoveryPending.delete(threadId)
       if (this.state === 'connected') this.followAny(threadId, false)
     }
@@ -7706,6 +7882,7 @@ function emitCodexActivityDelta(entries, inventoryChanged, inventoryRefreshPrior
   }
   for (const fingerprint of nextFingerprints) codexActivitySemanticFingerprints.set(fingerprint.lane, fingerprint.value)
   const bridgeFingerprint = `${codexActivitySourceFingerprint}\0${codexDesktopBridge?.state || 'not-checked'}`
+    + `\0${codexDesktopBridge?.hasDegradedStreams() === true ? 'degraded' : 'clear'}`
   const bridgeChanged = bridgeFingerprint !== codexActivityBridgeFingerprint
   const normalizedArchivedKeys = [...new Set((Array.isArray(archivedKeys) ? archivedKeys : [])
     .filter((key) => typeof key === 'string' && /^[a-f0-9]{32}$/.test(key)))]
@@ -8165,6 +8342,12 @@ function handleCodexStdout(chunk) {
 function sendCodexRpc(method, params, timeoutMs = CODEX_RPC_TIMEOUT_MS) {
   if (!codexProcess || !codexProcess.stdin || typeof codexProcess.stdin.write !== 'function') {
     return Promise.reject(codexError('process-exited', 'Codex App Server is unavailable'))
+  }
+  const threadId = codexRecord(params).threadId
+  if (['turn/start', 'thread/archive', 'thread/goal/set'].includes(method)
+    && validCodexThreadId(threadId)
+    && codexDesktopBridge?.streamStateReliable(threadId) === false) {
+    return Promise.reject(codexError('state-changed', 'Codex 状态待核验，未发送'))
   }
   const id = ++codexRpcId
   return new Promise((resolve, reject) => {
@@ -8783,8 +8966,11 @@ function readCodexDesktopUnreadIdsInner() {
   try { parsed = JSON.parse(fs.readFileSync(primary, 'utf8')) } catch {
     throw codexError('protocol-error', 'Codex desktop unread state is invalid')
   }
+  codexDesktopBridge?.unreadRecovery?.bootstrapBinding?.(codexDesktopBridge, parsed)
+  const binding = codexDesktopBridge?.readStateBinding
+    || codexDesktopShadow?.codexDesktopStartupReadBinding?.(parsed)
   let local
-  try { local = codexDesktopShadow?.parseCodexDesktopUnreadState(parsed, codexDesktopBridge?.readStateBinding) } catch (error) {
+  try { local = codexDesktopShadow?.parseCodexDesktopUnreadState(parsed, binding) } catch (error) {
     const failure = codexError('protocol-error', 'Codex desktop unread state is invalid')
     failure.unreadFailureReason = codexDesktopShadow?.codexDesktopUnreadReadFailureReason?.(error) || 'read-failed'
     failure.unreadSourceFingerprint = codexDesktopBridge?.unreadRecovery?.fingerprint(parsed) || ''
@@ -12342,6 +12528,7 @@ async function preflightCompanionTaskPackageV7(input = {}) {
       generation: available ? readAt : 0,
       errorCode: result.errorCode || ''
     }
+    if (provider === 'codex') providerHealth.codex = codexDesktopBridge?.streamProviderHealth(providerHealth.codex) || providerHealth.codex
     if (!available) continue
     result.projection = 'failed'
     const nodes = []
@@ -13125,6 +13312,8 @@ function applyCodexActivityToCompanionKernel(delta, removedMemberKeys = []) {
     .map((value) => createCompanionInteractionSetV7(value))
     .filter(Boolean)
   const currentLanes = codexRecord(current.sourceLaneGenerations?.codex)
+  const providerHealth = codexDesktopBridge?.streamProviderHealth(current.providerHealth?.codex) || current.providerHealth?.codex
+  const healthChanged = providerHealth !== current.providerHealth?.codex
   const hasActivity = entries.some((entry) => entry.readStateOnly !== true)
   const hasUnread = entries.some((entry) => typeof entry.hasUnreadTurn === 'boolean' && entry.unreadAuthority !== 'unavailable')
   const hasInteraction = explicitInteractions.length > 0 || explicitInteractionSets.length > 0
@@ -13155,9 +13344,9 @@ function applyCodexActivityToCompanionKernel(delta, removedMemberKeys = []) {
     laneGenerations,
     removedKeys: { membership: [...archivedKeys, ...removedMemberKeys] },
     removedRelationChildKeys: removedMemberKeys,
-    health: current.providerHealth?.codex?.status
+    health: providerHealth?.status
   })
-  if (!batch || (!entries.length && !archivedKeys.length && !removedMemberKeys.length && !hasInteraction)) {
+  if (!batch || (!entries.length && !archivedKeys.length && !removedMemberKeys.length && !hasInteraction && !healthChanged)) {
     recordCompanionProbeGate('codex-activity-v7-gate', 'empty-delta', {
       generation,
       inventoryChanged: source.inventoryChanged === true
@@ -13168,7 +13357,8 @@ function applyCodexActivityToCompanionKernel(delta, removedMemberKeys = []) {
   const published = publishCompanionEvidenceBatchesV3({
     acceptedAt: source.receivedAt,
     sourceLaneGenerations: { codex: laneGenerations },
-    evidenceBatches: { codex: batch }
+    evidenceBatches: { codex: batch },
+    providerHealth: { codex: providerHealth }
   })
   const canonical = companionTaskKernel?.getPackage?.()
   const changed = Boolean(published && canonical?.packageRevision !== beforeRevision)

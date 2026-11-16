@@ -6,6 +6,7 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 
 ## Current Authorities And Routes
 
+- 状态流结构兼容与本次验收：[Codex 数据与状态同步组件](../../261114/codex-state-sync/raw-requirement.md#L1)
 - 当前跨来源运行时权威：[Companion Task Topology V6 corrective revision](../../260823/companion-task-topology-v5/spec.md#L1)
 - Codex Tab 当前功能权威：[codex-quota-float](../../260718/1148-codex-quota-float/spec.md#L1) · [Environment Action](../../260729/1435-codex-environment-actions/spec.md#L1) · [快速任务查看](../../260813/1455-companion-quick-task-view/spec.md#L1) · [搜索栏收纳](../../260817/0859-float-search-status-compact/spec.md#L1) · [确认气泡](../../260817/1618-float-action-hint-popover/spec.md#L1) · [Side 重载恢复提示](../../260825/codex-side-reload-recovery/spec.md#L1)
 - 条款正文：[raw-requirement.md](../../260718/1148-codex-quota-float/raw-requirement.md#L1)
@@ -13,6 +14,9 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 - 产品语义：[PRODUCT_REQUIREMENTS](../../PRODUCT_REQUIREMENTS.md#L1)
 
 ## Primary Requirements
+
+- [状态流结构兼容 RAW-001](../codex-state-sync-raw-001.md#L1) — `active`
+
 2026-11-14 Hook 规则裁决：收尾构建只由同步 Stop Hook 执行。未回结果只报缺口，模型不手动 build，不伪装调用处理器。真实失败后才修复并交自然 Stop 重验。本条不产生新产物身份。
 
 2026-11-14 显示标签增量：账号显示邮箱名前四位加完整域名，仅去掉末尾 .com；重名序号仍放在时间末尾。SHA-256 去重不变，完整邮箱不落盘。20:52 自然 Hook 回执已覆盖此前源码与本轮 Hook 文案：V7 / host-46e2d9b53fc524f3409c / renderer-84aa25e1092762ee1804 / builtAt 2026-11-14T12:52:06.897Z；这不是真实插件验收，也不覆盖此后新增的 Hook 文案。

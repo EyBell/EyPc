@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 69,
+    "source_documents": 70,
     "ordered_anchors": 356,
     "raw_parent_ordered": 230,
     "unparented_ordered": 126,
@@ -698,6 +698,16 @@
       "source_path": "vibe/specs/261030/tooltip-unification/raw-requirement.md",
       "spec_id": "SPEC-261030-TOOLTIP-UNIFICATION",
       "content_sha256": "bad355283f0a5996204a52275711984ebd8778ac5a460f1ae9fa84745a664a29",
+      "raw_identity_count": 1,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "261114/codex-state-sync",
+      "source_path": "vibe/specs/261114/codex-state-sync/raw-requirement.md",
+      "spec_id": null,
+      "content_sha256": "d2a32b349f406275f21f41889137756e8115b1a73b4a5575fc93bcc583714694",
       "raw_identity_count": 1,
       "ordered_anchor_count": 0,
       "raw_parent_ordered_count": 0,

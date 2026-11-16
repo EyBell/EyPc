@@ -16,13 +16,13 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 真值维度 | 当前唯一值 |
 | --- | --- |
 | 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
-| 需求登记 | 373 leaves / 7 modules / 349 active / 22 superseded / 2 proposed / 0 conflicted |
+| 需求登记 | 374 leaves / 7 modules / 350 active / 22 superseded / 2 proposed / 0 conflicted |
 | 取代关系 | 22 whole / 157 scoped |
-| 原始来源 | 69 documents / 356 ordered / 230 RAW-parent / 126 source-only |
+| 原始来源 | 70 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-46e2d9b53fc524f3409c / renderer-84aa25e1092762ee1804` · `artifact-ready` |
-| 当前构建时间 | `2026/11/14 20:52:06`（`2026-11-14T12:52:06.897Z`） |
+| 当前构建产物 | `host-94a52604d80652934760 / renderer-b8e50f43a7ff42bc9146` · `artifact-ready` |
+| 当前构建时间 | `2026/11/16 09:48:56`（`2026-11-16T01:48:56.412Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -34,10 +34,10 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
   "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
   "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
   "requirement_registry": {
-    "leaves": 373,
+    "leaves": 374,
     "modules": 7,
     "proposed": 2,
-    "active": 349,
+    "active": 350,
     "superseded": 22,
     "retired": 0,
     "conflicted": 0,
@@ -45,7 +45,7 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "scoped_relations": 157
   },
   "source_anchor_catalog": {
-    "documents": 69,
+    "documents": 70,
     "ordered_anchors": 356,
     "raw_parent_ordered": 230,
     "registered_requirements": 105,
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-46e2d9b53fc524f3409c",
-    "renderer_asset": "renderer-84aa25e1092762ee1804",
+    "host_asset": "host-94a52604d80652934760",
+    "renderer_asset": "renderer-b8e50f43a7ff42bc9146",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-11-14T12:52:06.897Z",
-    "built_at_local": "2026/11/14 20:52:06",
+    "built_at": "2026-11-16T01:48:56.412Z",
+    "built_at_local": "2026/11/16 09:48:56",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "9f535e649d1a6205cc7042ae9b3911e6479d0c3a808343f76b7b409e882813a9",
-    "raw_sources": "1edc81b3b538a5c4e9a2fa41a6803e44f9b88e889a6acc076779289797407332",
-    "source_anchor_catalog": "b5042020e6a15cf133d36e29759682ca4f07582db5daaf00ffd199f12a227eef",
+    "requirement_registry": "7968b2ed6c32b6a54aadd33a32fd36abf2cab9b1f24305ced22072d5fe2f06b0",
+    "raw_sources": "2b8047e292d9d5163c76964deaacd5f0886f57b5c3b932ed568641bce665e87b",
+    "source_anchor_catalog": "c9623bfb03e0b5bd13b57e88ffbd3a223313c5832b484dcdd5200456dc23d792",
     "product_body": "4a9e330c69b5d56621914244627d59966a83575c85e5ef069dbff0ad756ecd44",
-    "architecture": "a233d645edb3030202574d577c4c6c3405ac876d405881e6b857f506289c9045",
-    "runtime_contract": "89d84e7d8030c9025f238c16e70e3222abc1a06759200e8a4b2a03ed10000551"
+    "architecture": "ccecda5f625a8c0b84cfa3b1626b47f707d99c5f8845f6f6760955593b9b301b",
+    "runtime_contract": "b5f017a1f7599cad95ecc2406b819d780077cd8b2c376e82c117bdf2d59971f1"
   }
 }
 ```
