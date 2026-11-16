@@ -305,7 +305,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
   function codexDesktopCanonicalTerminalDecision(shadow, options = {}) {
     const turn = shadow?.currentCanonicalTurn
     const startedAt = timestampMs(turn?.startedAt)
-    if (typeof shadow.ownerClientId !== 'string' || !shadow.ownerClientId || shadow.ownerDisconnectedAt
+    if (typeof shadow?.ownerClientId !== 'string' || !shadow.ownerClientId || shadow.ownerDisconnectedAt
       || !Number.isInteger(shadow.revision) || shadow.revision < 0) return { reason: 'owner-unavailable' }
     if (shadow.runtime?.type !== 'idle' || shadow.runtime.activeFlags?.length
       || shadow.liveTurnRunning === true) return { reason: 'runtime-not-idle' }
@@ -314,15 +314,15 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     if (shadow.requests?.length || shadow.nativeTurnSubmissions?.some((terminal) => terminal !== true)) return { reason: 'pending-work' }
     const overlays = shadow.asyncTurns || []
     if (overlays.some((overlay) => overlay.status === 'inProgress'
-      || timestampMs(overlay.startedAt) > startedAt
+      || overlay.turnRef !== turn.turnRef && timestampMs(overlay.startedAt) > startedAt
       || overlay.turnRef !== turn.turnRef && timestampMs(overlay.startedAt) >= startedAt
       || !timestampMs(overlay.startedAt) && overlay.turnRef !== turn.turnRef)) return { reason: 'unsettled-overlay' }
     const previous = options.previousShadow
     const previousTurn = previous?.currentCanonicalTurn
     const previousStartedAt = timestampMs(previousTurn?.startedAt)
-    if (previousStartedAt > startedAt
+    if (previousTurn?.turnRef !== turn.turnRef && previousStartedAt > startedAt
       || previousStartedAt === startedAt && previousTurn?.turnRef && previousTurn.turnRef !== turn.turnRef
-      || (previous?.asyncTurns || []).some((overlay) => timestampMs(overlay.startedAt) > startedAt)) return { reason: 'newer-previous-turn' }
+      || (previous?.asyncTurns || []).some((overlay) => overlay.turnRef !== turn.turnRef && timestampMs(overlay.startedAt) > startedAt)) return { reason: 'newer-previous-turn' }
     const sameOwner = previous?.ownerClientId === shadow.ownerClientId
     if (sameOwner && (shadow.revision < previous.revision
       || shadow.revision === previous.revision && previousTurn?.turnRef === turn.turnRef && previousTurn.status !== turn.status)) return { reason: 'stale-revision' }
@@ -334,25 +334,33 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     const terminal = options.terminal
     const terminalStartedAt = timestampMs(terminal?.turnStartedAt)
     const branchStartedAt = timestampMs(options.branchTurnStartedAt)
-    if (terminalStartedAt > startedAt || branchStartedAt > startedAt) return { reason: 'newer-branch-turn' }
+    if (terminal?.turnRef !== turn.turnRef && terminalStartedAt > startedAt
+      || options.branchTurnRef !== turn.turnRef && branchStartedAt > startedAt) return { reason: 'newer-branch-turn' }
     if (options.branchLiveExact === true && (!branchStartedAt || branchStartedAt >= startedAt)) return { reason: 'exact-branch-live' }
-    const duplicate = terminal?.lastTurnStatus === turn.status && terminalStartedAt === startedAt
+    const duplicate = terminal?.lastTurnStatus === turn.status && terminal?.turnRef === turn.turnRef
     const liveSequence = Math.max(Number(options.branchLiveSequence) || 0,
       shadow.activityEvidence === 'activity-event' ? Number(shadow.activityEventSequence) || 0 : 0)
     if (duplicate && liveSequence > (Number(terminal.terminalEvidenceSequence) || 0)) return { reason: 'newer-active-evidence' }
-    return { turn: { status: turn.status, startedAt }, duplicate, reason: duplicate ? 'existing-terminal' : 'owner-canonical-terminal' }
+    return { turn: { turnRef: turn.turnRef, status: turn.status, startedAt }, duplicate, reason: duplicate ? 'existing-terminal' : 'owner-canonical-terminal' }
   }
 
   function codexDesktopTerminalDiagnostic(shadow, previousShadow, input = {}) {
     const reason = input.decision?.reason || 'unavailable'
-    if ((shadow.terminalDecisionReason || previousShadow?.terminalDecisionReason) === reason) return null
     const terminal = input.terminal
+    const signature = JSON.stringify([reason, shadow.currentCanonicalTurn?.turnRef, shadow.currentCanonicalTurn?.status,
+      shadow.currentCanonicalTurn?.startedAt, terminal?.turnRef, terminal?.terminalEvidenceSequence,
+      input.branchStartedAt, input.exactLive, input.goal?.goalStatus, input.goal?.goalFreshness])
+    if ((shadow.terminalDecisionSignature || previousShadow?.terminalDecisionSignature) === signature) return null
+    shadow.terminalDecisionSignature = signature
     const details = {
       reason, source: 'owner-canonical', terminalStatus: input.decision?.turn?.status || 'unknown',
       memberRef: input.memberRef, goalStatus: input.goal?.goalStatus, goalFreshness: input.goal?.goalFreshness,
       canonicalStartedAt: timestampMs(shadow.currentCanonicalTurn?.startedAt),
       terminalStartedAt: timestampMs(terminal?.turnStartedAt), branchStartedAt: input.branchStartedAt,
       branchLiveExact: input.exactLive === true,
+      turnRef: shadow.currentCanonicalTurn?.turnRef || '',
+      sameTerminalIdentity: Boolean(terminal?.turnRef && terminal.turnRef === shadow.currentCanonicalTurn?.turnRef),
+      terminalSequence: Number(terminal?.terminalEvidenceSequence) || 0,
       terminalEvidence: ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(terminal?.lastTurnEvidence)
         ? terminal.lastTurnEvidence : 'unknown',
       ...(shadow.sideConversation === true ? {
@@ -461,15 +469,37 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
             terminalEvidenceSequence: Number(terminal.terminalEvidenceSequence) || 0,
             activeEvidenceSequence: Number(terminal.activeEvidenceSequence) || activeSequence, idleConfirmed }
         : { ...baseline, activeEvidenceSequence: activeSequence }
-    const shadowStart = timestampMs(row.shadow?.asyncTurns?.at(-1)?.startedAt)
-      || timestampMs(row.shadow?.currentCanonicalTurn?.startedAt)
+    const selectedLive = live && (!terminal || !terminalStrictlyNewer)
+    const shadowTurn = row.shadow?.asyncTurns?.at(-1) || row.shadow?.currentCanonicalTurn
+    const shadowStart = timestampMs(shadowTurn?.startedAt)
+    const selectedTurnRef = selectedLive
+      ? row.lane === 'app-server' ? turnRef : shadowTurn?.turnRef || turnRef
+      : terminal ? terminal.turnRef : turnRef
     return { ...fields,
-      turnStartedAt: timestampMs(terminal?.turnStartedAt)
-        || (!live ? timestampMs(baseline.turnStartedAt) : 0)
-        || shadowStart || timestampMs(row.inventoryEvidence?.turnStartedAt)
-        || (main ? timestampMs(known.lastTurnStartedAt) : 0),
+      turnRef: selectedTurnRef || '',
+      turnStartedAtSource: selectedLive ? row.lane === 'app-server' ? 'app-server'
+        : row.shadow?.asyncTurns?.at(-1) ? 'desktop-overlay' : shadowTurn ? 'desktop-canonical' : 'inventory'
+        : terminal ? 'terminal' : 'inventory',
+      turnStartedAt: selectedLive ? row.lane === 'app-server'
+        ? timestampMs(options.liveTurnStartedAt)
+        : shadowTurn ? shadowStart : timestampMs(baseline.turnStartedAt)
+        : terminal ? timestampMs(terminal.turnStartedAt) : timestampMs(baseline.turnStartedAt),
       terminalAt: timestampMs(terminal?.terminalAt)
         || (terminal?.lastTurnStatus === 'completed' ? timestampMs(known.lastTurnCompletedAt) : timestampMs(terminal?.turnStartedAt))
+    }
+  }
+
+  function codexDesktopActivityRebase(branch, previous, causalDomain) {
+    if (!branch.causalKey || branch.causalDomain !== causalDomain
+      || !Number.isSafeInteger(branch.terminalSnapshotRevision) || branch.terminalSnapshotRevision <= 0
+      || !['completed', 'interrupted', 'failed'].includes(branch.lastTurnStatus)) return undefined
+    if (!previous || previous.phase !== 'running' || !Number.isSafeInteger(previous.phaseRevision)
+      || previous.phaseRevision <= 0 || branch.terminalEvidenceSequence <= previous.phaseRevision) return undefined
+    return {
+      expectedCausalKey: previous.causalKey,
+      expectedPhaseRevision: previous.phaseRevision,
+      causalDomain: branch.causalDomain,
+      snapshotRevision: branch.terminalSnapshotRevision
     }
   }
 
@@ -528,6 +558,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     codexDesktopInventoryTurnCandidate,
     codexDesktopMainTerminalFallback,
     codexDesktopBranchTurnFields,
+    codexDesktopActivityRebase,
     codexDesktopSnapshotRefreshOptions,
     codexDesktopTerminalDiagnostic,
     codexDesktopStartedBranchBaseline

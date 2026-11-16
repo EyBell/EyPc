@@ -19,19 +19,19 @@
  * user-task membership across inventory and live transports.
  *
  * `fs`/`path` are injected on the native-state-paths precedent; `readThread`
- * and `record` keep RPC transport and diagnostics with the entry. The only
- * state is the per-factory verification cache, keyed by rollout mtime so
- * steady scans do not repeat targeted reads; every filesystem or RPC error
- * degrades to "not discovered this scan", never to a thrown scan.
+ * and `record` keep RPC transport and diagnostics with the entry.
  */
 
-const CODEX_SUBAGENT_DISCOVERY_REVISION = 'codex-subagent-discovery-v1'
+const CODEX_SUBAGENT_DISCOVERY_REVISION = 'codex-subagent-discovery-v2'
 /** Bounded like side-relation hints: older activity is not worth a targeted read. */
 const CODEX_SUBAGENT_DISCOVERY_MAX_AGE_MS = 48 * 60 * 60 * 1000
 /** Caps per-scan `thread/read` verification work for unknown candidates. */
 const CODEX_SUBAGENT_DISCOVERY_LIMIT = 24
 /** Keeps the verification cache from outliving its candidate window. */
 const CODEX_SUBAGENT_DISCOVERY_CACHE_LIMIT = 200
+const CODEX_THREAD_SOURCE_IDENTITY_CACHE_LIMIT = 2000
+const CODEX_THREAD_SOURCE_RECOVERY_CONCURRENCY = 4
+const CODEX_THREAD_SOURCE_RECOVERY_ATTEMPT_LIMIT = 3
 /** `rollout-<date>T<time>-<threadId>[_<segment>].jsonl`; the first uuid is the thread id. */
 const ROLLOUT_BASENAME_PATTERN = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_[0-9a-f][0-9a-f-]*)?\.jsonl$/i
 
@@ -59,19 +59,8 @@ function isInternalReviewThreadSource(value) {
 /** Only native finite source shapes may supersede a verified source identity. */
 function codexThreadSourceKind(value) {
   if (isInternalReviewThreadSource(value)) return 'guardian_review'
-  if (['cli', 'exec', 'vscode', 'appServer', 'subagent'].includes(value)) return 'other'
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'unknown'
-  const subAgent = value.subAgent
-  if (subAgent === 'review' || subAgent === 'compact') return 'other'
-  if (!subAgent || typeof subAgent !== 'object' || Array.isArray(subAgent)) return 'unknown'
-  const keys = Object.keys(subAgent)
-  if (keys.length !== 1) return 'unknown'
-  if (keys[0] === 'other' && typeof subAgent.other === 'string' && subAgent.other.length > 0) return 'other'
-  const spawn = subAgent.spawn
-  if (keys[0] === 'spawn' && spawn && typeof spawn === 'object' && !Array.isArray(spawn)
-    && typeof spawn.parentThreadId === 'string'
-    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(spawn.parentThreadId)
-    && Number.isInteger(spawn.depth) && spawn.depth >= 0) return 'other'
+  if (isSubAgentThreadSource(value)) return 'machine'
+  if (['cli', 'exec', 'vscode', 'appServer'].includes(value)) return 'human'
   return 'unknown'
 }
 
@@ -87,20 +76,77 @@ function createCodexSubagentDiscovery(dependencies = {}) {
 
   /** Cache verified metadata separately from admission to the current root set. */
   let verifiedRows = new Map()
-  // Keep only a finite identity decision, never the source object or its data.
-  // A missing source on another transport cannot revive an internal review.
-  const internalReviewThreadIds = new Set()
+  const threadSourceIdentities = new Map()
+  const unretainedIdentityIds = new Set()
+  const recoveryAttempts = new Map()
+  const unretainedRecoveryIds = new Set()
+  const recoveryRequests = new Map()
+  const recoveryQueue = new Map()
+  let activeRecoveryCount = 0
+  let retainedThreadIds = new Set()
+  let scopeGeneration = 0
+
+  function pruneThreadSourceIdentities() {
+    while (unretainedIdentityIds.size > CODEX_THREAD_SOURCE_IDENTITY_CACHE_LIMIT) {
+      const threadId = unretainedIdentityIds.values().next().value
+      unretainedIdentityIds.delete(threadId)
+      threadSourceIdentities.delete(threadId)
+    }
+  }
+
+  function pruneThreadSourceRecoveryAttempts() {
+    while (unretainedRecoveryIds.size > CODEX_THREAD_SOURCE_IDENTITY_CACHE_LIMIT) {
+      const threadId = unretainedRecoveryIds.values().next().value
+      unretainedRecoveryIds.delete(threadId)
+      recoveryAttempts.delete(threadId)
+    }
+  }
+
+  function codexRetainThreadIds(threadIds) {
+    if (!Array.isArray(threadIds) && !(threadIds instanceof Set)) return null
+    retainedThreadIds = new Set([...threadIds]
+      .filter((threadId) => typeof threadId === 'string' && validThreadId(threadId))
+      .map((threadId) => threadId.toLowerCase()))
+    for (const threadId of threadSourceIdentities.keys()) {
+      if (retainedThreadIds.has(threadId)) unretainedIdentityIds.delete(threadId)
+      else unretainedIdentityIds.add(threadId)
+    }
+    for (const threadId of recoveryAttempts.keys()) {
+      if (retainedThreadIds.has(threadId)) unretainedRecoveryIds.delete(threadId)
+      else unretainedRecoveryIds.add(threadId)
+    }
+    pruneThreadSourceIdentities()
+    pruneThreadSourceRecoveryAttempts()
+    return {
+      retainedCount: retainedThreadIds.size,
+      identityCount: threadSourceIdentities.size,
+      unretainedCount: unretainedIdentityIds.size
+    }
+  }
+
+  function codexGetThreadSourceIdentity(threadId) {
+    if (typeof threadId !== 'string' || !validThreadId(threadId)) return 'unknown'
+    return threadSourceIdentities.get(threadId.toLowerCase()) || 'unknown'
+  }
+
+  function codexObserveThreadSourceIdentity(threadId, identity) {
+    if (typeof threadId !== 'string' || !validThreadId(threadId)) return 'unknown'
+    const id = threadId.toLowerCase()
+    if (['machine', 'human', 'guardian_review'].includes(identity)) threadSourceIdentities.set(id, identity)
+    if (threadSourceIdentities.has(id) && !retainedThreadIds.has(id)) {
+      unretainedIdentityIds.delete(id)
+      unretainedIdentityIds.add(id)
+    }
+    pruneThreadSourceIdentities()
+    return codexGetThreadSourceIdentity(id)
+  }
 
   function codexIsInternalReviewThread(threadId) {
-    return typeof threadId === 'string' && internalReviewThreadIds.has(threadId.toLowerCase())
+    return codexGetThreadSourceIdentity(threadId) === 'guardian_review'
   }
 
   function codexObserveThreadSourceKind(threadId, kind) {
-    if (typeof threadId !== 'string' || !validThreadId(threadId)) return false
-    const id = threadId.toLowerCase()
-    if (kind === 'guardian_review') internalReviewThreadIds.add(id)
-    else if (kind === 'other') internalReviewThreadIds.delete(id)
-    return internalReviewThreadIds.has(id)
+    return codexObserveThreadSourceIdentity(threadId, kind) === 'guardian_review'
   }
 
   function codexObserveThreadRows(rows) {
@@ -109,10 +155,77 @@ function createCodexSubagentDiscovery(dependencies = {}) {
       const row = record(value)
       if (typeof row.id !== 'string' || !validThreadId(row.id)) continue
       const kind = codexThreadSourceKind(row.threadSource)
-      codexObserveThreadSourceKind(row.id, kind)
-      if (kind === 'guardian_review') internalIds.add(row.id.toLowerCase())
+      if (codexObserveThreadSourceKind(row.id, kind)) internalIds.add(row.id.toLowerCase())
+      else internalIds.delete(row.id.toLowerCase())
     }
     return [...internalIds]
+  }
+
+  function finishThreadSourceRecovery(request, identity) {
+    if (recoveryRequests.get(request.threadId) === request) recoveryRequests.delete(request.threadId)
+    request.resolve(identity)
+  }
+
+  async function readThreadSourceIdentity(request) {
+    try {
+      const response = await readThread(request.threadId)
+      if (request.generation !== scopeGeneration) return
+      const thread = record(record(response).thread)
+      if (codexGetThreadSourceIdentity(request.threadId) === 'unknown'
+        && typeof thread.id === 'string' && thread.id.toLowerCase() === request.threadId) {
+        codexObserveThreadRows([thread])
+      }
+    } catch {} finally {
+      activeRecoveryCount -= 1
+      finishThreadSourceRecovery(request, request.generation === scopeGeneration
+        ? codexGetThreadSourceIdentity(request.threadId) : 'unknown')
+      queueMicrotask(drainThreadSourceRecoveryQueue)
+    }
+  }
+
+  function drainThreadSourceRecoveryQueue() {
+    while (activeRecoveryCount < CODEX_THREAD_SOURCE_RECOVERY_CONCURRENCY && recoveryQueue.size) {
+      const request = recoveryQueue.values().next().value
+      recoveryQueue.delete(request.threadId)
+      if (request.generation !== scopeGeneration) {
+        finishThreadSourceRecovery(request, 'unknown')
+        continue
+      }
+      const identity = codexGetThreadSourceIdentity(request.threadId)
+      const attempts = recoveryAttempts.get(request.threadId) || 0
+      if (identity !== 'unknown' || attempts >= CODEX_THREAD_SOURCE_RECOVERY_ATTEMPT_LIMIT) {
+        finishThreadSourceRecovery(request, identity)
+        continue
+      }
+      recoveryAttempts.set(request.threadId, attempts + 1)
+      if (!retainedThreadIds.has(request.threadId)) {
+        unretainedRecoveryIds.delete(request.threadId)
+        unretainedRecoveryIds.add(request.threadId)
+      }
+      pruneThreadSourceRecoveryAttempts()
+      activeRecoveryCount += 1
+      void readThreadSourceIdentity(request)
+    }
+  }
+
+  function codexRecoverThreadSourceIdentity(threadId) {
+    if (typeof threadId !== 'string' || !validThreadId(threadId)) return Promise.resolve('unknown')
+    const id = threadId.toLowerCase()
+    const pending = recoveryRequests.get(id)
+    if (pending) return pending.promise
+    const identity = codexGetThreadSourceIdentity(id)
+    if (identity !== 'unknown' || !readThread
+      || (recoveryAttempts.get(id) || 0) >= CODEX_THREAD_SOURCE_RECOVERY_ATTEMPT_LIMIT
+      || (!retainedThreadIds.has(id) && recoveryQueue.size >= CODEX_THREAD_SOURCE_IDENTITY_CACHE_LIMIT)) {
+      return Promise.resolve(identity)
+    }
+    let resolveRecovery
+    const promise = new Promise((resolve) => { resolveRecovery = resolve })
+    const request = { threadId: id, generation: scopeGeneration, promise, resolve: resolveRecovery }
+    recoveryRequests.set(id, request)
+    recoveryQueue.set(id, request)
+    drainThreadSourceRecoveryQueue()
+    return promise
   }
 
   function numericNameDescending(entries) {
@@ -177,8 +290,10 @@ function createCodexSubagentDiscovery(dependencies = {}) {
    * `thread/list` rows the caller already holds.
    */
   async function codexDiscoverSubagentThreadRows(input = {}) {
-    if (!readThread) return []
     const rows = Array.isArray(input.rows) ? input.rows : []
+    codexObserveThreadRows(rows)
+    if (!readThread) return []
+    const generation = scopeGeneration
     const knownIds = new Set(rows.map((row) => record(row).id).filter((id) => validThreadId(id)))
     const candidates = codexRecentRolloutThreadCandidates({
       root: input.root,
@@ -199,16 +314,19 @@ function createCodexSubagentDiscovery(dependencies = {}) {
       try {
         readCount += 1
         const thread = record(record(await readThread(candidate.threadId)).thread)
+        if (generation !== scopeGeneration) return []
         if (thread.id === candidate.threadId) codexObserveThreadRows([thread])
         const parentThreadId = typeof thread.parentThreadId === 'string' ? thread.parentThreadId : ''
         const validParent = thread.id === candidate.threadId
           && validThreadId(parentThreadId)
           && parentThreadId !== thread.id
         verifiedRows.set(candidate.threadId, {
-          mtimeMs: candidate.mtimeMs, row: validParent ? thread : null, linked: cached?.linked === true
+          mtimeMs: candidate.mtimeMs, row: validParent ? thread : null
         })
         if (validParent) pending.set(candidate.threadId, thread)
-      } catch {}
+      } catch {
+        if (generation !== scopeGeneration) return []
+      }
     }
     // Rollouts are newest-first: a grandchild commonly precedes its parent.
     // Resolve the bounded verified set to a fixed point without more RPCs.
@@ -224,13 +342,6 @@ function createCodexSubagentDiscovery(dependencies = {}) {
         pending.delete(threadId)
         advanced = true
       }
-    }
-    // Publish admission only after all awaited reads: live unread consumers
-    // must not briefly treat an already-known machine member as a human run.
-    const admittedIds = new Set(discovered.map((thread) => thread.id))
-    for (const threadId of seenThisScan) {
-      const cached = verifiedRows.get(threadId)
-      if (cached) cached.linked = admittedIds.has(threadId)
     }
     if (verifiedRows.size > CODEX_SUBAGENT_DISCOVERY_CACHE_LIMIT) {
       for (const threadId of [...verifiedRows.keys()]) {
@@ -251,19 +362,24 @@ function createCodexSubagentDiscovery(dependencies = {}) {
     return discovered
   }
 
-  function codexResetSubagentDiscovery() {
+  function codexResetSubagentDiscovery(options = {}) {
+    scopeGeneration += 1
     verifiedRows = new Map()
-    internalReviewThreadIds.clear()
+    if (options.preserveIdentities !== true) {
+      threadSourceIdentities.clear()
+      unretainedIdentityIds.clear()
+      retainedThreadIds.clear()
+    }
+    recoveryAttempts.clear()
+    unretainedRecoveryIds.clear()
+    for (const request of recoveryRequests.values()) request.resolve('unknown')
+    recoveryRequests.clear()
+    recoveryQueue.clear()
   }
 
-  /**
-   * Whether this factory discovered `threadId` as a linked machine sub-run.
-   * Consumers use it to keep user-facing unread semantics off such runs; a
-   * thread never verified here (or verified as not linkable) answers false.
-   */
   function codexIsMachineRunThread(threadId) {
-    const cached = verifiedRows.get(typeof threadId === 'string' ? threadId.toLowerCase() : '')
-    return cached?.linked === true && isSubAgentThreadSource(record(cached.row).threadSource)
+    const identity = codexGetThreadSourceIdentity(threadId)
+    return identity === 'machine' || identity === 'guardian_review'
   }
 
   return {
@@ -273,6 +389,10 @@ function createCodexSubagentDiscovery(dependencies = {}) {
     codexResetSubagentDiscovery,
     codexObserveThreadRows,
     codexObserveThreadSourceKind,
+    codexObserveThreadSourceIdentity,
+    codexGetThreadSourceIdentity,
+    codexRecoverThreadSourceIdentity,
+    codexRetainThreadIds,
     codexIsInternalReviewThread,
     codexIsMachineRunThread,
     isSubAgentThreadSource
@@ -283,6 +403,7 @@ module.exports = {
   CODEX_SUBAGENT_DISCOVERY_REVISION,
   CODEX_SUBAGENT_DISCOVERY_MAX_AGE_MS,
   CODEX_SUBAGENT_DISCOVERY_LIMIT,
+  CODEX_THREAD_SOURCE_IDENTITY_CACHE_LIMIT,
   isSubAgentThreadSource,
   isInternalReviewThreadSource,
   codexThreadSourceKind,

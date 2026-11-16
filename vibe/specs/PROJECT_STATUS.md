@@ -1,5 +1,7 @@
 # EyPc Project Status Hub
 
+- 2026-11-16 13:00 Codex两类状态误判修复已实现，自然Hook最新回执为hook/rebuilt/build-passed/exit0：稳定Turn身份、受限旧节点恢复及机器来源登记已接通，身份补查仅更新未读；当前inputDigest匹配成功状态，七个源码与public/dist镜像一致。当前生成包晚于回执且未获对应回执核验，未安装、加载及V01–V12未验，S02/S04/S06不关闭。用户已授权Root提交推送，Git结果另报；[实现、历史失败与最新构建证据](261114/codex-state-sync/status-read-investigation-261116.md#7-本轮实现与验收边界)。
+
 - 2026-11-16 Codex 未读冷启动续修已获用户反馈通过：自然 Stop Hook 回执为 hook/rebuilt/exit 0，V7、`host-94a52604d80652934760`、`renderer-b8e50f43a7ff42bc9146`、builtAt `2026-11-16T01:41:25.205Z`。当前 public 产物 Host/Renderer 相同，但 builtAt 为 `2026-11-16T01:48:56.412Z`。两次真实只读核验选中 128 条原生 ID，含机器线程；先前四条漏项在集合内。用户反馈不替代全部场景、Windows 或实际加载验收；[证据及待验](261114/codex-state-sync/raw-requirement.md#2026-11-16-未读冷启动续修)。
 
 - 2026-11-15 Codex 状态同步源码已实现：v13状态流改按实际结构识别，保留v6路径；新增无状态协议模块和候选原子提交，目标失配走现有恢复并限制相关写入；连接/owner/目标过期结果不回写。自然 Stop Hook 回执已通过，但当前产物 builtAt 晚于回执，插件实际加载与 S01–S09 场景仍待验；独立入口预算存在既有漂移且本次未通过。未跑自动化测试、未安装重载；[唯一规格、证据与S01–S10待验清单](261114/codex-state-sync/raw-requirement.md#L1)。

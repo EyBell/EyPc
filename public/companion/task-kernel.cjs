@@ -16,7 +16,7 @@ const {
   buildCompanionTaskTopology,
   normalizeRelation
 } = require('./task-topology.cjs')
-const { finiteInteger, phaseEvidenceSupersedes } = require('./branch-causality.cjs')
+const { finiteInteger, phaseEvidenceSupersedes, sameTurnEvidenceDecision } = require('./branch-causality.cjs')
 const {
   TASK_PHASES,
   isKnownTaskPhase,
@@ -148,6 +148,10 @@ function taskPhaseObservation(task) {
   const terminal = isTerminalTaskPhase(task.phase)
   const sequence = finiteInteger(task.phaseRevision, finiteInteger(task.statusEnteredAt))
   return {
+    causalKey: task.causalKey,
+    causalDomain: task.causalDomain,
+    causalSequence: task.causalSequence,
+    authority: task.causalAuthority,
     liveCurrent: live,
     exactTerminal: terminal,
     turnStartedAt: finiteInteger(task.turnStartedAt),
@@ -312,9 +316,14 @@ function normalizeTask(value, enabledProviders) {
     standaloneEligible: value.standaloneEligible !== false,
     error: value.error === true,
     metadataPartial: value.metadataPartial === true,
+    activityObserved: value.activityObserved !== false,
     causalKey: typeof value.causalKey === 'string' ? value.causalKey.slice(0, 256) : '',
+    causalDomain: typeof value.causalDomain === 'string' && value.causalDomain.length <= 256 ? value.causalDomain : '',
+    causalSequence: Number.isSafeInteger(value.causalSequence) && value.causalSequence > 0 ? value.causalSequence : 0,
+    causalAuthority: COMPANION_ACTIVITY_AUTHORITIES_V7.includes(value.causalAuthority) ? value.causalAuthority : 'unknown',
     causalReliable: value.causalReliable === true,
     causalObserved: Object.prototype.hasOwnProperty.call(value, 'causalKey')
+      || Object.prototype.hasOwnProperty.call(value, 'causalDomain')
       || Object.prototype.hasOwnProperty.call(value, 'causalReliable'),
     ...(value.topology && typeof value.topology === 'object' ? {
       topology: {
@@ -337,10 +346,14 @@ function normalizeTask(value, enabledProviders) {
 
 function normalizeActivityCandidateV7(value = {}) {
   const kind = COMPANION_ACTIVITY_KINDS_V7.includes(value.kind) ? value.kind : 'unknown'
+  const causalSequence = Object.prototype.hasOwnProperty.call(value, 'causalSequence')
+    ? value.causalSequence : value.sequence
   return {
     kind,
     authority: COMPANION_ACTIVITY_AUTHORITIES_V7.includes(value.authority) ? value.authority : 'unknown',
     causalKey: typeof value.causalKey === 'string' ? value.causalKey : '',
+    causalDomain: typeof value.causalDomain === 'string' && value.causalDomain.length <= 256 ? value.causalDomain : '',
+    causalSequence: Number.isSafeInteger(causalSequence) && causalSequence > 0 ? causalSequence : 0,
     sequence: finiteInteger(value.sequence),
     exact: value.exact === true,
     observedAt: finiteInteger(value.observedAt),
@@ -355,6 +368,10 @@ function activityCandidateCausalObservationV7(candidate) {
   const liveCurrent = phase === 'running'
   const exactTerminal = candidate.exact === true && isTerminalTaskPhase(phase)
   return {
+    causalKey: candidate.causalKey,
+    causalDomain: candidate.causalDomain,
+    causalSequence: candidate.causalSequence,
+    authority: candidate.authority,
     liveCurrent,
     exactTerminal,
     turnStartedAt: candidate.turnStartedAt,
@@ -381,6 +398,14 @@ function reduceActivityCandidatesV7(activity = {}) {
   for (const candidate of candidates) {
     if (!selected) {
       selected = candidate
+      continue
+    }
+    const sameTurnDecision = sameTurnEvidenceDecision(
+      activityCandidateCausalObservationV7(selected),
+      activityCandidateCausalObservationV7(candidate)
+    )
+    if (sameTurnDecision) {
+      if (sameTurnDecision.accepted) selected = candidate
       continue
     }
     const selectedPriority = authorityPriority[selected.authority] || 0
@@ -437,6 +462,9 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
     standaloneEligible: value.standaloneEligible !== false,
     error: value.error === true,
     metadataPartial: metadata.partial === true,
+    activityObserved: activityCandidate.kind !== 'unknown' || activityCandidate.exact === true
+      || sequence > 0 || activityCandidate.statusEnteredAt > 0
+      || activityCandidate.turnStartedAt > 0 || activityCandidate.terminalAt > 0,
     phase,
     freshness: activityCandidate.exact === true && phase !== 'unknown' ? 'fresh' : 'verifying',
     observationGeneration: finiteInteger(observationGeneration),
@@ -445,6 +473,9 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
     turnStartedAt: finiteInteger(activityCandidate.turnStartedAt),
     terminalAt: finiteInteger(activityCandidate.terminalAt),
     causalKey: typeof activityCandidate.causalKey === 'string' ? activityCandidate.causalKey : '',
+    causalDomain: activityCandidate.causalDomain,
+    causalSequence: activityCandidate.causalSequence,
+    causalAuthority: activityCandidate.authority,
     causalReliable: activityCandidate.exact === true && Boolean(activityCandidate.causalKey),
     unreadKnown: unread.known === true,
     unread: unread.known === true && unread.value === true,
@@ -516,8 +547,13 @@ function publicRootTask(task) {
     standaloneEligible: _standaloneEligible,
     error: _error,
     metadataPartial: _metadataPartial,
+    activityObserved: _activityObserved,
     providerCapabilities: _providerCapabilities,
     causalKey: _causalKey,
+    causalDomain: _causalDomain,
+    causalSequence: _causalSequence,
+    causalAuthority: _causalAuthority,
+    activityRebase: _activityRebase,
     causalReliable: _causalReliable,
     causalObserved: _causalObserved,
     activityPhase: _activityPhase,
@@ -882,6 +918,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   const diagnosticTaskRef = typeof dependencies.diagnosticTaskRef === 'function' ? dependencies.diagnosticTaskRef : () => ''
   const diagnosticMemberSignatures = new Map()
   const diagnosticStateSignatures = new Map()
+  const diagnosticActivitySignatures = new Map()
   const preflight = typeof dependencies.preflight === 'function' ? dependencies.preflight : null
   const persistPlanPause = typeof dependencies.persistPlanPause === 'function' ? dependencies.persistPlanPause : () => true
   const persistInteractionTombstones = typeof dependencies.persistInteractionTombstones === 'function'
@@ -1582,6 +1619,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     clearUnknownTimer()
     clearVisibilityTimer()
     unknownEvidence.clear()
+    diagnosticActivitySignatures.clear()
     nodeStore.clear()
     relationStore.clear()
     interactionStore.clear()
@@ -1793,7 +1831,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       // send private keys to the sink; the host supplies its salted ref mapper.
       const memberSignature = JSON.stringify(members.map((member) => {
         const relation = admittedDiagnosticRelations.get(member.key)
-        return [member.key, member.phase, member.phaseRevision, relation?.parentKey, relation?.generation]
+        return [member.key, member.phase, member.phaseRevision, member.unreadKnown, member.unread,
+          relation?.parentKey, relation?.generation]
       }))
       const membersChanged = diagnosticMemberSignatures.get(root.key) !== memberSignature
       diagnosticMemberSignatures.set(root.key, memberSignature)
@@ -1805,6 +1844,7 @@ function createCompanionTaskKernel(dependencies = {}) {
               const relation = admittedDiagnosticRelations.get(member.key)
               return { ref: diagnosticTaskRef(member.provider, member.key), phase: member.phase,
                 root: member.key === root.key, phaseRevision: finiteInteger(member.phaseRevision),
+                unreadKnown: member.unreadKnown === true, unread: member.unread === true,
                 turnStartedAt: finiteInteger(member.turnStartedAt), terminalAt: finiteInteger(member.terminalAt),
                 parentRef: relation ? diagnosticTaskRef(member.provider, relation.parentKey) : '',
                 relation: relation?.relation || '', exact: relation?.exact === true,
@@ -1941,17 +1981,63 @@ function createCompanionTaskKernel(dependencies = {}) {
     return publishPrivateTopology(reason)
   }
 
-  function reconcileTask(previous, incoming, draft, forceUnknown, incomingLanes, currentLanes) {
+  function recordActivityDecision(previous, incoming, accepted, reason) {
+    if (incoming.provider !== 'codex') return
+    const details = {
+      reason,
+      previousPhase: previous?.activityPhase || previous?.phase || 'unknown',
+      incomingPhase: incoming.phase,
+      previousRevision: finiteInteger(previous?.phaseRevision),
+      incomingRevision: finiteInteger(incoming.phaseRevision),
+      previousSequence: finiteInteger(previous?.causalSequence),
+      incomingSequence: finiteInteger(incoming.causalSequence),
+      sameIdentity: Boolean(previous?.causalKey && previous.causalKey === incoming.causalKey),
+      sameDomain: Boolean(previous?.causalDomain && previous.causalDomain === incoming.causalDomain),
+      causalRef: incoming.causalKey ? diagnosticTaskRef(incoming.provider, `turn:${incoming.causalKey}`) : '',
+      domainRef: incoming.causalDomain ? diagnosticTaskRef(incoming.provider, `domain:${incoming.causalDomain}`) : ''
+    }
+    const signature = JSON.stringify([accepted, details])
+    if (diagnosticActivitySignatures.get(incoming.key) === signature) return
+    diagnosticActivitySignatures.set(incoming.key, signature)
+    record({ level: 'info', scope: 'task-evidence', event: 'state-decision',
+      provider: incoming.provider, taskRef: diagnosticTaskRef(incoming.provider, incoming.key),
+      outcome: accepted ? 'accepted' : 'retained', details })
+  }
+
+  function canRebaseActivity(previous, incoming, proof) {
+    if (!proof || incoming.provider !== 'codex' || previous.provider !== 'codex'
+      || previous.activityPhase !== 'running'
+      || previous.causalAuthority === 'goal' || previous.causalAuthority === 'goal-verifying'
+      || incoming.causalAuthority === 'goal' || incoming.causalAuthority === 'goal-verifying'
+      || !isTerminalTaskPhase(incoming.phase) || incoming.freshness !== 'fresh'
+      || incoming.causalReliable !== true || !incoming.causalKey || !incoming.causalDomain
+      || typeof proof.expectedCausalKey !== 'string' || !proof.expectedCausalKey
+      || proof.expectedCausalKey !== previous.causalKey
+      || !Number.isSafeInteger(proof.expectedPhaseRevision) || proof.expectedPhaseRevision <= 0
+      || proof.expectedPhaseRevision !== previous.phaseRevision
+      || proof.causalDomain !== incoming.causalDomain
+      || !Number.isSafeInteger(proof.snapshotRevision) || proof.snapshotRevision <= 0
+      || !Number.isSafeInteger(incoming.causalSequence)
+      || incoming.causalSequence <= previous.phaseRevision) return false
+    return true
+  }
+
+  function reconcileTask(previous, incoming, draft, forceUnknown, incomingLanes, currentLanes, activityRebase) {
     if (!previous) {
       if (incoming.phase !== 'unknown') unknownEvidence.delete(incoming.key)
       let next = preparePlanLifecycle(null, incoming, incoming, true)
       next = migrateLegacyHiddenPlan(next)
       next = finalizeCanonicalTask(next)
       if (incoming.phase === 'unknown') next.freshness = 'verifying'
+      recordActivityDecision(null, incoming, incoming.phase !== 'unknown', incoming.phase === 'unknown' ? 'unknown' : 'accepted')
       return { ...assignSemanticRevision(null, next), verifying: next.freshness === 'verifying' }
     }
 
     const provider = incoming.provider
+    const activityUnobserved = provider === 'codex' && incoming.metadataPartial === true
+      && incoming.activityObserved === false
+    const unreadOnly = activityUnobserved && incoming.planLifecycleState === 'unknown'
+      && incoming.planLifecycleRevision === 0
     const membershipAdvanced = incomingLanes[provider].membership > currentLanes[provider].membership
     const phaseAdvanced = incomingLanes[provider].activity > currentLanes[provider].activity
     const unreadAdvanced = incomingLanes[provider].unread > currentLanes[provider].unread
@@ -1969,12 +2055,13 @@ function createCompanionTaskKernel(dependencies = {}) {
       incoming.metadataRevision,
       previous.metadataRevision
     )
-    let acceptPhase = forceUnknown || laneIsNewer(
+    let acceptPhase = !activityUnobserved && (forceUnknown || laneIsNewer(
       incomingLanes[provider].activity,
       currentLanes[provider].activity,
       incoming.phaseRevision,
       previous.phaseRevision
-    )
+    ))
+    let activityDecisionReason = activityUnobserved ? 'activity-unobserved' : acceptPhase ? 'accepted' : 'stale-lane'
     let acceptUnread = laneIsNewer(
       incomingLanes[provider].unread,
       currentLanes[provider].unread,
@@ -1993,11 +2080,21 @@ function createCompanionTaskKernel(dependencies = {}) {
     // arbitrate even if the later-delivered batch has a higher lane generation.
     // For evidence without exact identities, retain the same-revision tie-break
     // so a delivery counter still cannot settle a conflicting fact by arrival.
-    const causalComparable = previous.causalReliable === true && incoming.causalReliable === true
+    const causalComparable = Boolean(previous.causalDomain || incoming.causalDomain)
+      || previous.causalReliable === true && incoming.causalReliable === true
     const laneTie = !phaseAdvanced && incoming.phaseRevision === previous.phaseRevision
-    if (acceptPhase && (causalComparable || laneTie)
-      && !phaseEvidenceSupersedes(taskPhaseObservation(previous), taskPhaseObservation(incoming))) {
-      acceptPhase = false
+    const previousObservation = taskPhaseObservation(previous)
+    const incomingObservation = taskPhaseObservation(incoming)
+    const causalDecision = sameTurnEvidenceDecision(previousObservation, incomingObservation)
+    if (acceptPhase && (causalDecision || causalComparable || laneTie)
+      && !phaseEvidenceSupersedes(previousObservation, incomingObservation)) {
+      if (draftProducer(draft.producer) !== 'renderer' && canRebaseActivity(previous, incoming, activityRebase)) {
+        activityDecisionReason = 'activity-rebase'
+      } else {
+        acceptPhase = false
+        activityDecisionReason = causalDecision?.reason
+          || (incoming.turnStartedAt > 0 && previous.turnStartedAt > incoming.turnStartedAt ? 'older-turn' : 'stale-evidence')
+      }
     }
 
     // Renderer drafts carry display metadata only once process-owned Provider
@@ -2005,6 +2102,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (draftProducer(draft.producer) === 'renderer') {
       acceptPhase = false
       acceptUnread = false
+      activityDecisionReason = 'renderer'
     }
 
     let verifying = false
@@ -2021,7 +2119,10 @@ function createCompanionTaskKernel(dependencies = {}) {
       // fabricate a new semantic state after it expires.
       acceptPhase = false
       verifying = true
+      activityDecisionReason = 'unknown'
     }
+
+    recordActivityDecision(previous, incoming, acceptPhase, activityDecisionReason)
 
     let next = { ...previous }
     if (acceptMembership) {
@@ -2077,6 +2178,9 @@ function createCompanionTaskKernel(dependencies = {}) {
         turnStartedAt: incoming.turnStartedAt,
         terminalAt: incoming.terminalAt,
         causalKey: incoming.causalObserved ? incoming.causalKey : previous.causalKey,
+        causalDomain: incoming.causalObserved ? incoming.causalDomain : previous.causalDomain,
+        causalSequence: incoming.causalObserved ? incoming.causalSequence : previous.causalSequence,
+        causalAuthority: incoming.causalObserved ? incoming.causalAuthority : previous.causalAuthority,
         causalReliable: incoming.causalObserved ? incoming.causalReliable : previous.causalReliable,
         freshness: incoming.phase === 'unknown' ? 'verifying' : 'fresh'
       })
@@ -2096,10 +2200,12 @@ function createCompanionTaskKernel(dependencies = {}) {
       }
     }
     next = preparePlanLifecycle(previous, next, incoming, acceptPlanArtifact)
-    next.planImplementation = next.planReady === true
-      && isAttentionTaskPhase(next.phase)
-      && incoming.planImplementation === true
-    next = migrateLegacyHiddenPlan(next)
+    if (!unreadOnly) {
+      next.planImplementation = next.planReady === true
+        && isAttentionTaskPhase(next.phase)
+        && incoming.planImplementation === true
+      next = migrateLegacyHiddenPlan(next)
+    }
     if (acceptUnread && incoming.unreadKnown) {
       next.unread = incoming.unread
       next.unreadKnown = true
@@ -2132,7 +2238,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   /** 吃证据的唯一入口：schema/revision 失败则整批丢掉，且不消耗 producer revision。 */
-  function commitDraft(draft, forceUnknown = false) {
+  function commitDraft(draft, forceUnknown = false, hostEvidence = false) {
     const freezeSpan = freezeTrace.begin('companion.commit-draft')
     try {
     if (disposed || !draft || draft.schema !== COMPANION_TASK_DRAFT_REVISION) return null
@@ -2190,6 +2296,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     const previousPublicByKey = new Map(currentPackage.tasks.map((task) => [task.key, task]))
     const incomingNodes = []
     const incomingKeys = new Set()
+    const activityRebases = new Map()
     for (const provider of PROVIDERS) {
       for (const value of batches[provider].nodes) {
         const incoming = normalizeEvidenceNode(
@@ -2203,6 +2310,10 @@ function createCompanionTaskKernel(dependencies = {}) {
         if (existing && existing.provider !== incoming.provider) continue
         incomingKeys.add(incoming.key)
         incomingNodes.push(incoming)
+        if (hostEvidence && producer === 'host-evidence' && provider === 'codex'
+          && value.activityRebase && typeof value.activityRebase === 'object') {
+          activityRebases.set(incoming.key, value.activityRebase)
+        }
       }
     }
     const nextNodeStore = new Map(nodeStore)
@@ -2251,7 +2362,8 @@ function createCompanionTaskKernel(dependencies = {}) {
         draft,
         forceUnknown,
         incomingLaneGenerations,
-        currentLaneGenerations
+        currentLaneGenerations,
+        activityRebases.get(incoming.key)
       )
       nextNodeStore.set(incoming.key, reconciled.task)
     }
@@ -2276,6 +2388,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       nextNodeStore.delete(key)
     }
     const retainedKeys = new Set(nextNodeStore.keys())
+    for (const key of diagnosticActivitySignatures.keys()) if (!retainedKeys.has(key)) diagnosticActivitySignatures.delete(key)
     for (const task of previousPrivateByKey.values()) {
       if (retainedKeys.has(task.key) || !enabledProviders.has(task.provider)) continue
       if (!pauseReceipts.has(task.key)) continue
@@ -2624,7 +2737,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   function publishEvidence(draft) {
     const startedAt = now()
     const beforeRevision = currentPackage.packageRevision
-    const result = commitDraft(draft)
+    const result = commitDraft(draft, false, true)
     const published = Boolean(result && currentPackage.packageRevision > beforeRevision)
     record({
       level: published ? 'info' : 'debug',
@@ -2637,6 +2750,18 @@ function createCompanionTaskKernel(dependencies = {}) {
       packageRevision: result?.packageRevision || currentPackage.packageRevision
     })
     return result
+  }
+
+  function getActivityCheckpoint(key) {
+    if (disposed || typeof key !== 'string') return null
+    const task = nodeStore.get(key)
+    if (!task || task.provider !== 'codex' || archiveTombstones.has(`codex:${key}`)) return null
+    return {
+      causalKey: task.causalKey,
+      phaseRevision: task.phaseRevision,
+      phase: task.activityPhase || task.phase,
+      causalDomain: task.causalDomain
+    }
   }
 
   function commitArchived(input = {}) {
@@ -3480,6 +3605,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     clearUnknownTimer()
     clearVisibilityTimer()
     packageListeners.clear()
+    diagnosticActivitySignatures.clear()
     commandResults.clear()
     commandQueues.clear()
     consumerAcknowledgements.clear()
@@ -3504,6 +3630,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     syncPackage,
     /** Host-only provider evidence path; never exposed as a Renderer authority. */
     publishEvidence,
+    getActivityCheckpoint,
     /** Only a verified Provider archive transaction may call this commit gate. */
     commitArchived,
     detach,

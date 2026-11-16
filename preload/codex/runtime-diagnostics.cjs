@@ -7,6 +7,23 @@ function createCodexRuntimeDiagnostics(dependencies) {
   const sources = ['manual', 'configured', 'volta', 'npm-global', 'local', 'homebrew', 'nvm', 'path', 'unknown']
   const launchFailures = new WeakMap()
   const snapshotFailures = new WeakMap()
+  const stateEvidenceSignatures = new Map()
+
+  function stateEvidence(event, taskRef, details) {
+    if (!['branch-activity-evidence', 'member-unread-eligibility'].includes(event)) return
+    const key = `${event}:${taskRef}`
+    const signature = JSON.stringify(details)
+    if (stateEvidenceSignatures.get(key) === signature) return
+    stateEvidenceSignatures.delete(key)
+    stateEvidenceSignatures.set(key, signature)
+    while (stateEvidenceSignatures.size > 8000) stateEvidenceSignatures.delete(stateEvidenceSignatures.keys().next().value)
+    runtimeDiagnostics.record({
+      level: 'info', scope: 'task-evidence', event,
+      outcome: event === 'branch-activity-evidence' ? 'observed'
+        : details.unreadKnown ? details.unread ? 'unread' : 'read' : 'unknown',
+      provider: 'codex', taskRef, details
+    })
+  }
 
   function safeDiagnostic(value) {
     if (!value || typeof value !== 'object' || !['local-state', 'app-server', 'task-projection'].includes(value.stage)) return null
@@ -223,7 +240,8 @@ function createCodexRuntimeDiagnostics(dependencies) {
     }
   }
 
-  return { errorResult, captureFailure, snapshotFailure, preflightRead, coldPreflight, captureLaunch, inventoryFailure, processEnd, startup, request, rpcFailure }
+  return { errorResult, captureFailure, snapshotFailure, preflightRead, coldPreflight, captureLaunch, inventoryFailure, processEnd, startup, request, rpcFailure,
+    stateEvidence, resetStateEvidence: () => stateEvidenceSignatures.clear() }
 }
 
 module.exports = { createCodexRuntimeDiagnostics }

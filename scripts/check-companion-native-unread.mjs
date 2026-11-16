@@ -131,7 +131,16 @@ export function checkCompanionNativeUnread(assetRoot) {
   const { createCodexDesktopActivityResolution } = require('./codex/desktop-activity-resolution.cjs')
   const resolution = createCodexDesktopActivityResolution({ timestampMs: value => Number(value) || 0, validThreadId: () => true,
     isConfirmedTurnEvidence: () => true, waitingEvidenceVisible: () => true, desktopRequestFlag: () => '', desktopIsPlanImplementationRequest: () => false })
+  const { createCodexSubagentDiscovery } = require('./codex/subagent-discovery.cjs')
+  const discovery = createCodexSubagentDiscovery({ fs: { readdirSync: () => [] }, path: require('node:path'),
+    validThreadId: value => [main, side].includes(value) })
+  discovery.codexObserveThreadRows([{ id: main, threadSource: 'vscode' }, { id: side, threadSource: 'subagent' }])
+  const known = { key: 'synthetic-root', lastTurnStatus: 'completed', lastTurnStartedAt: 500, connectorLastTurnStartedAt: 500, connectorLastTurnStatus: 'completed', connectorStatus: 'idle' }
   const projectionContext = vm.createContext({
+    Set, crypto: { createHash }, codexCausalDomain: 'synthetic-source-domain',
+    codexSubagentDiscovery: discovery, codexRuntimeDiagnostics: null,
+    codexActivityInventory: new Map([[main, known]]), codexThreadTurnStatusCache: new Map(),
+    codexSourceIdentityPublishes: new Map(),
     codexDesktopActivityResolution: resolution, codexDesktopRequestCorrelation: projector.codexDesktopRequestCorrelation,
     validCodexThreadId: value => [main, side].includes(value),
     codexDesktopBridge: { shadows: new Map([[main, ownShadow]]), sideShadows: new Map([[side, member]]) },
@@ -148,8 +157,13 @@ export function checkCompanionNativeUnread(assetRoot) {
   const projectionStart = source.indexOf('function codexPrivateBranchEvidence(')
   const projectionEnd = source.indexOf('\nfunction ', projectionStart + 1)
   assert(projectionStart >= 0 && projectionEnd > projectionStart)
+  for (const name of ['codexRetainReferencedThreadIdentities', 'codexPrivateBranchTerminalKey', 'companionCausalKey']) {
+    const start = source.indexOf(`function ${name}(`)
+    const end = source.indexOf('\nfunction ', start + 1)
+    assert(start >= 0 && end > start, `private projection dependency ${name} is available`)
+    vm.runInContext(source.slice(start, end), projectionContext)
+  }
   vm.runInContext(source.slice(projectionStart, projectionEnd), projectionContext)
-  const known = { key: 'synthetic-root', lastTurnStatus: 'completed', lastTurnStartedAt: 500, connectorLastTurnStartedAt: 500, connectorLastTurnStatus: 'completed', connectorStatus: 'idle' }
   let branches = projectionContext.codexPrivateBranchEvidence(main, known).branches
   assert.equal(branches.find(value => value.branchKind === 'side').turnStartedAt, 0, 'unknown Side epoch cannot borrow the parent epoch')
   terminals.set(side, { lastTurnStatus: 'completed', lastTurnEvidence: 'snapshot-corroborated', turnStartedAt: 100, terminalAt: 120, terminalEvidenceSequence: 30 })

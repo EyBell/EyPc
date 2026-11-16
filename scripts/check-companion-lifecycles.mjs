@@ -35,7 +35,8 @@ function checkDesktopSideTerminalCapability(require) {
   }
   const current = snapshot()
   assert.equal(current.canonicalLatestComplete, true, 'native exhausted boundary proves newest canonical coverage')
-  assert.deepEqual(activity.codexDesktopSideTerminalDecision(current).turn, { status: 'completed', startedAt },
+  assert.deepEqual(activity.codexDesktopSideTerminalDecision(current).turn,
+    { turnRef: current.currentCanonicalTurn.turnRef, status: 'completed', startedAt },
     'native ephemeral idle canonical completion is accepted without an App Server read')
   let checked = 1
   const refused = [
@@ -67,7 +68,8 @@ function checkDesktopSideTerminalCapability(require) {
     checked++
   }
   const main = { ...current, sideConversation: false, ephemeral: false }
-  assert.deepEqual(activity.codexDesktopCanonicalTerminalDecision(main).turn, { status: 'completed', startedAt },
+  assert.deepEqual(activity.codexDesktopCanonicalTerminalDecision(main).turn,
+    { turnRef: main.currentCanonicalTurn.turnRef, status: 'completed', startedAt },
     'native main owner completion is accepted before independent reader completion')
   for (const status of ['interrupted', 'failed']) {
     assert.equal(activity.codexDesktopCanonicalTerminalDecision({ ...main,

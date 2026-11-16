@@ -29,6 +29,44 @@ function noAttentionRank() {
   return 0
 }
 
+function sameTurnEvidenceDecision(previous, incoming) {
+  if (!previous || !incoming
+    || previous.authority === 'goal' || previous.authority === 'goal-verifying'
+    || incoming.authority === 'goal' || incoming.authority === 'goal-verifying') return null
+  if (!(previous.liveCurrent === true || previous.exactTerminal === true)
+    || !(incoming.liveCurrent === true || incoming.exactTerminal === true)) return null
+  const previousDomain = typeof previous.causalDomain === 'string' ? previous.causalDomain : ''
+  const incomingDomain = typeof incoming.causalDomain === 'string' ? incoming.causalDomain : ''
+  if (!previousDomain && !incomingDomain) return null
+  if (!previousDomain || !incomingDomain || previousDomain !== incomingDomain) {
+    return { accepted: false, reason: 'domain-incomparable' }
+  }
+  if (typeof previous.causalKey !== 'string' || !previous.causalKey
+    || typeof incoming.causalKey !== 'string' || !incoming.causalKey) {
+    return { accepted: false, reason: 'identity-incomparable' }
+  }
+  if (previous.causalKey !== incoming.causalKey) {
+    const previousStartedAt = finiteInteger(previous.turnStartedAt)
+    const incomingStartedAt = finiteInteger(incoming.turnStartedAt)
+    return previousStartedAt > 0 && incomingStartedAt > 0 && previousStartedAt !== incomingStartedAt
+      ? null : { accepted: false, reason: 'identity-incomparable' }
+  }
+  const previousSequence = Object.prototype.hasOwnProperty.call(previous, 'causalSequence') ? previous.causalSequence
+    : previous.liveCurrent === true ? previous.activeEvidenceSequence
+    : previous.exactTerminal === true ? previous.terminalEvidenceSequence : 0
+  const incomingSequence = Object.prototype.hasOwnProperty.call(incoming, 'causalSequence') ? incoming.causalSequence
+    : incoming.liveCurrent === true ? incoming.activeEvidenceSequence
+    : incoming.exactTerminal === true ? incoming.terminalEvidenceSequence : 0
+  if (!Number.isSafeInteger(previousSequence) || previousSequence <= 0
+    || !Number.isSafeInteger(incomingSequence) || incomingSequence <= 0) {
+    return { accepted: false, reason: 'sequence-incomparable' }
+  }
+  return {
+    accepted: incomingSequence > previousSequence,
+    reason: incomingSequence > previousSequence ? 'accepted' : 'same-turn-stale'
+  }
+}
+
 /**
  * Bidirectional phase admission. Ordering is decided by comparable Turn epoch
  * first, then real event sequence, then a Provider-supplied attention rank —
@@ -39,6 +77,8 @@ function noAttentionRank() {
  */
 function phaseEvidenceSupersedes(previous, incoming, attentionRank = noAttentionRank) {
   if (!previous) return true
+  const sameTurnDecision = sameTurnEvidenceDecision(previous, incoming)
+  if (sameTurnDecision) return sameTurnDecision.accepted
   const previousLive = previous.liveCurrent === true
   const incomingLive = incoming?.liveCurrent === true
   const previousTerminal = previous.exactTerminal === true
@@ -146,6 +186,7 @@ function mergeEvidenceLanes(previous, incoming, options = {}) {
 module.exports = {
   finiteInteger,
   noAttentionRank,
+  sameTurnEvidenceDecision,
   phaseEvidenceSupersedes,
   mergeEvidenceLanes
 }

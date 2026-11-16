@@ -68,6 +68,7 @@ function codexBranchObservationV7(value = {}) {
   // still working after the parent Turn completed. That group-active signal
   // must not be closed by the parent's terminal or Goal-complete candidate.
   const nativeGroupStillActive = branch.hostExternal !== true
+    && branch.groupActivityConfirmed === true
     && branch.status === 'active'
     && liveAuthority
     && hasLiveShape
@@ -93,6 +94,9 @@ function codexBranchObservationV7(value = {}) {
     candidates.push({
       kind: waiting ? 'turn-completed' : 'turn-running',
       authority: branch.activityEvidence === 'activity-event' ? 'live-turn' : 'inventory',
+      causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
+      causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
+      causalSequence: Number.isSafeInteger(branch.activeEvidenceSequence) && branch.activeEvidenceSequence > 0 ? branch.activeEvidenceSequence : 0,
       exact: true,
       sequence: activeSequence || integer(branch.observedAt),
       observedAt: integer(branch.observedAt),
@@ -108,6 +112,8 @@ function codexBranchObservationV7(value = {}) {
     if (goalKind !== 'unknown') candidates.push({
       kind: goalKind,
       authority: 'goal',
+      causalKey: '',
+      causalDomain: '',
       exact: true,
       sequence: goalSequence || integer(branch.goalUpdatedAt),
       observedAt: integer(branch.observedAt),
@@ -126,10 +132,14 @@ function codexBranchObservationV7(value = {}) {
       // Goal authority settles.
       liveCandidate.authority = 'goal-verifying'
       liveCandidate.exact = false
+      liveCandidate.causalKey = ''
+      liveCandidate.causalDomain = ''
     } else {
       candidates.push({
         kind: 'unknown',
         authority: 'goal-verifying',
+        causalKey: '',
+        causalDomain: '',
         exact: false,
         sequence: goalSequence || integer(branch.goalUpdatedAt) || integer(branch.observedAt),
         observedAt: integer(branch.observedAt),
@@ -144,6 +154,9 @@ function codexBranchObservationV7(value = {}) {
       kind: branch.lastTurnStatus === 'completed' ? 'turn-completed'
         : branch.lastTurnStatus === 'failed' ? 'turn-failed' : 'turn-interrupted',
       authority: 'terminal',
+      causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
+      causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
+      causalSequence: Number.isSafeInteger(branch.terminalEvidenceSequence) && branch.terminalEvidenceSequence > 0 ? branch.terminalEvidenceSequence : 0,
       exact: true,
       sequence: terminalSequence || integer(branch.observedAt),
       observedAt: integer(branch.observedAt),
@@ -157,6 +170,9 @@ function codexBranchObservationV7(value = {}) {
       kind: branch.lastTurnStatus === 'completed' ? 'turn-completed'
         : branch.lastTurnStatus === 'failed' ? 'turn-failed' : 'turn-interrupted',
       authority: 'inventory',
+      causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
+      causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
+      causalSequence: Number.isSafeInteger(branch.terminalEvidenceSequence) && branch.terminalEvidenceSequence > 0 ? branch.terminalEvidenceSequence : 0,
       exact: false,
       sequence: terminalSequence || integer(branch.turnStartedAt) || integer(branch.observedAt),
       observedAt: integer(branch.observedAt),
@@ -200,6 +216,9 @@ function codexBranchObservationV7(value = {}) {
     candidates: candidates.length ? candidates : [{
       kind: 'unknown',
       authority: 'unknown',
+      causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
+      causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
+      causalSequence: 0,
       exact: false,
       sequence,
       observedAt: integer(branch.observedAt),
@@ -412,17 +431,27 @@ function createEvidenceNodeV7(input = {}) {
   const planState = PLAN_STATES.has(observation.planState) ? observation.planState : 'unknown'
   const planReason = PLAN_REASONS.has(observation.planReason) ? observation.planReason : ''
   const sequence = integer(observation.sequence)
+  const goalActivity = provider === 'codex'
+    && (observation.authority === 'goal' || observation.authority === 'goal-verifying')
   const candidates = (Array.isArray(observation.candidates) ? observation.candidates : [])
     .map((candidate) => {
       const value = record(candidate)
+      const goalCandidate = provider === 'codex'
+        && (value.authority === 'goal' || value.authority === 'goal-verifying')
+      const causalSequence = Object.prototype.hasOwnProperty.call(value, 'causalSequence')
+        ? value.causalSequence : value.sequence
       return {
         kind: ACTIVITY_KINDS.has(value.kind) ? value.kind : 'unknown',
         authority: ['goal-verifying', 'goal', 'live-turn', 'terminal', 'inventory', 'unknown'].includes(value.authority)
           ? value.authority
           : 'unknown',
-        causalKey: typeof value.causalKey === 'string'
+        causalKey: goalCandidate ? '' : typeof value.causalKey === 'string'
           ? value.causalKey
           : typeof source.causalKey === 'string' ? source.causalKey : '',
+        causalDomain: goalCandidate ? '' : typeof value.causalDomain === 'string'
+          ? value.causalDomain
+          : typeof source.causalDomain === 'string' ? source.causalDomain : '',
+        causalSequence: Number.isSafeInteger(causalSequence) && causalSequence > 0 ? causalSequence : 0,
         sequence: integer(value.sequence),
         exact: value.exact === true,
         observedAt: integer(value.observedAt),
@@ -437,12 +466,22 @@ function createEvidenceNodeV7(input = {}) {
     family: typeof source.family === 'string' ? source.family : `${provider}:${key}`,
     role: source.role === 'child' ? 'child' : 'root',
     membership: 'present',
+    ...(provider === 'codex' && source.activityRebase && typeof source.activityRebase === 'object'
+      ? { activityRebase: {
+          expectedCausalKey: source.activityRebase.expectedCausalKey,
+          expectedPhaseRevision: source.activityRebase.expectedPhaseRevision,
+          causalDomain: source.activityRebase.causalDomain,
+          snapshotRevision: source.activityRebase.snapshotRevision
+        } }
+      : {}),
     activity: {
       kind,
       authority: ['goal-verifying', 'goal', 'live-turn', 'terminal', 'inventory', 'unknown'].includes(observation.authority)
         ? observation.authority
         : 'unknown',
-      causalKey: typeof source.causalKey === 'string' ? source.causalKey : '',
+      causalKey: goalActivity ? '' : typeof source.causalKey === 'string' ? source.causalKey : '',
+      causalDomain: goalActivity ? '' : typeof source.causalDomain === 'string' ? source.causalDomain : '',
+      causalSequence: Number.isSafeInteger(observation.sequence) && observation.sequence > 0 ? observation.sequence : 0,
       sequence,
       exact: observation.exact === true,
       observedAt: integer(source.observedAt) || sequence,
