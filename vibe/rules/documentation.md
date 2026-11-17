@@ -28,6 +28,7 @@ Consolidation follows [Single Authority And Current Entry](../../../../../czz/Cz
 - Rollout owner: [codex-evolution/rollout/README.md](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/codex-evolution/rollout/README.md#L1).
 - Runtime owner: [codex-evolution/runtime-supervision/README.md](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/codex-evolution/runtime-supervision/README.md#L1).
 - Communication owner: [process/communication-io.md](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/process/communication-io.md#L1).
+- 可发布主题交付或实际发版时，主题登记、发布时发现与回填读取 [topic-release-registration](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/ops/rules.md#topic-release-registration)。
 
 ## Feature Help Guides (required)
 
