@@ -36,15 +36,15 @@ function createCompanionPersistedSideState(options = {}) {
   const storage = typeof options.storage === 'function' ? options.storage : () => undefined
 
   let planPauseStorageReady = true
+  let blockedPauseKeys = null
 
   function sanitizeCompanionPlanPauseReceipts(stored) {
     const rows = Array.isArray(stored?.receipts) ? stored.receipts : []
     return rows.flatMap((value) => {
       const source = record(value)
-      const key = typeof source.key === 'string' && /^[a-f0-9]{16,64}$/i.test(source.key) ? source.key : ''
-      const planLifecycleRevision = Number.isFinite(source.planLifecycleRevision)
-        ? Math.max(0, Math.trunc(source.planLifecycleRevision))
-        : 0
+      const key = typeof source.key === 'string' && /^[a-f0-9]{16,64}$/i.test(source.key) ? source.key.toLowerCase() : ''
+      const planLifecycleRevision = Number.isSafeInteger(source.planLifecycleRevision) && source.planLifecycleRevision > 0
+        ? source.planLifecycleRevision : 0
       if (!key || !planLifecycleRevision || source.paused !== true) return []
       return [{
         key,
@@ -57,7 +57,9 @@ function createCompanionPersistedSideState(options = {}) {
 
   function writeCompanionPlanPauseReceipts(rows) {
     try {
-      return storage()?.setItem?.(COMPANION_PLAN_PAUSE_STORAGE_KEY, {
+      const store = storage()
+      if (typeof store?.setItem !== 'function') return false
+      return store.setItem(COMPANION_PLAN_PAUSE_STORAGE_KEY, {
         version: COMPANION_PLAN_PAUSE_STORAGE_VERSION,
         receipts: sanitizeCompanionPlanPauseReceipts({ receipts: rows })
       }) !== false
@@ -67,26 +69,39 @@ function createCompanionPersistedSideState(options = {}) {
   }
 
   function readCompanionPlanPauseReceipts() {
-    const store = storage()
-    if (typeof store?.getItem !== 'function') return []
+    planPauseStorageReady = false
+    blockedPauseKeys = null
     try {
+      const store = storage()
+      if (typeof store?.getItem !== 'function') return []
       const current = store.getItem(COMPANION_PLAN_PAUSE_STORAGE_KEY)
-      if (current != null) {
-        if (current?.version !== COMPANION_PLAN_PAUSE_STORAGE_VERSION) {
-          planPauseStorageReady = false
+      const stored = current ?? store.getItem(COMPANION_PLAN_PAUSE_LEGACY_STORAGE_KEY)
+      if (stored == null) {
+        planPauseStorageReady = true
+        return []
+      }
+      if (stored.version !== (current == null ? 1 : COMPANION_PLAN_PAUSE_STORAGE_VERSION)
+        || !Array.isArray(stored.receipts) || stored.receipts.length > 2_000) return []
+      const receipts = sanitizeCompanionPlanPauseReceipts(stored)
+      if (receipts.length !== stored.receipts.length
+        || new Set(receipts.map(value => value.key)).size !== receipts.length) return []
+      if (current == null) {
+        blockedPauseKeys = receipts.map(value => value.key)
+        if (!writeCompanionPlanPauseReceipts(receipts)) return receipts
+        const saved = store.getItem(COMPANION_PLAN_PAUSE_STORAGE_KEY)
+        if (saved?.version !== COMPANION_PLAN_PAUSE_STORAGE_VERSION || !Array.isArray(saved.receipts)
+          || saved.receipts.length !== receipts.length
+          || JSON.stringify(sanitizeCompanionPlanPauseReceipts(saved)) !== JSON.stringify(receipts)) {
+          // A different current namespace may protect additional tasks.
+          blockedPauseKeys = null
           return []
         }
-        return sanitizeCompanionPlanPauseReceipts(current)
       }
-      const legacy = store.getItem(COMPANION_PLAN_PAUSE_LEGACY_STORAGE_KEY)
-      if (legacy == null) return []
-      const receipts = sanitizeCompanionPlanPauseReceipts(legacy)
-      // Copy-on-read is intentionally one-way. The V6 key remains untouched so a
-      // package rollback can still consume the exact pre-migration data.
-      planPauseStorageReady = writeCompanionPlanPauseReceipts(receipts)
-      return planPauseStorageReady ? receipts : []
+      planPauseStorageReady = true
+      blockedPauseKeys = null
+      return receipts
     } catch {
-      planPauseStorageReady = false
+      blockedPauseKeys = null
       return []
     }
   }
@@ -204,14 +219,18 @@ function createCompanionPersistedSideState(options = {}) {
       ? Math.max(0, Math.trunc(source.planLifecycleRevision))
       : 0
     if (!key || !planLifecycleRevision) return false
-    const rows = readCompanionPlanPauseReceipts().filter((value) => value.key !== key)
+    const stored = readCompanionPlanPauseReceipts()
     if (!planPauseStorageReady) return false
+    const previous = stored.find(value => value.key === key.toLowerCase())
+    if (source.paused !== true && previous?.planLifecycleRevision !== planLifecycleRevision) return true
+    const rows = stored.filter(value => value !== previous)
     if (source.paused === true) rows.unshift({ key, planLifecycleRevision, paused: true, updatedAt: Date.now() })
-    return writeCompanionPlanPauseReceipts(rows.slice(0, 2_000))
+    return rows.length <= 2_000 && writeCompanionPlanPauseReceipts(rows)
   }
 
   return {
     planPauseStorageReady: () => planPauseStorageReady,
+    blockedPauseKeys: () => blockedPauseKeys,
     sanitizeCompanionPlanPauseReceipts,
     writeCompanionPlanPauseReceipts,
     readCompanionPlanPauseReceipts,

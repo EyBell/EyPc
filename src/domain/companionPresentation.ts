@@ -599,6 +599,32 @@ export interface CompanionTaskMetaLine {
   detail: string
 }
 
+export function codexNativeMemberStatusText(status: import('./companionTaskPackage').CodexGroupStatus): string {
+  function describe(member: typeof status.main): string {
+    const turn = {
+      'not-started': '尚未开始',
+      'turn-running': '执行中',
+      'turn-completed': '已完成',
+      'turn-interrupted': '已中断',
+      'turn-failed': '失败',
+      unknown: member.threadStatus === 'notLoaded' ? '未加载' : '待核验'
+    }[member.turn]
+    const goal = { '': '', unknown: '', none: '', active: 'Goal 运行中', paused: 'Goal 已暂停',
+      blocked: 'Goal 受阻', usageLimited: 'Goal 用量受限', budgetLimited: 'Goal 预算受限', complete: 'Goal 已完成' }[member.goal]
+    const pending = member.pending.map(kind => ({
+      approval: '待审批', 'user-input': '待答', 'plan-choice': '待选择', 'plan-implementation': '待实施'
+    })[kind])
+    return [turn, goal, ...pending,
+      member.planReady && !pending.includes('待实施') ? 'Plan 待实施' : '',
+      member.submissionPending ? '待发送确认' : '',
+      member.threadStatus === 'systemError' ? '原生系统错误' : '',
+      member.verifying && turn !== '待核验' ? '核验中' : ''
+    ].filter(Boolean).join('、')
+  }
+  return [`主对话 ${describe(status.main)}`, ...status.sides.map(side => `子对话 ${describe(side)}`),
+    status.groupActivity ? '原生整组活动' : ''].filter(Boolean).join(' · ')
+}
+
 export function buildCompanionTaskMetaLine(input: {
   task: {
     provider?: CompanionProviderId

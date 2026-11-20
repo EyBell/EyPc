@@ -1,5 +1,29 @@
 'use strict'
 
+const SYNC_STAGES = new Set([
+  'stream-received', 'stream-rejected', 'stream-held', 'inventory-targeted-read', 'inventory-admitted', 'stream-replayed',
+  'owner-queued', 'owner-requested', 'owner-resolved', 'turn-notification',
+  'native-unread', 'side-terminal-read', 'package-published'
+])
+const SYNC_OUTCOMES = new Set([
+  'snapshot', 'patches', 'held', 'admitted', 'replayed', 'queued', 'requested',
+  'targeted', 'discarded', 'expired', 'unavailable', 'started', 'completed',
+  'unread', 'read', 'published'
+])
+const SYNC_PHASES = new Set([
+  'unknown', 'running', 'inProgress', 'waiting-input', 'waiting-approval',
+  'completed', 'interrupted', 'failed', 'stopped'
+])
+const SYNC_TARGET_LIMIT = 256
+const SYNC_WINDOW_MS = 120_000
+const SIDE_TERMINAL_REASONS = new Set([
+  'rpc-unavailable', 'metadata-mismatch', 'rollout-unavailable', 'context-changed', 'turn-unverified', 'pending-decision', 'empty-turn-history'
+])
+const OWNER_RESOLUTION_REASONS = new Set([
+  'queue-deadline', 'response-deadline', 'background-backoff', 'connection-changed', 'target-changed',
+  'stream-current', 'superseded', 'send-unavailable', 'owner-unavailable', 'invalid-response'
+])
+
 function createCodexRuntimeDiagnostics(dependencies) {
   const { runtimeDiagnostics, startCodexServer, sendCodexRpc, process } = dependencies
   const errorNames = ['Error', 'TypeError', 'ReferenceError', 'SyntaxError', 'RangeError']
@@ -8,6 +32,47 @@ function createCodexRuntimeDiagnostics(dependencies) {
   const launchFailures = new WeakMap()
   const snapshotFailures = new WeakMap()
   const stateEvidenceSignatures = new Map()
+  const syncTargets = new Map()
+  const now = dependencies.now || Date.now
+
+  function syncStage(taskRef, stage, details = {}) {
+    if (!/^h:[0-9a-f]{16}$/.test(taskRef) || !SYNC_STAGES.has(stage)
+      || !SYNC_OUTCOMES.has(details.outcome)) return
+    const observedAt = now()
+    const number = (value) => Number.isSafeInteger(value) && value > 0 ? value : 0
+    const turnStartedAt = number(details.turnStartedAt)
+    const receivedAt = number(details.receivedAt)
+    const phase = SYNC_PHASES.has(details.phase) ? details.phase : 'unknown'
+    const memberRef = /^h:[0-9a-f]{16}$/.test(details.memberRef) ? details.memberRef : ''
+    const allowedReasons = stage === 'owner-resolved' ? OWNER_RESOLUTION_REASONS
+      : stage === 'side-terminal-read' ? SIDE_TERMINAL_REASONS : null
+    const reason = allowedReasons?.has(details.reason) ? details.reason : ''
+    const ownerStage = stage.startsWith('owner-')
+    const priority = ownerStage && ['targeted', 'background'].includes(details.priority) ? details.priority : ''
+    let target = syncTargets.get(taskRef)
+    if (!target || observedAt - target.startedAt >= SYNC_WINDOW_MS) {
+      target = { startedAt: observedAt, stages: new Map() }
+    }
+    const key = `${ownerStage ? 'owner' : stage}:${memberRef}`
+    const state = stage === 'stream-received' ? phase : `${details.outcome}:${phase}`
+    const signature = `${stage}:${state}:${turnStartedAt}:${reason}:${priority}`
+    if (target.stages.get(key) === signature) return
+    target.stages.set(key, signature)
+    while (target.stages.size > 32) target.stages.delete(target.stages.keys().next().value)
+    syncTargets.delete(taskRef)
+    syncTargets.set(taskRef, target)
+    while (syncTargets.size > SYNC_TARGET_LIMIT) syncTargets.delete(syncTargets.keys().next().value)
+    runtimeDiagnostics.record({
+      level: 'info', scope: 'task-evidence', event: 'codex-task-sync',
+      provider: 'codex', taskRef, outcome: details.outcome,
+      details: {
+        stage, phase, turnStartedAt, ...(memberRef ? { memberRef } : {}), ...(reason ? { reason } : {}),
+        ...(priority ? { priority } : {}),
+        ...(receivedAt && receivedAt <= observedAt ? { receivedAt } : {}),
+        streamRevision: number(details.streamRevision), packageRevision: number(details.packageRevision)
+      }
+    })
+  }
 
   function stateEvidence(event, taskRef, details) {
     if (!['branch-activity-evidence', 'member-unread-eligibility'].includes(event)) return
@@ -241,7 +306,10 @@ function createCodexRuntimeDiagnostics(dependencies) {
   }
 
   return { errorResult, captureFailure, snapshotFailure, preflightRead, coldPreflight, captureLaunch, inventoryFailure, processEnd, startup, request, rpcFailure,
-    stateEvidence, resetStateEvidence: () => stateEvidenceSignatures.clear() }
+    stateEvidence, syncStage, resetStateEvidence: () => {
+      stateEvidenceSignatures.clear()
+      syncTargets.clear()
+    } }
 }
 
 module.exports = { createCodexRuntimeDiagnostics }

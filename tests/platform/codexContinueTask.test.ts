@@ -21,6 +21,7 @@ function fixture(goalStatus?: string, turnStatus = 'interrupted') {
   }
   const deps = {
     resolveTarget: vi.fn(async () => ({ threadId, alias: target.actionAlias })),
+    captureScope: vi.fn(() => ({ current: () => true })),
     currentTask: vi.fn(() => state.task), getKnown: vi.fn(() => state.known),
     open: vi.fn(async () => state.opened), markStarted: vi.fn(), markGoalActive: vi.fn(),
     sanitizeTurnPage: vi.fn((page: any) => page?.data?.[0] ?? null),
@@ -62,7 +63,10 @@ describe('隔离 Codex 继续任务执行器', () => {
     const f = fixture(status, 'completed')
     expect(await f.run(f.target)).toMatchObject({ outcome: 'executed' })
     expect(f.writes()).toEqual([['thread/goal/set', { threadId, status: 'active', origin: 'user' }]])
-    expect(f.deps.markGoalActive).toHaveBeenCalledWith(threadId, { ...f.state.goal, status: 'active' })
+    expect(f.deps.captureScope.mock.calls).toHaveLength(2)
+    expect(f.deps.markGoalActive).toHaveBeenCalledExactlyOnceWith(
+      threadId, { ...f.state.goal, status: 'active' }, f.target, f.deps.captureScope.mock.results[1]?.value
+    )
     expect(f.deps.markStarted).not.toHaveBeenCalled()
   })
   it.each(['usageLimited', 'budgetLimited', 'active'])('拒绝 Goal %s', async (status) => {

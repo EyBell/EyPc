@@ -889,6 +889,7 @@ export interface CodexTaskCard {
   canonicalFreshness?: 'fresh' | 'verifying'
   /** Sole semantic state projected from the process-owned task Kernel. */
   companionPhase?: 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
+  codexStatus?: import('./companionTaskPackage').CodexGroupStatus
   /** Set while a hand-set phase is standing in for an `unknown` one. */
   manualPhase?: CodexManualPhaseValue | ''
   /** Latest Turn.startedAt; this is the only field used as “last question time”. */

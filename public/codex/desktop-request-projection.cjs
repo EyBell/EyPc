@@ -29,6 +29,17 @@ const {
  */
 
 const CODEX_DESKTOP_REQUEST_PROJECTION_REVISION = COMPANION_V7_REVISIONS.desktopRequestProjection
+const OWNER_REQUEST_LIMIT = 8
+const OWNER_BACKGROUND_LIMIT = 4
+const OWNER_RESERVED_FOR_ACTIVITY = 2
+const OWNER_SIDE_LIMIT = 4
+const OWNER_QUEUE_LIMIT = 32
+const OWNER_ATTEMPT_LIMIT = 1_000
+const OWNER_BROADCAST_GRACE_MS = 250
+const OWNER_BACKGROUND_QUEUE_MS = 1_000
+const OWNER_RESPONSE_MS = 5_000
+const OWNER_BACKGROUND_BACKOFF_MS = 30_000
+const OWNER_ATTEMPTS_PER_SIGNATURE = 2
 
 function createCodexDesktopRequestProjection(dependencies = {}) {
   const record = dependencies.record
@@ -51,102 +62,290 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
   const startTimer = dependencies.setTimeout || setTimeout
   const stopTimer = dependencies.clearTimeout || clearTimeout
 
-  function pendingOwnerSignature(shadow, known) {
+  function pendingOwnerSignature(shadow) {
     const requests = (shadow?.requests || []).filter((request) => request.asyncQuestion === true
       && request.identityExact === true
-      && !['resolved', 'cancelled', 'execution-started'].includes(request.interactionState))
+      && !['resolved', 'cancelled', 'execution-started'].includes(request.interactionState)
+      && dependencies.waitingEvidenceVisible?.(shadow.waitingState, codexDesktopRequestFlag(request), request.observedSequence) !== false)
     return requests.length ? {
-      value: `${timestampMs(known?.connectorLastTurnStartedAt)}:${requests.map((request) => request.observedSequence).sort((a, b) => a - b).join(',')}`,
+      value: requests.map((request) => request.observedSequence).sort((left, right) => left - right).join(','),
       observedAt: Math.max(...requests.map((request) => timestampMs(request.observedAt)))
     } : null
   }
 
-  function recordOwnerRefresh(threadId, outcome, entry) {
+  function recordOwnerRefresh(threadId, outcome, entry, reason) {
     dependencies.recordDiagnostic?.({ level: 'info', scope: 'task-recovery', event: 'desktop-owner-snapshot',
       provider: 'codex', taskRef: threadId, outcome,
       details: { mode: entry.mode, pendingCount: entry.shadow?.requests?.filter((request) => request.asyncQuestion).length || 0,
         ...(typeof entry.ownerMatched === 'boolean' ? { ownerMatched: entry.ownerMatched } : {}) } })
+    dependencies.recordSyncStage?.(entry.parentId, outcome === 'requested' ? 'owner-requested' : 'owner-resolved', {
+      outcome, turnStartedAt: entry.turnStartedAt, priority: entry.priority ? 'targeted' : 'background', reason
+    }, threadId)
   }
 
-  function inventoryOwnerSignature(known) {
-    return `${timestampMs(known?.connectorLastTurnStartedAt)}:${known?.connectorLastTurnId || ''}`
+  function coversOwnerTurn(turnStartedAt, turnId, observedStart, observedRef) {
+    if (turnStartedAt && observedStart !== turnStartedAt) return observedStart > turnStartedAt
+    return !turnId || observedRef === codexDesktopRequestCorrelation({ id: turnId })
   }
 
-  function ownerEntryCurrent(bridge, state, entry) {
+  function inventoryOwnerSatisfied(bridge, entry, shadow) {
+    const stream = bridge.streamProtocolFor?.(entry.threadId)
+    if (!shadow?.ownerClientId || shadow.ownerDisconnectedAt || stream?.available !== true
+      || stream.generation !== bridge.streamGeneration || stream.ownerClientId !== shadow.ownerClientId
+      || !Number.isSafeInteger(stream.trustedRevision) || stream.trustedRevision !== shadow.revision) return false
+    return coversOwnerTurn(entry.turnStartedAt, entry.turnId,
+      timestampMs(shadow.currentCanonicalTurn?.startedAt), shadow.currentCanonicalTurn?.turnRef)
+  }
+
+  function pendingOwnerSatisfied(bridge, entry, shadow, requestedSetRevision) {
+    return entry.mode === 'pending' && shadow?.requestSetComplete === true
+      && shadow.requestSetRevision > requestedSetRevision && inventoryOwnerSatisfied(bridge, entry, shadow)
+  }
+
+  function ownerDemand(bridge, entry) {
+    const { threadId, parentId } = entry
+    if (!bridge.inventory.has(parentId)
+      || bridge.parentThreadIdFor && bridge.parentThreadIdFor(threadId) !== parentId) return null
+    const context = bridge.ownerEvidenceFor ? bridge.ownerEvidenceFor(threadId, parentId) : { known: entry.known }
+    const known = context?.known
+    if (!known) return null
+    const shadow = bridge.shadows.get(threadId) || bridge.sideShadows.get(threadId)
+    const side = threadId !== parentId
+    const member = context.member
+    const appActivity = side ? context.appServerSide : known
+    const appLive = appActivity?.appServerLiveActive === true
+    const ownStatus = side ? member?.status : known.connectorStatus
+    const ownTurnStatus = side ? member?.lastTurnStatus : known.connectorLastTurnStatus
+    const rootStart = timestampMs(known.connectorLastTurnStartedAt)
+    const rootTurnId = known.connectorLastTurnId || ''
+    const directRoot = !side && known.status === 'active' && (known.lastTurnEvidence === 'turn-started' || appLive)
+    const turnStartedAt = side
+      ? timestampMs(appLive && context.liveTurn?.startedAt || member?.turnStartedAt)
+      : timestampMs(directRoot && known.lastTurnStartedAt) || rootStart
+    const turnId = side ? (appLive && context.liveTurn?.id || member?.turnId || '')
+      : (directRoot && known.lastTurnId || rootTurnId)
+    const parentTurn = !side || (!turnStartedAt && !turnId)
+      ? [rootStart, rootTurnId, timestampMs(known.lastTurnStartedAt), known.lastTurnId] : null
+    const basis = JSON.stringify([parentId, member?.spawnEdgeBasis, turnStartedAt, turnId, parentTurn])
+    if (entry.mode === 'pending') {
+      const pending = pendingOwnerSignature(shadow)
+      if (!pending?.observedAt || now() - pending.observedAt < 20_000
+        || codexDesktopRuntimeHasWaitingFlags({ activeFlags: side ? member?.activeFlags : known.connectorActiveFlags })) return null
+      return { signature: `${basis}:pending:${pending.value}`, priority: 2, turnStartedAt, turnId, shadow }
+    }
+    const closedAt = context.machine && member?.closedSpawnObservedAt
+    if (closedAt > 0 && closedAt > Math.max(member.activeEvidenceSequence || 0,
+      shadow?.activityEventSequence || 0, appLive ? appActivity.appServerLiveSequence || 0 : 0)) return null
+    const terminal = context.terminal
+    const terminalStart = timestampMs(terminal?.turnStartedAt)
+    const terminalCurrent = terminalStart > 0 && coversOwnerTurn(turnStartedAt, turnId, terminalStart, terminal.turnRef)
+    const waiting = codexDesktopRuntimeHasWaitingFlags({ activeFlags: side ? member?.activeFlags : known.connectorActiveFlags })
+    const ambiguous = ownStatus === 'notLoaded' && ownTurnStatus === 'interrupted' && Boolean(turnStartedAt || turnId)
+    const openRollout = ambiguous && context.openRollout === true
+    if (terminalCurrent && !appLive && !directRoot && !waiting
+      && !(openRollout && terminal.lastTurnEvidence === 'targeted-after-exit' && terminal.lastTurnStatus === 'interrupted')
+      && !(member?.activeEvidenceSequence > terminal.terminalEvidenceSequence)) return null
+    const active = appLive || directRoot || ownStatus === 'active' || ownTurnStatus === 'inProgress' || openRollout
+    const recoverSide = side && !active && !context.machine && !shadow
+      && (entry.recoveryRequested || known.lastTurnStatus === 'completed' && bridge.sideRecoveryPending?.has(threadId))
+    if (!active && !recoverSide && !ambiguous) return null
+    const priority = active ? 2 : recoverSide ? 1 : 0
+    return { signature: `${basis}:${priority}:${appLive ? appActivity.appServerLiveSequence || 0 : 0}`,
+      priority, recoverSide, turnStartedAt, turnId, shadow }
+  }
+
+  function ownerEntryObsolete(bridge, entry) {
     if (bridge.closed || bridge.state !== 'connected' || bridge.socket !== entry.socket
-      || !bridge.inventory.has(entry.parentId)) return false
-    if (entry.mode === 'inventory') return state.latest.get(entry.threadId) === entry.signature
-      && inventoryOwnerSignature(entry.known) === entry.signature
-    const shadow = bridge.shadows.get(entry.threadId) || bridge.sideShadows.get(entry.threadId)
-    return shadow === entry.shadow
-      && pendingOwnerSignature(shadow, { connectorLastTurnStartedAt: entry.turnStartedAt })?.value === entry.signature
+      || bridge.streamGeneration !== entry.generation) return 'connection-changed'
+    const current = ownerDemand(bridge, entry)
+    if (!current || current.signature !== entry.signature) return 'target-changed'
+    if (pendingOwnerSatisfied(bridge, entry, current.shadow, entry.requestedSetRevision)) return 'stream-current'
+    if (entry.mode === 'pending' && current.shadow !== entry.shadow) return 'target-changed'
+    if (entry.mode === 'inventory' && inventoryOwnerSatisfied(bridge, entry, current.shadow)) return 'stream-current'
+    return ''
+  }
+
+  function discardOwnerEntry(state, entry, reason) {
+    if (state.queue.get(entry.threadId) === entry) state.queue.delete(entry.threadId)
+    if (entry.requestId) {
+      state.pending.delete(entry.requestId)
+      stopTimer(entry.timer)
+    }
+    entry.outcome = 'discarded'
+    recordOwnerRefresh(entry.threadId, 'discarded', entry, reason)
+  }
+
+  function recoverOwnerSide(bridge, state, entry, dueAt = now()) {
+    const key = `inventory:${entry.threadId}`
+    const attempt = state.attempted.get(key)
+    if (!entry.recoverSide || attempt?.signature !== entry.signature) return
+    const current = () => ownerRefreshes.get(bridge) === state && state.attempted.get(key) === attempt
+      && !ownerEntryObsolete(bridge, entry)
+    if (!current()) return
+    if (dueAt > now() || bridge.sideTerminalReadAvailable?.(entry.threadId) === false) {
+      attempt.sideReadAt = dueAt
+      return
+    }
+    delete attempt.sideReadAt
+    void bridge.recoverUnloadedSideTerminal?.(entry.parentId, entry.threadId, undefined, current)
+  }
+
+  function expireOwnerResponse(bridge, state, entry) {
+    if (state.pending.get(entry.requestId) !== entry) return
+    state.pending.delete(entry.requestId)
+    stopTimer(entry.timer)
+    const reason = ownerEntryObsolete(bridge, entry)
+    entry.outcome = reason ? 'discarded' : 'expired'
+    recordOwnerRefresh(entry.threadId, entry.outcome, entry, reason || 'response-deadline')
+    if (!reason) {
+      armOwnerRetry(state, entry)
+      if (!entry.priority) state.backgroundRetryAt = now() + OWNER_BACKGROUND_BACKOFF_MS
+      if (entry.recoverSide) recoverOwnerSide(bridge, state, entry)
+    }
+    drainOwnerQueue(bridge, state)
+  }
+
+  function armOwnerRetry(state, entry) {
+    const attempt = state.attempted.get(`${entry.mode}:${entry.threadId}`)
+    if (!attempt || attempt.signature !== entry.signature || attempt.count >= OWNER_ATTEMPTS_PER_SIGNATURE) return
+    attempt.retryAt = now() + OWNER_BACKGROUND_BACKOFF_MS
+    attempt.retry = entry
   }
 
   function drainOwnerQueue(bridge, state) {
-    while (state.pending.size < 8 && state.queue.size) {
-      const [threadId, entry] = state.queue.entries().next().value
-      state.queue.delete(threadId)
-      if (!ownerEntryCurrent(bridge, state, entry)) {
-        entry.outcome = 'discarded'
-        recordOwnerRefresh(threadId, 'discarded', entry)
-        continue
+    if (state.draining || ownerRefreshes.get(bridge) !== state) return
+    state.draining = true
+    try {
+      for (const attempt of state.attempted.values()) {
+        const entry = attempt.retry
+        if (!entry || attempt.retryAt > now()) continue
+        delete attempt.retry
+        if (!ownerEntryObsolete(bridge, entry)) {
+          refreshOwner(bridge, entry.threadId, entry.known, entry.mode, entry.parentId, entry.recoveryRequested)
+        }
       }
-      const requestId = crypto.randomUUID()
-      const attemptKey = `${entry.mode}:${threadId}`
-      state.attempted.delete(attemptKey)
-      state.attempted.set(attemptKey, entry.signature)
-      while (state.attempted.size > 1_000) state.attempted.delete(state.attempted.keys().next().value)
-      state.pending.set(requestId, entry)
-      entry.timer = startTimer(() => {
-        if (state.pending.get(requestId) !== entry) return
+      while (state.queue.size && ownerRefreshes.get(bridge) === state) {
+        const at = now()
+        const pending = [...state.pending.values()]
+        const lowerPriorityCount = pending.filter((item) => item.priority < 2).length
+        const sideCount = pending.filter((item) => item.recoverSide).length
+        let entry = null
+        for (const candidate of state.queue.values()) {
+          const reason = at >= candidate.expiresAt ? 'queue-deadline'
+            : !candidate.priority && at < state.backgroundRetryAt ? 'background-backoff' : ownerEntryObsolete(bridge, candidate)
+          if (reason) { discardOwnerEntry(state, candidate, reason); continue }
+          if (at < candidate.readyAt || pending.length >= OWNER_REQUEST_LIMIT
+            || candidate.priority < 2 && lowerPriorityCount >= OWNER_REQUEST_LIMIT - OWNER_RESERVED_FOR_ACTIVITY
+            || candidate.recoverSide && sideCount >= OWNER_SIDE_LIMIT) continue
+          if (!entry || entry.priority < candidate.priority) entry = candidate
+        }
+        if (!entry) break
+        const { threadId } = entry
+        state.queue.delete(threadId)
+        const requestId = crypto.randomUUID()
+        entry.responseDeadline = now() + OWNER_RESPONSE_MS
+        const attemptKey = `${entry.mode}:${threadId}`
+        const previous = state.attempted.get(attemptKey)
+        state.attempted.delete(attemptKey)
+        entry.requestedSetRevision = entry.shadow?.requestSetRevision || 0
+        state.attempted.set(attemptKey, {
+          signature: entry.signature, mode: entry.mode, threadId, parentId: entry.parentId,
+          turnStartedAt: entry.turnStartedAt, turnId: entry.turnId,
+          requestedSetRevision: entry.requestedSetRevision,
+          count: (previous?.signature === entry.signature ? previous.count : 0) + 1,
+          retryAt: entry.responseDeadline + OWNER_BACKGROUND_BACKOFF_MS
+        })
+        while (state.attempted.size > OWNER_ATTEMPT_LIMIT) state.attempted.delete(state.attempted.keys().next().value)
+        entry.requestId = requestId
+        state.pending.set(requestId, entry)
+        entry.timer = startTimer(() => expireOwnerResponse(bridge, state, entry), OWNER_RESPONSE_MS)
+        entry.timer?.unref?.()
+        entry.outcome = 'requested'
+        recordOwnerRefresh(threadId, 'requested', entry)
+        if (bridge.send({ type: 'request', method: 'thread-owner-discovery', requestId,
+          sourceClientId: bridge.clientId, version: 1, params: { hostId: 'local', conversationId: threadId } })) continue
+        stopTimer(entry.timer)
         state.pending.delete(requestId)
-        recordOwnerRefresh(threadId, 'expired', entry)
-        drainOwnerQueue(bridge, state)
-      }, 5_000)
-      entry.timer?.unref?.()
-      entry.outcome = 'requested'
-      recordOwnerRefresh(threadId, 'requested', entry)
-      if (bridge.send({ type: 'request', method: 'thread-owner-discovery', requestId,
-        sourceClientId: bridge.clientId, version: 1, params: { hostId: 'local', conversationId: threadId } })) continue
-      stopTimer(entry.timer)
-      state.pending.delete(requestId)
-      entry.outcome = 'unavailable'
-      recordOwnerRefresh(threadId, 'unavailable', entry)
+        entry.outcome = 'unavailable'
+        armOwnerRetry(state, entry)
+        if (!entry.priority) state.backgroundRetryAt = now() + OWNER_BACKGROUND_BACKOFF_MS
+        recordOwnerRefresh(threadId, 'unavailable', entry, 'send-unavailable')
+        if (entry.recoverSide) recoverOwnerSide(bridge, state, entry)
+      }
+    } finally {
+      state.draining = false
+      if (state.wakeTimer != null) stopTimer(state.wakeTimer)
+      state.wakeTimer = null
+      if (ownerRefreshes.get(bridge) === state) {
+        const at = now()
+        const deadlines = Array.from(state.queue.values(), entry => entry.readyAt > at ? entry.readyAt : entry.expiresAt)
+        for (const attempt of state.attempted.values()) if (attempt.retry) deadlines.push(attempt.retryAt)
+        if (deadlines.length) {
+          const next = Math.min(...deadlines)
+          state.wakeTimer = startTimer(() => drainOwnerQueue(bridge, state), Math.max(0, next - at))
+          state.wakeTimer?.unref?.()
+        }
+      }
     }
   }
 
-  function refreshOwner(bridge, threadId, known, mode, verifiedParentId) {
+  function refreshOwner(bridge, threadId, known, mode, verifiedParentId, recoverSide = false) {
     const shadow = bridge?.shadows?.get(threadId) || bridge?.sideShadows?.get(threadId)
-    const parentId = shadow?.parentThreadId || verifiedParentId || threadId
-    if (bridge?.closed || bridge?.state !== 'connected' || !bridge.socket
-      || !bridge.inventory?.has(parentId) || !known) return false
-    const signature = mode === 'inventory' ? { value: inventoryOwnerSignature(known) } : pendingOwnerSignature(shadow, known)
-    if (mode === 'pending' && (codexDesktopRuntimeHasWaitingFlags({ activeFlags: known.connectorActiveFlags })
-      || !signature?.observedAt || now() - signature.observedAt < 20_000)) return false
+    const parentId = verifiedParentId || shadow?.parentThreadId || threadId
+    if (bridge?.closed || bridge?.state !== 'connected' || !bridge.socket) return false
+    const entry = { threadId, parentId, known, mode, recoveryRequested: recoverSide,
+      socket: bridge.socket, generation: bridge.streamGeneration, outcome: 'queued' }
+    const demand = ownerDemand(bridge, entry)
+    Object.assign(entry, demand)
+    if (!demand || mode === 'inventory' && inventoryOwnerSatisfied(bridge, entry, entry.shadow)) {
+      const previous = ownerRefreshes.get(bridge)
+      const removed = previous?.attempted.delete(`${mode}:${threadId}`)
+      codexDesktopReconcileOwnerTarget(bridge, threadId)
+      if (removed) drainOwnerQueue(bridge, previous)
+      return false
+    }
     let state = ownerRefreshes.get(bridge)
+    if (state && (state.socket !== bridge.socket || state.generation !== bridge.streamGeneration)) {
+      codexDesktopClearOwnerRefreshes(bridge)
+      state = null
+    }
     if (!state) {
-      state = { pending: new Map(), attempted: new Map(), queue: new Map(), latest: new Map() }
+      state = { pending: new Map(), attempted: new Map(), queue: new Map(), backgroundRetryAt: 0,
+        socket: bridge.socket, generation: bridge.streamGeneration, wakeTimer: null }
       ownerRefreshes.set(bridge, state)
     }
-    if (mode === 'inventory') {
-      state.latest.delete(threadId)
-      state.latest.set(threadId, signature.value)
-      while (state.latest.size > 1_000) state.latest.delete(state.latest.keys().next().value)
-    }
     const attemptKey = `${mode}:${threadId}`
-    if (state.queue.size >= 1_000 || state.queue.has(threadId)
-      || mode === 'pending' && state.pending.size >= 8 || state.attempted.get(attemptKey) === signature.value
-      || [...state.pending.values()].some((entry) => entry.threadId === threadId)) return false
-    const entry = { threadId, parentId, shadow, known, mode, signature: signature.value,
-      turnStartedAt: timestampMs(known.connectorLastTurnStartedAt), socket: bridge.socket, timer: null, outcome: 'queued' }
+    const current = state.queue.get(threadId) || [...state.pending.values()].find((item) => item.threadId === threadId)
+    if (current) {
+      const reason = ownerEntryObsolete(bridge, current)
+      if (reason) discardOwnerEntry(state, current, reason)
+      else if (mode === 'pending' && current.mode === 'inventory' && !current.requestId) {
+        discardOwnerEntry(state, current, 'superseded')
+      } else return !current.requestId && current.mode === mode
+    }
+    const queueLimit = entry.priority === 2 ? OWNER_QUEUE_LIMIT : OWNER_QUEUE_LIMIT - OWNER_REQUEST_LIMIT
+    const at = now()
+    const attempt = state.attempted.get(attemptKey)
+    if (attempt?.signature === entry.signature) {
+      if (pendingOwnerSatisfied(bridge, entry, entry.shadow, attempt.requestedSetRevision)) return false
+      if (attempt.sideReadAt != null && attempt.sideReadAt <= at) recoverOwnerSide(bridge, state, entry)
+      if (attempt.count >= OWNER_ATTEMPTS_PER_SIGNATURE || at < attempt.retryAt) return false
+    }
+    if (state.queue.size >= queueLimit) return false
+    if (!entry.priority && (at < state.backgroundRetryAt
+      || [...state.queue.values(), ...state.pending.values()].filter((item) => !item.priority).length >= OWNER_BACKGROUND_LIMIT)) return false
+    entry.readyAt = entry.priority ? at : at + OWNER_BROADCAST_GRACE_MS
+    entry.expiresAt = at + (entry.priority ? OWNER_RESPONSE_MS * 2 : OWNER_BACKGROUND_QUEUE_MS)
     state.queue.set(threadId, entry)
+    dependencies.recordSyncStage?.(parentId, 'owner-queued', {
+      outcome: 'queued', turnStartedAt: entry.turnStartedAt, priority: entry.priority ? 'targeted' : 'background'
+    }, threadId)
     drainOwnerQueue(bridge, state)
     return !['unavailable', 'discarded'].includes(entry.outcome)
   }
 
-  /** Subscription discovers authority; independent notLoaded/interrupted is not an exclusion. */
-  function codexDesktopRefreshInventoryOwner(bridge, threadId, known, verifiedParentId) {
-    return refreshOwner(bridge, threadId, known, 'inventory', verifiedParentId)
+  function codexDesktopRefreshInventoryOwner(bridge, threadId, known, verifiedParentId, recoverSide) {
+    return refreshOwner(bridge, threadId, known, 'inventory', verifiedParentId, recoverSide)
   }
 
   /** Revalidate evidence, never infer that plain-active or elapsed time answered it. */
@@ -158,29 +357,87 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     const state = ownerRefreshes.get(bridge)
     const entry = message?.type === 'response' ? state?.pending.get(message.requestId) : null
     if (!entry) return false
+    if (now() >= entry.responseDeadline) {
+      expireOwnerResponse(bridge, state, entry)
+      return true
+    }
     state.pending.delete(message.requestId)
     stopTimer(entry.timer)
     const shadow = bridge.shadows.get(entry.threadId) || bridge.sideShadows.get(entry.threadId)
+    const reason = ownerEntryObsolete(bridge, entry)
     if (message.method !== 'thread-owner-discovery' || message.resultType !== 'success'
       || typeof message.handledByClientId !== 'string' || !message.handledByClientId || message.handledByClientId.length > 512
-      || !ownerEntryCurrent(bridge, state, entry)) {
-      recordOwnerRefresh(entry.threadId, 'discarded', entry)
+      || reason) {
+      const failed = message.method === 'thread-owner-discovery' && message.resultType === 'error'
+      if (!reason) {
+        armOwnerRetry(state, entry)
+        if (!entry.priority) state.backgroundRetryAt = now() + OWNER_BACKGROUND_BACKOFF_MS
+        if (entry.recoverSide && failed && message.error === 'no-client-found') recoverOwnerSide(bridge, state, entry)
+      }
+      recordOwnerRefresh(entry.threadId, 'discarded', entry, reason || (failed ? 'owner-unavailable' : 'invalid-response'))
       drainOwnerQueue(bridge, state)
       return true
     }
     entry.ownerMatched = shadow?.ownerClientId === message.handledByClientId
     const sent = bridge.followAny(entry.threadId, true, [message.handledByClientId])
+    armOwnerRetry(state, entry)
     recordOwnerRefresh(entry.threadId, sent ? 'targeted' : 'unavailable', entry)
+    if (entry.recoverSide) recoverOwnerSide(bridge, state, entry, sent ? entry.responseDeadline : now())
     drainOwnerQueue(bridge, state)
     return true
+  }
+
+  function codexDesktopReconcileOwnerTarget(bridge, threadId, forget = false) {
+    const state = ownerRefreshes.get(bridge)
+    if (!state) return
+    let discarded = false
+    for (const entry of [...state.pending.values(), ...state.queue.values()]) {
+      if (entry.threadId !== threadId && !(forget && entry.parentId === threadId)) continue
+      const reason = forget ? 'target-changed' : ownerEntryObsolete(bridge, entry)
+      if (!reason) continue
+      discardOwnerEntry(state, entry, reason)
+      discarded = true
+    }
+    if (forget) {
+      state.attempted.delete(`inventory:${threadId}`)
+      state.attempted.delete(`pending:${threadId}`)
+      for (const [key, attempt] of state.attempted) if (attempt.parentId === threadId) state.attempted.delete(key)
+    }
+    for (const mode of ['pending', 'inventory']) {
+      const key = `${mode}:${threadId}`
+      const attempt = state.attempted.get(key)
+      if (!attempt) continue
+      const shadow = bridge.shadows.get(threadId) || bridge.sideShadows.get(threadId)
+      if (mode === 'pending' ? pendingOwnerSatisfied(bridge, attempt, shadow, attempt.requestedSetRevision)
+        : inventoryOwnerSatisfied(bridge, attempt, shadow)) {
+        if (mode === 'inventory') state.attempted.delete(key)
+        else {
+          // This complete set satisfies the request while it remains trusted.
+          // Losing the owner later starts a new budget, even for the same Turn.
+          attempt.count = 0
+          attempt.retryAt = 0
+          delete attempt.retry
+        }
+        discarded = true
+        continue
+      }
+      const retry = attempt.retry
+      const reason = retry && ownerEntryObsolete(bridge, retry)
+      if (reason) {
+        state.attempted.delete(key)
+        discarded = true
+      }
+    }
+    if (discarded || forget) drainOwnerQueue(bridge, state)
   }
 
   function codexDesktopClearOwnerRefreshes(bridge) {
     streamObservations.delete(bridge)
     const state = ownerRefreshes.get(bridge)
     if (!state) return
-    for (const entry of state.pending.values()) stopTimer(entry.timer)
     ownerRefreshes.delete(bridge)
+    if (state.wakeTimer != null) stopTimer(state.wakeTimer)
+    for (const entry of [...state.pending.values(), ...state.queue.values()]) discardOwnerEntry(state, entry, 'connection-changed')
   }
 
   function recordStreamProjection(bridge, threadId, shadow, waitingEvidenceVisible) {
@@ -528,8 +785,13 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
   }
 
   function codexDesktopRetainCausallyOpenRequests(shadow, previousState, completedPlanContext = false) {
-    if (!shadow || !previousState
-      || codexDesktopRuntimeBecamePlainActive(previousState.runtime, shadow.runtime)) return false
+    if (!shadow || !previousState) return false
+    if (codexDesktopRuntimeBecamePlainActive(previousState.runtime, shadow.runtime)) {
+      // An omitted Plan carried across an idle frame expires on execution.
+      // A request still present in the native collection has its own lifetime.
+      shadow.requests = (shadow.requests || []).filter(request => !request.retainedWhileIdle)
+      return false
+    }
     const retained = codexDesktopRemovedWaitingRequests(previousState.requests, shadow.requests)
       .filter((request) => {
         if (request?.asyncQuestion === true
@@ -540,7 +802,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
           || request.identityExact === true && completedPlanContext
       })
     if (!retained.length) return false
-    shadow.requests = [...(Array.isArray(shadow.requests) ? shadow.requests : []), ...retained]
+    shadow.requests = [...(shadow.requests || []), ...retained.map(request => ({ ...request, retainedWhileIdle: true }))]
     shadow.requestSetRevision = previousState.requestSetRevision
     shadow.requestSetComplete = previousState.requestSetComplete
     shadow.requestSetAuthority = previousState.requestSetAuthority
@@ -583,18 +845,26 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       )))
   }
 
-  function codexDesktopResumedWaitingFlags(previousRuntime, currentRuntime, currentRequests, previousRequests) {
-    if (!codexDesktopRuntimeBecamePlainActive(previousRuntime, currentRuntime)) return []
-    const previouslyWaiting = new Set((Array.isArray(previousRequests) ? previousRequests : [])
+  function codexDesktopResumedWaitingEvidence(previousRuntime, currentRuntime, currentRequests, previousRequests) {
+    if (!codexDesktopRuntimeBecamePlainActive(previousRuntime, currentRuntime)) return null
+    const prior = Array.isArray(previousRequests) ? previousRequests : []
+    const previouslyWaiting = new Set(prior
       .map(codexDesktopRequestFlag)
       .filter(Boolean))
     if (codexDesktopRuntimeHasWaitingFlags(previousRuntime)) {
       for (const flag of previousRuntime.activeFlags) previouslyWaiting.add(flag)
     }
-    return [...new Set((Array.isArray(currentRequests) ? currentRequests : [])
+    const requests = Array.isArray(currentRequests) ? currentRequests : []
+    const exactFlags = new Set(requests.filter(request => request.identityExact === true)
+      .map(codexDesktopRequestFlag))
+    const flags = [...new Set(requests
       .map(codexDesktopRequestFlag)
       .filter(Boolean))]
-      .filter((flag) => previouslyWaiting.has(flag))
+      .filter((flag) => previouslyWaiting.has(flag) && !exactFlags.has(flag))
+    const previousInstances = new Set(prior.map(request => request.observedSequence))
+    const residues = requests.filter(request => request.identityExact !== true
+      && previousInstances.has(request.observedSequence) && exactFlags.has(codexDesktopRequestFlag(request)))
+    return { flags, residues }
   }
 
   function codexDesktopCompanionInteractionsForParent(bridge, parentThreadId, known, privateBranchRef, waitingEvidenceVisible) {
@@ -664,7 +934,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
           kind,
           state: terminal ? request.interactionState : 'opened',
           sequence,
-          turnEpoch,
+          turnEpoch: Number(request.turnEpoch) || turnEpoch,
           requestSetRevision,
           authority: terminal
             ? 'provider-live'
@@ -722,6 +992,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     codexDesktopRefreshInventoryOwner,
     codexDesktopRefreshPendingOwner,
     codexDesktopHandleOwnerDiscoveryResponse,
+    codexDesktopReconcileOwnerTarget,
     codexDesktopClearOwnerRefreshes,
     codexDesktopProjectFallbackInteractions,
     codexDesktopClearFallbackInteractions,
@@ -740,7 +1011,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     codexDesktopRetainCausallyOpenRequests,
     codexDesktopAsyncResolvedRuntimeFlags,
     codexDesktopResolveWaitingRequestObservations,
-    codexDesktopResumedWaitingFlags
+    codexDesktopResumedWaitingEvidence
   }
 }
 

@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Script } from 'node:vm'
 
-function checkDesktopSideTerminalCapability(require) {
+async function checkDesktopSideTerminalCapability(require, assetRoot) {
   const { createCodexDesktopShadow } = require('./codex/desktop-shadow.cjs')
   const { createCodexDesktopActivityResolution } = require('./codex/desktop-activity-resolution.cjs')
   const { createCodexDesktopRequestProjection } = require('./codex/desktop-request-projection.cjs')
+  const { createCodexRolloutRuntimeState } = require('./codex/rollout-runtime-state.cjs')
   let sequence = 0
   const helpers = { record: value => value && typeof value === 'object' ? value : {},
     timestampMs: value => Number(value) || 0, nextLiveEvidenceSequence: () => ++sequence }
@@ -34,13 +37,23 @@ function checkDesktopSideTerminalCapability(require) {
     return { ...shadow, ownerClientId: 'synthetic-owner' }
   }
   const current = snapshot()
+  const ordinarySide = snapshot({ ephemeral: false })
   assert.equal(current.canonicalLatestComplete, true, 'native exhausted boundary proves newest canonical coverage')
-  assert.deepEqual(activity.codexDesktopSideTerminalDecision(current).turn,
-    { turnRef: current.currentCanonicalTurn.turnRef, status: 'completed', startedAt },
-    'native ephemeral idle canonical completion is accepted without an App Server read')
-  let checked = 1
+  for (const shadow of [current, ordinarySide]) {
+    assert.deepEqual(activity.codexDesktopSideTerminalDecision(shadow).turn,
+      { turnRef: shadow.currentCanonicalTurn.turnRef, status: 'completed', startedAt },
+      'native idle canonical completion is accepted for both kinds of Side Chat')
+  }
+  let checked = 2
+  for (const status of ['interrupted', 'failed']) {
+    const turn = { ...ordinarySide.currentCanonicalTurn, status }
+    assert.deepEqual(activity.codexDesktopSideTerminalDecision({ ...ordinarySide, currentCanonicalTurn: turn }).turn,
+      { turnRef: turn.turnRef, status, startedAt }, 'current idle owner confirms the ordinary Side outcome')
+    checked++
+  }
   const refused = [
-    ['ordinary-side', snapshot({ ephemeral: false })],
+    ['unconfirmed-side-kind', snapshot({ ephemeral: undefined })],
+    ['ordinary-newer-live', ordinarySide, { branchLiveExact: true, branchTurnStartedAt: startedAt + 1 }],
     ['incomplete-canonical', snapshot({}, 10, 'loading')],
     ['disconnected-owner', { ...current, ownerDisconnectedAt: 1 }],
     ['new-running', snapshot({ threadRuntimeStatus: { type: 'active', activeFlags: [] } })],
@@ -55,6 +68,34 @@ function checkDesktopSideTerminalCapability(require) {
     assert.equal(activity.codexDesktopSideTerminalDecision(shadow, options).turn, undefined, `native Side ${name} must not complete`)
     checked++
   }
+  const rollout = createCodexRolloutRuntimeState({ record: helpers.record,
+    rolloutTimestampMs: (...values) => values.map(helpers.timestampMs).find(Boolean) || 0 })
+  const abortLine = JSON.stringify({ type: 'event_msg', timestamp: startedAt + 10,
+    payload: { type: 'turn_aborted', turn_id: 'synthetic-aborted', started_at: startedAt } })
+  const aborted = rollout.codexRolloutRuntimeStateText(abortLine)
+  assert.deepEqual(activity.codexDesktopUnloadedSideTerminal(null, aborted),
+    { id: 'synthetic-aborted', status: 'interrupted', startedAt, interruptedAt: startedAt + 10 }, 'ordinary Side retains the abort event time independently of its start')
+  const startOnly = rollout.codexRolloutRuntimeStateText(JSON.stringify({ type: 'event_msg',
+    payload: { type: 'turn_aborted', turn_id: 'synthetic-aborted', started_at: startedAt } }))
+  assert.deepEqual(activity.codexDesktopUnloadedSideTerminal(null, startOnly),
+    { id: 'synthetic-aborted', status: 'interrupted', startedAt }, 'a start-only abort has a status but no verified end time')
+  const { sanitizeCodexTurnStatus } = require('./codex/inventory-turn-fields.cjs').createCodexInventoryTurnFields(helpers)
+  const endedTurn = sanitizeCodexTurnStatus({ id: 'synthetic-aborted', status: 'interrupted', startedAt, completedAt: startedAt + 30 })
+  assert.equal(activity.codexDesktopUnloadedSideTerminal(endedTurn, aborted).interruptedAt, startedAt + 30,
+    'the matching native Turn and abort event use the later end bound')
+  assert.equal(sanitizeCodexTurnStatus({ ...endedTurn, completedAt: 0 }).interruptedAt, undefined)
+  assert.equal(activity.codexDesktopUnloadedSideTerminal({ ...endedTurn, startedAt: startedAt + 2000 }, aborted).interruptedAt, undefined,
+    'a conflicting native start cannot order the persisted Side interruption')
+  assert.equal(activity.codexDesktopUnloadedSideTerminal({ ...endedTurn, startedAt: startedAt + 50, interruptedAt: 0 }, aborted).interruptedAt, undefined,
+    'a candidate end before a more precise start in the same second cannot order the interruption')
+  assert.equal(activity.codexDesktopUnloadedSideTerminal({ id: 'synthetic-aborted', status: 'inProgress', startedAt }, aborted),
+    null, 'a current running Turn prevents abort recovery')
+  assert.equal(activity.codexDesktopUnloadedSideTerminal(null, { ...aborted, startedAt: 0 }),
+    null, 'a missing start does not become a terminal Turn')
+  const emptySide = snapshot({ ephemeral: false, turnHistory: null })
+  assert.equal(activity.codexDesktopSideNeedsPersistedTerminal(emptySide), true, 'an empty ordinary Side owner snapshot can recover a persisted terminal')
+  assert.equal(activity.codexDesktopSideNeedsPersistedTerminal({ ...emptySide, ephemeral: true }), false, 'ephemeral Side skips native persisted recovery')
+  checked += 10
   for (const [name, shadow, expected] of [
     ['ephemeral-capability', snapshot(), { goalStatus: 'none', goalFreshness: 'fresh' }],
     ['ordinary-side', snapshot({ ephemeral: false }), null],
@@ -99,7 +140,345 @@ function checkDesktopSideTerminalCapability(require) {
     terminal: { lastTurnStatus: 'interrupted', turnStartedAt: startedAt, lastTurnEvidence: 'targeted-after-exit' }
   }).lastTurnStatus, undefined, 'recorded independent terminal cannot bypass current owner precedence')
   checked += 11
-  return checked
+  const ownerRequests = []
+  const followed = []
+  let sideParent = 'original-parent'
+  const bridge = {
+    state: 'connected', socket: {}, inventory: new Set(['original-parent', 'new-parent']),
+    shadows: new Map(), sideShadows: new Map(), parentThreadIdFor: () => sideParent,
+    send: (request) => ownerRequests.push(request) > 0,
+    followAny: (...args) => followed.push(args) > 0
+  }
+  const owner = createCodexDesktopRequestProjection({ ...helpers, setTimeout: () => 1, clearTimeout: () => {} })
+  const lookup = (parentId, turnStartedAt) => owner.codexDesktopRefreshInventoryOwner(bridge, 'ordinary-side',
+    { connectorLastTurnStartedAt: turnStartedAt }, parentId, true)
+  const resolveOwner = () => owner.codexDesktopHandleOwnerDiscoveryResponse(bridge, {
+    type: 'response', requestId: ownerRequests.at(-1).requestId, method: 'thread-owner-discovery',
+    resultType: 'success', handledByClientId: 'synthetic-owner'
+  })
+  assert.equal(lookup(sideParent, startedAt), true, 'a relation-only ordinary Side can discover its current owner')
+  resolveOwner()
+  assert.deepEqual(followed, [['ordinary-side', true, ['synthetic-owner']]], 'owner evidence triggers an exact Side subscription')
+  assert.equal(lookup(sideParent, startedAt + 1), true)
+  sideParent = 'new-parent'
+  resolveOwner()
+  assert.equal(followed.length, 1, 'an old parent discovery response does not follow the moved Side')
+  assert.equal(lookup(sideParent, startedAt + 1), true, 'the new relation can look up its owner at the same inventory epoch')
+  resolveOwner()
+  assert.equal(followed.length, 2, 'the current relation can recover after rejecting the old response')
+  checked += 4
+  return checked + await checkDesktopOwnerDiscovery(require, assetRoot, { helpers, activity, rollout, abortLine, emptySide })
+}
+
+async function checkDesktopOwnerDiscovery(require, assetRoot, { helpers, activity, rollout, abortLine, emptySide }) {
+  const { createCodexDesktopRequestProjection } = require('./codex/desktop-request-projection.cjs')
+  const { createCodexRuntimeDiagnostics } = require('./codex/runtime-diagnostics.cjs')
+  const source = readFileSync(resolve(assetRoot, assetRoot.endsWith('preload') ? 'index.js' : 'preload.js'), 'utf8')
+  const start = source.indexOf('class CodexDesktopCompanionBridge {')
+  const end = source.indexOf('\nfunction codexEnsureDesktopBridge(', start)
+  assert(start >= 0 && end > start, 'packaged Desktop subscription entry is present')
+  const rememberStart = source.indexOf('function codexRememberPrivateBranchTerminal(')
+  const rememberEnd = source.indexOf('\nfunction codexForgetPrivateBranchTerminal(', rememberStart)
+  assert(rememberStart >= 0 && rememberEnd > rememberStart)
+  const historyStart = source.indexOf('function codexSideHistoryReadScope(')
+  const historyEnd = source.indexOf('\nasync function readCodexThreadTurnStatuses(', historyStart)
+  assert(historyStart >= 0 && historyEnd > historyStart)
+  const bridgeClass = new Script(`${source.slice(rememberStart, rememberEnd)}\n${source.slice(historyStart, historyEnd)}
+    (${source.slice(start, end)}).prototype`)
+  const epoch = 1_800_000_000_000
+  const oldStart = epoch - 10 * 86_400_000
+  const ambiguous = { connectorStatus: 'notLoaded', connectorLastTurnStatus: 'interrupted',
+    connectorLastTurnId: 'old-turn', connectorLastTurnStartedAt: oldStart }
+  const completed = { connectorStatus: 'notLoaded', connectorLastTurnStatus: 'completed',
+    lastTurnStatus: 'completed', lastTurnStartedAt: oldStart, connectorLastTurnStartedAt: oldStart }
+
+  function fixture(rolloutText = abortLine) {
+    let clock = epoch
+    const timers = new Set()
+    const events = [], writes = [], targeted = [], reads = [], scheduled = []
+    const known = new Map(), relations = new Map(), members = new Map(), terminals = new Map(), trackers = new Map()
+    const machines = new Set(), metadata = new Map()
+    const recordStage = (parentId, stage, details, threadId = parentId) => events.push({ stage, threadId, ...details, at: clock })
+    const owner = createCodexDesktopRequestProjection({ ...helpers, now: () => clock, recordSyncStage: recordStage,
+      setTimeout(callback, delay) {
+        const timer = { at: clock + delay, callback }
+        timers.add(timer)
+        return timer
+      }, clearTimeout: timer => timers.delete(timer) })
+    function advance(delay) {
+      const until = clock + delay
+      for (;;) {
+        const next = [...timers].sort((left, right) => left.at - right.at)[0]
+        if (!next || next.at > until) break
+        timers.delete(next)
+        clock = next.at
+        next.callback()
+      }
+      clock = until
+    }
+    const prototype = bridgeClass.runInNewContext({
+      validCodexThreadId: id => typeof id === 'string' && id.length > 0, codexActivityInventory: known,
+      codexDesktopRequestProjection: owner, codexAllSideRelations: () => relations, codexSideParentThreadId: id => relations.get(id),
+      codexInventorySideBranchEvidence: members, codexDesktopSideRelations: relations, codexInventorySideRelations: members,
+      codexAppServerSideActivities: new Map(), codexAppServerSideActivity: () => null,
+      codexCompleteInventoryThreadIds: null, codexRolloutDecisionTrackers: trackers, codexThreadTurnStatusCache: new Map(),
+      codexInventoryMembershipGeneration: 1, codexThreadTurnStatusDirty: new Map(),
+      codexSubagentDiscovery: { codexIsMachineRunThread: id => machines.has(id) }, codexCausalDomain: 'synthetic',
+      codexReadPrivateBranchTerminal: (parent, id) => terminals.get(`${parent}/${id}`),
+      codexPrivateBranchTerminals: terminals, codexPrivateBranchTerminalKey: (parent, id) => `${parent}/${id}`,
+      codexIsConfirmedTurnEvidence: value => ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(value),
+      CODEX_PRIVATE_BRANCH_TERMINAL_LIMIT: 2000, get codexDesktopBridge() { return bridge },
+      codexDesktopActivityResolution: activity, codexTimestampMs: helpers.timestampMs, codexRecord: helpers.record,
+      codexNextLiveEvidenceSequence: helpers.nextLiveEvidenceSequence, recordCodexTaskSync: recordStage,
+      CODEX_DESKTOP_TURN_REFRESH_DEADLINE_MS: 3000, CODEX_ROLLOUT_PENDING_INPUT_TAIL_BYTES: 1000,
+      requestCodexRpc(method, { threadId }) {
+        if (method === 'thread/turns/list') return { data: [] }
+        assert.equal(method, 'thread/read')
+        reads.push(threadId)
+        return new Promise(resolve => metadata.set(threadId, { reply: resolve, parent: relations.get(threadId) }))
+      },
+      codexThreadRolloutCandidate: () => ({ candidate: 'synthetic', stat: { size: 10, mtimeMs: 1, ino: 2 } }),
+      sanitizeCodexTurnStatusPage: () => null, codexReadRolloutTail: () => rolloutText,
+      codexRolloutRuntimeStateText: rollout.codexRolloutRuntimeStateText, refreshCodexThreadGoal: () => null,
+      codexPrivateThreadGoalEvidence: () => ({ goalFreshness: 'fresh', goalStatus: 'none' }),
+      codexDesktopRequestCorrelation: owner.codexDesktopRequestCorrelation, codexPrivateBranchRef: (_parent, id) => id,
+      codexThreadGoalNeedsTerminalRefresh: () => false,
+      codexClearAppServerLiveActive(thread) {
+        thread.appServerLiveActive = false
+        delete thread.appServerLiveSequence
+        delete thread.orderedTurnStart
+      },
+      codexMarkConfirmedTerminalEvidence(thread, evidence, sequence) {
+        thread.lastTurnEvidence = evidence
+        thread.terminalEvidenceSequence = sequence
+      },
+      runtimeDiagnostics: { record: event => events.push(event) },
+      codexThreadHasPersistedPendingPlan: () => false, codexThreadPersistedInputEvidence: () => null, emitCodexActivityDelta() {}
+    })
+    const bridge = Object.assign(Object.create(prototype), {
+      state: 'connected', socket: {}, streamGeneration: 1, inventory: new Set(), sideRecoveryPending: new Set(),
+      sideTerminalReads: new Set(), shadows: new Map(), sideShadows: new Map(), streamProtocols: new Map(),
+      liveUnread: new Map(), persistedUnread: new Map(), turnRefreshes: new Map(), unreadRefreshes: new Map(),
+      waitingEdgeRefreshes: new Map(), waitingStates: new Map(),
+      send: request => writes.push(request) > 0,
+      followAny(threadId, following, clients) { if (clients && following) targeted.push(threadId); return true },
+      parentLiveEvidenceSequence: () => 0, scheduleLatestTurnRefresh: (_parent, refresh) => scheduled.push(refresh.queryThreadId),
+      discardSupersededOrphanedPending() {}, refreshPersistedUnread() {}, ensureUnreadStateWatcher() {}, ensure() {}, emitParentActivity() {}
+    })
+    function addRoot(id, data) { bridge.inventory.add(id); known.set(id, { ...data }) }
+    function response(request, extra) {
+      return owner.codexDesktopHandleOwnerDiscoveryResponse(bridge, { type: 'response', method: 'thread-owner-discovery',
+        requestId: request.requestId, resultType: 'success', handledByClientId: 'synthetic-owner', ...extra })
+    }
+    async function finishReads(valid = true) {
+      for (const [id, { reply, parent }] of metadata) reply({ thread: { id, forkedFromId: parent,
+        threadSource: valid ? 'user' : 'subagent', status: { type: 'notLoaded' } } })
+      metadata.clear()
+      await new Promise(resolve => setImmediate(resolve))
+    }
+    return { bridge, owner, known, relations, members, terminals, trackers, machines, events, writes, targeted, reads,
+      scheduled, timers, addRoot, advance, response, finishReads, scan: () => bridge.updateInventory(bridge.inventory),
+      sent: () => writes.map(request => request.params.conversationId) }
+  }
+
+  const cold = fixture()
+  for (let index = 0; index < 160; index++) cold.addRoot(`idle-${index}`, index % 2 ? completed : {})
+  for (let index = 0; index < 24; index++) {
+    const id = `closed-${index}`
+    cold.relations.set(id, 'idle-1')
+    cold.machines.add(id)
+    cold.members.set(id, { parentThreadId: 'idle-1', status: 'notLoaded', lastTurnStatus: 'interrupted',
+      turnStartedAt: oldStart, closedSpawnObservedAt: 8, activeEvidenceSequence: 3 })
+  }
+  cold.bridge.followAll(true)
+  assert.equal(cold.events.length, 0, 'empty inventory, completed roots and closed machine edges enqueue no owner work')
+  for (let index = 0; index < 80; index++) cold.addRoot(`ambiguous-${index}`, ambiguous)
+  cold.bridge.followAll(true)
+  assert.equal(cold.events.filter(event => event.stage === 'owner-queued').length, 4, 'a large ambiguous inventory admits four probes')
+  cold.advance(249)
+  assert.deepEqual(cold.sent(), [], 'the broadcast can supply its owner first')
+  cold.advance(1)
+  assert.deepEqual(cold.sent(), ['ambiguous-0', 'ambiguous-1', 'ambiguous-2', 'ambiguous-3'])
+  cold.trackers.set('ambiguous-79', { externalOpen: true })
+  cold.terminals.set('ambiguous-79/ambiguous-79', { turnStartedAt: oldStart, lastTurnStatus: 'interrupted',
+    lastTurnEvidence: 'targeted-after-exit', turnRef: cold.owner.codexDesktopRequestCorrelation({ id: ambiguous.connectorLastTurnId }) })
+  cold.bridge.refreshSubscribedOwner('ambiguous-79')
+  cold.addRoot('new-turn', { status: 'active', lastTurnEvidence: 'turn-started', lastTurnStartedAt: epoch })
+  cold.bridge.refreshSubscribedOwner('new-turn')
+  assert.deepEqual(cold.sent().slice(4), ['ambiguous-79', 'new-turn'], 'an old open rollout and a fresh Turn dispatch immediately')
+  cold.advance(5000)
+  cold.scan()
+  cold.advance(30_000)
+  assert.deepEqual(cold.sent().slice(6), ['ambiguous-79', 'new-turn'], 'still-unresolved urgent targets retry first')
+  cold.advance(60_000)
+  const initialTargets = cold.sent().slice(0, 6)
+  assert.deepEqual(new Set(cold.sent()), new Set(initialTargets), 'elapsed backoff cannot expand the cold inventory scan')
+  for (const id of initialTargets) assert.equal(cold.sent().filter(value => value === id).length, 2, 'one retry per unchanged demand')
+  assert.equal(cold.events.filter(event => event.priority === 'background' && event.reason === 'response-deadline').length, 8)
+  assert.equal(cold.timers.size, 0)
+
+  const flow = fixture()
+  for (const id of ['broadcast', 'timeout', 'late-background']) flow.addRoot(id, ambiguous)
+  for (const id of ['broadcast', 'timeout']) flow.bridge.refreshSubscribedOwner(id)
+  const turnRef = flow.owner.codexDesktopRequestCorrelation({ id: ambiguous.connectorLastTurnId })
+  flow.bridge.shadows.set('broadcast', { ownerClientId: 'current-owner', revision: 9, currentCanonicalTurn: { turnRef, startedAt: oldStart } })
+  flow.bridge.streamProtocols.set('broadcast', { available: true, generation: 1, trustedRevision: 9, ownerClientId: 'current-owner' })
+  flow.advance(250)
+  assert.deepEqual(flow.sent(), ['timeout'], 'dispatch rechecks the trusted broadcast revision and Turn')
+  assert(flow.events.some(event => event.threadId === 'broadcast' && event.reason === 'stream-current'))
+  flow.advance(4900)
+  flow.bridge.refreshSubscribedOwner('late-background')
+  flow.advance(100)
+  assert(flow.events.some(event => event.threadId === 'late-background' && event.reason === 'background-backoff'))
+  flow.addRoot('urgent', { connectorStatus: 'active' })
+  flow.bridge.refreshSubscribedOwner('urgent')
+  flow.advance(250)
+  assert.deepEqual(flow.sent(), ['timeout', 'urgent'], 'backoff discards queued background while an urgent lookup can still send')
+  assert.equal(flow.response(flow.writes[0]), false, 'the expired owner cannot subscribe')
+  assert.deepEqual(flow.targeted, [])
+
+  const reserved = fixture()
+  reserved.addRoot('parent', completed)
+  for (let index = 0; index < 4; index++) {
+    reserved.addRoot(`background-${index}`, ambiguous)
+    reserved.relations.set(`recovery-${index}`, 'parent')
+  }
+  reserved.bridge.followAll(true)
+  reserved.advance(250)
+  assert.equal(reserved.writes.length, 6, 'queued background and Side recovery leave two slots for current work')
+  reserved.addRoot('live', { connectorStatus: 'active' })
+  reserved.bridge.refreshSubscribedOwner('live')
+  reserved.addRoot('pending', {})
+  reserved.bridge.shadows.set('pending', { requests: [{ asyncQuestion: true, identityExact: true,
+    method: 'requestUserInput', observedAt: epoch - 21_000, observedSequence: 19 }] })
+  reserved.owner.codexDesktopRefreshPendingOwner(reserved.bridge, 'pending', reserved.known.get('pending'))
+  assert.deepEqual(reserved.sent().slice(6), ['live', 'pending'], 'both urgent requests dispatch before any earlier timeout')
+
+  const sides = fixture()
+  sides.addRoot('parent', completed)
+  const ids = Array.from({ length: 41 }, (_, index) => `side-${index}`)
+  for (const id of ids) sides.relations.set(id, 'parent')
+  sides.bridge.followAll(true)
+  assert.deepEqual(sides.sent(), ids.slice(0, 4), 'four ordinary Side discoveries may run at once')
+  assert(!sides.events.some(event => event.threadId === ids.at(-1)), 'the last Side exceeds even the full queue capacity')
+  for (let index = 0; index < 8; index++) sides.bridge.sideTerminalReads.add(`busy-${index}`)
+  sides.advance(10_000)
+  assert.deepEqual(sides.sent(), ids.slice(0, 8), 'only two owner waves fit before their queue deadline')
+  assert(sides.events.some(event => event.threadId === ids[8] && event.reason === 'queue-deadline'))
+  assert.equal(sides.reads.length, 0)
+  sides.bridge.sideTerminalReads.clear()
+  for (let pass = 0; pass < Math.ceil(ids.length / 8); pass++) {
+    sides.scan()
+    assert(sides.bridge.sideTerminalReads.size <= 8)
+    await sides.finishReads()
+    sides.advance(10_000)
+    assert(sides.bridge.sideTerminalReads.size <= 8)
+    await sides.finishReads()
+  }
+  sides.scan()
+  assert.deepEqual(sides.sent(), ids, 'inventory retries unsent Side targets and never resends the same failed owner')
+  assert.deepEqual(sides.reads, ids, 'each timed-out Side reaches one bounded persisted read, including deferred reads and the tail')
+  assert.equal(sides.terminals.size, ids.length)
+  const abortTimestamp = JSON.parse(abortLine).timestamp
+  assert([...sides.terminals.values()].every(turn => turn.lastTurnStatus === 'interrupted' && turn.lastTurnEvidence === 'targeted-after-exit'
+    && turn.ordinarySideInterruptedAt === abortTimestamp && turn.terminalAt === turn.turnStartedAt))
+  assert.equal(sides.timers.size, 0)
+
+  const snapshot = fixture()
+  snapshot.addRoot('parent', completed)
+  snapshot.relations.set('side', 'parent')
+  const shadow = { ...emptySide, parentThreadId: 'parent', activityEvidence: 'initial-snapshot', activityRevision: 1 }
+  snapshot.bridge.sideShadows.set('side', shadow)
+  snapshot.bridge.streamProtocols.set('side', { available: true })
+  for (let index = 0; index < 8; index++) snapshot.bridge.sideTerminalReads.add(`busy-${index}`)
+  const fullRead = snapshot.bridge.recoverUnloadedSideTerminal('parent', 'side', shadow)
+  assert.equal(typeof fullRead.then, 'function', 'a full persisted-read pool still returns a Promise')
+  await fullRead
+  snapshot.bridge.verifyUncorroboratedActiveSnapshot('side', shadow)
+  assert.deepEqual([snapshot.reads, snapshot.scheduled], [[], []], 'a saturated snapshot cannot bypass the shared limit')
+  snapshot.bridge.sideTerminalReads.clear()
+  snapshot.scan()
+  await snapshot.finishReads(false)
+  assert.deepEqual(snapshot.reads, ['side'], 'a still-current idle snapshot retries on the next inventory')
+  assert.deepEqual(snapshot.scheduled, ['side'], 'a rejected persisted read resumes the existing scoped Turn verification')
+  assert.equal(snapshot.terminals.size, 0)
+
+  const stale = fixture()
+  stale.addRoot('parent', completed)
+  stale.relations.set('moved-side', 'parent')
+  stale.bridge.followAll(true)
+  stale.advance(5000)
+  stale.owner.codexDesktopReconcileOwnerTarget(stale.bridge, 'moved-side', true)
+  stale.addRoot('other-parent', completed)
+  stale.relations.set('moved-side', 'other-parent')
+  await stale.finishReads()
+  assert.equal(stale.terminals.size, 0, 'a late persisted read cannot write after the Side changes parent')
+  for (const change of ['socket', 'generation', 'turn', 'terminal', 'pending-resolved']) {
+    const target = fixture()
+    target.addRoot('current', { ...ambiguous, connectorStatus: 'active' })
+    if (change === 'pending-resolved') {
+      target.bridge.shadows.set('current', { requests: [{ asyncQuestion: true, identityExact: true, method: 'requestUserInput',
+        observedSequence: 3, observedAt: epoch - 21_000 }] })
+      target.owner.codexDesktopRefreshPendingOwner(target.bridge, 'current', target.known.get('current'))
+      target.bridge.shadows.get('current').requests[0].interactionState = 'resolved'
+    } else {
+      target.bridge.refreshSubscribedOwner('current')
+      if (change === 'socket') target.bridge.socket = {}
+      if (change === 'generation') target.bridge.streamGeneration++
+      if (change === 'turn') target.known.get('current').connectorLastTurnId = 'replacement-at-same-start'
+      if (change === 'terminal') target.terminals.set('current/current', { turnStartedAt: oldStart, terminalEvidenceSequence: 10,
+        turnRef: target.owner.codexDesktopRequestCorrelation({ id: ambiguous.connectorLastTurnId }) })
+    }
+    assert.equal(target.writes.length, 1)
+    target.response(target.writes[0])
+    assert.deepEqual(target.targeted, [], `${change} rejects the old reply`)
+    assert.deepEqual(target.reads, [])
+  }
+
+  const interruptedTurnId = 'shutdown-interrupted'
+  const originalAbort = JSON.stringify({ type: 'event_msg', timestamp: epoch + 10_000,
+    payload: { type: 'turn_aborted', turn_id: interruptedTurnId, started_at: epoch } })
+  const nextTurn = JSON.stringify({ type: 'event_msg', timestamp: epoch + 11_000,
+    payload: { type: 'task_started', turn_id: 'next-turn' } })
+  for (const scenario of ['same-turn', 'no-abort', 'different-turn', 'new-start', 'pending-work', 'old-stream']) {
+    const text = scenario === 'no-abort' ? ''
+      : scenario === 'different-turn' ? abortLine
+        : scenario === 'new-start' ? `${originalAbort}\n${nextTurn}` : originalAbort
+    const target = fixture(text)
+    target.addRoot('interrupted', { status: 'active', lastTurnStatus: 'inProgress', lastTurnId: interruptedTurnId,
+      lastTurnStartedAt: epoch + 338, appServerLiveActive: true, appServerLiveSequence: 7 })
+    target.trackers.set('interrupted', { candidate: 'synthetic' })
+    const ownerTurnRef = target.owner.codexDesktopRequestCorrelation({ id: interruptedTurnId })
+    const shadow = {
+      ownerClientId: 'current-owner', revision: 9, runtime: { type: 'idle', activeFlags: [] },
+      canonicalLatestComplete: true, currentCanonicalTurn: { status: 'interrupted', turnRef: ownerTurnRef, startedAt: epoch },
+      requests: scenario === 'pending-work' ? [{}] : []
+    }
+    target.bridge.shadows.set('interrupted', shadow)
+    target.bridge.streamProtocols.set('interrupted', { available: true, generation: scenario === 'old-stream' ? 0 : 1,
+      trustedRevision: 9, ownerClientId: 'current-owner' })
+    target.bridge.reconcileDesktopBranchTerminal('interrupted', shadow)
+    const accepted = scenario === 'same-turn'
+    const thread = target.known.get('interrupted')
+    assert.equal(thread.appServerLiveActive, !accepted, `reconnect preserves or retires only the matching live Turn: ${scenario}`)
+    assert.equal(thread.lastTurnStatus, accepted ? 'interrupted' : 'inProgress')
+    assert.equal(target.terminals.get('interrupted/interrupted')?.lastTurnStatus, accepted ? 'interrupted' : undefined)
+  }
+
+  const records = []
+  const diagnostics = createCodexRuntimeDiagnostics({ now: () => epoch, runtimeDiagnostics: { record: event => records.push(event) } })
+  for (const reason of ['queue-deadline', 'response-deadline', 'background-backoff', 'private-input']) {
+    diagnostics.syncStage('h:1234567890abcdef', 'owner-resolved', { outcome: 'discarded', reason })
+  }
+  assert.deepEqual(records.map(event => event.details.reason), ['queue-deadline', 'response-deadline', 'background-backoff', undefined])
+  diagnostics.syncStage('h:1234567890abcdef', 'side-terminal-read', { outcome: 'discarded', reason: 'queue-deadline' })
+  assert.equal(Object.hasOwn(records.at(-1).details, 'reason'), false, 'owner reasons stay scoped to owner resolution')
+  const retryStages = ['owner-queued', 'owner-resolved', 'owner-queued', 'owner-requested']
+  for (const [index, outcome] of ['queued', 'discarded', 'queued', 'requested'].entries()) {
+    diagnostics.syncStage('h:1234567890abcdef', retryStages[index], { outcome, priority: 'targeted' })
+  }
+  assert.deepEqual(records.slice(-4).map(event => event.details.stage), retryStages, 'a retry logs a new queue timestamp after discard')
+  return 21
 }
 
 function checkInternalReviewMembership(require) {
@@ -127,10 +506,55 @@ function checkInternalReviewMembership(require) {
   return 11
 }
 
+async function checkSpawnEdgeReaders(require) {
+  const { createCodexSubagentDiscovery } = require('./codex/subagent-discovery.cjs')
+  const parentId = '12345678-1234-4234-8234-123456789abc'
+  const childIds = ['22345678-1234-4234-8234-123456789abc', '32345678-1234-4234-8234-123456789abc',
+    '42345678-1234-4234-8234-123456789abc']
+  const pairs = childIds.map((childId) => [childId, parentId])
+  const rows = childIds.slice(0, 2).map((childId, index) => ({
+    child_thread_id: childId, parent_thread_id: parentId, status: index === 0 ? 'closed' : 'open'
+  }))
+  const fs = { readdirSync: () => ['state_3.sqlite', 'state_5.sqlite'], existsSync: () => false }
+  function discovery(dependencies) {
+    const instance = createCodexSubagentDiscovery({ fs, path: require('node:path'), validThreadId: () => true, ...dependencies })
+    for (const childId of childIds) instance.codexObserveThreadSourceKind(childId, 'machine')
+    return instance
+  }
+  const builtin = discovery({ DatabaseSync: class {
+    constructor(path, options) {
+      assert(path.endsWith('state_5.sqlite'))
+      assert.equal(options.readOnly, true)
+    }
+    prepare() { return { all: () => rows } }
+    close() {}
+  } })
+  const cli = discovery({
+    sqliteBin: '/synthetic/sqlite3',
+    DatabaseSync: class { constructor() { throw new Error('node:sqlite unavailable') } },
+    execFile(_binary, args, options, callback) {
+      assert.deepEqual(args.slice(0, 2), ['-readonly', '-json'])
+      assert(args[2].endsWith('state_5.sqlite?mode=ro'))
+      assert(args[3].includes('thread_spawn_edges') && args[3].includes(parentId))
+      assert(options.timeout > 0 && options.maxBuffer > 0)
+      callback(null, JSON.stringify(rows))
+    }
+  })
+  const outcome = await cli.codexReadSpawnEdges('/synthetic', pairs)
+  assert.equal(outcome.driver, 'cli')
+  assert.deepEqual(outcome.edges.map(({ status }) => status), ['closed', 'open', 'absent'])
+  assert.deepEqual(outcome.edges, (await builtin.codexReadSpawnEdges('/synthetic', pairs)).edges)
+  const unavailable = discovery({ sqliteBin: '/synthetic/sqlite3', execFile(_binary, _args, _options, callback) {
+    callback(new Error('unavailable'))
+  } })
+  assert.deepEqual(await unavailable.codexReadSpawnEdges('/synthetic', pairs), { outcome: 'unavailable', driver: 'cli', edges: [] })
+  return 4
+}
+
 export async function checkCompanionLifecycles(assetRoot) {
   const require = createRequire(resolve(assetRoot, 'index.js'))
   const { createCompanionTaskKernel } = require('./companion/task-kernel.cjs')
-  const { createEvidenceNodeV7, createEvidenceBatchV7 } = require('./companion/evidence-adapter-v7.cjs')
+  const { createEvidenceNodeV7, createEvidenceBatchV7, codexBranchObservationV7 } = require('./companion/evidence-adapter-v7.cjs')
   const providers = { codex: true, claude: false, cursor: false, orca: false }
   const lanes = ['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology']
   let checked = 0
@@ -141,27 +565,38 @@ export async function checkCompanionLifecycles(assetRoot) {
       adapters: { codex: { open } } })
     const lease = kernel.attach({ enabled: true, providers }).lease
     let transport = 0
-    function publish(rows, generation, { complete = false, remove = [], unreadGeneration = generation } = {}) {
+    function publish(rows, generation, { complete = false, remove = [], unreadGeneration = generation, hostEvidence = false } = {}) {
       const family = 'codex:lifecycle'
-      const nodes = rows.map(({ key, phase = 'completed', epoch = 100, unread = false, known = true, parent }) => createEvidenceNodeV7({
+      const nodes = rows.map(({ key, phase = 'completed', epoch = 100, unread = false, known = true, branch,
+        closedMachineRun, relationOnly, goalVerifying, turnStartedAt = phase === 'unknown' ? 0 : epoch }) => createEvidenceNodeV7({
         key, provider: 'codex', family, role: key === 'main' ? 'root' : 'child', standaloneEligible: key === 'main',
         observedAt: epoch + (phase === 'completed' ? 10 : 0), causalKey: `${key}:${epoch}`,
-        capabilities: key === 'main' ? ['open', 'archive'] : [],
+        capabilities: key === 'main' ? branch ? ['open', 'archive', 'continue-task'] : ['open', 'archive'] : [],
         metadata: { kind: key === 'main' ? 'codex-thread' : 'topology-child',
           actionAlias: key === 'main' ? 'ct_lifecycle_main_1234567890' : '',
           revisionAt: epoch, membershipRevision: generation, visibilityRevision: generation, metadataRevision: generation,
-          lastQuestionAt: 100, createdAt: 50 },
-        observation: { kind: phase === 'running' ? 'turn-running' : 'turn-completed', authority: 'live-turn', exact: true,
-          sequence: epoch + (phase === 'completed' ? 10 : 0), turnStartedAt: epoch,
+          lastQuestionAt: 100, createdAt: 50, closedMachineRun, relationOnly },
+        observation: branch ? codexBranchObservationV7({ branchKind: key === 'main' ? 'main' : 'side',
+          status: 'idle', lastTurnStatus: phase === 'unknown' ? undefined : phase === 'stopped' ? 'interrupted' : 'completed',
+          goalStatus: 'none', goalFreshness: 'fresh',
+          lastTurnEvidence: 'targeted-after-exit', terminalEvidenceSequence: epoch + 1, causalKey: `${key}:${epoch}`,
+          causalDomain: 'native-domain', observedAt: epoch + 10, turnStartedAt, terminalAt: turnStartedAt,
+          unreadKnown: known, hasUnreadTurn: unread, ...branch })
+          : phase === 'unknown' && (relationOnly || goalVerifying)
+          ? codexBranchObservationV7({ observedAt: epoch, turnStartedAt, relationOnly,
+            goalStatus: 'unknown', goalFreshness: 'verifying', unreadKnown: known, hasUnreadTurn: unread })
+          : { kind: phase === 'running' ? 'turn-running' : phase === 'stopped' ? 'turn-interrupted'
+            : phase === 'unknown' ? 'unknown' : 'turn-completed', authority: 'live-turn', exact: phase !== 'unknown',
+          sequence: epoch + (phase === 'completed' ? 10 : 0), turnStartedAt,
           statusEnteredAt: epoch + (phase === 'completed' ? 10 : 0), terminalAt: phase === 'completed' ? epoch + 10 : 0,
           unreadKnown: known, unread, unreadSequence: unreadGeneration }
       }))
       const relations = rows.filter(row => row.key !== 'main').map(row => ({ childKey: row.key,
-        parentKey: row.parent || 'main', provider: 'codex', family, relation: 'side-thread',
+        parentKey: row.parent || 'main', provider: 'codex', family, relation: row.relation || 'side-thread',
         authority: 'lifecycle-exact', exact: true, generation }))
-      const interactions = rows.filter(row => row.phase === 'waiting-input').map(row => ({
+      const interactions = rows.filter(row => row.phase === 'waiting-input' || row.interactionState === 'resolved').map(row => ({
         revision: 'companion-interaction-evidence-v1', provider: 'codex', taskKey: row.key, branchRef: row.key,
-        interactionRef: 'f'.repeat(32), kind: 'user-input', state: 'opened', sequence: row.epoch || 100,
+        interactionRef: 'f'.repeat(32), kind: 'user-input', state: row.interactionState || 'opened', sequence: row.epoch || 100,
         turnEpoch: row.epoch || 100, requestSetRevision: generation, authority: 'provider-live', exact: true
       }))
       const batch = createEvidenceBatchV7({ provider: 'codex', nodes, interactions, relations, relationsComplete: complete,
@@ -169,11 +604,12 @@ export async function checkCompanionLifecycles(assetRoot) {
         laneGenerations: Object.fromEntries(lanes.map(lane => [lane, lane === 'unread' ? unreadGeneration : generation])),
         removedKeys: { membership: remove }, health: 'ready' })
       batch.removedRelationChildKeys = remove
-      return kernel.syncPackage({ lease, draft: { schema: 'companion-task-evidence-draft-v7', producer: 'host-evidence',
+      const draft = { schema: 'companion-task-evidence-draft-v7', producer: 'host-evidence',
         sourceTaskStateRevision: 'task-state-v12', draftRevision: ++transport, acceptedAt: 1000,
-        enabled: true, complete: true, providers, sourceGenerations: { codex: generation }, sourceLaneGenerations: { codex: Object.fromEntries(lanes.map(lane => [lane, lane === 'unread' ? unreadGeneration : generation])) }, evidenceBatches: { codex: batch } } })
+        enabled: true, complete: true, providers, sourceGenerations: { codex: generation }, sourceLaneGenerations: { codex: Object.fromEntries(lanes.map(lane => [lane, lane === 'unread' ? unreadGeneration : generation])) }, evidenceBatches: { codex: batch } }
+      return hostEvidence ? kernel.publishEvidence(draft) : kernel.syncPackage({ lease, draft })
     }
-    function expectRoot(phase, unread, count) {
+    function expectRoot(phase, unread, count, unreadEntry = phase === 'completed' && unread) {
       const snapshot = kernel.getLatest()
       for (const event of events.filter(event => event.event === 'phase-transition' && event.taskRef)) {
         assert.equal(event.provider, 'codex', 'root phase diagnostics share the Provider namespace with Side topology diagnostics')
@@ -184,7 +620,7 @@ export async function checkCompanionLifecycles(assetRoot) {
       assert.equal(snapshot.tasks[0].phase, phase)
       assert.equal(snapshot.tasks[0].unread, unread)
       assert.equal(snapshot.tasks[0].topology.memberCount, count)
-      assert.equal(snapshot.views.counts.unread, phase === 'completed' && unread ? 1 : 0)
+      assert.equal(snapshot.views.counts.unread, unreadEntry ? 1 : 0)
       assert.equal(snapshot.views.counts.active, phase === 'running' ? 1 : 0)
       assert.equal(snapshot.views.counts.input, phase === 'waiting-input' ? 1 : 0)
       assert(!snapshot.views.cycleKeys.includes('side'))
@@ -195,6 +631,241 @@ export async function checkCompanionLifecycles(assetRoot) {
   }
   const main = { key: 'main' }
   const side = { key: 'side' }
+  const completedMain = { ...main, epoch: 300, branch: {} }
+  const endedSide = { ...side, phase: 'stopped', epoch: 100, branch: { ordinarySideInterruptedAt: 200 } }
+  const coldHistory = fixture()
+  try {
+    const interrupted = { ...main, phase: 'stopped', epoch: 300, branch: { status: 'notLoaded',
+      lastTurnEvidence: 'inventory', terminalEvidenceSequence: 0 } }
+    coldHistory.publish([interrupted], 1, { complete: true, hostEvidence: true })
+    assert.equal(coldHistory.expectRoot('unknown', false, 1).capabilities.continueTask, false)
+    coldHistory.publish([interrupted], 2, { complete: true, hostEvidence: true })
+    assert.equal(coldHistory.expectRoot('unknown', false, 1).capabilities.continueTask, false)
+    coldHistory.publish([{ ...interrupted, branch: { status: 'active', lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started', statusAuthority: 'app-server-live', activityEvidence: 'activity-event',
+      activeEvidenceSequence: 500 } }], 3, { hostEvidence: true })
+    coldHistory.expectRoot('running', false, 1)
+    coldHistory.publish([{ ...interrupted, branch: { status: 'idle', lastTurnEvidence: 'turn-completed',
+      terminalEvidenceSequence: 501, idleConfirmed: true } }], 4, { hostEvidence: true })
+    assert.equal(coldHistory.expectRoot('stopped', false, 1).capabilities.continueTask, true)
+  } finally { coldHistory.kernel.close() }
+  for (const [name, rootRow, childRow, phase, trusted = true] of [
+    ['old ordinary interruption, read', completedMain, endedSide, 'completed'],
+    ['old ordinary interruption, unread', { ...completedMain, unread: true }, endedSide, 'completed'],
+    ['Side unread stays in the family', completedMain, { ...endedSide, unread: true }, 'completed'],
+    ['old start alone', completedMain, { ...endedSide, branch: {} }, 'stopped'],
+    ['boundary equality', completedMain, { ...endedSide, branch: { ordinarySideInterruptedAt: 300 } }, 'stopped'],
+    ['unresolved subsecond order', { ...completedMain, epoch: 20_050 }, { ...endedSide, branch: { ordinarySideInterruptedAt: 20_000 } }, 'stopped'],
+    ['overlapping interruption', completedMain, { ...endedSide, branch: { ordinarySideInterruptedAt: 310 } }, 'stopped'],
+    ['later Side', completedMain, { ...endedSide, epoch: 350, branch: { ordinarySideInterruptedAt: 400 } }, 'stopped'],
+    ['end before Side start', completedMain, { ...endedSide, branch: { ordinarySideInterruptedAt: 90 } }, 'stopped'],
+    ['unknown main start', { ...completedMain, turnStartedAt: 0 }, endedSide, 'stopped'],
+    ['incomparable domains', { ...completedMain, branch: { causalDomain: 'other-domain' } }, endedSide, 'stopped'],
+    ['inventory without a current Turn reference', { ...completedMain, branch: { lastTurnEvidence: 'inventory' } }, endedSide, 'stopped'],
+    ['subagent relation', completedMain, { ...endedSide, relation: 'subagent' }, 'stopped'],
+    ['untrusted producer', completedMain, endedSide, 'stopped', false],
+    ['failed is not interrupted', completedMain, { ...endedSide, branch: { ...endedSide.branch, lastTurnStatus: 'failed' } }, 'stopped'],
+    ['current Goal', completedMain, { ...endedSide, branch: { ...endedSide.branch, goalStatus: 'active' } }, 'running'],
+    ['paused Goal', completedMain, { ...endedSide, branch: { ...endedSide.branch, goalStatus: 'paused' } }, 'stopped'],
+    ['root Plan', { ...completedMain, branch: { planReady: true, planLifecycleRevision: 300 } }, endedSide, 'stopped'],
+    ['current interaction', completedMain, { ...endedSide, phase: 'waiting-input', branch: { ...endedSide.branch, lastTurnStatus: 'interrupted' } }, 'waiting-input']
+  ]) {
+    const scenario = fixture()
+    try {
+      scenario.publish([rootRow, childRow], 1, { hostEvidence: trusted })
+      const root = scenario.expectRoot(phase, Boolean(rootRow.unread || childRow.unread), 2)
+      assert.equal(root.capabilities.continueTask, false, name)
+      assert.equal(Object.hasOwn(root, 'ordinarySideInterruptedAt'), false, name)
+      if (childRow === endedSide && trusted) assert.equal(scenario.kernel.getActivityCheckpoint('side').phase, 'stopped', name)
+    } finally { scenario.kernel.close() }
+  }
+  const resumed = fixture()
+  try {
+    resumed.publish([{ ...completedMain, phase: 'stopped' }, { ...side, unread: true }], 1, { hostEvidence: true })
+    assert.equal(resumed.expectRoot('stopped', true, 2, true).capabilities.continueTask, true)
+    const nextTurn = { ...completedMain, epoch: 400, branch: { status: 'active', statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event', lastTurnStatus: 'inProgress', lastTurnEvidence: 'turn-started', activeEvidenceSequence: 402 } }
+    resumed.publish([nextTurn, endedSide], 2, { hostEvidence: true })
+    assert.equal(resumed.expectRoot('running', false, 2).capabilities.continueTask, false)
+  } finally { resumed.kernel.close() }
+  const lateTurnState = fixture()
+  try {
+    const stoppedMain = { ...completedMain, phase: 'stopped' }
+    lateTurnState.publish([stoppedMain], 1, { hostEvidence: true })
+    assert.equal(lateTurnState.expectRoot('stopped', false, 1).capabilities.continueTask, true)
+    const late = { ...completedMain, epoch: 200, branch: {
+      status: 'active', groupActivityConfirmed: true, submissionPending: true
+    } }
+    lateTurnState.publish([late], 2, { hostEvidence: true })
+    const retained = lateTurnState.expectRoot('stopped', false, 1)
+    assert.equal(retained.capabilities.continueTask, true, 'an older Turn cannot block the current continue action')
+    assert.equal(retained.codexStatus.main.threadStatus, 'idle')
+
+    const rechecking = { ...stoppedMain, branch: { submissionPending: true } }
+    lateTurnState.publish([rechecking], 3, { hostEvidence: true })
+    assert.equal(lateTurnState.expectRoot('stopped', false, 1).capabilities.continueTask, false,
+      'a current submission blocks continue even when the Turn verdict stays the same')
+    lateTurnState.publish([stoppedMain], 4, { hostEvidence: true })
+    assert.equal(lateTurnState.expectRoot('stopped', false, 1).capabilities.continueTask, true)
+
+    lateTurnState.publish([{ ...late, branch: { ...late.branch, goalStatus: 'budgetLimited',
+      goalUpdatedAt: 350, goalEvidenceSequence: 400 } }], 5, { hostEvidence: true })
+    const limited = lateTurnState.expectRoot('stopped', false, 1)
+    assert.equal(limited.codexStatus.main.goal, 'budgetLimited', 'Goal evidence advances independently of a rejected Turn')
+    assert.equal(limited.capabilities.continueTask, false)
+  } finally { lateTurnState.kernel.close() }
+  const supersededPlan = fixture()
+  try {
+    const planned = { ...completedMain, branch: { planReady: true, planLifecycleRevision: 300 } }
+    supersededPlan.publish([planned], 1, { hostEvidence: true })
+    assert.equal(supersededPlan.expectRoot('waiting-input', false, 1).planReady, true)
+    const interrupted = { ...completedMain, phase: 'stopped', epoch: 400 }
+    supersededPlan.publish([interrupted], 2, { hostEvidence: true })
+    const stopped = supersededPlan.expectRoot('stopped', false, 1)
+    assert.deepEqual([stopped.planReady, stopped.capabilities.executePlan, stopped.capabilities.continueTask],
+      [false, false, true], 'a Plan from an older Turn cannot block Continue or remain executable')
+    assert.deepEqual([stopped.planArtifactState, stopped.planLifecycleRevision], ['available', 300],
+      'a newer Turn alone does not consume the retained Plan')
+    supersededPlan.publish([planned], 3, { hostEvidence: true })
+    assert.equal(supersededPlan.expectRoot('stopped', false, 1).planReady, false)
+    const newPlan = { ...completedMain, epoch: 500, branch: { planReady: true, planLifecycleRevision: 500 } }
+    supersededPlan.publish([newPlan], 4, { hostEvidence: true })
+    assert.equal(supersededPlan.expectRoot('waiting-input', false, 1).planLifecycleRevision, 500)
+  } finally { supersededPlan.kernel.close() }
+  const coldMainStart = Date.parse('2026-11-18T19:24:58+08:00')
+  const coldSideStart = Date.parse('2026-11-18T18:43:48+08:00')
+  const coldSideEnd = Date.parse('2026-11-18T18:48:51.052+08:00')
+  const turnFields = require('./codex/desktop-activity-resolution.cjs').createCodexDesktopActivityResolution({
+    timestampMs: value => Number(value) || 0, validThreadId: () => true,
+    isConfirmedTurnEvidence: () => false, waitingEvidenceVisible: () => false, desktopRequestFlag: () => '',
+    desktopIsPlanImplementationRequest: () => false
+  }).codexDesktopBranchTurnFields
+  const coldMain = { key: 'main', epoch: coldMainStart, branch: turnFields({ lane: 'connector' }, {
+    connectorLastTurnStatus: 'completed', connectorLastTurnStartedAt: coldMainStart
+  }, { main: true, live: false, activeSequence: 0, turnRef: 'cold-main-turn' }) }
+  assert.equal(coldMain.branch.turnStartedAtSource, 'inventory')
+  assert.equal(coldMain.branch.terminalEvidenceSequence, 0)
+  assert.equal(coldMain.branch.turnRef, 'cold-main-turn')
+  const coldSide = { ...endedSide, epoch: coldSideStart, known: false,
+    branch: { ordinarySideInterruptedAt: coldSideEnd, terminalEvidenceSequence: 7888 } }
+  const machine = { key: 'machine', phase: 'stopped', epoch: coldMainStart + 203_000, closedMachineRun: true }
+  const coldStart = fixture()
+  try {
+    coldStart.publish([coldMain, machine, { ...side, phase: 'unknown', known: false, relationOnly: true }], 1, { hostEvidence: true })
+    coldStart.expectRoot('unknown', false, 3)
+    coldStart.publish([coldMain], 2, { hostEvidence: true })
+    assert(coldStart.events.some(event => event.event === 'state-decision' && event.details?.reason === 'sequence-incomparable'
+      && event.details.sameIdentity && event.details.sameDomain && event.details.incomingPhase === 'completed'))
+    coldStart.publish([coldSide], 3, { hostEvidence: true })
+    const settled = coldStart.expectRoot('completed', false, 3)
+    assert.deepEqual([settled.freshness, settled.dynamicGroup, settled.unreadKnown], ['verifying', 'completed', false])
+    assert.equal(coldStart.kernel.getActivityCheckpoint('side').phase, 'stopped')
+    coldStart.publish([{ ...coldMain, unread: true }], 4, { hostEvidence: true })
+    assert.equal(coldStart.expectRoot('completed', true, 3).dynamicGroup, 'unread')
+  } finally { coldStart.kernel.close() }
+  for (const [rootOverrides, childOverrides, expected] of [
+    [{}, { ordinarySideInterruptedAt: coldMainStart }, 'stopped'],
+    [{}, { ordinarySideInterruptedAt: coldMainStart + 1 }, 'stopped'],
+    [{}, { ordinarySideInterruptedAt: 0, terminalAt: coldSideStart }, 'stopped'],
+    [{}, { causalDomain: 'previous-connection' }, 'stopped'],
+    [{ turnRef: '' }, {}, 'stopped'],
+    [{ causalDomain: '' }, {}, 'stopped'],
+    [{ turnStartedAt: 0 }, {}, 'stopped'],
+    [{ goalStatus: 'paused' }, {}, 'stopped'],
+    [{ goalStatus: 'active' }, {}, 'running'],
+    [{ planReady: true }, {}, 'stopped']
+  ]) {
+    const boundary = fixture()
+    try {
+      boundary.publish([{ ...coldMain, branch: { ...coldMain.branch, ...rootOverrides } },
+        { ...coldSide, branch: { ...coldSide.branch, ...childOverrides } }], 1, { hostEvidence: true })
+      boundary.expectRoot(expected, false, 2)
+    } finally { boundary.kernel.close() }
+  }
+  const coldConflict = fixture()
+  try {
+    coldConflict.publish([coldMain, coldSide], 1, { hostEvidence: true })
+    coldConflict.expectRoot('completed', false, 2)
+    coldConflict.publish([{ ...coldMain, branch: { ...coldMain.branch, lastTurnStatus: 'inProgress', status: 'active',
+      statusAuthority: 'app-server-live', activityEvidence: 'activity-event', activeEvidenceSequence: 8 } }], 2, { hostEvidence: true })
+    assert.equal(coldConflict.kernel.getActivityCheckpoint('main').phase, 'completed', 'the existing same-Turn arbiter retains the inventory phase')
+    coldConflict.expectRoot('stopped', false, 2)
+    coldConflict.publish([coldMain], 3, { hostEvidence: true })
+    coldConflict.expectRoot('stopped', false, 2)
+  } finally { coldConflict.kernel.close() }
+  const lateEnd = fixture()
+  try {
+    lateEnd.publish([coldMain, { ...coldSide, branch: { ...coldSide.branch, ordinarySideInterruptedAt: 0 } }], 1, { hostEvidence: true })
+    lateEnd.expectRoot('stopped', false, 2)
+    lateEnd.publish([coldSide], 2, { hostEvidence: true })
+    lateEnd.expectRoot('completed', false, 2)
+    lateEnd.publish([{ ...coldSide, branch: { ...coldSide.branch, ordinarySideInterruptedAt: coldMainStart + 2000 } }], 3, { hostEvidence: true })
+    lateEnd.expectRoot('stopped', false, 2)
+    lateEnd.publish([coldSide], 4, { hostEvidence: true })
+    lateEnd.expectRoot('stopped', false, 2)
+  } finally { lateEnd.kernel.close() }
+  const closedRun = fixture()
+  try {
+    const stoppedSide = { ...side, phase: 'stopped' }
+    closedRun.publish([main, stoppedSide], 1, { hostEvidence: true })
+    closedRun.expectRoot('stopped', false, 2)
+    closedRun.publish([main, { ...stoppedSide, closedMachineRun: true }], 2, { hostEvidence: true })
+    closedRun.expectRoot('completed', false, 2)
+    closedRun.publish([main, stoppedSide], 3, { hostEvidence: true })
+    closedRun.expectRoot('completed', false, 2)
+    closedRun.publish([main, { ...stoppedSide, closedMachineRun: false }], 4, { hostEvidence: true })
+    closedRun.expectRoot('stopped', false, 2)
+    closedRun.publish([main, { ...side, phase: 'running', epoch: 200, closedMachineRun: true }], 5, { hostEvidence: true })
+    closedRun.expectRoot('running', false, 2)
+  } finally { closedRun.kernel.close() }
+  const unreadWithUnknownSide = fixture()
+  try {
+    const unknownSide = { ...side, phase: 'unknown', known: false, relationOnly: true }
+    unreadWithUnknownSide.publish([{ ...main, unread: true }, unknownSide], 1, { hostEvidence: true })
+    const incomplete = unreadWithUnknownSide.expectRoot('unknown', true, 2, true)
+    assert.deepEqual(unreadWithUnknownSide.kernel.getPackage().views.attentionKeys.completedUnread, ['main'])
+    assert.equal(incomplete.freshness, 'verifying')
+    assert.equal(incomplete.capabilities.archive, false)
+    unreadWithUnknownSide.publish([main, unknownSide], 2, { hostEvidence: true })
+    unreadWithUnknownSide.expectRoot('unknown', false, 2)
+    unreadWithUnknownSide.publish([{ ...main, unread: true }, { ...unknownSide, relationOnly: false, goalVerifying: true }], 3, { hostEvidence: true })
+    unreadWithUnknownSide.expectRoot('unknown', true, 2, true)
+    unreadWithUnknownSide.publish([{ ...main, unread: true }, { ...unknownSide, epoch: 200, turnStartedAt: 200 }], 4, { hostEvidence: true })
+    unreadWithUnknownSide.expectRoot('unknown', true, 2, true)
+    unreadWithUnknownSide.publish([{ ...main, unread: true }, { ...side, phase: 'running', epoch: 300, relationOnly: false }], 5, { hostEvidence: true })
+    unreadWithUnknownSide.expectRoot('running', true, 2)
+  } finally { unreadWithUnknownSide.kernel.close() }
+  const emptySideHistory = fixture()
+  try {
+    const completedRoot = { ...completedMain, unread: true }
+    const noTurn = { status: 'notLoaded', causalKey: '', causalDomain: '', terminalEvidenceSequence: 0,
+      lastTurnStatus: undefined, turnStartedAt: 0, terminalAt: 0 }
+    const empty = { ...side, phase: 'unknown', relationOnly: true, epoch: 100, known: false,
+      branch: { ...noTurn, emptyTurnHistory: true } }
+    emptySideHistory.publish([completedRoot, { ...empty, branch: noTurn }], 1, { hostEvidence: true })
+    emptySideHistory.expectRoot('unknown', true, 2, true)
+    emptySideHistory.publish([completedRoot, empty], 2, { hostEvidence: true })
+    const settled = emptySideHistory.expectRoot('completed', true, 2)
+    assert.equal(settled.capabilities.continueTask, false)
+    assert.equal(settled.codexStatus.sides[0].turn, 'not-started')
+    assert.equal(settled.codexStatus.sides[0].verifying, false)
+    emptySideHistory.publish([{ ...completedRoot, unread: false }, empty], 3, { hostEvidence: true })
+    emptySideHistory.expectRoot('completed', false, 2)
+    emptySideHistory.publish([{ ...empty, branch: noTurn }], 4, { hostEvidence: true })
+    emptySideHistory.expectRoot('unknown', false, 2)
+    emptySideHistory.publish([empty], 5, { hostEvidence: true })
+    emptySideHistory.expectRoot('completed', false, 2)
+    emptySideHistory.publish([{ ...empty, phase: 'waiting-input' }], 6, { hostEvidence: true })
+    emptySideHistory.expectRoot('waiting-input', false, 2)
+    emptySideHistory.publish([{ ...empty, branch: noTurn, interactionState: 'resolved' }], 7, { hostEvidence: true })
+    emptySideHistory.expectRoot('unknown', false, 2)
+    emptySideHistory.publish([{ ...side, phase: 'running', epoch: 500, branch: { status: 'active', lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started', statusAuthority: 'app-server-live', activityEvidence: 'activity-event',
+      activeEvidenceSequence: 501 } }], 8, { hostEvidence: true })
+    emptySideHistory.expectRoot('running', false, 2)
+    emptySideHistory.publish([empty], 9, { hostEvidence: true })
+    emptySideHistory.expectRoot('running', false, 2)
+  } finally { emptySideHistory.kernel.close() }
   const graph = fixture()
   try {
     graph.publish([main, { ...side, phase: 'running' }], 2)
@@ -240,7 +911,7 @@ export async function checkCompanionLifecycles(assetRoot) {
     read.publish([main, { ...side, unread: false }], 6, { unreadGeneration: 2 })
     read.expectRoot('completed', true, 2) // Old unread cannot erase the new completion.
   } finally { read.kernel.close() }
-  const confirmed = fixture(async () => ({
+  const openConfirmed = async () => ({
     outcome: 'opened',
     confirmsRead: true,
     handoff: {
@@ -252,7 +923,8 @@ export async function checkCompanionLifecycles(assetRoot) {
       controlOwner: 'target-native',
       confirmsRead: true
     }
-  }))
+  })
+  const confirmed = fixture(openConfirmed)
   try {
     confirmed.publish([main, { ...side, unread: true }], 2)
     await confirmed.kernel.dispatch({ action: 'open', key: 'main', source: 'global-shortcut' })
@@ -260,6 +932,21 @@ export async function checkCompanionLifecycles(assetRoot) {
     confirmed.publish([main, { ...side, unread: true }], 3)
     confirmed.expectRoot('completed', false, 2) // Same-turn native unread does not rebound after a confirmed read.
   } finally { confirmed.kernel.close() }
+  const stoppedUnread = fixture(openConfirmed)
+  try {
+    const stopped = { ...endedSide, epoch: 350, branch: {} }
+    stoppedUnread.publish([{ ...completedMain, unread: true }, stopped], 1, { hostEvidence: true })
+    const before = stoppedUnread.expectRoot('stopped', true, 2, true)
+    assert.deepEqual(stoppedUnread.kernel.getPackage().views.attentionKeys.completedUnread, ['main'])
+    const receipt = await stoppedUnread.kernel.dispatch({
+      action: 'open-attention', kind: 'completed-unread', source: 'global-shortcut'
+    })
+    assert.equal(receipt.confirmsRead, true)
+    const after = stoppedUnread.expectRoot('stopped', false, 2)
+    assert.equal(after.capabilities.continueTask, before.capabilities.continueTask)
+    assert.deepEqual(stoppedUnread.kernel.getPackage().views.attentionKeys.completedUnread, [])
+    assert.deepEqual(stoppedUnread.kernel.getPackage().views.cycleKeys, ['main'])
+  } finally { stoppedUnread.kernel.close() }
   const remaining = fixture()
   try {
     remaining.publish([main, { ...side, unread: true }, { key: 'sibling', phase: 'running' }], 1)
@@ -292,7 +979,7 @@ export async function checkCompanionLifecycles(assetRoot) {
     await opening
     pending.expectRoot('completed', true, 2) // A late open result cannot read a newer Side completion.
   } finally { pending.kernel.close() }
-  return checked + checkDesktopSideTerminalCapability(require) + checkInternalReviewMembership(require)
+  return checked + await checkDesktopSideTerminalCapability(require, assetRoot) + checkInternalReviewMembership(require) + await checkSpawnEdgeReaders(require)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

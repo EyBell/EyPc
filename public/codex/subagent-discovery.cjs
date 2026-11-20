@@ -1,5 +1,10 @@
 'use strict'
 
+const { resolveSqliteBin, querySqliteCli } = require('../sqlite-readonly.cjs')
+const SPAWN_EDGE_BATCH_SIZE = 128
+const SPAWN_EDGE_MAX_PAIRS = 512
+const NATIVE_THREAD_ID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i
+
 /**
  * Discovers Codex subagent threads from recent session rollout files.
  *
@@ -382,6 +387,51 @@ function createCodexSubagentDiscovery(dependencies = {}) {
     return identity === 'machine' || identity === 'guardian_review'
   }
 
+  async function codexReadSpawnEdges(directory, pairs) {
+    const candidates = Array.from(pairs || []).filter(([childId, parentId]) =>
+      NATIVE_THREAD_ID.test(childId) && NATIVE_THREAD_ID.test(parentId)
+      && codexGetThreadSourceIdentity(childId) === 'machine').slice(0, SPAWN_EDGE_MAX_PAIRS)
+    if (!candidates.length) return { outcome: 'no-candidates', edges: [] }
+    let database
+    let driver = ''
+    try {
+      const databaseName = fs.readdirSync(directory)
+        .filter((name) => /^state_[1-9]\d*\.sqlite$/.test(name))
+        .sort((left, right) => Number.parseInt(right.slice(6), 10) - Number.parseInt(left.slice(6), 10))[0]
+      if (!databaseName) return { outcome: 'database-missing', edges: [] }
+      const databaseFile = path.join(directory, databaseName)
+      const bin = resolveSqliteBin(fs, dependencies.sqliteBin)
+      const query = bin
+        ? (sql) => querySqliteCli({ execFile: dependencies.execFile || require('node:child_process').execFile },
+          bin, databaseFile, sql, { timeout: 1_500, maxBuffer: 64 * 1024 })
+        : (sql) => {
+            const DatabaseSync = dependencies.DatabaseSync || require('node:sqlite').DatabaseSync
+            database ||= new DatabaseSync(databaseFile, { readOnly: true })
+            return database.prepare(sql).all()
+          }
+      driver = bin ? 'cli' : 'builtin'
+      const edges = []
+      for (let offset = 0; offset < candidates.length; offset += SPAWN_EDGE_BATCH_SIZE) {
+        const batch = candidates.slice(offset, offset + SPAWN_EDGE_BATCH_SIZE)
+        const values = batch.map(([childId, parentId]) => `('${childId}','${parentId}')`).join(',')
+        const rows = await query(`SELECT edge.child_thread_id, edge.parent_thread_id, edge.status
+          FROM (VALUES ${values}) AS wanted
+          JOIN thread_spawn_edges AS edge ON edge.child_thread_id = wanted.column1 AND edge.parent_thread_id = wanted.column2`)
+        const statusByEdge = new Map(rows.map((row) => [`${row.child_thread_id}:${row.parent_thread_id}`, row.status]))
+        for (const [childId, parentId] of batch) {
+          const status = statusByEdge.get(`${childId}:${parentId}`)
+          edges.push({ childId, parentId, status: status === undefined ? 'absent'
+            : status === 'closed' || status === 'open' ? status : 'unknown' })
+        }
+      }
+      return { outcome: 'read', driver, edges }
+    } catch {
+      return { outcome: 'unavailable', driver, edges: [] }
+    } finally {
+      try { database?.close() } catch {}
+    }
+  }
+
   return {
     revision: CODEX_SUBAGENT_DISCOVERY_REVISION,
     codexRecentRolloutThreadCandidates,
@@ -395,6 +445,7 @@ function createCodexSubagentDiscovery(dependencies = {}) {
     codexRetainThreadIds,
     codexIsInternalReviewThread,
     codexIsMachineRunThread,
+    codexReadSpawnEdges,
     isSubAgentThreadSource
   }
 }

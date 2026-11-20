@@ -21,6 +21,7 @@ import {
 import { buildCodexTaskStatePackage, type CodexTaskStatePackageV1 } from './codexPresentation'
 import type {
   CompanionProviderEvidenceBatchV3,
+  CodexNativeStateEvidence,
   CompanionTaskRelationObservationV1,
   CompanionTaskTopologySummaryV1
 } from './companionTaskTopology'
@@ -69,7 +70,24 @@ export interface CanonicalTaskStateV4 {
   capabilities: CompanionCanonicalTaskV4['capabilities']
 }
 export type CompanionTaskCycleTier = 'attention' | 'plan' | 'active' | 'unread' | 'fallback' | 'none'
-export type CompanionTaskDynamicGroup = 'pinned' | 'input' | 'active' | 'stopped' | 'unread' | 'completed' | 'none'
+export type CompanionTaskDynamicGroup = 'pinned' | 'input' | 'active' | 'unknown' | 'stopped' | 'unread' | 'completed' | 'none'
+
+export interface CodexMemberStatus {
+  phase: CompanionTaskPhase
+  turn: 'not-started' | 'turn-running' | 'turn-completed' | 'turn-interrupted' | 'turn-failed' | 'unknown'
+  goal: CodexNativeStateEvidence['goal']['status'] | ''
+  threadStatus: CodexNativeStateEvidence['threadStatus']
+  verifying: boolean
+  pending: ('user-input' | 'approval' | 'plan-choice' | 'plan-implementation')[]
+  planReady: boolean
+  submissionPending: boolean
+}
+
+export interface CodexGroupStatus {
+  main: CodexMemberStatus
+  groupActivity: boolean
+  sides: CodexMemberStatus[]
+}
 
 export interface CompanionTaskArchiveRequestV3 {
   expectedUpdatedAt: number
@@ -114,6 +132,8 @@ export interface CompanionCanonicalTaskV4 {
   hidden: boolean
   unread: boolean
   unreadKnown: boolean
+  completedUnread?: boolean
+  codexStatus?: CodexGroupStatus
   planImplementation: boolean
   planReady: boolean
   planLifecycleRevision: number
@@ -193,6 +213,7 @@ export interface CompanionTaskPackageViewsV4 {
     pinned: string[]
     input: string[]
     active: string[]
+    unknown?: string[]
     stopped: string[]
     unread: string[]
     completed: string[]
@@ -312,7 +333,7 @@ export function emptyCompanionTaskPackage(
     }])) as CompanionTaskSnapshotV6['providerHealth'],
     tasks: [],
     views: {
-      groups: { pinned: [], input: [], active: [], stopped: [], unread: [], completed: [] },
+      groups: { pinned: [], input: [], active: [], unknown: [], stopped: [], unread: [], completed: [] },
       counts: { input: 0, active: 0, unread: 0 },
       cycleKeys: [],
       attentionKeys: { input: [], completedUnread: [], archive: [] },
@@ -397,7 +418,8 @@ function projectCanonicalCard(
     archiveCapability,
     revisionAt: task.revisionAt,
     statusEnteredAt: task.statusEnteredAt || task.revisionAt,
-    unreadState: completed && task.unreadKnown ? (task.unread ? 'unread' : 'read') : 'unknown',
+    unreadState: task.completedUnread ? 'unread'
+      : task.unreadKnown && (completed || task.codexStatus) ? (task.unread ? 'unread' : 'read') : 'unknown',
     canonicalFreshness: task.freshness,
     companionPhase: task.phase,
     // Carried so the row can offer to clear it; the phase itself already
@@ -414,6 +436,7 @@ function projectCanonicalCard(
     planPaused: task.paused,
     companionCapabilities: { ...task.capabilities },
     companionTopology: task.topology ? { ...task.topology } : undefined,
+    codexStatus: task.codexStatus,
     hasCurrentActivity: live,
     canArchive: archiveCapability === 'allowed'
   }
@@ -623,6 +646,7 @@ export function applyCompanionTaskPackageViews(
     pinned: project(taskPackage.views.groups.pinned),
     input: project(taskPackage.views.groups.input),
     active: project(taskPackage.views.groups.active),
+    unknown: project(taskPackage.views.groups.unknown || []),
     stopped: project(taskPackage.views.groups.stopped),
     unread: project(taskPackage.views.groups.unread),
     completed: project(taskPackage.views.groups.completed)
@@ -633,7 +657,7 @@ export function applyCompanionTaskPackageViews(
     dynamic: {
       ...taskState.dynamic,
       groups,
-      tasks: [groups.pinned, groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat(),
+      tasks: Object.values(groups).flat(),
       compactCounts: { ...taskPackage.views.counts }
     },
     generatedAt: Math.max(taskState.generatedAt, taskPackage.publishedAt)

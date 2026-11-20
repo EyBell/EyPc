@@ -36,7 +36,7 @@ function createCodexDesktopIpcConnection(dependencies = {}) {
     if (host.platform === 'win32') {
       const check = bridge.endpointCheck = {}
       bridge.endpointReason = 'checking-security'
-      bridge.setState('connecting')
+      if (bridge.state === 'not-checked') bridge.setState('connecting')
       let result
       try { result = await verify(target) } catch {}
       if (bridge.closed || bridge.endpointCheck !== check) return
@@ -49,13 +49,12 @@ function createCodexDesktopIpcConnection(dependencies = {}) {
       bridge.endpointReason = secure ? '' : target && !fs.existsSync(target) ? 'not-running' : 'endpoint-untrusted'
     }
     if (!secure) {
-      bridge.setState(bridge.endpointReason === 'not-running' ? 'not-running' : 'failed')
-      bridge.scheduleReconnect()
+      await bridge.reconnectAfterUnavailable(bridge.endpointReason === 'not-running')
       return
     }
     bridge.endpointReason = ''
     bridge.lastSocketError = ''
-    bridge.setState('connecting')
+    if (bridge.state === 'not-checked') bridge.setState('connecting')
     let socket
     try { socket = net.connect(target) } catch (error) {
       bridge.lastSocketError = String(error?.code || 'other')

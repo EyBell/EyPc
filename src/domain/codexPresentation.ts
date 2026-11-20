@@ -76,6 +76,7 @@ export interface CodexDynamicStatusGroups {
   pinned: CodexTaskCard[]
   input: CodexTaskCard[]
   active: CodexTaskCard[]
+  unknown?: CodexTaskCard[]
   stopped: CodexTaskCard[]
   unread: CodexTaskCard[]
   completed: CodexTaskCard[]
@@ -180,11 +181,12 @@ export function projectCodexDynamicStatus(
     // because the underlying Turn is older than the ordinary activity window.
     input: orderCodexAttentionTasks(visibleInput.filter((task) => !pinnedKeys.has(task.key))),
     active: orderCodexTasksForDisplay(recentOngoing.filter(isDynamicActiveTask)),
-    stopped: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'stopped')),
+    unknown: orderCodexTasksForDisplay(recent.filter((task) => task.companionPhase === 'unknown')),
+    stopped: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'stopped' && task.companionPhase !== 'unknown')),
     unread: orderCodexAttentionTasks(visibleUnread.filter((task) => !pinnedKeys.has(task.key))),
     completed: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'completed'))
   }
-  const tasks = [groups.pinned, groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
+  const tasks = Object.values(groups).flat()
   // Stopped tasks remain actionable and never schedule a time-window expiry.
   const timeBounded = [groups.active, groups.completed].flat()
   const nextTransitionAt = timeBounded.length

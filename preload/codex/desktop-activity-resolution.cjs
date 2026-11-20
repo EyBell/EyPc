@@ -207,7 +207,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
   function codexLiveEvidenceSequence(known, shadows, inventorySequence, branchThreadId = '', parentThreadId = '') {
     return Math.max(
       known?.appServerLiveActive === true && Number.isInteger(known.appServerLiveSequence)
-        && (!branchThreadId || (known.appServerLiveBranchThreadId || parentThreadId) === branchThreadId)
+        && (!branchThreadId || parentThreadId === branchThreadId)
         ? known.appServerLiveSequence : 0,
       Number(inventorySequence) || 0,
       ...shadows.map((shadow) => codexDesktopShadowActivity(shadow)?.status === 'active'
@@ -224,8 +224,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
 
   function codexShouldDeferHydrationActive(bridge, known, parentThreadId, branchThreadId, activity) {
     if (!codexHasConfirmedTerminalEvidence(known) || activity?.status !== 'active' || activity.activeFlags?.length) return false
-    if (known.appServerLiveActive === true
-      && (!validThreadId(known.appServerLiveBranchThreadId) || known.appServerLiveBranchThreadId === branchThreadId)) return false
+    if (known.appServerLiveActive === true && branchThreadId === parentThreadId) return false
     const shadow = branchThreadId === parentThreadId
       ? bridge?.shadows?.get(branchThreadId)
       : bridge?.sideShadows?.get(branchThreadId) || bridge?.shadows?.get(branchThreadId)
@@ -278,9 +277,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
 
   function codexHasOtherActiveBranch(parentThreadId, branchThreadId, known, shadows, sideShadows) {
     if (!validThreadId(parentThreadId) || !validThreadId(branchThreadId)) return false
-    const appServerBranchThreadId = validThreadId(known?.appServerLiveBranchThreadId)
-      ? known.appServerLiveBranchThreadId : parentThreadId
-    if (known?.appServerLiveActive === true && appServerBranchThreadId !== branchThreadId) return true
+    if (known?.appServerLiveActive === true && parentThreadId !== branchThreadId) return true
     return [
       [parentThreadId, shadows.get(parentThreadId)],
       ...[...sideShadows.entries()].filter(([, shadow]) => shadow.parentThreadId === parentThreadId)
@@ -290,7 +287,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
 
   function codexCanRetireMissingDesktopSide(parentThreadId, refresh, input = {}) {
     const threadId = refresh?.queryThreadId
-    const { known, shadow, parentTerminal } = input
+    const { shadow, parentTerminal } = input
     if (!validThreadId(parentThreadId) || !validThreadId(threadId) || threadId === parentThreadId
       || input.desktopRelation !== parentThreadId || input.inventoryRelation
       || input.completeInventoryKnown !== true || input.completeInventoryContains === true) return false
@@ -299,7 +296,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     const activity = codexDesktopShadowActivity(shadow)
     if (activity?.status !== 'active' || activity.activeFlags.length > 0
       || activity.planImplementationOnly === true || !parentTerminal) return false
-    return !(known?.appServerLiveActive === true && known.appServerLiveBranchThreadId === threadId)
+    return input.appServerSideActive !== true
   }
 
   function codexDesktopCanonicalTerminalDecision(shadow, options = {}) {
@@ -378,20 +375,63 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
 
   function codexDesktopStartedBranchBaseline(known, sideTurn, sideInventory, side) {
     return side ? {
+      lastTurnId: sideTurn?.id || sideInventory?.turnId,
       lastTurnStatus: sideTurn?.status || sideInventory?.lastTurnStatus,
       lastTurnStartedAt: sideTurn?.startedAt || sideInventory?.turnStartedAt
     } : known
   }
 
   function codexDesktopSideTerminalDecision(shadow, options = {}) {
-    if (shadow?.sideConversation !== true || shadow.ephemeral !== true) return { reason: 'not-ephemeral-side' }
+    const ordinaryTerminal = shadow?.ephemeral === false
+      && ['completed', 'interrupted', 'failed'].includes(shadow.currentCanonicalTurn?.status)
+    if (shadow?.sideConversation !== true || (shadow.ephemeral !== true && !ordinaryTerminal)) {
+      return { reason: 'not-ephemeral-side' }
+    }
     return codexDesktopCanonicalTerminalDecision(shadow, options)
+  }
+
+  function codexDesktopUnloadedSideMetadata(thread, threadId, parentId) {
+    return thread?.id === threadId && thread.threadSource === 'user'
+      && thread.forkedFromId === parentId
+      && (!thread.parentThreadId || thread.parentThreadId === parentId)
+      && ['idle', 'notLoaded'].includes(thread.status?.type)
+      && !thread.status.activeFlags?.length
+  }
+
+  function codexDesktopUnloadedSideTerminal(turn, runtime) {
+    const startedAt = timestampMs(turn?.startedAt)
+    const abortedAt = timestampMs(runtime?.edgeAt)
+    const abortedStart = timestampMs(runtime?.startedAt)
+    if (runtime?.edge === 'turn-aborted' && runtime.turnId && abortedStart > 0 && abortedAt >= abortedStart) {
+      const sameTurn = runtime.turnId === turn?.id
+      if (!turn || (sameTurn ? turn.status === 'interrupted'
+        : turn.status !== 'inProgress' && startedAt > 0 && startedAt < abortedStart)) {
+        const matchingStart = !sameTurn || !startedAt || startedAt === abortedStart
+          || (Math.floor(startedAt / 1000) === Math.floor(abortedStart / 1000) && (startedAt % 1000 === 0 || abortedStart % 1000 === 0))
+        const interruptedAt = matchingStart ? Math.max(timestampMs(runtime.interruptedAt), sameTurn ? timestampMs(turn.interruptedAt) : 0) : 0
+        return { id: runtime.turnId, status: 'interrupted', startedAt: abortedStart,
+          ...(interruptedAt >= Math.max(abortedStart, sameTurn ? startedAt : 0) ? { interruptedAt } : {}) }
+      }
+      if (sameTurn || !startedAt || startedAt <= abortedStart) return null
+    }
+    if (!turn?.id || startedAt <= 0) return null
+    if (turn.status === 'failed' && (runtime?.phase !== 'running' || timestampMs(runtime.startedAt) < startedAt)) return turn
+    return turn.status === 'completed' && timestampMs(turn.completedAt) >= startedAt ? turn : null
+  }
+
+  function codexDesktopSideNeedsPersistedTerminal(shadow) {
+    return shadow?.sideConversation === true && shadow.ephemeral !== true && !shadow.ownerDisconnectedAt
+      && ['idle', 'notLoaded'].includes(codexDesktopShadowActivity(shadow)?.status)
+      && !shadow.currentCanonicalTurn?.turnRef && shadow.liveTurnRunning !== true
+      && !shadow.requests?.length && !shadow.asyncTurns?.some((turn) => turn.status === 'inProgress')
+      && !shadow.nativeTurnSubmissions?.some((terminal) => terminal !== true)
   }
 
   // Only a current owner-confirmed successful ephemeral terminal can stop
   // future recovery. Keep the live member/terminal; persist no phase as a hint.
   function codexDesktopSideNeedsRecoveryHint(shadow, terminal, goal) {
-    if (goal?.goalFreshness !== 'fresh' || !['none', 'complete'].includes(goal.goalStatus)) return true
+    if (shadow?.ephemeral !== true || goal?.goalFreshness !== 'fresh'
+      || !['none', 'complete'].includes(goal.goalStatus)) return true
     const decision = codexDesktopSideTerminalDecision(shadow, { terminal })
     return decision.turn?.status !== 'completed'
       || terminal?.lastTurnStatus !== 'completed'
@@ -461,7 +501,12 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
       status: terminal.lastTurnStatus, startedAt: terminal.turnStartedAt
     }, row.shadow)) terminal = null
     const baseline = codexDesktopBranchInventoryTurn(row.shadow, row.inventoryEvidence, known, main, turnRef)
-    const fields = live && (!terminal || !terminalStrictlyNewer)
+    const waiting = row.activity?.activeFlags?.length > 0
+    const shadowTurn = row.shadow?.asyncTurns?.at(-1) || row.shadow?.currentCanonicalTurn
+    const hasRunningTurn = row.appServerActivity?.turn?.status === 'inProgress' || shadowTurn?.status === 'inProgress'
+      || baseline.lastTurnStatus === 'inProgress'
+    const selectedLive = live && (!waiting || hasRunningTurn) && (!terminal || !terminalStrictlyNewer)
+    const fields = selectedLive
       ? { lastTurnStatus: 'inProgress', lastTurnEvidence: 'turn-started',
           activeEvidenceSequence: activeSequence || Number(known.activeEvidenceSequence) || 0, idleConfirmed: false }
       : terminal
@@ -469,8 +514,6 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
             terminalEvidenceSequence: Number(terminal.terminalEvidenceSequence) || 0,
             activeEvidenceSequence: Number(terminal.activeEvidenceSequence) || activeSequence, idleConfirmed }
         : { ...baseline, activeEvidenceSequence: activeSequence }
-    const selectedLive = live && (!terminal || !terminalStrictlyNewer)
-    const shadowTurn = row.shadow?.asyncTurns?.at(-1) || row.shadow?.currentCanonicalTurn
     const shadowStart = timestampMs(shadowTurn?.startedAt)
     const selectedTurnRef = selectedLive
       ? row.lane === 'app-server' ? turnRef : shadowTurn?.turnRef || turnRef
@@ -517,7 +560,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
       && input.completeInventoryKnown === true
       && input.completeInventoryContains !== true
       && Boolean(input.parentTerminal)
-      && !(known.appServerLiveActive === true && known.appServerLiveBranchThreadId === threadId)
+      && input.appServerSideActive !== true
     const settledSide = shadow.sideConversation === true && ['idle', 'notLoaded'].includes(activity?.status)
       && !input.branchTerminal
     if (shadow.activityEvidence !== 'initial-snapshot' && !detachedDesktopSide && !settledSide) return null
@@ -552,6 +595,9 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     codexCanRetireMissingDesktopSide,
     codexDesktopCanonicalTerminalDecision,
     codexDesktopSideTerminalDecision,
+    codexDesktopUnloadedSideMetadata,
+    codexDesktopUnloadedSideTerminal,
+    codexDesktopSideNeedsPersistedTerminal,
     codexDesktopSideNeedsRecoveryHint,
     codexDesktopTerminalConflictsWithOwner,
     codexDesktopBranchInventoryTurn,

@@ -18,6 +18,8 @@ const COMPANION_V7_REVISIONS = Object.freeze({
 const COMPANION_EVIDENCE_CHANNELS_V7 = Object.freeze(["membership","activity","interaction","unread","planArtifact","metadata","topology"])
 const COMPANION_ACTIVITY_KINDS_V7 = Object.freeze(["turn-running","turn-completed","turn-interrupted","turn-failed","unknown"])
 const COMPANION_ACTIVITY_AUTHORITIES_V7 = Object.freeze(["goal-verifying","goal","live-turn","terminal","inventory","unknown"])
+const CODEX_THREAD_STATUSES = Object.freeze(["unknown","active","idle","notLoaded","systemError"])
+const CODEX_GOAL_STATUSES = Object.freeze(["unknown","none","active","paused","blocked","usageLimited","budgetLimited","complete"])
 const COMPANION_INTERACTION_KINDS_V1 = Object.freeze(["user-input","approval","plan-choice","plan-implementation"])
 const COMPANION_INTERACTION_STATES_V1 = Object.freeze(["opened","resolved","cancelled","execution-started"])
 const COMPANION_INTERACTION_AUTHORITIES_V1 = Object.freeze(["provider-live","provider-snapshot","host-command","rollout"])
@@ -54,6 +56,24 @@ function normalizeCompanionActivityCandidateV7(value) {
   }
 }
 
+function normalizeCodexStateV7(value) {
+  const goal = value?.goal
+  if (!CODEX_THREAD_STATUSES.includes(value?.threadStatus)
+    || typeof value.groupActivityConfirmed !== 'boolean' || typeof value.submissionPending !== 'boolean'
+    || typeof value.orderedTurnStart !== 'boolean'
+    || value.emptyTurnHistory !== undefined && typeof value.emptyTurnHistory !== 'boolean'
+    || !CODEX_GOAL_STATUSES.includes(goal?.status) || !['fresh', 'verifying'].includes(goal.freshness)
+    || typeof goal.observed !== 'boolean'
+    || !Number.isSafeInteger(goal.updatedAt) || goal.updatedAt < 0
+    || !Number.isSafeInteger(goal.sequence) || goal.sequence < 0) return null
+  return { threadStatus: value.threadStatus, groupActivityConfirmed: value.groupActivityConfirmed,
+    submissionPending: value.submissionPending,
+    orderedTurnStart: value.orderedTurnStart,
+    ...(value.emptyTurnHistory === true ? { emptyTurnHistory: true } : {}),
+    goal: { status: goal.status, freshness: goal.freshness, observed: goal.observed,
+      updatedAt: goal.updatedAt, sequence: goal.sequence } }
+}
+
 function validateCompanionEvidenceNodeV3(value, expectedProvider = '') {
   if (!value || typeof value !== 'object'
     || !PROVIDERS.has(value.provider)
@@ -64,6 +84,8 @@ function validateCompanionEvidenceNodeV3(value, expectedProvider = '') {
     || value.membership !== 'present'
     || !value.activity || typeof value.activity !== 'object'
     || !normalizeCompanionActivityCandidateV7(value.activity)
+    || value.activity.codexState !== undefined && (value.provider !== 'codex'
+      || !normalizeCodexStateV7(value.activity.codexState))
     || value.activity.candidates !== undefined && (!Array.isArray(value.activity.candidates)
       || value.activity.candidates.length === 0
       || !value.activity.candidates.every((candidate) => normalizeCompanionActivityCandidateV7(candidate)))
@@ -207,6 +229,9 @@ function validateCompanionEvidenceBatchV3(value, expectedProvider = '') {
 }
 
 module.exports = {
+  CODEX_THREAD_STATUSES,
+  CODEX_GOAL_STATUSES,
+  normalizeCodexStateV7,
   COMPANION_V7_REVISIONS,
   COMPANION_EVIDENCE_CHANNELS_V7,
   COMPANION_ACTIVITY_KINDS_V7,

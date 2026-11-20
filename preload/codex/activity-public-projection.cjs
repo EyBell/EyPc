@@ -42,9 +42,11 @@ function createCodexActivityPublicProjection(dependencies = {}) {
     const unreadAuthority = ['desktop-live', 'desktop-persisted', 'unavailable'].includes(source.unreadAuthority)
       ? source.unreadAuthority
       : 'unavailable'
-    const lastTurnStatus = ['completed', 'interrupted', 'failed', 'inProgress'].includes(source.lastTurnStatus)
-      ? source.lastTurnStatus
-      : undefined
+    // Activity Delta v2 carried aggregate running in this field. V7 receives
+    // the member's own Turn separately through the host-private observation.
+    const sideActive = status === 'active' && source.legacySideActive === true
+    const lastTurnStatus = sideActive ? 'inProgress'
+      : ['completed', 'interrupted', 'failed', 'inProgress'].includes(source.lastTurnStatus) ? source.lastTurnStatus : undefined
     const lastTurnStartedAt = timestampMs(source.lastTurnStartedAt)
     const lastTurnCompletedAt = lastTurnStatus === 'completed' ? timestampMs(source.lastTurnCompletedAt) : 0
     const desktopActiveSince = status === 'active' && statusAuthority === 'desktop-live'
@@ -54,13 +56,13 @@ function createCodexActivityPublicProjection(dependencies = {}) {
       && activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
       ? timestampMs(source.waitingSince)
       : 0
-    const lastTurnEvidence = ['inventory', 'turn-started', 'turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(source.lastTurnEvidence)
+    const lastTurnEvidence = !sideActive && ['inventory', 'turn-started', 'turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(source.lastTurnEvidence)
       ? source.lastTurnEvidence
       : undefined
     const activeEvidenceSequence = Number.isInteger(source.activeEvidenceSequence) && source.activeEvidenceSequence > 0
       ? source.activeEvidenceSequence
       : undefined
-    const terminalEvidenceSequence = Number.isInteger(source.terminalEvidenceSequence) && source.terminalEvidenceSequence > 0
+    const terminalEvidenceSequence = !sideActive && Number.isInteger(source.terminalEvidenceSequence) && source.terminalEvidenceSequence > 0
       ? source.terminalEvidenceSequence
       : undefined
     const planLifecycleState = source.planLifecycleState === 'ready' || source.planLifecycleState === 'cleared'

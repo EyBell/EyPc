@@ -138,6 +138,7 @@ function createCodexFloatBridge(dependencies = {}) {
   let codexFloatEdge = 'right'
   let codexFloatSnapshot = null
   let codexFloatBaseLastSentRevision = 0
+  const codexFloatSentTaskRevisions = new Set()
   let codexFloatTaskLastSentRevision = 0
   let codexFloatTaskAppliedRevision = 0
   let codexFloatTaskPendingRevision = 0
@@ -632,6 +633,7 @@ function createCodexFloatBridge(dependencies = {}) {
   function resetCodexFloatTaskLane() {
     clearCodexFloatTaskAckTimer()
     codexFloatBaseLastSentRevision = 0
+    codexFloatSentTaskRevisions.clear()
     codexFloatTaskLastSentRevision = 0
     codexFloatTaskAppliedRevision = 0
     codexFloatTaskPendingRevision = 0
@@ -640,6 +642,10 @@ function createCodexFloatBridge(dependencies = {}) {
   }
 
   function armCodexFloatTaskAck(taskPackage, revision, attempt) {
+    codexFloatSentTaskRevisions.add(revision)
+    if (codexFloatSentTaskRevisions.size > 128) {
+      codexFloatSentTaskRevisions.delete(codexFloatSentTaskRevisions.values().next().value)
+    }
     clearCodexFloatTaskAckTimer()
     if (!revision || revision <= codexFloatTaskAppliedRevision) return
     if (revision !== codexFloatTaskPendingRevision) {
@@ -687,6 +693,7 @@ function createCodexFloatBridge(dependencies = {}) {
       codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.taskPackage, {
         taskSnapshot: taskPackage,
         sentRevision: revision,
+        windowGeneration: codexFloatWindowGeneration,
         sentAt: Date.now()
       })
       codexFloatTaskLastSentRevision = Math.max(codexFloatTaskLastSentRevision, revision)
@@ -721,7 +728,7 @@ function createCodexFloatBridge(dependencies = {}) {
       const outboundSnapshot = codexFloatTaskLastSentRevision > 0
         ? (({ taskSnapshot: _taskSnapshot, ...snapshotWithoutTasks }) => snapshotWithoutTasks)(codexFloatSnapshot)
         : codexFloatSnapshot
-      codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.snapshot, outboundSnapshot)
+      codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.snapshot, { ...outboundSnapshot, windowGeneration: codexFloatWindowGeneration })
       if (baseRevision > 0) codexFloatBaseLastSentRevision = Math.max(codexFloatBaseLastSentRevision, baseRevision)
       if (revision > 0 && codexFloatTaskLastSentRevision === 0) {
         codexFloatTaskLastSentRevision = revision
@@ -1839,12 +1846,24 @@ function createCodexFloatBridge(dependencies = {}) {
       const currentRevision = Number(source.currentRevision)
       const stage = source.stage
       if (!Number.isInteger(sentRevision) || sentRevision <= 0 || !Number.isInteger(currentRevision) || currentRevision < 0) return
-      if (stage === 'received') return
+      if (source.windowGeneration !== codexFloatWindowGeneration || !codexFloatSentTaskRevisions.has(sentRevision)) return
+      const delivery = (outcome, revision, details) => runtimeDiagnostics.record({
+        level: 'debug', scope: 'float-bridge', event: 'task-package-ack', outcome, count: revision,
+        details: { windowGeneration: codexFloatWindowGeneration, ...details }
+      })
+      if (stage === 'received') {
+        delivery('received', sentRevision)
+        return
+      }
       if (stage === 'applied') {
         if (sentRevision > codexFloatTaskLastSentRevision || currentRevision < sentRevision) return
+        for (const earlier of codexFloatSentTaskRevisions) {
+          if (earlier > codexFloatTaskAppliedRevision && earlier < sentRevision) delivery('superseded', earlier, { packageRevision: sentRevision })
+        }
+        const clearsPending = codexFloatTaskPendingRevision > 0 && sentRevision >= codexFloatTaskPendingRevision
         codexFloatTaskAppliedRevision = Math.max(codexFloatTaskAppliedRevision, sentRevision)
         companionTaskKernel?.acknowledge?.({ consumer: 'float', revision: sentRevision })
-        if (codexFloatTaskAppliedRevision >= codexFloatTaskPendingRevision) {
+        if (clearsPending) {
           const elapsed = codexFloatTaskPendingStartedAt ? Date.now() - codexFloatTaskPendingStartedAt : 0
           clearCodexFloatTaskAckTimer()
           codexFloatTaskPendingRevision = 0
@@ -1859,11 +1878,12 @@ function createCodexFloatBridge(dependencies = {}) {
             slowMs: 250,
             count: sentRevision
           })
-        }
+        } else delivery('applied', sentRevision)
         return
       }
       if (stage !== 'rejected') return
       if (source.reason === 'older-revision' && currentRevision >= sentRevision) {
+        delivery('older-revision', sentRevision, { packageRevision: currentRevision })
         const hostRevision = Number(
           companionTaskKernel?.getLatest?.()?.packageRevision
           || companionTaskKernel?.getPackage?.()?.packageRevision
@@ -1872,14 +1892,6 @@ function createCodexFloatBridge(dependencies = {}) {
         if (currentRevision > hostRevision) {
           requestCodexFloatRecreate('task-revision-desync')
           return
-        }
-        codexFloatTaskAppliedRevision = Math.max(codexFloatTaskAppliedRevision, currentRevision)
-        companionTaskKernel?.acknowledge?.({ consumer: 'float', revision: currentRevision })
-        if (codexFloatTaskAppliedRevision >= codexFloatTaskPendingRevision) {
-          clearCodexFloatTaskAckTimer()
-          codexFloatTaskPendingRevision = 0
-          codexFloatTaskSendAttempts = 0
-          codexFloatTaskPendingStartedAt = 0
         }
         return
       }

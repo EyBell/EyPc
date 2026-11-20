@@ -56,8 +56,16 @@
     "activity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kinds", "authorities"],
+      "required": ["kinds", "authorities", "codexThreadStatuses", "codexGoalStatuses"],
       "properties": {
+        "codexThreadStatuses": {
+          "type": "array",
+          "items": { "enum": ["unknown", "active", "idle", "notLoaded", "systemError"] }
+        },
+        "codexGoalStatuses": {
+          "type": "array",
+          "items": { "enum": ["unknown", "none", "active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"] }
+        },
         "kinds": {
           "type": "array",
           "prefixItems": [

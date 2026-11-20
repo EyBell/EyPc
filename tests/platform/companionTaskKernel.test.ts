@@ -6,9 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const { createCodexDesktopRequestProjection } = require('../../preload/codex/desktop-request-projection.cjs')
-const { createCompanionTaskKernel: createCompanionTaskKernelRaw, UNKNOWN_GRACE_MS } = require('../../preload/companion/task-kernel.cjs') as {
+const { createCompanionTaskKernel: createCompanionTaskKernelRaw } = require('../../preload/companion/task-kernel.cjs') as {
   createCompanionTaskKernel(options?: Record<string, unknown>): any
-  UNKNOWN_GRACE_MS: number
 }
 const {
   codexBranchObservationV7,
@@ -909,7 +908,8 @@ describe('CompanionTaskKernel', () => {
     ], 1, { providers: { codex: true, claude: false }, relations: [{ childKey: 'side', parentKey: 'root',
       provider: 'codex', family, relation: 'subagent', authority: 'test-exact-identity', exact: true, generation: 1 }] }) })
     expect(current.tasks).toHaveLength(1)
-    expect(current.tasks[0]).toMatchObject({ phase: unread ? 'completed' : 'stopped', unread, planReady: true })
+    expect(current.tasks[0]).toMatchObject({ phase: 'stopped', unread, planReady: true })
+    expect(current.views.counts.unread).toBe(unread ? 1 : 0)
     expect(current.views.groups.input).toEqual([])
   })
 
@@ -1269,7 +1269,7 @@ describe('CompanionTaskKernel', () => {
   })
 
 
-  it.each(['running', 'completed'])('keeps main Plan available while a %s Codex side owns presentation', (phase) => {
+  it.each(['running', 'completed'])('keeps main Plan available while a Codex side is %s', (phase) => {
     const kernel = createCompanionTaskKernel({ initialConfiguration: { enabled: true, providers: { codex: true } } })
     const receipt = kernel.attach({ enabled: true, providers: { codex: true } })
     const family = 'codex:side-plan-contract'
@@ -1279,7 +1279,7 @@ describe('CompanionTaskKernel', () => {
         actionAlias: '', unreadKnown: true, unread: true })
     ], 1, { providers: { codex: true }, relations: [{ childKey: 'side', parentKey: 'root', provider: 'codex',
       family, relation: 'subagent', authority: 'test-exact-identity', exact: true, generation: 1 }] }) })
-    expect(current.tasks[0]).toMatchObject({ phase, unread: true, planReady: true })
+    expect(current.tasks[0]).toMatchObject({ phase: phase === 'completed' ? 'stopped' : phase, unread: true, planReady: true })
     expect(current.views.counts).toMatchObject({ active: phase === 'running' ? 1 : 0, unread: phase === 'completed' ? 1 : 0 })
   })
 
@@ -2491,7 +2491,7 @@ describe('CompanionTaskKernel', () => {
   })
 
   it.each([
-    ['stopped', true, 'completed'],
+    ['stopped', true, 'stopped'],
     ['completed', true, 'completed'],
     ['stopped', false, 'stopped'],
     ['running', true, 'running'],
@@ -2540,20 +2540,22 @@ describe('CompanionTaskKernel', () => {
         provider: 'codex', family, relation: 'subagent', authority: 'test-exact-identity', exact: true, generation }] })
     })
     publish(1, true)
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed', unread: true, statusEnteredAt: 200 })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'stopped', unread: true, statusEnteredAt: 100 })
     await expect(kernel.dispatch({ action: 'open-attention', kind: 'completed-unread' }))
       .resolves.toMatchObject({ outcome: 'dispatched', key: 'root' })
     expect(opened).toHaveBeenCalledTimes(1)
-    expect(kernel.getPackage().views.groups.unread).toEqual(['root'])
+    expect(kernel.getPackage().views.attentionKeys.completedUnread).toEqual(['root'])
     publish(2, false)
     expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'stopped', unread: false,
       topology: { memberCount: 2 } })
     expect(kernel.getPackage().views.groups.unread).toEqual([])
+    expect(kernel.getPackage().views.attentionKeys.completedUnread).toEqual([])
     publish(3, true)
-    expect(kernel.getPackage().views.groups.unread).toEqual(['root'])
+    expect(kernel.getPackage().views.attentionKeys.completedUnread).toEqual(['root'])
     publish(4, true, 'stopped')
     expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'stopped', unread: true })
     expect(kernel.getPackage().views.groups.unread).toEqual([])
+    expect(kernel.getPackage().views.attentionKeys.completedUnread).toEqual([])
   })
 
   it('publishes only the aggregate root and excludes topology children from badges and cycling', () => {
@@ -3385,7 +3387,7 @@ describe('CompanionTaskKernel', () => {
     expect(firstUnknown).toMatchObject({ freshness: 'verifying' })
     expect(firstUnknown.tasks[0].phase).toBe('running')
 
-    now += UNKNOWN_GRACE_MS
+    now += 1_000
     const secondUnknown = kernel.syncPackage({ lease: receipt.lease, draft: draft([task({ phase: 'unknown', cycleTier: 'none', dynamicGroup: 'none' })], 3, { acceptedAt: now, providers: { codex: true, claude: false } }) })
     expect(secondUnknown.tasks[0].phase).toBe('running')
     expect(secondUnknown.views.groups.active).toEqual(['codex-a'])
@@ -4228,6 +4230,7 @@ describe('source lane units', () => {
         statusAuthority: 'desktop-live',
         activityEvidence: 'activity-event',
         activeFlags: [],
+        groupActivityConfirmed: true,
         lastTurnStatus: 'completed',
         lastTurnEvidence: 'turn-completed',
         activeEvidenceSequence: 40,
@@ -4246,7 +4249,8 @@ describe('source lane units', () => {
       key: 'codex-a',
       phase: 'running',
       unreadKnown: true,
-      unread: true
+      unread: true,
+      codexStatus: { groupActivity: true, main: { turn: 'turn-completed' } }
     })
   })
 
@@ -4466,7 +4470,7 @@ describe('source lane units', () => {
       turnStartedAt: 200,
       idleConfirmed: false
     })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running' })
 
     publish(3, {
       ref: 'branch-main-anonymous',
@@ -4483,7 +4487,7 @@ describe('source lane units', () => {
       terminalAt: 150,
       idleConfirmed: true
     })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running' })
 
     publish(4, {
       ref: 'branch-main-anonymous',
@@ -4530,7 +4534,7 @@ describe('source lane units', () => {
       waitingSince: 220,
       idleConfirmed: false
     })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running' })
 
     publish(3, {
       ref: 'branch-main-anonymous',
@@ -4545,7 +4549,7 @@ describe('source lane units', () => {
       turnStartedAt: 100,
       idleConfirmed: false
     })
-    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'completed' })
+    expect(kernel.getPackage().tasks[0]).toMatchObject({ phase: 'running' })
 
     publish(4, {
       ref: 'branch-main-anonymous',
@@ -5405,7 +5409,7 @@ describe('continue-task backend command', () => {
     return { kernel, continueTask }
   }
   const stopped = (extra: any = {}) => task({ phase: 'stopped', capabilities: { open: true, continueTask: true }, ...extra })
-  it('dispatches UI command with exact revision and publishes running after success', async () => {
+  it('settles the exact continue operation and awaits native turn evidence', async () => {
     const { kernel, continueTask } = setup([stopped()])
     const row = kernel.getLatest().tasks[0]
     expect(row.capabilities.continueTask).toBe(true)
@@ -5414,7 +5418,7 @@ describe('continue-task backend command', () => {
       .resolves.toMatchObject({ outcome: 'executed' })
     expect(continueTask).toHaveBeenCalledOnce()
     expect(continueTask.mock.calls[0]?.[0]).toMatchObject({ key: row.key, revisionAt: row.revisionAt })
-    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'running', capabilities: { continueTask: false } })
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'stopped', revisionAt: row.revisionAt })
     kernel.close()
   })
   it.each(['revision', 'running', 'completed', 'plan', 'input', 'approval', 'child'])('rejects %s', async (kind) => {

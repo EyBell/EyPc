@@ -5,8 +5,10 @@ import { describe, expect, it } from 'vitest'
 import { checkCompanionLifecycles } from '../../scripts/check-companion-lifecycles.mjs'
 
 async function withMutation(mutate: (source: string) => string, target = 'companion/task-kernel.cjs', expectedError?: RegExp) {
-  const temporary = mkdtempSync(join(tmpdir(), 'eypc-lifecycle-'))
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'eypc-lifecycle-'))
+  const temporary = join(fixtureRoot, 'preload')
   try {
+    mkdirSync(temporary)
     const root = resolve('preload')
     const directory = dirname(target)
     const file = basename(target)
@@ -19,12 +21,12 @@ async function withMutation(mutate: (source: string) => string, target = 'compan
     }
     writeFileSync(join(temporary, target), mutate(readFileSync(join(root, target), 'utf8')))
     await expect(checkCompanionLifecycles(temporary)).rejects.toThrow(expectedError)
-  } finally { rmSync(temporary, { recursive: true, force: true }) }
+  } finally { rmSync(fixtureRoot, { recursive: true, force: true }) }
 }
 
 describe('Companion unread and Side lifecycle preservation gate', () => {
   it('covers complete/incomplete retirement, stale evidence, nested sides, unread and open races', async () => {
-    expect(await checkCompanionLifecycles(resolve('preload'))).toBe(58)
+    expect(await checkCompanionLifecycles(resolve('preload'))).toBe(178)
   })
   it('rejects stale relation deletion in a newer transport batch', async () => {
     await withMutation(source => {
@@ -66,9 +68,9 @@ describe('Companion unread and Side lifecycle preservation gate', () => {
 
   it('rejects accepting a terminal without complete newest canonical coverage', async () => {
     await withMutation(source => {
-      const guard = 'shadow.canonicalLatestComplete !== true || '
+      const guard = 'if (shadow.canonicalLatestComplete !== true || !turn?.turnRef'
       expect(source).toContain(guard)
-      return source.replace(guard, '')
+      return source.replace(guard, 'if (!turn?.turnRef')
     }, 'codex/desktop-activity-resolution.cjs', /native Side incomplete-canonical must not complete/)
   })
   it('rejects an older owner completion while the previous owner is still running', async () => {

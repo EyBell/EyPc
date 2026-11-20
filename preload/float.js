@@ -87,6 +87,7 @@ const CHANNELS = {
 let lastSnapshot = null
 let lastBaseSnapshotRevision = 0
 let lastTaskPackageRevision = 0
+let taskWindowGeneration = 0
 let lastState = { expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null }
 const snapshotListeners = new Set()
 const stateListeners = new Set()
@@ -155,6 +156,14 @@ function baseSnapshotRevision(value) {
   return Number.isInteger(revision) && revision > 0 ? revision : 0
 }
 
+function acceptTaskWindowGeneration(generation) {
+  if (generation === undefined) return taskWindowGeneration === 0
+  if (!Number.isSafeInteger(generation) || generation <= 0) return false
+  if (taskWindowGeneration && generation !== taskWindowGeneration) return false
+  taskWindowGeneration = generation
+  return true
+}
+
 function sendTaskPackageAck(stage, sentRevision, reason) {
   const revision = Number.isInteger(sentRevision) && sentRevision > 0 ? sentRevision : lastTaskPackageRevision
   if (!revision) return false
@@ -162,6 +171,7 @@ function sendTaskPackageAck(stage, sentRevision, reason) {
     revision,
     sentRevision: revision,
     currentRevision: lastTaskPackageRevision,
+    windowGeneration: taskWindowGeneration,
     stage,
     ...(reason ? { reason } : {})
   })
@@ -207,6 +217,7 @@ function acceptTaskPackage(taskPackage, sentRevision, baseSnapshot = lastSnapsho
 
 ipcRenderer.on(CHANNELS.snapshot, (_event, snapshot) => {
   if (!snapshot || typeof snapshot !== 'object' || (snapshot.version !== 1 && snapshot.version !== 2)) return
+  if (!acceptTaskWindowGeneration(snapshot.windowGeneration)) return
   const incomingBaseRevision = baseSnapshotRevision(snapshot)
   if (lastBaseSnapshotRevision > 0 && incomingBaseRevision === 0) return
   if (incomingBaseRevision > 0 && incomingBaseRevision < lastBaseSnapshotRevision) return
@@ -227,6 +238,7 @@ ipcRenderer.on(CHANNELS.snapshot, (_event, snapshot) => {
 
 ipcRenderer.on(CHANNELS.taskPackage, (_event, payload) => {
   const source = payload && typeof payload === 'object' ? payload : {}
+  if (!acceptTaskWindowGeneration(source.windowGeneration)) return
   acceptTaskPackage(source.taskSnapshot, Number(source.sentRevision), lastSnapshot)
 })
 
@@ -344,7 +356,7 @@ window.eypcFloat = {
   getState: () => lastState,
   getHealth: () => ({ heartbeatSequence, lastHeartbeatAckAt }),
   ackTaskSnapshot: (stage, revision, reason) => {
-    if (!['applied', 'rejected'].includes(stage)) return false
+    if (!['applied', 'rejected'].includes(stage) || stage === 'applied' && !runtimeIdentityCompatible) return false
     if (!Number.isInteger(revision) || revision <= 0 || revision > lastTaskPackageRevision) return false
     return sendTaskPackageAck(stage, revision, stage === 'rejected' ? reason : undefined)
   },

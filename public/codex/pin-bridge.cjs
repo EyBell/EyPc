@@ -240,7 +240,7 @@ module.exports = {
  * `section` key. `nativePinLane` is `''` when no source can speak for the
  * row, which the evidence lane reports as `providerPin: null`.
  */
-function codexThreadNativePinFields(row, mirrorOrder) {
+function codexThreadNativePinFields(row, mirrorOrder, sectionOrder) {
   const thread = record(row)
   const mirror = mirrorOrder instanceof Map ? mirrorOrder : new Map()
   if (thread.codexhostExternal === true) {
@@ -251,10 +251,11 @@ function codexThreadNativePinFields(row, mirrorOrder) {
   const sectionPinned = codexThreadSectionPinned(thread)
   const id = typeof thread.id === 'string' ? thread.id : ''
   if (sectionPinned !== null) {
+    const order = sectionOrder?.get(id) ?? mirror.get(id)
     return {
       nativePinned: sectionPinned,
       nativePinLane: 'app-server',
-      ...(sectionPinned && mirror.has(id) ? { nativePinnedOrder: mirror.get(id) } : {})
+      ...(sectionPinned && Number.isInteger(order) ? { nativePinnedOrder: order } : {})
     }
   }
   const mirrored = mirror.has(id)

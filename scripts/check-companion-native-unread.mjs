@@ -63,21 +63,30 @@ export function checkCompanionNativeUnread(assetRoot) {
   }), 'verified Desktop-only Side attaches without inventory duplication')
   const applyStart = source.indexOf('function applyCodexActivityToCompanionKernel(')
   const applyEnd = source.indexOf('\nfunction ', applyStart + 1)
+  const selection = source.slice(source.indexOf('function selectCodexEvidenceMembers('), source.indexOf('function noteLostCodexEvidence('))
+  const retirement = source.slice(source.indexOf('function retirePendingCodexMembers('), source.indexOf('function preparePendingCodexEvidence('))
+  const { createEvidenceNodeV7, createEvidenceBatchV7 } = require('./companion/evidence-adapter-v7.cjs')
+  const { validateCompanionEvidenceBatchV3 } = require('./companion/contracts-v7.cjs')
+  const members = ['root-key', 'codex-child:synthetic-side-ref'].map((key, index) => createEvidenceNodeV7({
+    provider: 'codex', key, family: 'codex:root-key', role: index ? 'child' : 'root',
+    metadata: { kind: index ? 'topology-child' : 'codex-thread', revisionAt: 30 }
+  }))
   let published
   const applyContext = vm.createContext({ Date,
     codexDesktopBridge: null,
     codexRecord: value => value || {}, companionEvidenceSequenceV7: (...values) => Math.max(0, ...values.map(value => Number(value) || 0)),
     companionTaskKernel: { getPackage: () => ({ complete: true, providers: { codex: true }, sourceLaneGenerations: {}, packageRevision: 1 }) },
     companionPersistedTaskState: () => ({}), companionTaskConfiguration: () => ({ dynamicTaskWindowHours: 24 }),
-    companionCodexEvidenceV7: () => ({ nodes: [{ key: 'root-key' }, { key: 'codex-child:synthetic-side-ref' }],
+    companionCodexEvidenceV7: () => ({ nodes: members,
       relations: [], interactions: projected.interactions, interactionSets: projected.interactionSets }),
     createCompanionInteractionEvidenceV7: value => value, createCompanionInteractionSetV7: value => value,
-    createCompanionEvidenceBatchV7: value => value,
+    createCompanionEvidenceBatchV7: createEvidenceBatchV7,
     publishCompanionEvidenceBatchesV3: value => { published = value; return true },
     runtimeDiagnostics: { record() {} }, codexActivitySourceFingerprint: 'synthetic'
   })
-  const apply = vm.runInContext(`${source.slice(applyStart, applyEnd)}; applyCodexActivityToCompanionKernel`, applyContext)
+  const apply = vm.runInContext(`${selection}\n${retirement}\n${source.slice(applyStart, applyEnd)}; applyCodexActivityToCompanionKernel`, applyContext)
   apply({ generation: 30, entries: [{ key: 'root-key' }] })
+  assert(validateCompanionEvidenceBatchV3(published.evidenceBatches.codex, 'codex'), 'member evidence passes the Kernel input contract')
   assert.equal(published.evidenceBatches.codex.interactions[0].taskKey, 'codex-child:synthetic-side-ref',
     'unchanged open member input survives activity-only replay')
   const cacheGuard = source.match(/if \((queryThreadId === threadId[\s\S]*?codexApplyCachedCompletedTurnEvidence\(known, threadId\))\) \{/)
@@ -86,21 +95,21 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(vm.runInNewContext(cacheGuard[1], { queryThreadId: 'child', threadId: 'parent', known: {},
     refresh: {}, codexApplyCachedCompletedTurnEvidence: () => { cachedRead = true; return true } }), false)
   assert.equal(cachedRead, false)
-  const confirmationStart = source.indexOf('        const branchShadow = queryThreadId !== threadId ? this.sideShadows.get(queryThreadId) : null')
+  const confirmationStart = source.indexOf('        if (refresh.confirmCompletionEvent && validTerminalTurn')
   const confirmationEnd = source.indexOf('        const resumedTerminalRevision', confirmationStart)
   assert(confirmationStart >= 0 && confirmationEnd > confirmationStart)
   let terminal
-  let emitted = false
   const confirm = vm.runInNewContext(`(function() {${source.slice(confirmationStart, confirmationEnd)}})`, {
     queryThreadId: 'child', threadId: 'parent', refresh: { confirmCompletionEvent: true }, known: { lastTurnStartedAt: 10000 },
-    turn: { status: 'completed', startedAt: 2000 }, codexInventorySideBranchEvidence: new Map(),
-    codexNextLiveEvidenceSequence: () => 40, codexPrivateBranchIdleConfirmed: () => true,
-    codexRememberPrivateBranchTerminal: (parent, child, turn) => { terminal = { parent, child, turn } }, finish() {}
+    validTerminalTurn: true, turn: { id: 'side-turn', status: 'failed', startedAt: 2000 },
+    codexApplySideTerminalNotification: (_bridge, parent, child, turn) => {
+      terminal = { parent, child, turn }
+      return true
+    }, finish() {}
   })
-  confirm.call({ sideShadows: new Map([['child', { parentThreadId: 'parent', currentCanonicalTurn: { startedAt: 2000 } }]]),
-    emitParentActivity: () => { emitted = true } })
-  assert.equal(terminal?.child, 'child', 'a newer parent epoch does not invalidate current child completion')
-  assert(emitted)
+  confirm()
+  assert.equal(terminal?.child, 'child', 'a newer parent epoch does not invalidate the current child terminal')
+  assert.equal(terminal?.turn.status, 'failed')
   const { createCodexDesktopShadow } = require('./codex/desktop-shadow.cjs')
   let questionSequence = 0
   const questionProjector = createCodexDesktopRequestProjection({ record: value => value || {},
@@ -145,7 +154,7 @@ export function checkCompanionNativeUnread(assetRoot) {
     validCodexThreadId: value => [main, side].includes(value),
     codexDesktopBridge: { shadows: new Map([[main, ownShadow]]), sideShadows: new Map([[side, member]]) },
     honorHostExternalProjection: (_id, _known, value) => value,
-    codexDesktopShadowActivity: activity, codexAppServerActiveDominates: () => false,
+    codexDesktopShadowActivity: activity, codexAppServerActiveDominates: () => false, codexAppServerSideActivity: () => null,
     codexAllSideRelations: () => new Map([[side, main]]), codexInventorySideBranchEvidence: new Map(),
     codexInventorySideRelations: new Map(), codexDesktopSideRelations: new Map([[side, main]]),
     codexDesktopUnreadObservation: () => ({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' }),

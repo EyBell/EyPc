@@ -1,6 +1,8 @@
 'use strict'
 
 const {
+  CODEX_THREAD_STATUSES,
+  CODEX_GOAL_STATUSES,
   COMPANION_V7_REVISIONS,
   COMPANION_EVIDENCE_CHANNELS_V7
 } = require('./contracts-v7.cjs')
@@ -25,6 +27,17 @@ function integer(value) {
 
 function record(value) {
   return value && typeof value === 'object' ? value : {}
+}
+
+function selectCodexGoalEvidenceV7(desktop, cached) {
+  if (!desktop || cached?.explicitlyCleared) return cached
+  // A qualified ephemeral owner can explicitly lack Goal support, or carry
+  // an unreadable Goal field. Both observations are scoped to this member.
+  if (!desktop.goalUpdatedAt) return desktop
+  if (integer(cached?.goalUpdatedAt) > desktop.goalUpdatedAt
+    || cached?.goalUpdatedAt === desktop.goalUpdatedAt
+      && cached.goalEvidenceSequence >= desktop.goalEvidenceSequence) return cached
+  return desktop
 }
 
 function activityFromPhaseV7(phase, options = {}) {
@@ -64,35 +77,12 @@ function codexBranchObservationV7(value = {}) {
     || branch.planImplementationOnly === true
     || hostExternalLive
   const hostSettled = branch.hostExternal === true && exactTerminal && flags.length === 0
-  // Native Codex++ / Cloud splits keep thread/list `active` while a child is
-  // still working after the parent Turn completed. That group-active signal
-  // must not be closed by the parent's terminal or Goal-complete candidate.
-  const nativeGroupStillActive = branch.hostExternal !== true
-    && branch.groupActivityConfirmed === true
-    && branch.status === 'active'
-    && liveAuthority
-    && hasLiveShape
-  const live = branch.status === 'active' && liveAuthority
-    && !hostSettled
-    && (nativeGroupStillActive || !terminalNewer)
-    && hasLiveShape
-  const goalFresh = branch.goalFreshness !== 'verifying'
-    && branch.goalStatus !== 'unknown'
-    && branch.goalStatus !== 'none'
-  const goalSuperseded = goalFresh && branch.goalStatus !== 'active' && (
-    live
-    || (activeSequence > 0 && (
-      integer(branch.turnStartedAt) > integer(branch.goalUpdatedAt)
-      || (integer(branch.turnStartedAt) === integer(branch.goalUpdatedAt) && activeSequence > goalSequence)
-      || (integer(branch.goalUpdatedAt) === 0 && activeSequence > goalSequence)
-    ))
-  )
-  const goalCurrent = goalFresh && !goalSuperseded
+  const live = branch.status === 'active' && liveAuthority && !hostSettled && !terminalNewer && hasLiveShape
   const candidates = []
-  if (live) {
-    const waiting = flags.includes('waitingOnApproval') || flags.includes('waitingOnUserInput')
+  if (live && (branch.lastTurnStatus === 'inProgress' || !flags.length && !branch.groupActivityConfirmed)
+    && branch.connectorOnly !== true) {
     candidates.push({
-      kind: waiting ? 'turn-completed' : 'turn-running',
+      kind: 'turn-running',
       authority: branch.activityEvidence === 'activity-event' ? 'live-turn' : 'inventory',
       causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
       causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
@@ -102,54 +92,10 @@ function codexBranchObservationV7(value = {}) {
       observedAt: integer(branch.observedAt),
       statusEnteredAt: integer(branch.transitionAt) || integer(branch.waitingSince),
       turnStartedAt: integer(branch.turnStartedAt),
-      terminalAt: waiting ? integer(branch.transitionAt) || integer(branch.waitingSince) : 0
+      terminalAt: 0
     })
   }
-  if (goalCurrent) {
-    const goalKind = branch.goalStatus === 'active' ? 'turn-running'
-      : ['paused', 'blocked', 'usageLimited', 'budgetLimited'].includes(branch.goalStatus) ? 'turn-interrupted'
-        : branch.goalStatus === 'complete' ? 'turn-completed' : 'unknown'
-    if (goalKind !== 'unknown') candidates.push({
-      kind: goalKind,
-      authority: 'goal',
-      causalKey: '',
-      causalDomain: '',
-      exact: true,
-      sequence: goalSequence || integer(branch.goalUpdatedAt),
-      observedAt: integer(branch.observedAt),
-      statusEnteredAt: integer(branch.goalUpdatedAt),
-      turnStartedAt: integer(branch.turnStartedAt),
-      terminalAt: goalKind === 'turn-running' ? 0 : integer(branch.goalUpdatedAt)
-    })
-  }
-  if (branch.goalFreshness === 'verifying' && branch.goalStatus !== 'none') {
-    const liveCandidate = candidates.find((candidate) => (
-      candidate.authority === 'live-turn' && candidate.kind === 'turn-running'
-    ))
-    if (liveCandidate) {
-      // A transient Goal read cannot erase an exact, newer Turn start. Mark the
-      // same activity as verifying so a terminal candidate cannot win until the
-      // Goal authority settles.
-      liveCandidate.authority = 'goal-verifying'
-      liveCandidate.exact = false
-      liveCandidate.causalKey = ''
-      liveCandidate.causalDomain = ''
-    } else {
-      candidates.push({
-        kind: 'unknown',
-        authority: 'goal-verifying',
-        causalKey: '',
-        causalDomain: '',
-        exact: false,
-        sequence: goalSequence || integer(branch.goalUpdatedAt) || integer(branch.observedAt),
-        observedAt: integer(branch.observedAt),
-        statusEnteredAt: integer(branch.goalUpdatedAt),
-        turnStartedAt: integer(branch.turnStartedAt),
-        terminalAt: 0
-      })
-    }
-  }
-  if (exactTerminal && !live) {
+  if (exactTerminal) {
     candidates.push({
       kind: branch.lastTurnStatus === 'completed' ? 'turn-completed'
         : branch.lastTurnStatus === 'failed' ? 'turn-failed' : 'turn-interrupted',
@@ -162,9 +108,13 @@ function codexBranchObservationV7(value = {}) {
       observedAt: integer(branch.observedAt),
       statusEnteredAt: integer(branch.transitionAt) || integer(branch.terminalAt),
       turnStartedAt: integer(branch.turnStartedAt),
-      terminalAt: integer(branch.terminalAt)
+      terminalAt: integer(branch.terminalAt),
+      ...(branch.ordinarySideInterruptedAt > 0 && branch.branchKind === 'side' && branch.lastTurnStatus === 'interrupted'
+        && !flags.length && !branch.planReady && !branch.planImplementationOnly
+        && branch.goalFreshness === 'fresh' && ['none', 'complete'].includes(branch.goalStatus)
+        ? { ordinarySideInterruptedAt: integer(branch.ordinarySideInterruptedAt) } : {})
     })
-  } else if (!live && ['completed', 'interrupted', 'failed'].includes(branch.lastTurnStatus)
+  } else if (['completed', 'interrupted', 'failed'].includes(branch.lastTurnStatus)
     && branch.lastTurnEvidence === 'inventory') {
     candidates.push({
       kind: branch.lastTurnStatus === 'completed' ? 'turn-completed'
@@ -178,7 +128,11 @@ function codexBranchObservationV7(value = {}) {
       observedAt: integer(branch.observedAt),
       statusEnteredAt: integer(branch.transitionAt) || integer(branch.turnStartedAt),
       turnStartedAt: integer(branch.turnStartedAt),
-      terminalAt: integer(branch.terminalAt) || integer(branch.turnStartedAt)
+      terminalAt: integer(branch.terminalAt) || integer(branch.turnStartedAt),
+      ...(branch.branchKind === 'main' && branch.hostExternal !== true && branch.lastTurnStatus === 'completed'
+        && branch.turnStartedAtSource === 'inventory' && branch.turnRef && integer(branch.turnStartedAt) > 0
+        && !flags.length && !branch.planReady && !branch.planImplementationOnly
+        && branch.goalStatus === 'none' && branch.goalFreshness === 'fresh' ? { inventoryRootCompletion: true } : {})
     })
   }
   const interactionKind = live && flags.includes('waitingOnApproval')
@@ -211,6 +165,21 @@ function codexBranchObservationV7(value = {}) {
     ? integer(branch.planLifecycleRevision) || sequence
     : 0
   return {
+    codexState: {
+      threadStatus: CODEX_THREAD_STATUSES.includes(branch.status) ? branch.status : 'unknown',
+      groupActivityConfirmed: branch.groupActivityConfirmed === true,
+      submissionPending: branch.submissionPending === true,
+      orderedTurnStart: branch.orderedTurnStart === true,
+      ...(branch.emptyTurnHistory === true ? { emptyTurnHistory: true } : {}),
+      goal: {
+        status: CODEX_GOAL_STATUSES.includes(branch.goalStatus) ? branch.goalStatus : 'unknown',
+        freshness: branch.goalFreshness === 'fresh' ? 'fresh' : 'verifying',
+        observed: ['app-server', 'desktop', 'pending', 'external'].includes(branch.goalSource)
+          || branch.goalStatus !== undefined && branch.goalStatus !== 'unknown',
+        updatedAt: integer(branch.goalUpdatedAt),
+        sequence: goalSequence
+      }
+    },
     kind: 'unknown',
     exact: false,
     candidates: candidates.length ? candidates : [{
@@ -457,7 +426,9 @@ function createEvidenceNodeV7(input = {}) {
         observedAt: integer(value.observedAt),
         statusEnteredAt: integer(value.statusEnteredAt),
         turnStartedAt: integer(value.turnStartedAt),
-        terminalAt: integer(value.terminalAt)
+        terminalAt: integer(value.terminalAt),
+        ...(value.inventoryRootCompletion === true ? { inventoryRootCompletion: true } : {}),
+        ...(value.ordinarySideInterruptedAt > 0 ? { ordinarySideInterruptedAt: integer(value.ordinarySideInterruptedAt) } : {})
       }
     })
   return {
@@ -488,7 +459,8 @@ function createEvidenceNodeV7(input = {}) {
       statusEnteredAt: integer(observation.statusEnteredAt),
       turnStartedAt: integer(observation.turnStartedAt),
       terminalAt: integer(observation.terminalAt),
-      ...(candidates.length ? { candidates } : {})
+      ...(candidates.length ? { candidates } : {}),
+      ...(provider === 'codex' && observation.codexState ? { codexState: observation.codexState } : {})
     },
     unread: {
       known: observation.unreadKnown === true,
@@ -580,6 +552,7 @@ function createEvidenceBatchV7(input = {}) {
 }
 
 module.exports = {
+  selectCodexGoalEvidenceV7,
   activityFromPhaseV7,
   codexBranchObservationV7,
   claudeSessionObservationV7,

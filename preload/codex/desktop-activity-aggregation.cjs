@@ -115,6 +115,7 @@ function createCodexDesktopActivityAggregation(dependencies = {}) {
       rows.filter((branch) => branch !== own))
     const activity = {
       status: projected.status, activeFlags: projected.activeFlags,
+      legacySideActive: rows.some((branch) => branch !== own && branch.status === 'active'),
       waitingSince: projected.waitingSince, desktopActiveSince: projected.desktopActiveSince,
       planImplementationOnly: projected.planImplementationOnly
     }

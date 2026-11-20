@@ -39,7 +39,7 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
       hasUnreadTurn: false
     })).toMatchObject({
       kind: 'unknown',
-      candidates: [expect.objectContaining({ kind: 'turn-completed' })],
+      candidates: [expect.objectContaining({ kind: 'unknown' })],
       interactionKind: 'plan-implementation',
       unreadKnown: true,
       unread: false,
@@ -189,11 +189,12 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
     }).candidates.some((candidate: { kind: string }) => candidate.kind === 'turn-running')).toBe(false)
   })
 
-  it('keeps native Codex++ group-active running after the parent Turn completed', () => {
+  it('passes native Codex++ group activity and a completed Turn independently', () => {
     const observation = codexBranchObservationV7({
       status: 'active',
       statusAuthority: 'desktop-live',
       activityEvidence: 'activity-event',
+      groupActivityConfirmed: true,
       lastTurnStatus: 'completed',
       lastTurnEvidence: 'turn-completed',
       activeEvidenceSequence: 40,
@@ -207,10 +208,8 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
       unreadKnown: true,
       hasUnreadTurn: true
     })
-    expect(observation.candidates.some((candidate: { kind: string }) => candidate.kind === 'turn-running')).toBe(true)
-    expect(observation.candidates.some((candidate: { kind: string; authority: string }) => (
-      candidate.kind === 'turn-completed' && (candidate.authority === 'terminal' || candidate.authority === 'goal')
-    ))).toBe(false)
+    expect(observation.codexState).toMatchObject({ groupActivityConfirmed: true, goal: { status: 'complete' } })
+    expect(observation.candidates).toEqual([expect.objectContaining({ kind: 'turn-completed', authority: 'terminal' })])
   })
 
   it('treats Host extra-process connector-active as live running', () => {

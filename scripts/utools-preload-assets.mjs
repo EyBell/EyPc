@@ -8,7 +8,8 @@ export const UTOOLS_PRELOAD_ASSETS = Object.freeze([
   { id: 'freeze-trace', canonical: 'preload/freeze-trace.cjs', public: 'public/freeze-trace.cjs', dist: 'freeze-trace.cjs' },
   { id: 'diagnostics', canonical: 'preload/diagnostics.cjs', public: 'public/diagnostics.cjs', dist: 'diagnostics.cjs' },
   { id: 'timing-policy', canonical: 'preload/timing-policy.cjs', public: 'public/timing-policy.cjs', dist: 'timing-policy.cjs' },
-  { id: 'task-phase', canonical: 'preload/task-phase.cjs', public: 'public/task-phase.cjs', dist: 'task-phase.cjs' }
+  { id: 'task-phase', canonical: 'preload/task-phase.cjs', public: 'public/task-phase.cjs', dist: 'task-phase.cjs' },
+  { id: 'sqlite-readonly', canonical: 'preload/sqlite-readonly.cjs', public: 'public/sqlite-readonly.cjs', dist: 'sqlite-readonly.cjs' }
 ])
 
 /**

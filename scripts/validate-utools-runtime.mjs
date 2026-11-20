@@ -231,7 +231,6 @@ for (const marker of [
   'companion-task-ack-v2',
   'sourceLaneGenerations',
   'preflightInFlight',
-  'UNKNOWN_GRACE_MS',
   'planReady',
   'pausedKeys',
   'reduceActivityCandidatesV7',
@@ -382,13 +381,18 @@ assert(actionRunnerFeature?.mainHide === true, 'Action Runner feature must run w
 assert(actionRunnerFeature?.cmds?.includes('打开 Action 执行工作台'), 'Action Runner must expose the stable global-hotkey command label')
 
 const preloadSource = preloadSources.main
-checkCompanionDiagnosticPrivacy(preloadSource)
+checkCompanionDiagnosticPrivacy(preloadSource, preloadModuleSources.get('codex/runtime-diagnostics.cjs'))
 const floatPreloadSource = preloadSources.float
 const actionPreloadSource = preloadSources.action
 const ipcListeners = new Map()
 const inertSetTimer = () => 1
 const inertClearTimer = () => undefined
+const validationStorage = new Map()
 const sandbox = {
+  utools: { dbStorage: {
+    getItem: key => validationStorage.get(key),
+    setItem: (key, value) => validationStorage.set(key, value)
+  } },
   window: {},
   globalThis: {},
   process: { platform: 'darwin', env: {}, cwd: () => '/tmp' },

@@ -58,6 +58,7 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
       'function_call_output',
       'reasoning'
     ])
+    let interruptedAt = 0
     for (const line of text.split(/\r?\n/)) {
       if (!line || line.length > MAX_ROLLOUT_RUNTIME_LINE_BYTES) continue
       let parsed
@@ -96,8 +97,11 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         state.known = true
         state.phase = 'interrupted'
         state.edge = 'turn-aborted'
+        interruptedAt = turnId ? rolloutTimestampMs(source.timestamp, payload.timestamp, payload.completed_at) : 0
         if (turnId) {
-          if (state.turnId && state.turnId !== turnId) state.startedAt = 0
+          const explicitStart = rolloutTimestampMs(payload.started_at)
+          const sameTurnStart = state.turnId === turnId ? state.startedAt : 0
+          state.startedAt = explicitStart > 0 && explicitStart <= observedAt ? explicitStart : sameTurnStart
           state.turnId = turnId
         }
         state.edgeAt = observedAt
@@ -115,7 +119,7 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
       state.edge = 'live-append'
       state.edgeAt = observedAt
     }
-    return state
+    return state.edge === 'turn-aborted' && interruptedAt > 0 ? { ...state, interruptedAt } : state
   }
 
   function codexRolloutRuntimeForTurn(runtime, input = {}) {

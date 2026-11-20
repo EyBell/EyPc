@@ -236,7 +236,7 @@ function createCodexDesktopShadow(dependencies = {}) {
     return shadow.sideGoalEvidence
   }
 
-  function codexDesktopRootGoalEvidence(shadow, cached) {
+  function codexDesktopRootGoalEvidence(shadow) {
     const goal = shadow?.nativeGoal
     if (!shadow || shadow.sideConversation === true || !shadow.ownerClientId || shadow.ownerDisconnectedAt
       || goal?.kind !== 'goal' || !goalStatuses.includes(goal.status) || !(goal.updatedAt > 0)) return null
@@ -245,13 +245,7 @@ function createCodexDesktopShadow(dependencies = {}) {
       shadow.rootGoalEvidence = { goalStatus: goal.status, goalFreshness: 'fresh', goalUpdatedAt: goal.updatedAt,
         goalEvidenceSequence: nextLiveEvidenceSequence() }
     }
-    const current = shadow.rootGoalEvidence
-    // Independent App Servers do not share goal/updated notifications. The
-    // exact Desktop owner is another current source, but cannot replace a
-    // later Goal clock or an already newer same-clock connector observation.
-    return Number(cached?.goalUpdatedAt) > current.goalUpdatedAt
-      || Number(cached?.goalUpdatedAt) === current.goalUpdatedAt
-        && Number(cached?.goalEvidenceSequence) >= current.goalEvidenceSequence ? null : current
+    return shadow.rootGoalEvidence
   }
 
   function refreshAsyncRequests(shadow, previous = shadow.requests) {
@@ -279,25 +273,31 @@ function createCodexDesktopShadow(dependencies = {}) {
     const pendingSideTurn = shadow.sideConversation === true
       && ['completed', 'interrupted', 'failed'].includes(latest?.status)
       ? turns.findLast(value => value.turnRef && value.status === 'inProgress') : null
-    const turn = pendingSideTurn || (latest?.turnRef && ['inProgress', 'completed'].includes(latest.status) ? latest : null)
     const canonical = shadow.asyncCanonical?.entities[shadow.asyncCanonical?.islands.at(-1)?.entries.at(-1)]
     shadow.canonicalLatestComplete = shadow.asyncCanonical?.latestComplete === true
     shadow.currentCanonicalTurn = canonical?.turnRef
       ? { turnRef: canonical.turnRef, status: canonical.status, startedAt: canonical.startedAt } : null
-    const followingItems = pendingSideTurn
-      ? turns.slice(turns.indexOf(pendingSideTurn) + 1).flatMap(value => value.items) : []
-    const answered = new Set([...(turn?.items || []), ...followingItems].flatMap((item) => item.replyAccepted ? item.answered : []))
-    const items = turn?.items || []
-    // Accepted force-inserted conversation input supersedes questions before
-    // that item. Pending/rejected input and partial question replies do not.
-    const continuationIndex = items.findLastIndex((item) => item.replyAccepted && item.continuesConversation)
-    const laterContinuation = followingItems.some(item => item.replyAccepted && item.continuesConversation)
-    const values = (laterContinuation ? [] : items).flatMap((item, index) => index > continuationIndex && item.itemRef
-      ? Array.from({ length: item.count }, (_, index) => `${item.itemRef}:${index}`)
-        .filter((key) => !answered.has(key))
-        .map((key) => ({ type: 'userInput', method: 'requestUserInput', id: `async:${key}` })) : [])
+    const open = new Map()
+    const questionTurns = pendingSideTurn ? turns.slice(turns.indexOf(pendingSideTurn)) : latest ? [latest] : []
+    for (const turn of questionTurns) {
+      const presentsQuestions = turn === pendingSideTurn || turn === latest && turn.turnRef
+        && ['inProgress', 'completed'].includes(turn.status)
+      for (const item of turn.items) {
+        if (item.replyAccepted) {
+          if (item.continuesConversation) open.clear()
+          for (const key of item.answered) open.delete(key)
+        }
+        if (!presentsQuestions || !item.itemRef) continue
+        for (let slot = 0; slot < item.count; slot++) open.set(`${item.itemRef}:${slot}`, turn.startedAt)
+      }
+    }
+    const values = Array.from(open, ([key, turnEpoch]) => ({
+      type: 'userInput', method: 'requestUserInput', id: `async:${key}`, turnEpoch
+    }))
     const prior = (previous || []).filter((request) => request.asyncQuestion === true)
-    const requests = projectedRequests(values, prior).map((request) => ({ ...request, asyncQuestion: true }))
+    const requests = projectedRequests(values, prior).map((request, index) => ({
+      ...request, asyncQuestion: true, turnEpoch: values[index].turnEpoch
+    }))
     shadow.asyncRequestSetChanged = prior.map((request) => request.observedSequence).join(',') !== requests.map((request) => request.observedSequence).join(',')
     shadow.requests = [...(shadow.requests || []).filter((request) => !request.asyncQuestion), ...requests]
   }

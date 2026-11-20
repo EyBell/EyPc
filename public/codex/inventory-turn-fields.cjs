@@ -111,11 +111,13 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     const id = typeof turn.id === 'string' && turn.id.length > 0 && turn.id.length <= 200 ? turn.id : ''
     const completedAt = status === 'completed' ? timestampMs(turn.completedAt) : 0
     const startedAt = timestampMs(turn.startedAt)
+    const interruptedAt = status === 'interrupted' && id && startedAt ? timestampMs(turn.completedAt) : 0
     return {
       status,
       ...(id ? { id } : {}),
       ...(startedAt ? { startedAt } : {}),
-      ...(completedAt ? { completedAt } : {})
+      ...(completedAt ? { completedAt } : {}),
+      ...(interruptedAt > 0 && interruptedAt >= startedAt ? { interruptedAt } : {})
     }
   }
 

@@ -334,6 +334,7 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
     }
   }
   const utools = {
+    dbStorage: { getItem: () => undefined },
     getAllDisplays: () => displays,
     getCursorScreenPoint: () => ({ x: 2500, y: 300 }),
     getDisplayNearestPoint: (point: { x: number }) => point.x < 0 ? displays[0] : displays[1],
@@ -506,6 +507,7 @@ describe('Codex float preload sizing', () => {
       revision: 1,
       sentRevision: 1,
       currentRevision: 1,
+      windowGeneration: (initial?.payload as { windowGeneration?: number } | undefined)?.windowGeneration,
       stage: 'applied'
     })
 
@@ -925,7 +927,7 @@ describe('Codex float preload sizing', () => {
 
   it('recreates when the main renderer identity changes or the float reports a newer revision than the host', async () => {
     vi.useFakeTimers()
-    const { bridge, createCount, ipcHandlers, taskKernel } = loadPreloadHarness()
+    const { bridge, createCount, ipcHandlers, taskKernel, sent } = loadPreloadHarness()
     const position = { displayId: 'right', x: 3244, y: 120, edge: 'right' }
     const withIdentity = (rendererAssetId: string) => ({
       ...snapshot({ baseRevision: 1 }),
@@ -948,6 +950,7 @@ describe('Codex float preload sizing', () => {
       revision: 1,
       sentRevision: 1,
       currentRevision: 9,
+      windowGeneration: (sent.filter(item => item.channel === 'eypc-float:task-package').at(-1)?.payload as { windowGeneration?: number } | undefined)?.windowGeneration,
       stage: 'rejected',
       reason: 'older-revision'
     })

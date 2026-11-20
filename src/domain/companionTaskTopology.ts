@@ -41,6 +41,21 @@ export interface CompanionTaskNodeObservationV1 {
 export type CompanionActivityEvidenceKindV3 =
   CompanionActivityKindV7
 
+export interface CodexNativeStateEvidence {
+  threadStatus: typeof import('./generated/companionContractsV7').CODEX_THREAD_STATUSES[number]
+  groupActivityConfirmed: boolean
+  submissionPending: boolean
+  orderedTurnStart: boolean
+  emptyTurnHistory?: boolean
+  goal: {
+    status: typeof import('./generated/companionContractsV7').CODEX_GOAL_STATUSES[number]
+    freshness: 'fresh' | 'verifying'
+    observed: boolean
+    updatedAt: number
+    sequence: number
+  }
+}
+
 /** @deprecated V7 uses `CompanionPlanArtifactEvidenceV1`. */
 export interface CompanionPlanLifecycleEvidenceV2 {
   state: 'unknown' | 'ready' | 'cleared'
@@ -64,6 +79,7 @@ export interface CompanionTaskEvidenceNodeV3 {
     statusEnteredAt: number
     turnStartedAt: number
     terminalAt: number
+    codexState?: CodexNativeStateEvidence
     candidates?: Array<{
       kind: CompanionActivityEvidenceKindV3
       causalKey: string

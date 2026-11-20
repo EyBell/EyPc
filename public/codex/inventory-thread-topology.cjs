@@ -69,7 +69,7 @@ function createCodexInventoryThreadTopology(dependencies = {}) {
   }
   function codexResetSideTopologyDiagnostics() { diagnosticFingerprints.clear() }
 
-  function codexInventoryThreadTopology(rows) {
+  function codexInventoryThreadTopology(rows, recoveredSideParents = new Map()) {
     const rowById = new Map()
     for (const value of Array.isArray(rows) ? rows : []) {
       const row = record(value)
@@ -93,12 +93,14 @@ function createCodexInventoryThreadTopology(dependencies = {}) {
         const parent = forkedFromId ? rowById.get(forkedFromId) : null
         const sessionId = nativeString(row.sessionId)
         const parentSessionId = nativeString(parent?.sessionId)
+        const matchingSession = sessionId && parentSessionId && sessionId === parentSessionId
+        const matchingRecoveredSide = (!sessionId || !parentSessionId)
+          && recoveredSideParents.get(threadId) === forkedFromId
+          && row.threadSource === 'user' && (!row.parentThreadId || row.parentThreadId === forkedFromId)
         if (!forkedFromId
           || forkedFromId === threadId
           || !parent
-          || !sessionId
-          || !parentSessionId
-          || sessionId !== parentSessionId) {
+          || (!matchingSession && !matchingRecoveredSide)) {
           isolated.add(threadId)
           continue
         }

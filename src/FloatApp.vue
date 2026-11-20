@@ -33,6 +33,7 @@ import FloatTaskSectionHeading from './components/FloatTaskSectionHeading.vue'
 import OperationTooltipLayer from './components/OperationTooltipLayer.vue'
 import {
   buildCompanionTaskMetaLine,
+  codexNativeMemberStatusText,
   claudeRealtimeGapNote,
   companionQuotaChipAriaLabel,
   companionSearchAlertText,
@@ -558,8 +559,6 @@ const renderRows = computed<RenderRow[]>(() => {
 
   if (selectedUiTab.value === 'dynamic') {
     const statusGroups = dynamicStatus.value.groups
-    const unknownTasks = statusGroups.stopped.filter((task) => task.companionPhase === 'unknown')
-    const stoppedTasks = statusGroups.stopped.filter((task) => task.companionPhase !== 'unknown')
     const groups = [
       // Parked work sits above live work: it is there to be found again, not to
       // compete for attention, and it is the one group the activity window
@@ -567,8 +566,8 @@ const renderRows = computed<RenderRow[]>(() => {
       { key: 'pinned', title: '置顶', tone: 'pinned' as const, tasks: statusGroups.pinned },
       { key: 'input', title: '待输入', tone: 'input' as const, tasks: statusGroups.input },
       { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: statusGroups.active },
-      { key: 'unknown', title: '状态未知', tone: 'unknown' as const, tasks: unknownTasks },
-      { key: 'stopped', title: '待继续', tone: 'stopped' as const, tasks: stoppedTasks },
+      { key: 'unknown', title: '状态未知', tone: 'unknown' as const, tasks: statusGroups.unknown || [] },
+      { key: 'stopped', title: '待继续', tone: 'stopped' as const, tasks: statusGroups.stopped },
       { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: statusGroups.unread },
       { key: 'completed', title: '已完成', tone: 'completed' as const, tasks: statusGroups.completed }
     ]
@@ -795,13 +794,11 @@ watch(() => {
   // the exact task presentation that the template just consumed.
   return {
     revision: taskSnapshot?.packageRevision || 0,
-    complete: taskSnapshot?.complete === true,
     generatedAt: taskState.value.generatedAt,
     taskCount: taskState.value.conversations.all.length
   }
 }, (rendered) => {
-  if (!rendered.complete
-    || rendered.revision <= renderedTaskRevision.value
+  if (rendered.revision <= renderedTaskRevision.value
     || floatRuntimeIdentity.value?.status !== 'host-loaded') return
   renderedTaskRevision.value = rendered.revision
   window.eypcFloat?.ackTaskSnapshot?.('applied', rendered.revision)
@@ -3315,7 +3312,9 @@ function taskStateLabel(task: CodexTaskCard) {
             : task.companionPhase === 'completed'
               ? '已完成'
               : '进行中'
-  return task.canonicalFreshness === 'verifying' ? `${label} · 核验中` : label
+  const details = task.codexStatus ? codexNativeMemberStatusText(task.codexStatus) : ''
+  return [label, details, task.canonicalFreshness === 'verifying' && !details.includes('核验中') ? '核验中' : '']
+    .filter(Boolean).join(' · ')
 }
 
 function taskIcon(task: CodexTaskCard) {

@@ -1,6 +1,6 @@
 "use strict"
 const { trace: freezeTrace } = require('../freeze-trace.cjs')
-const { createShortcutReadReceipts, isShortcutSource } = require('./shortcut-read.cjs')
+const { createShortcutReadReceipts, hasCompletedUnread, isShortcutSource } = require('./shortcut-read.cjs')
 
 const { createCompanionNavigation } = require('./navigation.cjs')
 const { createCompanionTaskActions } = require('./task-actions.cjs')
@@ -35,6 +35,7 @@ const {
   normalizeCompanionInteractionEvidenceV1,
   normalizeCompanionInteractionSetEvidenceV1,
   normalizeCompanionPlanArtifactEvidenceV1,
+  normalizeCodexStateV7,
   validateCompanionEvidenceBatchV3
 } = require('./contracts-v7.cjs')
 
@@ -47,7 +48,6 @@ const COMPANION_TASK_ACK_REVISION = providerRegistry.ackRevision
 const COMPANION_PROVIDER_EVIDENCE_BATCH_REVISION = COMPANION_V7_REVISIONS.providerEvidenceBatch
 const PREFLIGHT_PROGRESS_MS = 600
 const PREFLIGHT_TIMEOUT_MS = 5_000
-const UNKNOWN_GRACE_MS = 250
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 /**
  * RAW222: only the highest non-empty tier enters the generic cycle. Badges and
@@ -59,7 +59,7 @@ const CYCLE_TIER_ORDER = ['active', 'attention', 'unread', 'fallback']
  * absence of one — so it stays out of the view shape rather than becoming a
  * bucket nothing may read.
  */
-const DYNAMIC_GROUPS = ['pinned', 'input', 'active', 'stopped', 'unread', 'completed']
+const DYNAMIC_GROUPS = ['pinned', 'input', 'active', 'unknown', 'stopped', 'unread', 'completed']
 const PROVIDER_PIN_AUTHORITIES = new Set(['app-server', 'codexhost', 'claude-metadata', 'cursor-workspace', 'orca-tab'])
 const TASK_KINDS = new Set([
   ...PROVIDERS.map((id) => providerRegistry.providers[id].taskKind),
@@ -78,6 +78,7 @@ const ACTIVITY_EVIDENCE_PHASE = Object.freeze({
 })
 const PLAN_LIFECYCLE_STATES = new Set(['unknown', 'ready', 'cleared'])
 const PLAN_CLEAR_REASONS = new Set(['cancel', 'execution-start', 'archive', 'removal'])
+const CODEX_STOPPED_GOALS = new Set(['paused', 'blocked', 'usageLimited', 'budgetLimited'])
 const AGGREGATE_LIVE_PHASE_PRIORITY = Object.freeze({
   'waiting-approval': 3,
   'waiting-input': 2,
@@ -144,8 +145,9 @@ function providerTraits(provider) {
  * the opposite side reads zero, which the core treats as "no such observation".
  */
 function taskPhaseObservation(task) {
-  const live = isLiveTaskPhase(task.phase)
-  const terminal = isTerminalTaskPhase(task.phase)
+  const phase = task.activityPhase || task.phase
+  const live = isLiveTaskPhase(phase)
+  const terminal = isTerminalTaskPhase(phase)
   const sequence = finiteInteger(task.phaseRevision, finiteInteger(task.statusEnteredAt))
   return {
     causalKey: task.causalKey,
@@ -359,7 +361,9 @@ function normalizeActivityCandidateV7(value = {}) {
     observedAt: finiteInteger(value.observedAt),
     statusEnteredAt: finiteInteger(value.statusEnteredAt),
     turnStartedAt: finiteInteger(value.turnStartedAt),
-    terminalAt: finiteInteger(value.terminalAt)
+    terminalAt: finiteInteger(value.terminalAt),
+    inventoryRootCompletion: kind === 'turn-completed' && value.authority === 'inventory' && value.inventoryRootCompletion === true,
+    ordinarySideInterruptedAt: kind === 'turn-interrupted' ? finiteInteger(value.ordinarySideInterruptedAt) : 0
   }
 }
 
@@ -382,7 +386,7 @@ function activityCandidateCausalObservationV7(candidate) {
 }
 
 /** Multiple raw Provider candidates are reduced once, inside the Kernel. */
-function reduceActivityCandidatesV7(activity = {}) {
+function reduceActivityCandidatesV7(activity, requireConfirmedInterruption) {
   const candidates = (Array.isArray(activity.candidates) && activity.candidates.length
     ? activity.candidates
     : [activity]).map(normalizeActivityCandidateV7)
@@ -395,7 +399,12 @@ function reduceActivityCandidatesV7(activity = {}) {
     inventory: 1,
     unknown: 0
   }
-  for (const candidate of candidates) {
+  for (const observed of candidates) {
+    const unverifiedInterruption = requireConfirmedInterruption && observed.kind === 'turn-interrupted'
+      && observed.authority === 'inventory' && !observed.exact
+    const candidate = unverifiedInterruption
+      ? { ...observed, kind: 'unknown', authority: 'unknown', causalSequence: 0, terminalAt: 0 }
+      : observed
     if (!selected) {
       selected = candidate
       continue
@@ -428,7 +437,7 @@ function reduceActivityCandidatesV7(activity = {}) {
   return selected || normalizeActivityCandidateV7(activity)
 }
 
-function normalizeEvidenceNode(value, provider, enabledProviders, observationGeneration = 0) {
+function normalizeEvidenceNode(value, provider, enabledProviders, observationGeneration = 0, hostEvidence = false) {
   if (!value || typeof value !== 'object' || value.provider !== provider) return null
   const activity = value.activity && typeof value.activity === 'object' ? value.activity : {}
   const unread = value.unread && typeof value.unread === 'object' ? value.unread : {}
@@ -442,7 +451,7 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
         }
       : { state: 'unknown', sequence: 0, actionable: false, reason: '' })
   const metadata = value.metadata && typeof value.metadata === 'object' ? value.metadata : {}
-  const activityCandidate = reduceActivityCandidatesV7(activity)
+  const activityCandidate = reduceActivityCandidatesV7(activity, hostEvidence && provider === 'codex' && value.role !== 'child')
   const activityKind = activityCandidate.kind
   const phase = ACTIVITY_EVIDENCE_PHASE[activityKind]
   const capabilityNames = new Set((Array.isArray(value.capabilities) ? value.capabilities : [])
@@ -453,7 +462,7 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
     : planArtifactState === 'unknown' ? 'unknown' : 'cleared'
   const planSequence = finiteInteger(planArtifact.sequence)
   const planClearReason = PLAN_CLEAR_REASONS.has(planArtifact.reason) ? planArtifact.reason : ''
-  return normalizeTask({
+  const node = normalizeTask({
     ...metadata,
     key: value.key,
     provider,
@@ -496,6 +505,22 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
       pin: capabilityNames.has('pin')
     }
   }, enabledProviders)
+  if (node && provider === 'codex') {
+    node.turnKind = activityKind
+    if (hostEvidence) node.codexState = normalizeCodexStateV7(activity.codexState)
+  }
+  if (node && hostEvidence && provider === 'codex' && node.causalKey && node.causalDomain) {
+    const exactTerminal = node.causalAuthority === 'terminal' && node.causalReliable && node.causalSequence > 0
+    if (node.role === 'root' && activityKind === 'turn-completed' && node.turnStartedAt > 0
+      && (exactTerminal || activityCandidate.inventoryRootCompletion)) {
+      node.rootCompletionForSideOrder = true
+    }
+    if (activityKind === 'turn-interrupted' && exactTerminal && node.role === 'child') {
+        node.ordinarySideInterruptedAt = node.turnStartedAt > 0 && activityCandidate.ordinarySideInterruptedAt >= node.turnStartedAt
+          ? activityCandidate.ordinarySideInterruptedAt : 0
+    }
+  }
+  return node
 }
 
 function normalizeEvidenceBatch(value, provider, draft, producer) {
@@ -548,6 +573,16 @@ function publicRootTask(task) {
     error: _error,
     metadataPartial: _metadataPartial,
     activityObserved: _activityObserved,
+    codexLaneGenerations: _codexLaneGenerations,
+    closedMachineRun: _closedMachineRun,
+    relationOnly: _relationOnly,
+    ordinarySideInterruptedAt: _ordinarySideInterruptedAt,
+    turnKind: _turnKind,
+    codexState: _codexState,
+    memberStatus: _memberStatus,
+    stateWriteBlocked: _stateWriteBlocked,
+    goalVerificationRunning: _goalVerificationRunning,
+    rootCompletionForSideOrder: _rootCompletionForSideOrder,
     providerCapabilities: _providerCapabilities,
     causalKey: _causalKey,
     causalDomain: _causalDomain,
@@ -690,7 +725,7 @@ function derivedCycleTier(task) {
   if (attention === 'input') return 'attention'
   // Completed-unread keeps its existing activity-window exemption. Continuable
   // tasks join this cycle tier without changing their phase or display group.
-  if (attention === 'unread') return 'unread'
+  if (hasCompletedUnread(task)) return 'unread'
   if (task.phase === 'stopped') return 'unread'
   if (task.phase === 'completed' && taskPinned(task)) return 'fallback'
   return 'none'
@@ -710,13 +745,13 @@ function derivedDynamicGroup(task) {
   if (pinned) return 'pinned'
   // The activity window retires only unpinned work.
   if (!task.dynamicEligible) return 'none'
-  if (task.phase === 'unknown') return 'none'
+  if (task.phase === 'unknown') return task.provider === 'codex' && task.capabilities.open ? 'unknown' : 'none'
   if (task.phase === 'completed') return 'completed'
   return 'none'
 }
 
 /** 公开相位、分组、快捷键环都从这里算出；先拍 canonicalPhase，再决定显示组。 */
-function finalizeTask(task) {
+function finalizeTask(task, pauseStorageReady = true) {
   const revisionAt = finiteInteger(task.revisionAt)
   const next = { ...task, revisionAt }
   // The hand-set phase stands in only while the canonical phase is `unknown`,
@@ -748,7 +783,7 @@ function finalizeTask(task) {
     next.planLifecycleRevision = Math.max(1, next.statusEnteredAt, next.turnStartedAt, next.revisionAt)
   }
   if (!next.planReady) {
-    if (next.planLifecycleState !== 'cleared') next.planLifecycleRevision = 0
+    if (next.planLifecycleState === 'unknown') next.planLifecycleRevision = 0
     next.paused = false
   }
   if (next.planReady) {
@@ -763,14 +798,14 @@ function finalizeTask(task) {
   // priority only; it must not disable the row/menu controls. The Host still
   // performs an exact latest-Turn/activity/request preflight before execution.
   const planActionable = providerTraits(next.provider).planLifecycle
-    && next.planReady
+    && next.planReady && next.planArtifactActionable && next.stateWriteBlocked !== true
     && (isSettledTaskPhase(next.phase) || isAttentionTaskPhase(next.phase))
   const providerCapabilities = next.providerCapabilities || next.capabilities
   next.providerCapabilities = { ...providerCapabilities }
   next.capabilities = {
     ...next.capabilities,
-    pause: planActionable && !next.paused,
-    resume: planActionable && next.paused,
+    pause: pauseStorageReady && planActionable && !next.paused,
+    resume: pauseStorageReady && planActionable && next.paused,
     executePlan: planActionable && providerCapabilities.executePlan === true,
     ...(typeof providerCapabilities.continueTask === 'boolean' ? { continueTask: providerCapabilities.continueTask
       && next.provider === 'codex' && next.role !== 'child' && next.phase === 'stopped' && !next.planReady } : {})
@@ -826,7 +861,9 @@ function semanticTask(task) {
     projectKey: task.projectKey,
     projectName: task.projectName,
     projectKind: task.projectKind,
-    topology: task.topology
+    topology: task.topology,
+    completedUnread: task.completedUnread,
+    codexStatus: task.codexStatus
   }
 }
 
@@ -855,7 +892,7 @@ function buildViews(tasks) {
   views.counts.active = countable.filter((task) => (
     task.phase === 'running' && (task.dynamicEligible || taskPinned(task))
   )).length
-  views.counts.unread = countable.filter((task) => derivedAttentionState(task) === 'unread').length
+  views.counts.unread = countable.filter(hasCompletedUnread).length
 
   const cycleCandidates = [...visible]
     .filter((task) => task.capabilities.open && task.cycleTier !== 'none')
@@ -876,7 +913,7 @@ function buildViews(tasks) {
   // then parked pins (including unknown pins). It does not inherit the generic
   // cycle's RAW222 tiers or its continuable-task membership.
   const unreadAttention = attention
-    .filter((task) => task.capabilities.open && derivedAttentionState(task) === 'unread')
+    .filter((task) => task.capabilities.open && hasCompletedUnread(task))
   const pinnedOrder = new Map(views.groups.pinned.map((key, index) => [key, index]))
   const pinnedAttention = attention
     .filter((task) => task.capabilities.open && taskPinned(task) && task.dynamicGroup === 'pinned')
@@ -938,15 +975,12 @@ function createCompanionTaskKernel(dependencies = {}) {
   let topologySequence = 0
   let topologyFingerprint = ''
   let currentPackage = emptyPackage(providers)
-  let lastDraft = null
   const lastDraftRevisionByProducer = new Map()
   let lastSemantic = semanticPackage(currentPackage)
   let disposed = false
   let preflightInFlight = null
-  let unknownTimer = null
   let visibilityTimer = null
   let nextVisibilityTransitionAt = 0
-  const unknownEvidence = new Map()
   const archiveTombstones = new Map()
   // Dynamic Provider observations stay process-private. Public snapshots are
   // rebuilt from this retained graph and expose roots plus aggregate counts
@@ -954,9 +988,24 @@ function createCompanionTaskKernel(dependencies = {}) {
   const nodeStore = new Map()
   const relationStore = new Map()
   const interactionStore = new Map()
+  const completeCodexRequestSets = new Map()
   const interactionTombstones = new Map()
+  let interactionTombstonesChanged = false
   const packageListeners = new Set()
   const pauseReceipts = new Map()
+  let pauseRecoveryPending = Array.isArray(dependencies.initialBlockedPauseKeys)
+  let unavailablePauseKeys = new Set(dependencies.initialBlockedPauseKeys || [])
+  const protectedPauseGroupKeys = new Set()
+  function refreshPauseProtection() {
+    if (!pauseRecoveryPending) return
+    const state = dependencies.refreshPauseStorage()
+    unavailablePauseKeys = state.ready || Array.isArray(state.blockedKeys) ? new Set(state.blockedKeys) : null
+    if (!state.ready) return
+    pauseRecoveryPending = false
+    pauseReceipts.clear()
+    for (const receipt of state.receipts) pauseReceipts.set(receipt.key, receipt)
+    for (const task of nodeStore.values()) applyPauseReceipt(task)
+  }
   const attentionSeen = {
     input: new Set(),
     completedUnread: new Set()
@@ -1099,7 +1148,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       if (!oldest) break
       interactionTombstones.delete(oldest)
     }
-    try { persistInteractionTombstones([...interactionTombstones.values()].slice(-2_000)) } catch {}
+    interactionTombstonesChanged = true
     return true
   }
 
@@ -1114,15 +1163,19 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   /** 按 activity sequence 关旧提问并写入墓碑，避免已清掉的 waiting 复活。 */
-  function reconcileInteractions(batches, incomingLanes, currentLanes, enabledProviders) {
-    for (const provider of PROVIDERS) {
+  function reconcileInteractions(batches, incomingLanes, currentLanes, enabledProviders, activities) {
+    for (const [provider, batch] of Object.entries(batches)) {
       if (!enabledProviders.has(provider)) continue
-      const batch = batches[provider]
       const channel = batch.channels.interaction
       const generation = finiteInteger(incomingLanes[provider].interaction)
       const currentGeneration = finiteInteger(currentLanes[provider].interaction)
       for (const requestSet of batch.interactionSets) {
         if (requestSet.complete !== true) continue
+        if (provider === 'codex') {
+          const latest = completeCodexRequestSets.get(requestSet.taskKey) || 0
+          if (requestSet.requestSetRevision < latest) continue
+          completeCodexRequestSets.set(requestSet.taskKey, requestSet.requestSetRevision)
+        }
         const present = new Set(batch.interactions
           .filter((interaction) => interaction.taskKey === requestSet.taskKey
             && interaction.requestSetRevision === requestSet.requestSetRevision)
@@ -1175,36 +1228,36 @@ function createCompanionTaskKernel(dependencies = {}) {
       for (const interaction of batch.interactions) {
         const key = interactionStoreKey(interaction)
         if (terminalInteractionState(interaction.state)) {
-          const previous = interactionStore.get(key)
-          if (!interactionSupersedes(previous, interaction)
-            && !interactionSupersedes(interactionTombstones.get(key), interaction)) continue
+          if (provider === 'codex' && !interactionSupersedes(interactionStore.get(key), interaction)) continue
           interactionStore.delete(key)
           recordInteractionTombstone(key, interaction)
           continue
         }
         // A resolved instance can never be reopened. Providers must emit a new
         // anonymous interactionRef for a genuinely new request instance.
-        if (interactionTombstones.has(key)) continue
+        if (interactionTombstones.has(key) || provider === 'codex'
+          && interaction.requestSetRevision < (completeCodexRequestSets.get(interaction.taskKey) || 0)) continue
         const previous = interactionStore.get(key)
         if (interactionSupersedes(previous, interaction)) interactionStore.set(key, interaction)
       }
-      const openedTaskKeys = new Set(batch.interactions
-        .filter((interaction) => interaction.state === 'opened')
-        .map((interaction) => interaction.taskKey))
-      for (const node of batch.nodes) {
-        const taskKey = typeof node?.key === 'string' ? node.key : ''
-        const activity = reduceActivityCandidatesV7(node?.activity)
-        const sequence = finiteInteger(activity.sequence)
-        if (!taskKey || !sequence || openedTaskKeys.has(taskKey) || activity.kind === 'unknown') continue
+      const opened = batch.interactions.filter(request => request.state === 'opened')
+      const openedKeys = new Set(opened.map(interactionStoreKey))
+      const openedTaskKeys = new Set(opened.map(request => request.taskKey))
+      for (const activity of activities) {
+        const { key: taskKey, phaseRevision: sequence } = activity
+        if (activity.provider !== provider || !sequence || activity.phase === 'unknown'
+          || provider !== 'codex' && openedTaskKeys.has(taskKey)) continue
         for (const [key, interaction] of interactionStore) {
-          if (interaction.provider !== provider || interaction.taskKey !== taskKey || interaction.sequence > sequence) continue
+          if (interaction.provider !== provider || interaction.taskKey !== taskKey || interaction.sequence > sequence || openedKeys.has(key)) continue
+          if (provider === 'codex' && interaction.exact && !(activity.phase === 'running'
+            && activity.freshness === 'fresh' && interaction.turnEpoch > 0 && activity.turnStartedAt > interaction.turnEpoch)) continue
           interactionStore.delete(key)
           recordInteractionTombstone(key, {
             ...interaction,
             state: 'resolved',
             sequence,
             authority: 'provider-live',
-            exact: activity.exact === true
+            exact: activity.freshness === 'fresh'
           })
         }
       }
@@ -1219,48 +1272,90 @@ function createCompanionTaskKernel(dependencies = {}) {
     ))
   }
 
-  /** RAW-207：interactionStore 仍有 opened 时，Turn running 也必须公开成待输入。 */
+  function codexGoalForTurn(task) {
+    const goal = task.codexState?.goal
+    // Retain the last active Goal while its completion is being checked.
+    if (goal?.status === 'active') return 'active'
+    if (goal?.freshness !== 'fresh' || goal.status === 'unknown' || goal.status === 'none') return ''
+    if (task.activityPhase === 'running') return ''
+    if (goal.updatedAt && task.turnStartedAt > goal.updatedAt) return ''
+    if ((!goal.updatedAt || task.turnStartedAt === goal.updatedAt)
+      && goal.sequence > 0 && task.causalSequence > goal.sequence) return ''
+    return goal.status
+  }
+
+  // A supplementary Turn does not consume a Plan. Its old revision can
+  // remain in the artifact lane without providing controls for the new Turn.
+  function hasCurrentPlanArtifact(task) {
+    return task?.planReady === true && (task.provider !== 'codex'
+      || (finiteInteger(task.turnStartedAt) || finiteInteger(task.terminalAt)) <= task.planLifecycleRevision)
+  }
+
+  /** RAW-207: an open interaction may coexist with the underlying Turn. */
   function applyInteractionProjection(task) {
-    const basePhase = isKnownTaskPhase(task.activityPhase) ? task.activityPhase : task.phase
+    const turnPhase = isKnownTaskPhase(task.activityPhase) ? task.activityPhase : task.phase
     const interactions = taskOpenInteractions(task)
+    const goal = codexGoalForTurn(task)
+    const goalStopped = CODEX_STOPPED_GOALS.has(goal)
+    const planReady = hasCurrentPlanArtifact(task)
+    const artifactWaiting = task.provider === 'codex' && task.role === 'child' && planReady
+      && turnPhase === 'completed'
+      && goal !== 'active' && !goalStopped
+    const verifiesGoal = task.codexState?.goal?.observed === true && task.codexState.goal.freshness === 'verifying'
+    const basePhase = goal === 'active' || task.goalVerificationRunning ? 'running' : goalStopped ? 'stopped'
+      : verifiesGoal && isTerminalTaskPhase(turnPhase) ? 'unknown' : artifactWaiting ? 'waiting-input' : turnPhase
+    const approval = interactions.some((interaction) => interaction.kind === 'approval')
+    const phase = approval ? 'waiting-approval' : interactions.length ? 'waiting-input' : basePhase
+    const planImplementation = interactions.length > 0 && !approval
+      && interactions.every((interaction) => interaction.kind === 'plan-choice' || interaction.kind === 'plan-implementation')
+    // Before its first Turn, a Side can be known without having an activity phase.
+    const noTurn = task.role === 'child' && phase === 'unknown' && task.turnKind === 'unknown'
+      && !task.causalKey && !task.turnStartedAt && !task.terminalAt
+      && task.codexState?.emptyTurnHistory === true && !task.codexState.submissionPending
+      && ['idle', 'notLoaded'].includes(task.codexState.threadStatus)
+      && task.codexState.goal.status === 'none' && task.codexState.goal.freshness === 'fresh' && !planReady
+      && !(task.unreadKnown && task.unread)
+    const memberStatus = task.provider === 'codex' ? {
+      phase,
+      turn: noTurn ? 'not-started' : task.turnKind || 'unknown',
+      goal,
+      threadStatus: task.codexState?.threadStatus || 'unknown',
+      verifying: !noTurn && (task.freshness === 'verifying' || verifiesGoal),
+      pending: [...new Set(interactions.map((interaction) => interaction.kind))],
+      planReady,
+      submissionPending: task.codexState?.submissionPending === true
+    } : undefined
     // Exact current input/approval owns presentation even while the Turn is
     // still running (Codex Questions, Cursor AskQuestion). A newer running
     // epoch without this instance clears the store first, so this cannot
     // resurrect stale waiting. Completed-unread stays a settled backlog
     // state, never a transition frame between running and waiting.
     if (interactions.length) {
-      const approval = interactions.some((interaction) => interaction.kind === 'approval')
-      const planImplementation = !approval
-        && interactions.every((interaction) => interaction.kind === 'plan-choice' || interaction.kind === 'plan-implementation')
-      const phase = approval ? 'waiting-approval' : 'waiting-input'
       const selectedSequence = Math.max(...interactions.map((interaction) => interaction.sequence))
       const selectedTurnEpoch = Math.max(...interactions.map((interaction) => interaction.turnEpoch), 0)
       if (task.phase === phase
         && task.planImplementation === planImplementation
-        && finiteInteger(task.phaseRevision) >= selectedSequence) return task
+        && finiteInteger(task.phaseRevision) >= selectedSequence) return { ...task, memberStatus }
       return finalizeCanonicalTask({
         ...task,
         phase,
+        memberStatus,
         phaseRevision: Math.max(finiteInteger(task.phaseRevision), selectedSequence),
         statusEnteredAt: selectedTurnEpoch || finiteInteger(task.statusEnteredAt),
         planImplementation
       })
     }
-    if (task.phase === basePhase && task.planImplementation !== true) return task
+    if (task.phase === basePhase && task.planImplementation !== true) return memberStatus ? { ...task, memberStatus } : task
     return finalizeCanonicalTask({
       ...task,
       phase: basePhase,
+      memberStatus,
       planImplementation: false
     })
   }
 
   function refreshInteractionProjections() {
     for (const [key, task] of nodeStore) nodeStore.set(key, applyInteractionProjection(task))
-  }
-
-  function clearUnknownTimer() {
-    if (unknownTimer) clearTimer(unknownTimer)
-    unknownTimer = null
   }
 
   function clearVisibilityTimer() {
@@ -1306,7 +1401,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       }
     }
     const root = nodes.find((node) => node.key === key)
-    const planRevision = root?.planReady === true && (!waiting.size || root.planImplementation === true)
+    const planRevision = hasCurrentPlanArtifact(root) && (!waiting.size || root.planImplementation === true)
       ? finiteInteger(root.planLifecycleRevision)
       : 0
     return { requests, waiting, planRevision }
@@ -1491,6 +1586,7 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   function writePauseReceipt(task, paused) {
     if (!task?.planReady || !task.planLifecycleRevision) return false
+    if (pauseRecoveryPending) return false
     const receipt = {
       key: task.key,
       planLifecycleRevision: task.planLifecycleRevision,
@@ -1505,6 +1601,15 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (paused) pauseReceipts.set(task.key, receipt)
     else pauseReceipts.delete(task.key)
     return true
+  }
+
+  function retirePauseReceipt(key, revision) {
+    if (pauseRecoveryPending || pauseReceipts.get(key)?.planLifecycleRevision !== revision) return
+    try {
+      if (persistPlanPause({ key, planLifecycleRevision: revision, paused: false, updatedAt: now() }) !== false) {
+        pauseReceipts.delete(key)
+      }
+    } catch {}
   }
 
   function preparePlanLifecycle(previous, state, evidence, acceptPhase) {
@@ -1554,8 +1659,6 @@ function createCompanionTaskKernel(dependencies = {}) {
             : evidence.planClearReason === 'execution-start' ? 'executing' : 'consumed'
       next.planArtifactActionable = false
       next.paused = false
-      pauseReceipts.delete(evidence.key)
-      try { persistPlanPause({ key: evidence.key, planLifecycleRevision: previousRevision, paused: false, updatedAt: now() }) } catch {}
       return next
     }
     if (evidence.planLifecycleState === 'ready' || evidence.planReady === true || evidence.planImplementation === true) {
@@ -1569,7 +1672,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         finiteInteger(evidence.statusEnteredAt),
         finiteInteger(evidence.revisionAt)
       )
-      if (revision < previousRevision) return next
+      if (revision < previousRevision || previous.planLifecycleState === 'cleared' && revision === previousRevision) return next
       const replaced = revision !== previousRevision
       next.planReady = true
       next.planLifecycleRevision = revision
@@ -1577,20 +1680,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       next.planClearReason = ''
       next.planArtifactState = 'available'
       next.planArtifactActionable = evidence.planArtifactActionable !== false
-      if (replaced) {
-        next.paused = false
-        if (pauseReceipts.has(evidence.key)) {
-          pauseReceipts.delete(evidence.key)
-          try {
-            persistPlanPause({
-              key: evidence.key,
-              planLifecycleRevision: finiteInteger(previous.planLifecycleRevision),
-              paused: false,
-              updatedAt: now()
-            })
-          } catch {}
-        }
-      }
+      if (replaced) next.paused = false
       applyPauseReceipt(next)
     }
     // `unknown` deliberately retains the last exact Plan lifecycle. A generic
@@ -1616,13 +1706,12 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function invalidate(reason) {
-    clearUnknownTimer()
     clearVisibilityTimer()
-    unknownEvidence.clear()
     diagnosticActivitySignatures.clear()
     nodeStore.clear()
     relationStore.clear()
     interactionStore.clear()
+    completeCodexRequestSets.clear()
     // V7 tombstones are deliberately retained across reducer invalidation and
     // process restart. A configuration/preflight reset is not evidence that a
     // previously resolved native request became current again.
@@ -1638,7 +1727,6 @@ function createCompanionTaskKernel(dependencies = {}) {
     shortcutReads.clear()
     shortcutReadInputs.clear()
     lastDraftRevisionByProducer.clear()
-    lastDraft = null
     const next = emptyPackage(providers)
     next.enabled = enabled
     next.publishedAt = now()
@@ -1739,19 +1827,44 @@ function createCompanionTaskKernel(dependencies = {}) {
   /** 根任务聚合：Topology 只给成员图，相位/未读/Plan 只在这里归约。
    * The Kernel is the sole owner of root state aggregation. Topology supplies
    * membership only; it never interprets phase, unread, Plan or capabilities. */
-  function aggregateKernelRoot(root, members) {
+  function aggregateKernelRoot(root, members, relationsByChild) {
     // Current input on the Codex main remains actionable even while a side
     // works. Otherwise aggregate all members: a historical side terminal must
     // never erase the main's newer running/Goal evidence.
     const preserveRootInput = providerTraits(root.provider).rootInputPriority
       && members.length > 1 && isAttentionTaskPhase(root.phase)
-    const phaseMembers = preserveRootInput ? [root] : members
-    const activityPhase = aggregateMemberPhase(phaseMembers)
+    const planReady = hasCurrentPlanArtifact(root)
+    const codexRoot = root.provider === 'codex'
+    const completedCodexRoot = codexRoot && root.phase === 'completed'
+    const phaseMembers = preserveRootInput ? [root] : !codexRoot ? members : members.filter((member) => {
+      const relation = relationsByChild.get(member.key)
+      if (member.memberStatus?.turn === 'not-started' && relation?.exact === true
+        && relation.relation === 'side-thread' && relation.parentKey === root.key) return false
+      if (!completedCodexRoot || planReady) return true
+      if (member.phase !== 'stopped' || member.causalAuthority === 'goal' || taskOpenInteractions(member).length) return true
+      if (CODEX_STOPPED_GOALS.has(member.memberStatus?.goal) || member.memberStatus?.submissionPending) return true
+      if (member.closedMachineRun === true) return false
+      const interruptedAt = member.ordinarySideInterruptedAt
+      const latestEnd = interruptedAt % 1000 === 0 ? interruptedAt + 999 : interruptedAt
+      const earlierOrdinaryInterruption = interruptedAt > 0 && latestEnd < root.turnStartedAt
+        && root.activityPhase === 'completed' && root.rootCompletionForSideOrder === true
+        && (root.causalAuthority === 'inventory' || root.freshness === 'fresh')
+        && member.freshness === 'fresh' && !member.memberStatus?.planReady
+        && root.causalDomain && member.causalDomain === root.causalDomain
+        && relation?.relation === 'side-thread' && relation.parentKey === root.key
+      return !earlierOrdinaryInterruption
+    })
+    const groupActivity = root.codexState?.groupActivityConfirmed === true
+    const memberPhase = aggregateMemberPhase(phaseMembers)
+    const activityPhase = groupActivity && !isAttentionTaskPhase(memberPhase) ? 'running' : memberPhase
+    const main = root.memberStatus
+    const confirmedMainStop = codexRoot && root.phase === 'stopped' && activityPhase === 'unknown'
+      && (root.causalAuthority === 'terminal' && root.causalReliable && root.freshness === 'fresh'
+        || CODEX_STOPPED_GOALS.has(main?.goal) && root.codexState?.goal?.freshness === 'fresh')
     const unread = aggregateMemberUnread(members)
     const liveCount = members.filter((node) => isLiveTaskPhase(node.phase)).length
     const attentionCount = members.filter((node) => isAttentionTaskPhase(node.phase)).length
     const errorCount = members.filter((node) => node.error === true).length
-    const planReady = root.planReady === true
     const currentInteractionWaiting = phaseMembers.some((node) => taskOpenInteractions(node).length > 0)
     const planInteractionWaiting = phaseMembers.some((node) => (
       isAttentionTaskPhase(node.phase) && node.planImplementation === true
@@ -1759,45 +1872,56 @@ function createCompanionTaskKernel(dependencies = {}) {
     // An available Plan on a completed family asks for the next decision without
     // fabricating an interaction. Running, exact input/approval and a genuine
     // interrupted member retain their activity phase. Unread remains independent.
-    const planRevision = finiteInteger(root.planLifecycleRevision)
-    const latestTurnStart = finiteInteger(root.turnStartedAt)
-    // Rollout Plan revision is anchored to its Turn start, not its completion.
-    // A later completion in that same Turn is valid. Without a start boundary,
-    // a newer terminal cannot safely be attributed to the Plan's Turn.
-    const planHasNoNewerTurn = planRevision > 0 && (latestTurnStart > 0
-      ? latestTurnStart <= planRevision
-      : finiteInteger(root.terminalAt) <= planRevision)
-    const artifactWaiting = planReady && planHasNoNewerTurn && activityPhase === 'completed'
-    const completedUnreadWithStoppedMember = activityPhase === 'stopped'
-      && members.some((node) => node.phase === 'completed' && node.unreadKnown === true && node.unread === true)
+    const artifactWaiting = codexRoot && planReady && activityPhase === 'completed'
     const phase = artifactWaiting ? 'waiting-input'
-      : unread.known && unread.value && !currentInteractionWaiting
-      && (isAttentionTaskPhase(activityPhase) || completedUnreadWithStoppedMember)
-      ? 'completed'
-      : activityPhase
-    const statusEnteredAt = completedUnreadWithStoppedMember
-      ? Math.max(...members.filter((node) => node.phase === 'completed' && node.unreadKnown === true && node.unread === true)
-        .map((node) => finiteInteger(node.statusEnteredAt)), 0)
-      : artifactWaiting
-      ? Math.max(finiteInteger(root.planLifecycleRevision), finiteInteger(root.statusEnteredAt), finiteInteger(root.terminalAt))
-      : Math.max(...phaseMembers.filter((node) => node.phase === activityPhase).map((node) => finiteInteger(node.statusEnteredAt)), 0)
+      : confirmedMainStop ? 'stopped'
+      : !codexRoot && unread.value && isAttentionTaskPhase(activityPhase) && !currentInteractionWaiting
+        ? 'completed' : activityPhase
+    const statusEnteredAt = artifactWaiting ? Math.max(root.planLifecycleRevision, root.statusEnteredAt)
+      : confirmedMainStop ? root.statusEnteredAt
+      : Math.max(0, ...phaseMembers.filter((node) => node.phase === activityPhase)
+        .map((node) => finiteInteger(node.statusEnteredAt)))
+    const blocked = phaseMembers.some((member) => member.memberStatus?.submissionPending
+      || member.memberStatus?.threadStatus === 'systemError')
+    const stateWriteBlocked = blocked || activityPhase === 'unknown'
+      || phaseMembers.some((member) => member.codexState?.goal?.observed && member.codexState.goal.freshness === 'verifying')
+    const goalLimited = ['usageLimited', 'budgetLimited'].includes(main?.goal)
     const capabilities = { ...(root.capabilities || {}) }
-    if (liveCount > 0 || isLiveTaskPhase(phase)) capabilities.archive = false
+    if (liveCount > 0 || isLiveTaskPhase(phase) || stateWriteBlocked) capabilities.archive = false
     const canContinue = root.role === 'root' && root.phase === 'stopped' && phase === 'stopped'
-      && !planReady && !currentInteractionWaiting && liveCount === 0
+      && !planReady && !currentInteractionWaiting && liveCount === 0 && !stateWriteBlocked && !goalLimited
+      && (!root.codexState || ['turn-interrupted', 'turn-failed'].includes(main?.turn)
+        || ['paused', 'blocked'].includes(main?.goal) && main?.turn === 'turn-completed')
     if (typeof capabilities.continueTask === 'boolean') capabilities.continueTask &&= canContinue
     // finalizeTask must not restore the provider declaration after aggregation.
     const providerCapabilities = { ...(root.providerCapabilities || root.capabilities) }
+    if (stateWriteBlocked) providerCapabilities.archive = false
     if (typeof providerCapabilities.continueTask === 'boolean') providerCapabilities.continueTask &&= canContinue
     return {
       ...root,
       phase,
+      planReady,
+      ...(activityPhase === 'unknown' || blocked || main?.verifying ? { freshness: 'verifying' } : {}),
+      ...(main ? {
+        completedUnread: !isLiveTaskPhase(phase)
+          && members.some((member) => member.activityPhase === 'completed' && member.unreadKnown && member.unread),
+        codexStatus: {
+          main,
+          groupActivity,
+          sides: members.filter((member) => member.key !== root.key && member.memberStatus)
+            .sort((left, right) => (AGGREGATE_LIVE_PHASE_PRIORITY[right.phase] || 0)
+              - (AGGREGATE_LIVE_PHASE_PRIORITY[left.phase] || 0))
+            .slice(0, 8).map((member) => member.memberStatus)
+        }
+      } : {}),
+      stateWriteBlocked,
       planImplementation: isAttentionTaskPhase(phase) && planInteractionWaiting,
+      idleConfirmed: !isLiveTaskPhase(phase) && root.idleConfirmed,
       unreadKnown: unread.known,
       unread: unread.value,
       revisionAt: Math.max(...members.map((node) => finiteInteger(node.revisionAt)), finiteInteger(root.revisionAt)),
       statusEnteredAt,
-      turnStartedAt: Math.max(...members.map((node) => finiteInteger(node.turnStartedAt)), 0),
+      turnStartedAt: root.provider === 'codex' ? root.turnStartedAt : Math.max(...members.map((node) => finiteInteger(node.turnStartedAt)), 0),
       terminalAt: isLiveTaskPhase(phase) ? 0 : Math.max(...members.map((node) => finiteInteger(node.terminalAt)), 0),
       capabilities,
       providerCapabilities,
@@ -1821,17 +1945,25 @@ function createCompanionTaskKernel(dependencies = {}) {
       relations: [...relationStore.values()]
     })
     const nextShortcutInputs = new Map()
-    const admittedDiagnosticRelations = new Map(topology.acceptedRelations.map((relation) => [relation.childKey, relation]))
-    const tasks = topology.rootGroups.map(({ root, members }) => {
-      const canonical = finalizeCanonicalTask(aggregateKernelRoot(root, members))
+    const admittedRelationsByChild = new Map(topology.acceptedRelations.map((relation) => [relation.childKey, relation]))
+    protectedPauseGroupKeys.clear()
+    const eligibleGroups = pauseRecoveryPending ? topology.rootGroups.filter(({ root, members }) => {
+      if (unavailablePauseKeys && !unavailablePauseKeys.has(root.key)
+        && members.every(member => !unavailablePauseKeys.has(member.key))) return true
+      protectedPauseGroupKeys.add(root.key)
+      for (const member of members) protectedPauseGroupKeys.add(member.key)
+      return false
+    }) : topology.rootGroups
+    const tasks = eligibleGroups.map(({ root, members }) => {
+      const canonical = finalizeCanonicalTask(aggregateKernelRoot(root, members, admittedRelationsByChild))
       nextShortcutInputs.set(root.key, { task: canonical, members })
-      const finalized = publicRootTask(finalizeTask(shortcutReads.project(canonical, members)))
+      const finalized = publicRootTask(finalizeTask(shortcutReads.project(canonical, members), !pauseRecoveryPending))
       const previous = previousPublicByKey.get(finalized.key)
       // Diagnose the actual admitted topology, not discovery candidates. Never
       // send private keys to the sink; the host supplies its salted ref mapper.
       const memberSignature = JSON.stringify(members.map((member) => {
-        const relation = admittedDiagnosticRelations.get(member.key)
-        return [member.key, member.phase, member.phaseRevision, member.unreadKnown, member.unread,
+        const relation = admittedRelationsByChild.get(member.key)
+        return [member.key, member.phase, member.memberStatus?.turn, member.phaseRevision, member.unreadKnown, member.unread, member.closedMachineRun,
           relation?.parentKey, relation?.generation]
       }))
       const membersChanged = diagnosticMemberSignatures.get(root.key) !== memberSignature
@@ -1841,9 +1973,11 @@ function createCompanionTaskKernel(dependencies = {}) {
           provider: root.provider, taskRef: diagnosticTaskRef(root.provider, root.key), outcome: finalized.phase,
           details: { rootPhase: root.phase, memberCount: members.length, omittedCount: Math.max(0, members.length - 32),
             members: members.slice(0, 32).map((member) => {
-              const relation = admittedDiagnosticRelations.get(member.key)
+              const relation = admittedRelationsByChild.get(member.key)
               return { ref: diagnosticTaskRef(member.provider, member.key), phase: member.phase,
                 root: member.key === root.key, phaseRevision: finiteInteger(member.phaseRevision),
+                emptyTurnHistory: member.memberStatus?.turn === 'not-started',
+                closedMachineRun: member.closedMachineRun === true,
                 unreadKnown: member.unreadKnown === true, unread: member.unread === true,
                 turnStartedAt: finiteInteger(member.turnStartedAt), terminalAt: finiteInteger(member.terminalAt),
                 parentRef: relation ? diagnosticTaskRef(member.provider, relation.parentKey) : '',
@@ -1907,24 +2041,14 @@ function createCompanionTaskKernel(dependencies = {}) {
         : '',
       views: buildViews(materialized.tasks)
     }
-    const semantic = semanticPackage(next)
-    if (semantic === lastSemantic) return currentPackage
-    next.packageRevision = ++packageSequence
-    next.publishedAt = now()
-    currentPackage = next
-    lastSemantic = semantic
-    syncConsumers(next)
-    emitPackage(next)
-    scheduleVisibilityTransition()
-    record({
+    return publishTaskPackage(next, { onChanged: () => record({
       level: 'info',
       scope: 'task-kernel',
       event: 'private-graph-commit',
       outcome: reason,
       packageRevision: next.packageRevision,
       count: next.tasks.length
-    })
-    return next
+    }) })
   }
 
   function markProviderDegraded(provider, errorCode) {
@@ -1952,26 +2076,43 @@ function createCompanionTaskKernel(dependencies = {}) {
       focusedKey: tasks.some((task) => task.key === currentPackage.focusedKey) ? currentPackage.focusedKey : '',
       views: buildViews(tasks)
     }
-    const semantic = semanticPackage(next)
-    if (semantic === lastSemantic) {
-      scheduleVisibilityTransition()
-      return currentPackage
-    }
-    next.packageRevision = ++packageSequence
-    next.publishedAt = now()
-    currentPackage = next
-    lastSemantic = semantic
-    syncConsumers(next)
-    emitPackage(next)
-    scheduleVisibilityTransition()
-    record({
+    return publishTaskPackage(next, { rescheduleNoop: true, onChanged: () => record({
       level: 'info',
       scope: 'task-kernel',
       event: 'local-state-commit',
       outcome: reason,
       packageRevision: next.packageRevision,
       count: next.tasks.length
-    })
+    }) })
+  }
+
+  function publishTaskPackage(next, { evidenceDraft, rescheduleNoop = false, onChanged } = {}) {
+    const semantic = semanticPackage(next)
+    const previous = currentPackage
+    if (semantic === lastSemantic) {
+      // Evidence watermarks advance even when there is no visible change.
+      if (evidenceDraft) {
+        currentPackage = { ...next, packageRevision: previous.packageRevision, publishedAt: previous.publishedAt }
+        record({
+          level: 'debug', scope: 'task-kernel', event: 'same-state-no-op', outcome: 'ignored',
+          packageRevision: previous.packageRevision, count: next.tasks.length
+        })
+      }
+      if (evidenceDraft || rescheduleNoop) scheduleVisibilityTransition()
+      return currentPackage
+    }
+    next.packageRevision = ++packageSequence
+    if (!evidenceDraft) next.publishedAt = now()
+    currentPackage = next
+    lastSemantic = semantic
+    if (evidenceDraft) {
+      recordPhaseTransitionsOnChange(previous.tasks, next.tasks, evidenceDraft)
+      recordGroupCountsOnChange(next)
+    }
+    syncConsumers(next)
+    emitPackage(next)
+    scheduleVisibilityTransition()
+    onChanged?.()
     return next
   }
 
@@ -2022,15 +2163,13 @@ function createCompanionTaskKernel(dependencies = {}) {
     return true
   }
 
-  function reconcileTask(previous, incoming, draft, forceUnknown, incomingLanes, currentLanes, activityRebase) {
+  function reconcileTask(previous, incoming, draft, incomingLanes, currentLanes, activityRebase) {
     if (!previous) {
-      if (incoming.phase !== 'unknown') unknownEvidence.delete(incoming.key)
       let next = preparePlanLifecycle(null, incoming, incoming, true)
-      next = migrateLegacyHiddenPlan(next)
       next = finalizeCanonicalTask(next)
       if (incoming.phase === 'unknown') next.freshness = 'verifying'
       recordActivityDecision(null, incoming, incoming.phase !== 'unknown', incoming.phase === 'unknown' ? 'unknown' : 'accepted')
-      return { ...assignSemanticRevision(null, next), verifying: next.freshness === 'verifying' }
+      return { ...assignSemanticRevision(null, next), activityAccepted: incoming.phase !== 'unknown' }
     }
 
     const provider = incoming.provider
@@ -2055,12 +2194,12 @@ function createCompanionTaskKernel(dependencies = {}) {
       incoming.metadataRevision,
       previous.metadataRevision
     )
-    let acceptPhase = !activityUnobserved && (forceUnknown || laneIsNewer(
+    let acceptPhase = !activityUnobserved && laneIsNewer(
       incomingLanes[provider].activity,
       currentLanes[provider].activity,
       incoming.phaseRevision,
       previous.phaseRevision
-    ))
+    )
     let activityDecisionReason = activityUnobserved ? 'activity-unobserved' : acceptPhase ? 'accepted' : 'stale-lane'
     let acceptUnread = laneIsNewer(
       incomingLanes[provider].unread,
@@ -2086,9 +2225,26 @@ function createCompanionTaskKernel(dependencies = {}) {
     const previousObservation = taskPhaseObservation(previous)
     const incomingObservation = taskPhaseObservation(incoming)
     const causalDecision = sameTurnEvidenceDecision(previousObservation, incomingObservation)
+    const authoritativeStart = incoming.codexState?.orderedTurnStart === true && incoming.phase === 'running'
+      && incoming.turnStartedAt > 0 && (incoming.turnStartedAt > previous.turnStartedAt
+        || incoming.turnStartedAt === previous.turnStartedAt && incoming.causalKey && previous.causalKey
+          && incoming.causalKey !== previous.causalKey && incoming.causalDomain
+          && incoming.causalDomain === previous.causalDomain && incoming.causalSequence > previous.causalSequence)
     if (acceptPhase && (causalDecision || causalComparable || laneTie)
-      && !phaseEvidenceSupersedes(previousObservation, incomingObservation)) {
-      if (draftProducer(draft.producer) !== 'renderer' && canRebaseActivity(previous, incoming, activityRebase)) {
+      && !authoritativeStart && !phaseEvidenceSupersedes(previousObservation, incomingObservation)) {
+      if (provider === 'codex' && causalDecision?.reason === 'sequence-incomparable'
+        && previous.causalAuthority === 'inventory' && previous.causalSequence === 0
+        && (previous.activityPhase || previous.phase) === incoming.phase && isTerminalTaskPhase(incoming.phase)
+        && incoming.causalAuthority === 'terminal' && incoming.causalReliable === true
+        && incoming.causalSequence > 0 && incoming.freshness === 'fresh') {
+        activityDecisionReason = 'same-turn-terminal-confirmed'
+      } else if (causalDecision?.reason === 'domain-incomparable' && incoming.codexState
+        && !previous.causalKey && !previous.causalDomain && incoming.causalKey && incoming.causalDomain
+        && incoming.turnKind === previous.turnKind
+        && (!previous.turnStartedAt || previous.turnStartedAt === incoming.turnStartedAt)) {
+        // Bind the first scoped Host observation to the retained, unscoped verdict.
+        activityDecisionReason = 'turn-identity-established'
+      } else if (draftProducer(draft.producer) !== 'renderer' && canRebaseActivity(previous, incoming, activityRebase)) {
         activityDecisionReason = 'activity-rebase'
       } else {
         acceptPhase = false
@@ -2106,17 +2262,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
 
     let verifying = false
-    if (acceptPhase && incoming.phase !== 'unknown') {
-      unknownEvidence.delete(incoming.key)
-    } else if (acceptPhase && (previous.canonicalPhase || previous.phase) !== 'unknown') {
-      const observation = unknownEvidence.get(incoming.key)
-      const next = observation
-        ? { firstSeenAt: observation.firstSeenAt, count: observation.count + 1 }
-        : { firstSeenAt: now(), count: 1 }
-      unknownEvidence.set(incoming.key, next)
-      // Unknown/unconfirmed terminal evidence never destroys a stable group.
-      // The 250 ms timer is only a verification deadline, not permission to
-      // fabricate a new semantic state after it expires.
+    if (acceptPhase && incoming.phase === 'unknown' && (previous.canonicalPhase || previous.phase) !== 'unknown') {
+      // Only a later observation can settle an unknown phase.
       acceptPhase = false
       verifying = true
       activityDecisionReason = 'unknown'
@@ -2132,6 +2279,8 @@ function createCompanionTaskKernel(dependencies = {}) {
         family: incoming.family,
         role: incoming.role,
         standaloneEligible: incoming.standaloneEligible,
+        ...(typeof incoming.closedMachineRun === 'boolean' ? { closedMachineRun: incoming.closedMachineRun } : {}),
+        ...(typeof incoming.relationOnly === 'boolean' ? { relationOnly: incoming.relationOnly } : {}),
         error: incoming.error
       })
     }
@@ -2177,6 +2326,9 @@ function createCompanionTaskKernel(dependencies = {}) {
         idleConfirmed: incoming.idleConfirmed,
         turnStartedAt: incoming.turnStartedAt,
         terminalAt: incoming.terminalAt,
+        ordinarySideInterruptedAt: incoming.ordinarySideInterruptedAt,
+        turnKind: incoming.turnKind,
+        rootCompletionForSideOrder: incoming.rootCompletionForSideOrder,
         causalKey: incoming.causalObserved ? incoming.causalKey : previous.causalKey,
         causalDomain: incoming.causalObserved ? incoming.causalDomain : previous.causalDomain,
         causalSequence: incoming.causalObserved ? incoming.causalSequence : previous.causalSequence,
@@ -2198,13 +2350,57 @@ function createCompanionTaskKernel(dependencies = {}) {
         next.capabilities = { ...next.capabilities, archive: false }
         delete next.archiveRequest
       }
+    } else if (activityDecisionReason === 'same-turn-stale' && previous.ordinarySideInterruptedAt !== undefined
+      && incoming.ordinarySideInterruptedAt !== undefined && incoming.causalSequence === previous.causalSequence
+      && incoming.turnStartedAt === previous.turnStartedAt) {
+      next.ordinarySideInterruptedAt = incoming.ordinarySideInterruptedAt
+        ? Math.max(previous.ordinarySideInterruptedAt, incoming.ordinarySideInterruptedAt) : 0
+    } else if (provider === 'codex' && previous.role === 'root' && previous.activityPhase === 'completed'
+      && !activityUnobserved && !['renderer', 'stale-lane'].includes(activityDecisionReason)) {
+      const sameTurn = previous.causalKey && incoming.causalKey === previous.causalKey
+        && previous.causalDomain && incoming.causalDomain === previous.causalDomain
+      if (['goal', 'goal-verifying'].includes(incoming.causalAuthority)
+        || (sameTurn && (incoming.phase !== 'completed' || incoming.causalAuthority === 'live-turn')
+          && (incoming.causalSequence > previous.causalSequence || previous.causalAuthority === 'inventory'))) {
+        next.rootCompletionForSideOrder = false
+      } else if (sameTurn && incoming.turnStartedAt === previous.turnStartedAt
+        && previous.causalAuthority === 'inventory' && incoming.causalAuthority === 'inventory'
+        && previous.causalSequence === 0 && incoming.causalSequence === 0
+        && previous.rootCompletionForSideOrder !== false && incoming.rootCompletionForSideOrder) {
+        next.rootCompletionForSideOrder = true
+      }
+    }
+    if (incoming.codexState && !activityUnobserved && (phaseAdvanced || acceptPhase)
+      && draftProducer(draft.producer) !== 'renderer') {
+      // A repeated verdict for the current Turn may change Thread status or
+      // submission state. A rejected observation from a different Turn cannot.
+      const sameTurn = incoming.causalKey && incoming.causalKey === previous.causalKey
+        && incoming.causalDomain && incoming.causalDomain === previous.causalDomain
+        && incoming.turnStartedAt === previous.turnStartedAt
+      const sameVerdict = sameTurn && incoming.turnKind === previous.turnKind
+        && incoming.causalSequence === previous.causalSequence
+      // The proof can arrive or be withdrawn while the member still has no Turn identity.
+      const emptyHistoryChanged = phaseAdvanced && incoming.role === 'child' && previous.turnKind === 'unknown'
+        && !previous.causalKey && !previous.turnStartedAt
+        && incoming.codexState.emptyTurnHistory !== previous.codexState?.emptyTurnHistory
+      const acceptState = acceptPhase || sameVerdict || emptyHistoryChanged
+      const state = acceptState ? incoming.codexState : previous.codexState
+      const previousGoal = previous.codexState?.goal
+      const incomingGoal = incoming.codexState.goal
+      const acceptGoal = (acceptState && incomingGoal.sequence >= (previousGoal?.sequence || 0))
+        || incomingGoal.observed && incomingGoal.sequence > (previousGoal?.sequence || 0)
+      if (state || acceptGoal) {
+        const goal = acceptGoal ? incomingGoal : previousGoal
+        next.codexState = { ...state, goal }
+        next.goalVerificationRunning = goal.observed && goal.freshness === 'verifying'
+          && (previous.activityPhase === 'running' || previous.phase === 'running' || previous.goalVerificationRunning === true)
+      }
     }
     next = preparePlanLifecycle(previous, next, incoming, acceptPlanArtifact)
     if (!unreadOnly) {
       next.planImplementation = next.planReady === true
         && isAttentionTaskPhase(next.phase)
         && incoming.planImplementation === true
-      next = migrateLegacyHiddenPlan(next)
     }
     if (acceptUnread && incoming.unreadKnown) {
       next.unread = incoming.unread
@@ -2220,94 +2416,50 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     if (verifying) next.freshness = 'verifying'
     const finalized = finalizeCanonicalTask(next)
-    return { ...assignSemanticRevision(previous, finalized), verifying: verifying || finalized.freshness === 'verifying' }
+    return { ...assignSemanticRevision(previous, finalized), activityAccepted: acceptPhase }
   }
 
-  function scheduleUnknownCommit(draft) {
-    clearUnknownTimer()
-    let dueAt = 0
-    for (const value of unknownEvidence.values()) {
-      const candidate = value.firstSeenAt + UNKNOWN_GRACE_MS
-      if (!dueAt || candidate < dueAt) dueAt = candidate
-    }
-    if (!dueAt) return
-    unknownTimer = setTimer(() => {
-      unknownTimer = null
-      if (!disposed && lastDraft === draft) commitDraft(draft, true)
-    }, Math.max(0, dueAt - now()))
-  }
-
-  /** 吃证据的唯一入口：schema/revision 失败则整批丢掉，且不消耗 producer revision。 */
-  function commitDraft(draft, forceUnknown = false, hostEvidence = false) {
-    const freezeSpan = freezeTrace.begin('companion.commit-draft')
-    try {
-    if (disposed || !draft || draft.schema !== COMPANION_TASK_DRAFT_REVISION) return null
+  function reduceEvidenceBatches(draft, batches, incomingLaneGenerations, currentLaneGenerations, hostEvidence, enabledProviders, observedKeys, admission) {
     const producer = draftProducer(draft.producer)
-    const draftRevision = finiteInteger(draft.draftRevision)
-    if (!draftRevision) return null
-    const lastProducerRevision = lastDraftRevisionByProducer.get(producer) || 0
-    if (!forceUnknown && draftRevision <= lastProducerRevision) return currentPackage
-    const draftProviders = providerShape(draft.providers)
-    const draftEnabled = draft.enabled === true
-    const enabledProviders = providerSet(draftProviders)
-    const batches = Object.fromEntries(PROVIDERS.map((provider) => [provider, normalizeEvidenceBatch(
-      draft.evidenceBatches?.[provider],
-      provider,
-      draft,
-      producer
-    )]))
-    // Validate the complete cross-Provider transaction before consuming its
-    // producer revision or applying configuration. A corrected retry with the
-    // same revision must remain admissible after an invalid batch.
-    if (draftEnabled && PROVIDERS.some((provider) => enabledProviders.has(provider) && batches[provider].valid !== true)) {
-      record({
-        level: 'error',
-        scope: 'task-kernel',
-        event: 'provider-evidence-batch',
-        outcome: 'rejected',
-        code: 'invalid-batch',
-        details: { producer }
-      })
-      return null
-    }
-    configure({ enabled: draft.enabled, providers: draftProviders })
-    if (!forceUnknown) lastDraftRevisionByProducer.set(producer, draftRevision)
-    if (!enabled) return currentPackage
-    if (!sameProviders(providers, draftProviders)) return null
-    if (currentPackage.complete && draft.complete !== true) return currentPackage
-    const incomingLaneGenerations = normalizeSourceLaneGenerations(draft.sourceLaneGenerations, draft.sourceGenerations)
-    const currentLaneGenerations = normalizeSourceLaneGenerations(currentPackage.sourceLaneGenerations, currentPackage.sourceGenerations)
+    const observedProviders = Object.keys(batches)
     // A draft that carries no membership observation — an App Server event, a
     // phase-only push — asserts nothing about the inventory. Reading its absent
     // lane as zero would make it look strictly older than every real read and
     // silently reshape membership, so an unstated lane means "unchanged".
-    for (const provider of PROVIDERS) {
+    for (const provider of observedProviders) {
       if (incomingLaneGenerations[provider].membership === 0) {
         incomingLaneGenerations[provider].membership = currentLaneGenerations[provider].membership
       }
     }
-    const staleMembershipProviders = new Set(PROVIDERS.filter((provider) => {
+    const staleMembershipProviders = new Set(observedProviders.filter((provider) => {
       if (!enabledProviders.has(provider)) return false
       const incomingGeneration = incomingLaneGenerations[provider].membership
       const currentGeneration = currentLaneGenerations[provider].membership
       return incomingGeneration > 0 && currentGeneration > 0 && incomingGeneration < currentGeneration
     }))
-    const previousPrivateByKey = new Map(nodeStore)
-    const previousPublicByKey = new Map(currentPackage.tasks.map((task) => [task.key, task]))
     const incomingNodes = []
+    const activities = []
     const incomingKeys = new Set()
     const activityRebases = new Map()
-    for (const provider of PROVIDERS) {
+    for (const provider of observedProviders) {
       for (const value of batches[provider].nodes) {
+        const seed = value.metadata?.partial && !nodeStore.has(value.key) && admission?.get(value.key)
+        const member = seed ? { ...value, metadata: { ...seed.metadata, partial: true }, capabilities: seed.capabilities,
+          standaloneEligible: seed.standaloneEligible } : value
         const incoming = normalizeEvidenceNode(
-          value,
+          member,
           provider,
           enabledProviders,
-          incomingLaneGenerations[provider].activity
+          incomingLaneGenerations[provider].activity,
+          hostEvidence && ['host-evidence', 'host-preflight'].includes(producer)
         )
         if (!incoming || incomingKeys.has(incoming.key)) continue
-        const existing = previousPrivateByKey.get(incoming.key)
+        const existing = nodeStore.get(incoming.key)
         if (existing && existing.provider !== incoming.provider) continue
+        if (hostEvidence && ['host-evidence', 'host-preflight'].includes(producer) && provider === 'codex' && incoming.role === 'child') {
+          if (typeof value.metadata?.closedMachineRun === 'boolean') incoming.closedMachineRun = value.metadata.closedMachineRun
+          if (typeof value.metadata?.relationOnly === 'boolean') incoming.relationOnly = value.metadata.relationOnly
+        }
         incomingKeys.add(incoming.key)
         incomingNodes.push(incoming)
         if (hostEvidence && producer === 'host-evidence' && provider === 'codex'
@@ -2317,7 +2469,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       }
     }
     const nextNodeStore = new Map(nodeStore)
-    for (const provider of PROVIDERS) {
+    for (const provider of observedProviders) {
       const batch = batches[provider]
       const membershipGeneration = incomingLaneGenerations[provider].membership
       const membershipCurrent = currentLaneGenerations[provider].membership
@@ -2351,24 +2503,36 @@ function createCompanionTaskKernel(dependencies = {}) {
         if (membershipRevision <= tombstone.membershipRevision) continue
         archiveTombstones.delete(tombstoneKey)
       }
-      const previous = previousPrivateByKey.get(incoming.key)
+      const previous = nodeStore.get(incoming.key)
       // A partial lane observation may update an existing task, but it cannot
       // establish membership or public metadata on its own.
-      if (!previous && incoming.metadataPartial === true) continue
+      if (!previous && incoming.metadataPartial === true && !admission?.has(incoming.key)) continue
       if (!previous && staleMembershipProviders.has(incoming.provider)) continue
       const reconciled = reconcileTask(
         previous,
         incoming,
         draft,
-        forceUnknown,
         incomingLaneGenerations,
-        currentLaneGenerations,
+        previous?.codexLaneGenerations
+          ? { ...currentLaneGenerations, codex: { ...currentLaneGenerations.codex, ...previous.codexLaneGenerations } }
+          : currentLaneGenerations,
         activityRebases.get(incoming.key)
       )
+      if (hostEvidence && incoming.provider === 'codex') {
+        const seen = previous?.codexLaneGenerations
+        const lanes = incomingLaneGenerations.codex
+        reconciled.task.codexLaneGenerations = {
+          activity: Math.max(seen?.activity || 0, incoming.activityObserved ? lanes.activity : 0),
+          unread: Math.max(seen?.unread || 0, incoming.unreadKnown ? lanes.unread : 0),
+          planArtifact: Math.max(seen?.planArtifact || 0, incoming.planLifecycleState !== 'unknown' ? lanes.planArtifact : 0)
+        }
+      }
       nextNodeStore.set(incoming.key, reconciled.task)
+      if (reconciled.activityAccepted || incoming.provider !== 'codex') activities.push(incoming)
+      if (!incoming.metadataPartial) observedKeys.add(incoming.key)
     }
     const familySnapshots = new Map()
-    for (const provider of PROVIDERS) {
+    for (const provider of observedProviders) {
       if (!enabledProviders.has(provider) || staleMembershipProviders.has(provider)) continue
       for (const value of batches[provider].nodes) {
         if (value?.role !== 'root' || value?.metadata?.topologyComplete !== true) continue
@@ -2387,27 +2551,11 @@ function createCompanionTaskKernel(dependencies = {}) {
       if (!present || present.has(key)) continue
       nextNodeStore.delete(key)
     }
-    const retainedKeys = new Set(nextNodeStore.keys())
-    for (const key of diagnosticActivitySignatures.keys()) if (!retainedKeys.has(key)) diagnosticActivitySignatures.delete(key)
-    for (const task of previousPrivateByKey.values()) {
-      if (retainedKeys.has(task.key) || !enabledProviders.has(task.provider)) continue
-      if (!pauseReceipts.has(task.key)) continue
-      pauseReceipts.delete(task.key)
-      try {
-        persistPlanPause({
-          key: task.key,
-          planLifecycleRevision: task.planLifecycleRevision,
-          paused: false,
-          updatedAt: now()
-        })
-      } catch {}
-    }
-
     const nextRelationStore = new Map(relationStore)
-    const incomingRelations = PROVIDERS.flatMap((provider) => batches[provider].relations)
+    const incomingRelations = observedProviders.flatMap((provider) => batches[provider].relations)
       .map(normalizeRelation)
       .filter(Boolean)
-    for (const provider of PROVIDERS) {
+    for (const provider of observedProviders) {
       const batch = batches[provider]
       const topologyGeneration = incomingLaneGenerations[provider].topology
       const topologyCurrent = currentLaneGenerations[provider].topology
@@ -2442,15 +2590,98 @@ function createCompanionTaskKernel(dependencies = {}) {
     for (const [key, task] of nextNodeStore) nodeStore.set(key, task)
     relationStore.clear()
     for (const [key, relation] of nextRelationStore) relationStore.set(key, relation)
-    reconcileInteractions(batches, incomingLaneGenerations, currentLaneGenerations, enabledProviders)
-    refreshInteractionProjections()
+    reconcileInteractions(batches, incomingLaneGenerations, currentLaneGenerations, enabledProviders, activities)
+    for (const provider of observedProviders) {
+      for (const lane of SOURCE_LANES) {
+        currentLaneGenerations[provider][lane] = Math.max(currentLaneGenerations[provider][lane], incomingLaneGenerations[provider][lane])
+      }
+    }
+  }
 
-    const materialized = materializePrivateTopology(previousPublicByKey)
+  /** 吃证据的唯一入口：schema/revision 失败则整批丢掉，且不消耗 producer revision。 */
+  function commitDraft(draft, hostEvidence = false) {
+    const freezeSpan = freezeTrace.begin('companion.commit-draft')
+    try {
+    if (disposed || !draft || draft.schema !== COMPANION_TASK_DRAFT_REVISION) return null
+    const producer = draftProducer(draft.producer)
+    const draftRevision = finiteInteger(draft.draftRevision)
+    if (!draftRevision) return null
+    const lastProducerRevision = lastDraftRevisionByProducer.get(producer) || 0
+    if (draftRevision <= lastProducerRevision) return currentPackage
+    const draftProviders = providerShape(draft.providers)
+    const draftEnabled = draft.enabled === true
+    const enabledProviders = providerSet(draftProviders)
+    const batches = Object.fromEntries(PROVIDERS.map((provider) => [provider, normalizeEvidenceBatch(
+      draft.evidenceBatches?.[provider],
+      provider,
+      draft,
+      producer
+    )]))
+    // Validate the complete cross-Provider transaction before consuming its
+    // producer revision or applying configuration. A corrected retry with the
+    // same revision must remain admissible after an invalid batch.
+    if (draftEnabled && PROVIDERS.some((provider) => enabledProviders.has(provider) && batches[provider].valid !== true)) {
+      record({
+        level: 'error',
+        scope: 'task-kernel',
+        event: 'provider-evidence-batch',
+        outcome: 'rejected',
+        code: 'invalid-batch',
+        details: { producer }
+      })
+      return null
+    }
+    const pending = hostEvidence && draft.complete
+      ? dependencies.preparePendingEvidence?.(draft) : null
+    if (pending === false || hostEvidence && (!sameProviders(providers, draftProviders) || draftEnabled !== enabled)) return null
+    const normalizePending = batch => normalizeEvidenceBatch(batch, 'codex', draft, 'host-evidence')
+    const before = (pending?.before || []).map(normalizePending)
+    const after = (pending?.after || []).map(normalizePending)
+    if ([...before, ...after].some(batch => !batch.valid)) return null
+    if (hostEvidence && producer === 'host-preflight') refreshPauseProtection()
+    configure({ enabled: draft.enabled, providers: draftProviders })
+    if (!enabled) return currentPackage
+    if (!sameProviders(providers, draftProviders)) return null
+    if (currentPackage.complete && draft.complete !== true) return currentPackage
+
+    const lanes = normalizeSourceLaneGenerations(currentPackage.sourceLaneGenerations)
+    const observedKeys = new Set()
+    const previousPauseKeys = new Set([...pauseReceipts.keys()].filter(key => nodeStore.has(key)))
+    const admission = before.length ? new Map(batches.codex.nodes.map(node => [node.key, node])) : null
+    const reducePending = (batch, seed) => {
+      const generations = Object.fromEntries(SOURCE_LANES.map(lane => [lane, batch.channels[lane].generation]))
+      reduceEvidenceBatches({ producer: 'host-evidence' }, { codex: batch }, { codex: generations }, lanes,
+        true, enabledProviders, observedKeys, seed)
+    }
+    for (const batch of before) reducePending(batch, admission)
+    reduceEvidenceBatches(draft, batches, normalizeSourceLaneGenerations(draft.sourceLaneGenerations),
+      lanes, hostEvidence, enabledProviders, observedKeys)
+    for (const batch of after) reducePending(batch)
+
+    for (const [key, receipt] of pauseReceipts) {
+      const task = nodeStore.get(key)
+      if (task ? task.planLifecycleRevision > receipt.planLifecycleRevision : previousPauseKeys.has(key)) {
+        retirePauseReceipt(key, receipt.planLifecycleRevision)
+      }
+    }
+    for (const key of observedKeys) {
+      const task = nodeStore.get(key)
+      if (task?.hidden && hasCurrentPlanArtifact(task)) nodeStore.set(key, migrateLegacyHiddenPlan(task))
+    }
+    for (const key of diagnosticActivitySignatures.keys()) if (!nodeStore.has(key)) diagnosticActivitySignatures.delete(key)
+    for (const key of completeCodexRequestSets.keys()) if (!nodeStore.has(key)) completeCodexRequestSets.delete(key)
+    for (const [key, request] of interactionStore) {
+      if (request.provider === 'codex' && !nodeStore.has(request.taskKey)) interactionStore.delete(key)
+    }
+    if (interactionTombstonesChanged) {
+      try { persistInteractionTombstones([...interactionTombstones.values()].slice(-2_000)) } catch {}
+      interactionTombstonesChanged = false
+    }
+    refreshInteractionProjections()
+    const materialized = materializePrivateTopology()
     const nextTasks = materialized.tasks
     const freshness = materialized.freshness
     const nextTopologyRevision = materialized.topologyRevision
-    lastDraft = draft
-    if (!forceUnknown) scheduleUnknownCommit(draft)
     const focusedKey = typeof draft.focusedKey === 'string' && nextTasks.some((task) => task.key === draft.focusedKey)
       ? draft.focusedKey
       : ''
@@ -2473,12 +2704,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         provider,
         Math.max(finiteInteger(currentPackage.sourceGenerations?.[provider]), finiteInteger(draft.sourceGenerations?.[provider]))
       ])),
-      sourceLaneGenerations: Object.fromEntries(PROVIDERS.map((provider) => [provider, Object.fromEntries(
-        SOURCE_LANES.map((lane) => [lane, Math.max(
-          currentLaneGenerations[provider][lane],
-          incomingLaneGenerations[provider][lane]
-        )])
-      )])),
+      sourceLaneGenerations: lanes,
       providerHealth: Object.fromEntries(PROVIDERS.map((provider) => {
         const incoming = draft.providerHealth?.[provider]
         const previous = currentPackage.providerHealth?.[provider]
@@ -2500,45 +2726,20 @@ function createCompanionTaskKernel(dependencies = {}) {
       tasks: nextTasks,
       views: buildViews(nextTasks)
     }
-    const semantic = semanticPackage(next)
-    if (semantic === lastSemantic) {
-      // Observation/lane watermarks are process-internal ordering data. Advance
-      // them without publishing a new semantic package or touching consumers.
-      currentPackage = {
-        ...next,
-        packageRevision: currentPackage.packageRevision,
-        publishedAt: currentPackage.publishedAt
-      }
-      record({
-        level: 'debug',
-        scope: 'task-kernel',
-        event: 'same-state-no-op',
-        outcome: 'ignored',
-        packageRevision: currentPackage.packageRevision,
-        count: nextTasks.length
-      })
-      scheduleVisibilityTransition()
-      return currentPackage
-    }
-    next.packageRevision = ++packageSequence
-    const previousTasks = currentPackage.tasks
-    currentPackage = next
-    lastSemantic = semantic
-    recordPhaseTransitionsOnChange(previousTasks, nextTasks, draft, forceUnknown)
-    recordGroupCountsOnChange(next)
-    syncConsumers(next)
-    emitPackage(currentPackage)
-    scheduleVisibilityTransition()
-    return currentPackage
+    lastDraftRevisionByProducer.set(producer, draftRevision)
+    pending?.acknowledge()
+    return publishTaskPackage(next, { evidenceDraft: draft })
 
-    } finally { freezeTrace.end(freezeSpan) }
+    } finally {
+      freezeTrace.end(freezeSpan)
+    }
   }
 
   /** Group counts name the flood; per-task phase flips name the culprit. A
    * task oscillating running↔completed surfaces here as paired transitions
    * carrying its key and provider, which no aggregate counter can attribute. */
-  function recordPhaseTransitionsOnChange(previousTasks, nextTasks, draft, forceUnknown) {
-    if (!Array.isArray(previousTasks) || !previousTasks.length) return
+  function recordPhaseTransitionsOnChange(previousTasks, nextTasks, draft) {
+    if (!Array.isArray(previousTasks)) return
     const previousByKey = new Map(previousTasks.map((task) => [task.key, task]))
     const batchNodes = Object.fromEntries(PROVIDERS.map((provider) => [
       provider,
@@ -2548,6 +2749,10 @@ function createCompanionTaskKernel(dependencies = {}) {
     let logged = 0
     for (const task of nextTasks) {
       const before = previousByKey.get(task.key)
+      if (task.provider === 'codex' && (!before || before.phase !== task.phase
+        || before.unread !== task.unread || before.dynamicGroup !== task.dynamicGroup)) {
+        dependencies.diagnosticTaskPublish?.(task, currentPackage.packageRevision)
+      }
       if (!before || before.phase === task.phase) continue
       if (logged >= 8) { overflow += 1; continue }
       logged += 1
@@ -2566,7 +2771,7 @@ function createCompanionTaskKernel(dependencies = {}) {
           freshness: task.freshness,
           phaseRevision: task.phaseRevision,
           prevPhaseRevision: before.phaseRevision,
-          forced: forceUnknown === true,
+          forced: false,
           producer: draftProducer(draft?.producer),
           batchNodes
         }
@@ -2737,7 +2942,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   function publishEvidence(draft) {
     const startedAt = now()
     const beforeRevision = currentPackage.packageRevision
-    const result = commitDraft(draft, false, true)
+    const result = commitDraft(draft, true)
     const published = Boolean(result && currentPackage.packageRevision > beforeRevision)
     record({
       level: published ? 'info' : 'debug',
@@ -2792,17 +2997,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       for (const [interactionKey, interaction] of interactionStore) {
         if (interaction.provider === provider && interaction.taskKey === key) interactionStore.delete(interactionKey)
       }
-      if ((publicTask || privateTask) && pauseReceipts.has(key)) {
-        pauseReceipts.delete(key)
-        try {
-          persistPlanPause({
-            key,
-            planLifecycleRevision: finiteInteger(publicTask?.planLifecycleRevision || privateTask?.planLifecycleRevision),
-            paused: false,
-            updatedAt: now()
-          })
-        } catch {}
-      }
+      if (publicTask || privateTask) retirePauseReceipt(key, finiteInteger(publicTask?.planLifecycleRevision || privateTask?.planLifecycleRevision))
       archiveTombstones.set(`${provider}:${key}`, {
         membershipRevision: Math.max(
           finiteInteger(input.membershipRevision),
@@ -2910,7 +3105,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       Promise.resolve().then(() => preflight({ providers: { ...providers } })),
       timeout
     ]).then((draft) => {
-      const accepted = commitDraft(draft)
+      const accepted = commitDraft(draft, true)
       if (!accepted?.complete) throw new Error('preflight-incomplete')
       record({
         level: 'info',
@@ -2939,6 +3134,7 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   function ephemeralOpenTarget(key, actionAlias = '') {
     if (typeof key !== 'string' || !key || key.length > 256) return null
+    if (pauseRecoveryPending && (!unavailablePauseKeys || unavailablePauseKeys.has(key) || protectedPauseGroupKeys.has(key))) return null
     const enabledProviders = providerSet(providers)
     const namespaced = PROVIDERS.find((id) => id !== 'codex' && key.startsWith(`${id}:`)) || ''
     const inferred = namespaced
@@ -3152,47 +3348,23 @@ function createCompanionTaskKernel(dependencies = {}) {
         || finiteInteger(input.revisionAt) !== task.revisionAt) {
         return { outcome: 'failed', errorCode: 'state-changed', message: '任务状态已变化，当前不能继续' }
       }
-      const result = await actions.continueTask({
+      return actions.continueTask({
         key: task.key, revisionAt: task.revisionAt, source: input.source || 'continue-task-button',
         operationId: input.operationId, target: actionTargetForTask(task)
       })
-      if (result?.outcome === 'executed') {
-        commitLocalTaskState(task, { phase: 'running', freshness: 'fresh', statusEnteredAt: now(),
-          terminalAt: 0, idleConfirmed: false }, 'continue-started')
-      }
-      return result
     }
     if (input.action === 'execute-plan') {
       const task = taskForKey(input.key)
       if (!task?.capabilities.executePlan || finiteInteger(input.planLifecycleRevision) !== task.planLifecycleRevision) {
         return { outcome: 'failed', errorCode: 'state-changed', message: 'Plan 状态已变化，当前不能执行' }
       }
-      const result = await actions.executePlan({
+      return actions.executePlan({
         key: task.key,
         planLifecycleRevision: task.planLifecycleRevision,
         source: input.source || 'execute-plan-button',
         operationId: input.operationId,
         target: actionTargetForTask(task)
       })
-      if (result?.outcome === 'executed') {
-        if (task.paused) writePauseReceipt(task, false)
-        commitLocalTaskState(task, {
-          phase: 'running',
-          freshness: 'fresh',
-          statusEnteredAt: now(),
-          terminalAt: 0,
-          idleConfirmed: false,
-          planReady: false,
-          planImplementation: false,
-          planLifecycleState: 'cleared',
-          planClearReason: 'execution-start',
-          planArtifactState: 'executing',
-          planArtifactActionable: false,
-          planLifecycleRevision: Math.max(task.planLifecycleRevision + 1, now()),
-          paused: false
-        }, 'execute-started')
-      }
-      return result
     }
     if (input.action === 'archive-focused') {
       const accepted = actions.shortcutArchive()
@@ -3602,7 +3774,6 @@ function createCompanionTaskKernel(dependencies = {}) {
     disposed = true
     shortcutReads.clear()
     shortcutReadInputs.clear()
-    clearUnknownTimer()
     clearVisibilityTimer()
     packageListeners.clear()
     diagnosticActivitySignatures.clear()
@@ -3664,7 +3835,6 @@ module.exports = {
   COMPANION_TASK_ACK_REVISION,
   PREFLIGHT_PROGRESS_MS,
   PREFLIGHT_TIMEOUT_MS,
-  UNKNOWN_GRACE_MS,
   PROVIDERS,
   TASK_KINDS: [...TASK_KINDS],
   PROVIDER_TRAITS,

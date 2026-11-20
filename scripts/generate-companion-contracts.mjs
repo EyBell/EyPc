@@ -18,6 +18,8 @@ const revisions = constants(schema.properties.revisions.properties)
 const evidenceChannels = tuple(schema.properties.evidenceChannels)
 const activityKinds = tuple(schema.properties.activity.properties.kinds)
 const activityAuthorities = tuple(schema.properties.activity.properties.authorities)
+const codexThreadStatuses = schema.properties.activity.properties.codexThreadStatuses.items.enum
+const codexGoalStatuses = schema.properties.activity.properties.codexGoalStatuses.items.enum
 const interactionKinds = tuple(schema.properties.interaction.properties.kinds)
 const interactionStates = tuple(schema.properties.interaction.properties.states)
 const interactionAuthorities = tuple(schema.properties.interaction.properties.authorities)
@@ -34,6 +36,8 @@ export const COMPANION_V7_REVISIONS = ${JSON.stringify(revisions, null, 2)} as c
 export const COMPANION_EVIDENCE_CHANNELS_V7 = ${JSON.stringify(evidenceChannels)} as const
 export const COMPANION_ACTIVITY_KINDS_V7 = ${JSON.stringify(activityKinds)} as const
 export const COMPANION_ACTIVITY_AUTHORITIES_V7 = ${JSON.stringify(activityAuthorities)} as const
+export const CODEX_THREAD_STATUSES = ${JSON.stringify(codexThreadStatuses)} as const
+export const CODEX_GOAL_STATUSES = ${JSON.stringify(codexGoalStatuses)} as const
 export const COMPANION_INTERACTION_KINDS_V1 = ${JSON.stringify(interactionKinds)} as const
 export const COMPANION_INTERACTION_STATES_V1 = ${JSON.stringify(interactionStates)} as const
 export const COMPANION_INTERACTION_AUTHORITIES_V1 = ${JSON.stringify(interactionAuthorities)} as const
@@ -104,6 +108,8 @@ const COMPANION_V7_REVISIONS = Object.freeze(${JSON.stringify(revisions, null, 2
 const COMPANION_EVIDENCE_CHANNELS_V7 = Object.freeze(${JSON.stringify(evidenceChannels)})
 const COMPANION_ACTIVITY_KINDS_V7 = Object.freeze(${JSON.stringify(activityKinds)})
 const COMPANION_ACTIVITY_AUTHORITIES_V7 = Object.freeze(${JSON.stringify(activityAuthorities)})
+const CODEX_THREAD_STATUSES = Object.freeze(${JSON.stringify(codexThreadStatuses)})
+const CODEX_GOAL_STATUSES = Object.freeze(${JSON.stringify(codexGoalStatuses)})
 const COMPANION_INTERACTION_KINDS_V1 = Object.freeze(${JSON.stringify(interactionKinds)})
 const COMPANION_INTERACTION_STATES_V1 = Object.freeze(${JSON.stringify(interactionStates)})
 const COMPANION_INTERACTION_AUTHORITIES_V1 = Object.freeze(${JSON.stringify(interactionAuthorities)})
@@ -140,6 +146,24 @@ function normalizeCompanionActivityCandidateV7(value) {
   }
 }
 
+function normalizeCodexStateV7(value) {
+  const goal = value?.goal
+  if (!CODEX_THREAD_STATUSES.includes(value?.threadStatus)
+    || typeof value.groupActivityConfirmed !== 'boolean' || typeof value.submissionPending !== 'boolean'
+    || typeof value.orderedTurnStart !== 'boolean'
+    || value.emptyTurnHistory !== undefined && typeof value.emptyTurnHistory !== 'boolean'
+    || !CODEX_GOAL_STATUSES.includes(goal?.status) || !['fresh', 'verifying'].includes(goal.freshness)
+    || typeof goal.observed !== 'boolean'
+    || !Number.isSafeInteger(goal.updatedAt) || goal.updatedAt < 0
+    || !Number.isSafeInteger(goal.sequence) || goal.sequence < 0) return null
+  return { threadStatus: value.threadStatus, groupActivityConfirmed: value.groupActivityConfirmed,
+    submissionPending: value.submissionPending,
+    orderedTurnStart: value.orderedTurnStart,
+    ...(value.emptyTurnHistory === true ? { emptyTurnHistory: true } : {}),
+    goal: { status: goal.status, freshness: goal.freshness, observed: goal.observed,
+      updatedAt: goal.updatedAt, sequence: goal.sequence } }
+}
+
 function validateCompanionEvidenceNodeV3(value, expectedProvider = '') {
   if (!value || typeof value !== 'object'
     || !PROVIDERS.has(value.provider)
@@ -150,6 +174,8 @@ function validateCompanionEvidenceNodeV3(value, expectedProvider = '') {
     || value.membership !== 'present'
     || !value.activity || typeof value.activity !== 'object'
     || !normalizeCompanionActivityCandidateV7(value.activity)
+    || value.activity.codexState !== undefined && (value.provider !== 'codex'
+      || !normalizeCodexStateV7(value.activity.codexState))
     || value.activity.candidates !== undefined && (!Array.isArray(value.activity.candidates)
       || value.activity.candidates.length === 0
       || !value.activity.candidates.every((candidate) => normalizeCompanionActivityCandidateV7(candidate)))
@@ -293,6 +319,9 @@ function validateCompanionEvidenceBatchV3(value, expectedProvider = '') {
 }
 
 module.exports = {
+  CODEX_THREAD_STATUSES,
+  CODEX_GOAL_STATUSES,
+  normalizeCodexStateV7,
   COMPANION_V7_REVISIONS,
   COMPANION_EVIDENCE_CHANNELS_V7,
   COMPANION_ACTIVITY_KINDS_V7,

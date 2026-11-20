@@ -1,1 +1,1 @@
-export function checkCompanionDiagnosticPrivacy(source: string): number
+export function checkCompanionDiagnosticPrivacy(source: string, codexDiagnosticsSource: string): number

@@ -49,13 +49,14 @@ function createCodexContinueTask(deps) {
       const resolved = await deps.resolveTarget(selected)
       if (!validId(resolved?.threadId) || !validId(resolved?.alias)) return result('failed', 'target-missing')
       const { threadId, alias } = resolved
+      const scope = deps.captureScope?.(threadId)
       if (inFlight.has(threadId)) return result('failed', 'already-in-progress')
       inFlight.add(threadId)
       lockedId = threadId
 
       const checkTask = async () => {
         const task = await deps.currentTask(selected.key)
-        if (!task || task.key !== selected.key || task.phase !== 'stopped'
+        if (scope && !scope.current() || !task || task.key !== selected.key || task.phase !== 'stopped'
           || task.capabilities?.continueTask !== true || task.revisionAt !== selected.revisionAt) fail('state-changed')
         if (busy(await deps.getKnown(threadId))) fail('state-changed')
       }
@@ -101,6 +102,7 @@ function createCodexContinueTask(deps) {
       const opened = await deps.open({ ...selected, actionAlias: alias })
       if (!['opened', 'dispatched'].includes(opened?.outcome)) return result('failed', 'open-failed')
       const useDesktopOwner = !pausedGoal(goal) && deps.canStartDesktop?.(threadId) === true
+      if (scope && !scope.current()) fail('state-changed')
       stage = useDesktopOwner ? 'desktop-preflight' : 'resume'
       checkThread(await deps.rpc(useDesktopOwner ? 'thread/read' : 'thread/resume', {
         threadId, ...(useDesktopOwner ? { includeTurns: false } : { excludeTurns: true })
@@ -121,15 +123,18 @@ function createCodexContinueTask(deps) {
       }
       await revalidate()
 
+      if (scope && !scope.current()) fail('state-changed')
+      const writeScope = deps.captureScope?.(threadId)
       const markTurn = async (turn) => {
-        try { await deps.markStarted(threadId, turn) } catch { /* Native receipt remains authoritative. */ }
+        try { await deps.markStarted(threadId, turn, selected, beforeTurn.id, writeScope) } catch { /* Native receipt remains authoritative. */ }
         return result('executed')
       }
       const markGoal = async (activeGoal) => {
-        try { await deps.markGoalActive(threadId, activeGoal) } catch { /* Do not retry a confirmed native write. */ }
+        try { await deps.markGoalActive(threadId, activeGoal, selected, writeScope) } catch { /* Do not retry a confirmed native write. */ }
         return result('executed')
       }
       const confirmTurn = async () => {
+        if (scope && !scope.current()) return result('indeterminate', 'turn-start-unconfirmed')
         try {
           const turn = await readTurn()
           if (validId(turn?.id) && turn.id !== beforeTurn.id && turn.status === 'inProgress'
@@ -140,6 +145,7 @@ function createCodexContinueTask(deps) {
       const activeSameGoal = (candidate, requireIdentity = false) => candidate?.status === 'active'
         && sameGoal(goal, candidate, requireIdentity)
       const confirmGoal = async () => {
+        if (scope && !scope.current()) return result('indeterminate', 'goal-set-unconfirmed')
         try {
           const response = await deps.rpc('thread/goal/get', { threadId })
           if (activeSameGoal(response?.goal, true)) return await markGoal(response.goal)

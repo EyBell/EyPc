@@ -185,7 +185,7 @@ function rowsFor(
     + decisions.branchTerminalDeferred
     + decisions.snapshotConflictSuppressed
     + decisions.missingMappingRetained)
-  const decisionDetail = `开启新周期 ${decisions.liveEpochOpened}；丢弃旧读 ${decisions.staleTurnDiscarded}；延后分支终态 ${decisions.branchTerminalDeferred}；抑制冲突快照 ${decisions.snapshotConflictSuppressed}；保留缺行映射 ${decisions.missingMappingRetained}`
+  const decisionDetail = `开启新周期 ${decisions.liveEpochOpened}；丢弃旧读 ${decisions.staleTurnDiscarded}；分支结束后组仍活动 ${decisions.branchTerminalDeferred}；抑制冲突快照 ${decisions.snapshotConflictSuppressed}；保留缺行映射 ${decisions.missingMappingRetained}`
   const launchMode = environment.launchMode || 'unknown'
   const manualState = environment.manualLaunchPathState || 'unavailable'
   const statusFeed = environment.statusFeedMode || 'unavailable'

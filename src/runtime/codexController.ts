@@ -38,7 +38,7 @@ import {
   type CodexTaskCard,
   type ConversationSnapshotV1
 } from '../domain/codex'
-import { companionPinAppLabel, companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
+import { COMPANION_PROVIDER_IDS, companionPinAppLabel, companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
 import { buildCompanionPresentationSlice, type CompanionQuotaRefreshReceipt, type CompanionSnapshotSlice } from '../domain/companionPresentation'
 import { fetchMagpieQuotaProviders, redactMagpieQuotaProviders, resolveMagpieQuotaIdentities, type MagpieQuotaProvider } from '../domain/magpieQuota'
 import type { CompanionQuotaIdentityRef } from '../domain/companionQuota'
@@ -2550,9 +2550,7 @@ export function createCodexController(options: CodexControllerOptions) {
     const missingCodexMetadata = value.complete
       && value.tasks.some((task) => task.provider === 'codex' && !knownKeys.has(task.key))
     const configurationBarrier = value.enabled !== taskSnapshot.enabled
-      || value.providers.codex !== taskSnapshot.providers.codex
-      || value.providers.claude !== taskSnapshot.providers.claude
-      || value.providers.cursor !== taskSnapshot.providers.cursor
+      || COMPANION_PROVIDER_IDS.some(provider => value.providers[provider] !== taskSnapshot.providers[provider])
     // An incomplete evidence read must not erase the last complete semantic
     // package. A Kernel configuration barrier is different: disabling the
     // inbox or one Provider is itself authoritative and must clear its stale

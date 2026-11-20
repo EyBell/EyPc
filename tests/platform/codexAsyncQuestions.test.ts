@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
+const { selectCodexGoalEvidenceV7 } = require('../../preload/companion/evidence-adapter-v7.cjs')
 const { createCodexDesktopShadow } = require('../../preload/codex/desktop-shadow.cjs')
 const { createCodexDesktopActivityResolution } = require('../../preload/codex/desktop-activity-resolution.cjs')
 const { createCodexDesktopRequestProjection } = require('../../preload/codex/desktop-request-projection.cjs')
@@ -384,7 +385,7 @@ describe('Desktop root Goal source evidence', () => {
   it.each(['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'])('admits the finite owner Goal %s after an older no-Goal cache', (status) => {
     const { shadow } = harness()
     const state = goalSnapshot(shadow, { status, updatedAt: 100, objective: 'private objective' })
-    const evidence = shadow.codexDesktopRootGoalEvidence(state, { goalStatus: 'none', goalUpdatedAt: 0 })
+    const evidence = selectCodexGoalEvidenceV7(shadow.codexDesktopRootGoalEvidence(state), { goalStatus: 'none', goalUpdatedAt: 0 })
     expect(evidence).toMatchObject({ goalStatus: status, goalUpdatedAt: 100, goalFreshness: 'fresh' })
     expect(JSON.stringify(state)).not.toContain('private objective')
     const repeated = goalSnapshot(shadow, { status, updatedAt: 100 }, state)
@@ -394,12 +395,13 @@ describe('Desktop root Goal source evidence', () => {
   it('does not replace a newer Goal clock or a newer same-clock connector observation', () => {
     const { shadow } = harness()
     const state = goalSnapshot(shadow, { status: 'active', updatedAt: 100 })
-    const evidence = shadow.codexDesktopRootGoalEvidence(state, null)
-    expect(shadow.codexDesktopRootGoalEvidence(state, { goalStatus: 'paused', goalUpdatedAt: 200, goalEvidenceSequence: 1 })).toBeNull()
-    expect(shadow.codexDesktopRootGoalEvidence(state, { goalStatus: 'complete', goalUpdatedAt: 100,
-      goalEvidenceSequence: evidence.goalEvidenceSequence + 1 })).toBeNull()
+    const evidence = shadow.codexDesktopRootGoalEvidence(state)
+    const newer = { goalStatus: 'paused', goalUpdatedAt: 200, goalEvidenceSequence: 1 }
+    const sameClock = { goalStatus: 'complete', goalUpdatedAt: 100, goalEvidenceSequence: evidence.goalEvidenceSequence + 1 }
+    const cleared = { goalStatus: 'none', explicitlyCleared: true, goalUpdatedAt: 0 }
+    for (const cached of [newer, sameClock, cleared]) expect(selectCodexGoalEvidenceV7(evidence, cached)).toBe(cached)
     expect(shadow.codexApplyDesktopShadowPatch(state, { op: 'replace', path: ['threadGoal'], value: { status: 'complete', updatedAt: 300 } })).toBe(true)
-    expect(shadow.codexDesktopRootGoalEvidence(state, evidence)).toMatchObject({ goalStatus: 'complete', goalUpdatedAt: 300 })
+    expect(selectCodexGoalEvidenceV7(shadow.codexDesktopRootGoalEvidence(state), evidence)).toMatchObject({ goalStatus: 'complete', goalUpdatedAt: 300 })
   })
 
   it('abstains on invalid, missing, disconnected and Side Goal sources', () => {
@@ -694,6 +696,7 @@ describe('GPT async question evidence', () => {
     } })
     const current = build()
     expect(current.requests).toHaveLength(1)
+    if (status === 'completed') expect(build([{ ...question, id: 'second-question' }]).requests).toHaveLength(2)
     expect(current.liveTurnRunning).toBe(false)
     const continuation = build([{ type: 'steeringUserMessage', status: 'accepted', input: [{ type: 'text', text: 'synthetic accepted continuation' }] }])
     expect(continuation.requests).toHaveLength(0)

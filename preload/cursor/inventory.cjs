@@ -17,6 +17,7 @@
  */
 
 const { trace: freezeTrace } = require('../freeze-trace.cjs')
+const { resolveSqliteBin, querySqliteCli } = require('../sqlite-readonly.cjs')
 const CURSOR_INVENTORY_REVISION = 'cursor-agent-inventory-v6'
 /**
  * Unified modes that run a real Turn and therefore become cards. `plan` is a
@@ -27,11 +28,6 @@ const INVENTORY_UNIFIED_MODES = new Set(['agent', 'plan'])
 const SQLITE_QUERY_TIMEOUT_MS = 20_000
 const SQLITE_QUERY_MAX_BUFFER = 8 * 1024 * 1024
 const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
-const SQLITE_BIN_CANDIDATES = Object.freeze([
-  '/usr/bin/sqlite3',
-  '/opt/homebrew/bin/sqlite3',
-  '/usr/local/bin/sqlite3'
-])
 const COMPOSER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_ROWS = 500
 /** Fork ids may be prefixed (`task-<uuid>`), so only sanity-bound them. */
@@ -297,21 +293,6 @@ function sqliteUnavailable(message) {
   return error
 }
 
-function resolveSqliteBin(fs, explicit) {
-  if (typeof explicit === 'string' && explicit) return explicit
-  if (!fs || typeof fs.existsSync !== 'function') return ''
-  for (const candidate of SQLITE_BIN_CANDIDATES) {
-    if (fs.existsSync(candidate)) return candidate
-  }
-  return ''
-}
-
-function sqliteUri(dbPath) {
-  const normalized = String(dbPath || '').replace(/\\/g, '/')
-  if (/^[A-Za-z]:\//.test(normalized)) return `file:///${normalized}?mode=ro`
-  return `file:${normalized}?mode=ro`
-}
-
 function queryWithDatabaseSync(DatabaseSync, dbPath, sql = INVENTORY_SQL) {
   const database = new DatabaseSync(dbPath, { readOnly: true })
   try {
@@ -319,28 +300,6 @@ function queryWithDatabaseSync(DatabaseSync, dbPath, sql = INVENTORY_SQL) {
   } finally {
     try { if (typeof database.close === 'function') database.close() } catch {}
   }
-}
-
-function queryWithCli(dependencies, bin, dbPath, sql = INVENTORY_SQL) {
-  const args = ['-readonly', '-json', sqliteUri(dbPath), sql]
-  const options = {
-    encoding: 'utf8',
-    timeout: SQLITE_QUERY_TIMEOUT_MS,
-    maxBuffer: SQLITE_QUERY_MAX_BUFFER
-  }
-  const parse = (raw) => {
-    const parsed = JSON.parse(String(raw || '').trim() || '[]')
-    if (!Array.isArray(parsed)) throw new Error('sqlite-json-invalid')
-    return parsed
-  }
-  // The live store can be gigabytes; a blocking query freezes the plugin host.
-  if (typeof dependencies.execFile !== 'function') return Promise.resolve().then(() => parse(dependencies.execFileSync(bin, args, options)))
-  return new Promise((resolve, reject) => {
-    dependencies.execFile(bin, args, options, (error, raw) => {
-      if (error) { reject(error); return }
-      try { resolve(parse(raw)) } catch (parseError) { reject(parseError) }
-    })
-  })
 }
 
 function queryWithBuiltinSqlite(dbPath, sql = INVENTORY_SQL) {
@@ -356,7 +315,9 @@ async function queryRows(dependencies, dbPath, sql) {
   const bin = resolveSqliteBin(dependencies.fs, dependencies.sqliteBin)
   if (bin && (typeof dependencies.execFile === 'function' || typeof dependencies.execFileSync === 'function')) {
     try {
-      return await queryWithCli(dependencies, bin, dbPath, sql)
+      return await querySqliteCli(dependencies, bin, dbPath, sql, {
+        timeout: SQLITE_QUERY_TIMEOUT_MS, maxBuffer: SQLITE_QUERY_MAX_BUFFER
+      })
     } catch (error) {
       if (error && error.code === 'sqlite-unavailable') throw error
       if (dependencies.allowBuiltinSqlite === false) throw error

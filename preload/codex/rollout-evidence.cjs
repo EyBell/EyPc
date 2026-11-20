@@ -134,6 +134,8 @@ function createCodexRolloutEvidence(dependencies = {}) {
     let planClearReason = ''
     let turnMode = 'unknown'
     let currentTurnStartedAt = 0
+    let currentTurnId = ''
+    let planTurnId = ''
     let turnOrdinal = 0
     let planTurnOrdinal = 0
     let planEstablishedAt = 0
@@ -161,8 +163,10 @@ function createCodexRolloutEvidence(dependencies = {}) {
       const source = record(parsed)
       const payload = record(source.payload)
       if (source.type !== 'event_msg') continue
+      const turnId = typeof payload.turn_id === 'string' && payload.turn_id.length <= MAX_CALL_ID_LENGTH ? payload.turn_id : ''
       if (payload.type === 'task_started') {
         turnOrdinal += 1
+        currentTurnId = turnId
         const mode = String(payload.collaboration_mode_kind || payload.collaborationModeKind || '').toLowerCase()
         turnMode = mode === 'plan' ? 'plan' : mode === 'default' ? 'default' : 'unknown'
         currentTurnStartedAt = codexRolloutTimestampMs(source.timestamp, payload.started_at)
@@ -189,12 +193,14 @@ function createCodexRolloutEvidence(dependencies = {}) {
       const item = record(payload.item)
       const itemType = String(item.type || '').toLowerCase().replace(/[^a-z0-9]/g, '')
       if (itemType === 'plan') {
+        if (turnId && currentTurnId && turnId !== currentTurnId) continue
         // Repeated completion of one exact artifact is not a new Plan, including
         // replay after execution. Do not inspect/hash Plan prose for identity.
         const planId = typeof item.id === 'string' && item.id.length <= MAX_CALL_ID_LENGTH ? item.id : ''
         if (planId && completedPlanIds.has(planId)) continue
         if (planId) completedPlanIds.add(planId)
         planTurnOrdinal = turnOrdinal
+        planTurnId = turnId || currentTurnId
         planEstablishedAt = codexRolloutTimestampMs(source.timestamp, payload.completed_at) || currentTurnStartedAt
         sawPlanCompletion = true
         planReady = true
@@ -221,6 +227,7 @@ function createCodexRolloutEvidence(dependencies = {}) {
       planLifecycleState,
       planLifecycleRevision,
       planClearReason,
+      planTurnId,
       turnMode
     }
   }
@@ -266,22 +273,20 @@ function createCodexRolloutEvidence(dependencies = {}) {
     const previous = record(previousValue)
     const projectionRevision = Number(projection.planLifecycleRevision) || 0
     const previousRevision = Number(previous.planLifecycleRevision) || 0
-    const retainedClear = previous.planLifecycleState === 'cleared'
-      && PLAN_CLEAR_REASONS.has(previous.planClearReason) && previousRevision >= projectionRevision
-    const projectedClear = projection.planLifecycleState === 'cleared'
-      && PLAN_CLEAR_REASONS.has(projection.planClearReason) && projectionRevision > previousRevision
-    const clear = retainedClear ? previous : projectedClear ? projection : null
-    if (clear) return {
-      planReady: false,
-      planLifecycleState: 'cleared',
-      planLifecycleRevision: Number(clear.planLifecycleRevision) || 0,
-      planClearReason: clear.planClearReason || 'execution-start'
-    }
+    const previousClear = previous.planLifecycleState === 'cleared' && PLAN_CLEAR_REASONS.has(previous.planClearReason)
+    const projectedClear = projection.planLifecycleState === 'cleared' && PLAN_CLEAR_REASONS.has(projection.planClearReason)
+    const previousKnown = previousClear || previous.planReady === true
+    const projectedKnown = projectedClear || projection.planReady === true
+    const acceptProjection = projectedKnown && (!previousKnown || projectionRevision > previousRevision
+      || projectionRevision === previousRevision && projectedClear && !previousClear)
+    const current = acceptProjection ? projection : previous
+    const cleared = acceptProjection ? projectedClear : previousClear
+    const ready = !cleared && current.planReady === true
     return {
-      planReady: projection.planReady === true || previous.planReady === true,
-      planLifecycleState: projection.planReady === true || previous.planReady === true ? 'ready' : 'unknown',
-      planLifecycleRevision: projectionRevision || previousRevision,
-      planClearReason: ''
+      planReady: ready,
+      planLifecycleState: cleared ? 'cleared' : ready ? 'ready' : 'unknown',
+      planLifecycleRevision: cleared || ready ? Number(current.planLifecycleRevision) || 0 : 0,
+      planClearReason: cleared ? current.planClearReason : ''
     }
   }
 
