@@ -181,12 +181,13 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     if (!entry.recoverSide || attempt?.signature !== entry.signature) return
     const current = () => ownerRefreshes.get(bridge) === state && state.attempted.get(key) === attempt
       && !ownerEntryObsolete(bridge, entry)
+    delete attempt.sideRead
     if (!current()) return
-    if (dueAt > now() || bridge.sideTerminalReadAvailable?.(entry.threadId) === false) {
-      attempt.sideReadAt = dueAt
+    const wakeAt = dueAt > now() ? dueAt : null
+    if (wakeAt != null || bridge.sideTerminalReadAvailable?.(entry.threadId) === false) {
+      attempt.sideRead = { entry, wakeAt }
       return
     }
-    delete attempt.sideReadAt
     void bridge.recoverUnloadedSideTerminal?.(entry.parentId, entry.threadId, undefined, current)
   }
 
@@ -217,6 +218,8 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     state.draining = true
     try {
       for (const attempt of state.attempted.values()) {
+        const sideRead = attempt.sideRead
+        if (sideRead?.wakeAt != null && sideRead.wakeAt <= now()) recoverOwnerSide(bridge, state, sideRead.entry)
         const entry = attempt.retry
         if (!entry || attempt.retryAt > now()) continue
         delete attempt.retry
@@ -279,7 +282,10 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       if (ownerRefreshes.get(bridge) === state) {
         const at = now()
         const deadlines = Array.from(state.queue.values(), entry => entry.readyAt > at ? entry.readyAt : entry.expiresAt)
-        for (const attempt of state.attempted.values()) if (attempt.retry) deadlines.push(attempt.retryAt)
+        for (const attempt of state.attempted.values()) {
+          if (attempt.sideRead?.wakeAt != null) deadlines.push(attempt.sideRead.wakeAt)
+          if (attempt.retry) deadlines.push(attempt.retryAt)
+        }
         if (deadlines.length) {
           const next = Math.min(...deadlines)
           state.wakeTimer = startTimer(() => drainOwnerQueue(bridge, state), Math.max(0, next - at))
@@ -328,7 +334,8 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     const attempt = state.attempted.get(attemptKey)
     if (attempt?.signature === entry.signature) {
       if (pendingOwnerSatisfied(bridge, entry, entry.shadow, attempt.requestedSetRevision)) return false
-      if (attempt.sideReadAt != null && attempt.sideReadAt <= at) recoverOwnerSide(bridge, state, entry)
+      const sideRead = attempt.sideRead
+      if (sideRead && (sideRead.wakeAt == null || sideRead.wakeAt <= at)) recoverOwnerSide(bridge, state, sideRead.entry)
       if (attempt.count >= OWNER_ATTEMPTS_PER_SIGNATURE || at < attempt.retryAt) return false
     }
     if (state.queue.size >= queueLimit) return false
@@ -421,9 +428,8 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
         discarded = true
         continue
       }
-      const retry = attempt.retry
-      const reason = retry && ownerEntryObsolete(bridge, retry)
-      if (reason) {
+      const remaining = attempt.retry || attempt.sideRead?.entry
+      if (remaining && ownerEntryObsolete(bridge, remaining)) {
         state.attempted.delete(key)
         discarded = true
       }

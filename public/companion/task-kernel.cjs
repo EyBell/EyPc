@@ -575,6 +575,7 @@ function publicRootTask(task) {
     activityObserved: _activityObserved,
     codexLaneGenerations: _codexLaneGenerations,
     closedMachineRun: _closedMachineRun,
+    machineRunCoverageCurrent: _machineRunCoverageCurrent,
     relationOnly: _relationOnly,
     ordinarySideInterruptedAt: _ordinarySideInterruptedAt,
     turnKind: _turnKind,
@@ -1015,12 +1016,16 @@ function createCompanionTaskKernel(dependencies = {}) {
     completedUnread: []
   }
   const attentionRounds = {
-    input: 0
+    input: 0,
+    completedUnread: 0
   }
   const inputAttentionStates = new Map()
   const inputAttentionTokens = new Map()
+  const completedAttentionTokens = new Map()
   let inputOpenReceipt = null
+  let completedOpenReceipt = null
   let inputAttentionOperationSequence = 0
+  let completedAttentionOperationSequence = 0
   const readAcknowledgements = new Map()
   const shortcutReads = createShortcutReadReceipts()
   let shortcutReadInputs = new Map()
@@ -1059,18 +1064,39 @@ function createCompanionTaskKernel(dependencies = {}) {
       const token = shortcutReads.capture(before?.task, before?.members, source)
       const operationId = typeof request?.operationId === 'string' ? request.operationId : ''
       const queuedInput = operationId ? inputAttentionTokens.get(operationId) : null
+      const queuedCompleted = operationId ? completedAttentionTokens.get(operationId) : null
+      const attentionKind = request?.attentionKind === 'completed-unread' ? 'completedUnread'
+        : request?.attentionKind === 'input' ? 'input' : ''
+      const matchedAttention = attentionKind === 'input' ? queuedInput : attentionKind === 'completedUnread' ? queuedCompleted : null
       let capturedInput = queuedInput || null
+      let capturedCompleted = queuedCompleted || null
       if (!capturedInput) {
         const openingTask = taskForKey(target.key)
         const instance = openingTask ? attentionInstance('input', openingTask) : ''
         if (instance) capturedInput = { round: attentionRounds.input, instance, key: target.key }
+      }
+      if (!capturedCompleted) {
+        const openingTask = taskForKey(target.key)
+        const instance = openingTask ? attentionInstance('completedUnread', openingTask) : ''
+        if (instance) capturedCompleted = { round: attentionRounds.completedUnread, instance, key: target.key }
       }
       const result = await actions.open({
         key: target.key,
         target,
         trustedResolvedTarget: request?.trustedResolvedTarget === true,
         source: request?.source || 'task-cycle',
-        operationId: request?.operationId
+        operationId: request?.operationId,
+        isOpenCurrent() {
+          if (!currentPackage.complete) return false
+          const task = taskForKey(target.key)
+          if (!task) return request?.trustedResolvedTarget === true && ephemeralOpenTarget(target.key)?.provider === target.provider
+          if (request?.cycle === true) return currentPackage.views.cycleKeys.includes(target.key)
+          if (!attentionKind) return true
+          const listed = currentPackage.views?.attentionKeys?.[attentionKind] || []
+          return Boolean(matchedAttention) && matchedAttention.key === target.key && listed.includes(target.key)
+            && matchedAttention.round === attentionRounds[attentionKind]
+            && matchedAttention.instance === attentionInstance(attentionKind, task)
+        }
       })
       const current = shortcutReadInputs.get(target.key)
       if (!disposed && shortcutReads.accept(token, current?.task, current?.members, result?.outcome, result?.confirmsRead === true)) {
@@ -1083,6 +1109,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         acknowledgeOpenedTask(before?.task, result)
       }
       inputOpenReceipt = capturedInput
+      completedOpenReceipt = capturedCompleted
       return result
     }
   })
@@ -1096,7 +1123,9 @@ function createCompanionTaskKernel(dependencies = {}) {
   beginNavigation()
   navigation.onResult((event) => {
     const inputReceipt = inputOpenReceipt
+    const completedReceipt = completedOpenReceipt
     inputOpenReceipt = null
+    completedOpenReceipt = null
     if (event.outcome !== 'opened' && event.outcome !== 'dispatched') return
     const key = typeof event.key === 'string' ? event.key : ''
     const task = taskForKey(key)
@@ -1109,7 +1138,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       'local-shortcut',
       'task-cycle'
     ])
-    markAttentionOpened(task, { rotate: rotateSources.has(event.source), inputReceipt })
+    markAttentionOpened(task, { rotate: rotateSources.has(event.source), inputReceipt, completedReceipt })
     if (currentPackage.focusedKey === key) return
     currentPackage = { ...currentPackage, focusedKey: key }
     const semantic = semanticPackage(currentPackage)
@@ -1434,6 +1463,18 @@ function createCompanionTaskKernel(dependencies = {}) {
       return state ? `input:${task.key}:${state.generation}` : ''
     }
     if (task.dynamicGroup === 'pinned') return `${kind}:${task.key}:pinned`
+    if (kind === 'completedUnread') {
+      const members = shortcutReadInputs.get(task.key)?.members || [nodeStore.get(task.key) || task]
+      const completions = members.filter((member) => member?.activityPhase === 'completed'
+        && member.unreadKnown === true && member.unread === true)
+      if (completions.length) {
+        const anchor = completions.map((member) => {
+          const completionAt = Math.max(finiteInteger(member.terminalAt), finiteInteger(member.turnStartedAt))
+          return member.causalKey ? `${member.key}:${member.causalDomain}\0${member.causalKey}` : `${member.key}:${completionAt}`
+        }).sort().join('|')
+        return anchor ? `${kind}:${task.key}:completion:${anchor}` : ''
+      }
+    }
     const lifecycleAt = Math.max(
       finiteInteger(task.statusEnteredAt),
       finiteInteger(task.terminalAt),
@@ -1452,7 +1493,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       const instance = attentionInstance(kind, task)
       if (!instance || instances.has(instance)) continue
       instances.add(instance)
-      entries.push({ key, instance })
+      entries.push({ key, instance, pinned: kind === 'completedUnread' && task.dynamicGroup === 'pinned' })
     }
     return entries
   }
@@ -1466,6 +1507,14 @@ function createCompanionTaskKernel(dependencies = {}) {
     syncInputAttentionStates(packageValue)
     for (const kind of ['input', 'completedUnread']) {
       const current = attentionEntries(kind, packageValue)
+      if (kind === 'completedUnread') {
+        const pinned = current[0]?.pinned === true
+        const wasPinned = attentionWalks[kind][0]?.pinned === true
+        if (pinned !== wasPinned) {
+          attentionRounds.completedUnread += 1
+          attentionSeen.completedUnread.clear()
+        }
+      }
       const currentByInstance = new Map(current.map((entry) => [entry.instance, entry]))
       const valid = new Set(currentByInstance.keys())
       for (const instance of attentionSeen[kind]) if (!valid.has(instance)) attentionSeen[kind].delete(instance)
@@ -1493,6 +1542,11 @@ function createCompanionTaskKernel(dependencies = {}) {
         const receipt = options.inputReceipt
         const instance = attentionInstance('input', task)
         if (!receipt || receipt.key !== task.key || receipt.round !== attentionRounds.input || !instance || receipt.instance !== instance) continue
+      }
+      if (kind === 'completedUnread') {
+        const receipt = options.completedReceipt
+        const instance = attentionInstance(kind, task)
+        if (!receipt || receipt.key !== task.key || receipt.round !== attentionRounds.completedUnread || receipt.instance !== instance) continue
       }
       const instance = attentionInstance(kind, task)
       if (!instance) continue
@@ -1720,9 +1774,12 @@ function createCompanionTaskKernel(dependencies = {}) {
     attentionWalks.input = []
     attentionWalks.completedUnread = []
     attentionRounds.input += 1
+    attentionRounds.completedUnread += 1
     inputAttentionStates.clear()
     inputAttentionTokens.clear()
+    completedAttentionTokens.clear()
     inputOpenReceipt = null
+    completedOpenReceipt = null
     readAcknowledgements.clear()
     shortcutReads.clear()
     shortcutReadInputs.clear()
@@ -1854,8 +1911,36 @@ function createCompanionTaskKernel(dependencies = {}) {
         && relation?.relation === 'side-thread' && relation.parentKey === root.key
       return !earlierOrdinaryInterruption
     })
+    const memberCoverageKnown = (member) => {
+      const relation = relationsByChild.get(member.key)
+      if (member.memberStatus?.turn === 'not-started' && relation?.exact === true
+        && relation.relation === 'side-thread' && relation.parentKey === root.key) return true
+      const goal = member.codexState?.goal
+      return member.freshness === 'fresh' && completeCodexRequestSets.has(member.key)
+        && !taskOpenInteractions(member).length && !member.memberStatus?.submissionPending
+        && goal?.observed === true && goal.freshness === 'fresh' && ['none', 'complete'].includes(goal.status)
+        && member.planArtifactState !== 'unknown' && !hasCurrentPlanArtifact(member)
+    }
+    const rootTurnSettled = completedCodexRoot && root.activityPhase === 'completed'
+      && root.freshness === 'fresh' && root.causalAuthority === 'terminal' && root.causalReliable === true
+      && root.idleConfirmed === true && root.codexState?.threadStatus === 'idle'
+      && root.causalDomain && root.causalKey && root.turnStartedAt > 0
+      && members.every(memberCoverageKnown)
+    const historicalMachineMembers = rootTurnSettled ? phaseMembers.filter((member) => {
+      const relation = relationsByChild.get(member.key)
+      const latestEnd = member.terminalAt % 1000 === 0 ? member.terminalAt + 999 : member.terminalAt
+      return member.closedMachineRun === false && member.machineRunCoverageCurrent === true
+        && member.phase === 'stopped' && member.turnKind === 'turn-interrupted'
+        && member.causalAuthority === 'terminal' && member.causalReliable === true
+        && member.causalDomain === root.causalDomain && member.terminalAt > member.turnStartedAt
+        && latestEnd < root.turnStartedAt
+        && relation?.exact === true && relation.relation === 'side-thread' && relation.parentKey === root.key
+    }) : []
+    const machineFilteredMembers = historicalMachineMembers.length
+      ? phaseMembers.filter((member) => !historicalMachineMembers.includes(member))
+      : phaseMembers
     const groupActivity = root.codexState?.groupActivityConfirmed === true
-    const memberPhase = aggregateMemberPhase(phaseMembers)
+    const memberPhase = aggregateMemberPhase(machineFilteredMembers)
     const activityPhase = groupActivity && !isAttentionTaskPhase(memberPhase) ? 'running' : memberPhase
     const main = root.memberStatus
     const confirmedMainStop = codexRoot && root.phase === 'stopped' && activityPhase === 'unknown'
@@ -1879,7 +1964,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         ? 'completed' : activityPhase
     const statusEnteredAt = artifactWaiting ? Math.max(root.planLifecycleRevision, root.statusEnteredAt)
       : confirmedMainStop ? root.statusEnteredAt
-      : Math.max(0, ...phaseMembers.filter((node) => node.phase === activityPhase)
+      : Math.max(0, ...machineFilteredMembers.filter((node) => node.phase === activityPhase)
         .map((node) => finiteInteger(node.statusEnteredAt)))
     const blocked = phaseMembers.some((member) => member.memberStatus?.submissionPending
       || member.memberStatus?.threadStatus === 'systemError')
@@ -1922,7 +2007,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       revisionAt: Math.max(...members.map((node) => finiteInteger(node.revisionAt)), finiteInteger(root.revisionAt)),
       statusEnteredAt,
       turnStartedAt: root.provider === 'codex' ? root.turnStartedAt : Math.max(...members.map((node) => finiteInteger(node.turnStartedAt)), 0),
-      terminalAt: isLiveTaskPhase(phase) ? 0 : Math.max(...members.map((node) => finiteInteger(node.terminalAt)), 0),
+      terminalAt: isLiveTaskPhase(phase) ? 0
+        : Math.max(...machineFilteredMembers.map((node) => finiteInteger(node.terminalAt)), 0),
       capabilities,
       providerCapabilities,
       topology: {
@@ -2272,6 +2358,9 @@ function createCompanionTaskKernel(dependencies = {}) {
     recordActivityDecision(previous, incoming, acceptPhase, activityDecisionReason)
 
     let next = { ...previous }
+    if ((phaseAdvanced || acceptPhase) && typeof incoming.machineRunCoverageCurrent === 'boolean') {
+      next.machineRunCoverageCurrent = incoming.machineRunCoverageCurrent
+    }
     if (acceptMembership) {
       Object.assign(next, {
         kind: incoming.kind,
@@ -2458,6 +2547,9 @@ function createCompanionTaskKernel(dependencies = {}) {
         if (existing && existing.provider !== incoming.provider) continue
         if (hostEvidence && ['host-evidence', 'host-preflight'].includes(producer) && provider === 'codex' && incoming.role === 'child') {
           if (typeof value.metadata?.closedMachineRun === 'boolean') incoming.closedMachineRun = value.metadata.closedMachineRun
+          if (typeof value.metadata?.machineRunCoverageCurrent === 'boolean') {
+            incoming.machineRunCoverageCurrent = value.metadata.machineRunCoverageCurrent
+          }
           if (typeof value.metadata?.relationOnly === 'boolean') incoming.relationOnly = value.metadata.relationOnly
         }
         incomingKeys.add(incoming.key)
@@ -3140,7 +3232,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     const inferred = namespaced
       || (/^[a-f0-9]{32}$/i.test(key) || /^ct_/i.test(actionAlias) ? 'codex' : '')
       || (enabledProviders.size === 1 ? [...enabledProviders][0] : '')
-    if (!inferred || !enabledProviders.has(inferred)) return null
+    if (!inferred || !enabledProviders.has(inferred) || archiveTombstones.has(`${inferred}:${key}`)) return null
     return {
       key,
       provider: inferred,
@@ -3193,6 +3285,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       if (!task) {
         attentionSeen[kind].clear()
         if (kind === 'input') attentionRounds.input += 1
+        if (kind === 'completedUnread') attentionRounds.completedUnread += 1
         // A completed round adopts the latest published order exactly once;
         // the new round is then stable until it too is exhausted.
         resetAttentionWalk(kind)
@@ -3214,15 +3307,28 @@ function createCompanionTaskKernel(dependencies = {}) {
           key: task.key
         })
       }
+      if (kind === 'completedUnread') {
+        if (!operationId) {
+          completedAttentionOperationSequence += 1
+          operationId = `unattn-${attentionRounds.completedUnread}-${completedAttentionOperationSequence}`
+        }
+        completedAttentionTokens.set(operationId, {
+          round: attentionRounds.completedUnread,
+          instance: attentionInstance('completedUnread', task),
+          key: task.key
+        })
+      }
       try {
         return await navigation.open({
           key: task.key,
           target: actionTargetForTask(task),
           source: input.source || 'attention-shortcut',
-          operationId: operationId || input.operationId
+          operationId: operationId || input.operationId,
+          attentionKind: kind === 'completedUnread' ? 'completed-unread' : kind
         })
       } finally {
         if (kind === 'input' && operationId) inputAttentionTokens.delete(operationId)
+        if (kind === 'completedUnread' && operationId) completedAttentionTokens.delete(operationId)
       }
     })
     attentionQueues[kind] = run.then(() => undefined, () => undefined)

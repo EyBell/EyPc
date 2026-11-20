@@ -360,6 +360,8 @@ Orca状态感知（2026-10-22）：[orca/index.cjs](../../preload/orca/index.cjs
 
 ### Codex 已读联动固定通路
 
+- 2026-11-20：原生持久集合读态按成员变化发布，通过原 V7 unread lane 更新主界面、浮窗和快捷候选。同组仍有未读时，已清读的成员也有独立更新。Codex Desktop 断线时，快捷打开可向同一个已绑定账号和本机的持久文件做有界异步补读。同线程、同连接代次、同完成实例仍有效且原生集合明确移除该线程时，才发布目标成员的已读。随后出现的新轮或绑定换代会使补读失效。[实现与同版验证](../specs/261114/codex-state-sync/delivery.md#shortcut-read-reconciliation-261120)。
+
 - 2026-11-16：原生集合刷新只撤销上一份成功集合中存在、本次明确移出的任务的实时未读证据；某任务始终不在持久集合中，不能因为另一任务被读而失去精确未读。CodexHost 外部会话不受官方集合清理；身份切换沿原通路清除集合基线，不跨绑定比较。源码修复及多任务人工待验见[续修记录](../specs/261105/codex-unread-linkage/task-card.md#2026-11-16-快捷跳转误清其他未读)。
 
 - 2026-11-10 安全查询续修：Windows 句柄采用 SE_KERNEL_OBJECT（6），ACE 标志位显式整数运算；参数错误、API/owner/ACL 内部异常及启动/超时/进程/输出失败保持有限诊断。Windows SSH 上下文中的完整源脚本及真实 execFile 工厂已通过，只证明该上下文安全前置；宿主连接、v3 context 与未读传播仍独立验收。[现场结果与当前候选](../specs/260915/float-edge-rail/windows-diagnostics-review.md#实现现场结果与当前候选)。

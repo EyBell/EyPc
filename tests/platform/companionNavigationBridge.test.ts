@@ -164,19 +164,20 @@ describe('process-lifetime companion navigation', () => {
     })
   })
 
-  it('does not call Provider twice when a burst wraps back to the target already opening', async () => {
+  it.each([true, false])('shares a same-target tail only when the first dispatch succeeds (%s)', async (firstSucceeded) => {
     let releaseFirst!: () => void
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
     const opened: string[] = []
     const { navigation, receipt } = readyNavigation({
       openTarget: async (target: { key: string }) => {
         opened.push(target.key)
-        if (opened.length === 1) await firstGate
+        if (opened.length === 1) {
+          await firstGate
+          if (!firstSucceeded) return { outcome: 'failed', errorCode: 'open-failed' }
+        }
         return nativeOpened()
       }
     })
-    // A single-entry ring makes every press resolve to the same root, which is
-    // where advancing the logical cursor must NOT produce a second open.
     expect(navigation.sync({
       lease: receipt.lease,
       enabled: true,
@@ -191,9 +192,9 @@ describe('process-lifetime companion navigation', () => {
     const second = navigation.cycle(1)
     releaseFirst()
 
-    await expect(first).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    await expect(first).resolves.toMatchObject({ outcome: firstSucceeded ? 'opened' : 'failed', key: 'codex-a' })
     await expect(second).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
-    expect(opened).toEqual(['codex-a'])
+    expect(opened).toEqual(firstSucceeded ? ['codex-a'] : ['codex-a', 'codex-a'])
   })
 
   it('commits the cycle cursor only after Host confirms the exact target opened', async () => {

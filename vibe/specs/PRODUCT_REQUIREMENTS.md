@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 70 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-76820ccd4e3888194fd9 / renderer-badaca6d487bfad43880` · `artifact-ready` |
-| 当前构建时间 | `2026/11/20 15:54:20`（`2026-11-20T07:54:20.445Z`） |
+| 当前构建产物 | `host-d8352f0ac722a56c809a / renderer-9f307277830535f194ee` · `artifact-ready` |
+| 当前构建时间 | `2026/11/20 19:51:31`（`2026-11-20T11:51:31.622Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-76820ccd4e3888194fd9",
-    "renderer_asset": "renderer-badaca6d487bfad43880",
+    "host_asset": "host-d8352f0ac722a56c809a",
+    "renderer_asset": "renderer-9f307277830535f194ee",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-11-20T07:54:20.445Z",
-    "built_at_local": "2026/11/20 15:54:20",
+    "built_at": "2026-11-20T11:51:31.622Z",
+    "built_at_local": "2026/11/20 19:51:31",
     "package_version": "0.1.0"
   },
   "content_digests": {
     "requirement_registry": "652728f00fa3a1cdcfa69ac221c946443b56fd042314a0bdf38ba9df72d4b1cd",
     "raw_sources": "f3d2aae7773255e1d475b5ed6d341e2e60480592d258e78c802aa81e43282f66",
     "source_anchor_catalog": "3ebff5a33ad91018f97b7a66444551bbf57771e4a56153c464773592d8637d15",
-    "product_body": "75b89c14208d37cc855161c2217d213da1ef227c989e06dbf2d5d3cf312deaad",
-    "architecture": "abf12e4b963f3b76c5c952962dc1e62ec109321a0be8c383ab89be688fd31ce6",
-    "runtime_contract": "ab456acb55babcbd02dee378ba94924214ca34e1cc454b0a1c6e71133baf5667"
+    "product_body": "11d5188f7e9f424016b34f696c7c7b89121a737f49d4e2d2e6045126bc57d545",
+    "architecture": "76fdcf33997f33f80022f41be57ae6a0db70637b2c2b7dcffbcf508b72e0cf35",
+    "runtime_contract": "6b7fdac8a864872aeb5871645876bbc4d697f72f5358d7946815bcd4a39a4ea6"
   }
 }
 ```
@@ -255,6 +255,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 「上一个/下一个」通用任务循环以 [RAW-222](requirements/shared-raw-222.md#L1) 为当前权威：每次只发布最高非空层，顺序为进行中 → 待输入/待确认（含当前 Plan interaction）→ 已完成未读＋待继续（含 artifact-only Plan）→ 已完成已读的本地/来源置顶。前层仍有合格项不进入后层，更高层重新出现立即优先。待继续只调整通用候选归类，实际 phase、unread、显示组与专用入口不变。所有层均排除 EyPc 隐藏、暂停、不可打开、子任务和关闭来源；保留活动窗及置顶豁免。普通已完成已读与 unknown 不入环，unknown 置顶仍可由既有专用入口兜底。层内跨来源按最近提问时间倒序，创建时间与匿名 key 稳定并列；Provider/置顶不改排序。一次连续 walk 的 `CYCLE_WALK_HOLD_MS` 只冻结幸存项次序，新合格项追加，失格项立即移除；未派发的失格循环请求取消，已派发原生操作无法撤回，迟到回执不得夺回失格游标。整层替换无共同成员时从新层边界开始；所有层为空提示无可切换任务。候选只来自进程 V7 Snapshot 的根任务 `cycleKeys`，子任务不参与；热且可信时直接派发，只有冷启动、重连或明确成员缺口才等待所需 Provider 的 tasks-only 盘点，不得从部分集合跳转。第一下立即派发；打开仍在执行时，后续每一次按键都在**逻辑游标**上继续推进，只有最后一个目标真正派发——N 次连按前进 N 格并落在最终尾随目标，而不是重复选中正在打开的那一条；若推进后回到正在打开的目标（例如环只有一条），则不再重复调用 Provider。逻辑游标只在本次 walk 的请求全部落定前有效，之后回到已确认游标。进程游标由任意一次确认打开的 `cycleKeys` 成员提交，不再为循环按键独占：卡片点击、快速跳转与 attention 入口都让位置移到用户当前所见任务；落在 `cycleKeys` 之外的打开不提交游标。游标所指任务因层变化离开循环时，按旧次序就近改锚到幸存邻居。待输入与已完成未读专用入口的独立未打开进度（`attentionSeen`）不受游标提交影响。
 - 每个任务行和项目行固定显示一个明显的文本化来源标记；即使只启用单一来源也不得省略，且图标与可访问名称必须同步表达来源。任务行可见标记为 `CC` / `CX` / `CS` / `OR`，Codex Host 额外进程为 `XH`；可访问名称仍为「归属 Claude / Codex / Cursor / Orca / Codex Host」。Claude 第二行项目名来自会话目录，Cursor 来自工作区文件夹；证据层必须把该名写入 Kernel，不得只显示来源平台。RAW-217 / RAW-218。
 - 所有打开由 `CompanionTaskCommandV1` 进入同一个 Command Gateway：Kernel 在命令所见 Snapshot 上解析原根任务，再由 Provider Adapter 执行 Codex 深链、Claude Epitaxy deep link、Cursor deeplink 或 Orca `terminal switch`。手动点击、Enter、角标、attention、快捷键和循环之间没有第二条效果通路；选择/打开不刷新或改写 phase，失败不清 unread。第一下循环立即派发；仅当打开仍在执行时，后续按键合并成一个最终 trailing 目标；全部 Provider 最大打开并发为 1。打开回执统一携带 `companion-open-handoff-v1`：当前外部链接最多证明 `requested/dispatched`，只有未来真实原生回执才能进入 `native-confirmed/applied`。打开前先经就绪层（`companion-open-readiness-v1`）：目标应用未运行时先启动（Codex 按「通过 CodexHost 打开 Codex」的有效模式决定经 `codexhost launch` 还是 `open -b`；Claude / Cursor 用 `open -b`；Orca 用 `orca open` 并等到 runtime `ready`），每 500 ms 轮询至进程出现（≤ 25 秒）并软等待就绪（≤ 8 秒）后才派发；超时或启动失败 fail-closed，不派发、不清 unread；探测未知时不启动。「跳转前确保目标应用已打开」默认开，关闭时回到只发深链。CodexHost 有效（`on`，或 `auto` 找到 codexhost 命令 / Host 描述符存活 / 当前 Desktop 环境带 CodexHost 启动变量）但找不到 codexhost 命令时拦下不启动；Claude 的在运行判定以 `pgrep -x Claude` 为准，不再要求辅助功能权限。RAW-202。
+- 热态任务快捷键和快速查看消费完整已发布的包。目标映射需恢复时只在后台核对原任务，目标就绪后按当前资格触发打开。就绪等待后的派发与专用入口回执都复核原目标和实例。断线时可从原生持久状态复核所选完成实例的读态，要求同一身份、本机、连接代次及原生未读的明确变化。成员按自身读态更新。派发、应用前台、目标会话可见和原生清读各取对应的证据。[11 月 20 日验收](261114/codex-state-sync/delivery.md#shortcut-read-reconciliation-261120)
 - `operationId` 负责幂等，命令按任务串行；`expectedRevision` 或 topology revision 变化时只重校验原任务键，绝不替换成邻近任务。Provider Adapter 的异常转换为该来源 `degraded + command failed`，不能使 Kernel、其它 Provider 或插件进程崩溃。Archive 不合并、不乐观移除，活动成员存在时必须拒绝。
 - 当前唯一身份链是 `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2`。Topology 只派生 membership/root；Kernel 单独归约成员因果、三态 unread、Interaction、Plan Artifact、Goal、可见性、分组/计数/角标、attention/cycle/focus 与能力；Host Adapter、Controller、Renderer 和 Float 不重做 reducer。公开 projector 的 `unknown` 固定为 alias-free 中立不可操作状态，inventory 只能补项目/标题/时间 metadata，不能恢复旧 phase、unread 或 capability。旧 Host 或任一身份/能力缺失统一返回 `reload-required`，不允许可选方法静默降级。
 - RAW-162 makes Codex Goal status the completion boundary whenever a long-running Goal exists. An active Goal may span any number of automatic Turns；`turn/completed` closes only one round and must not publish task completed。Current input/approval evidence remains higher priority；paused、blocked、usageLimited and budgetLimited reuse stopped/“待继续”；only Goal complete may finish。Goal unknown、malformed、timeout or transient read failure preserves the last stable non-terminal phase as verifying；only explicit Goal cleared/no Goal or App Server method-not-found falls back to the existing Turn lifecycle。Goal Evidence is process-private and contains only finite status、updatedAt、freshness and causal sequence；Goal-only changes join the same atomic Kernel package without a public field、phase、Tab or badge。

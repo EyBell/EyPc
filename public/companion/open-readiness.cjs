@@ -201,6 +201,15 @@ function createCompanionOpenReadiness(dependencies = {}) {
           launch: launchField({ ...readiness, outcome: 'ready' })
         }
       }
+      if (typeof request?.isOpenCurrent === 'function' && request.isOpenCurrent() !== true) {
+        return {
+          outcome: 'unavailable',
+          errorCode: 'stale-target',
+          message: '任务状态已变化，未跳转',
+          confirmsRead: false,
+          launch: launchField(readiness)
+        }
+      }
       const result = await open(target, request)
       if (readiness.outcome !== 'launched') return result
       const source = result && typeof result === 'object' ? result : { outcome: 'failed', confirmsRead: false }

@@ -6049,6 +6049,46 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
+  it('publishes a Side read when its root still has its own native unread', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const root = FIXED_THREAD_IDS[2]!
+    const side = 'a2345678-1234-4234-8234-123456789abc'
+    let unread = [root, side]
+    desktopSocket.sideConversationParents.set(side, root)
+    desktopSocket.unreadSnapshotThreadIds.add(root)
+    desktopSocket.unreadSnapshotThreadIds.add(side)
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread(unread), desktopSocket)
+    const deltas: Array<Record<string, unknown>> = []
+    const stop = context.bridge.onActivityChanged((delta: Record<string, unknown>) => deltas.push(delta))
+    try {
+      const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      const task = snapshot.value.threads[2]
+      await vi.waitFor(async () => expect((await context.bridge.readActivitySnapshot()).value.desktopBridgeState).toBe('connected'))
+      desktopSocket.push({
+        type: 'broadcast', method: 'thread-stream-state-changed', sourceClientId: 'codex-desktop-owner', version: 11,
+        params: { hostId: 'local', conversationId: side, change: { type: 'snapshot', revision: 1,
+          conversationState: { sideConversation: true, forkedFromId: root, threadRuntimeStatus: { type: 'idle' },
+            requests: [], hasUnreadTurn: true } } }
+      })
+      await vi.waitFor(() => expect(context.native.privateBranchEvidence(root)?.branches)
+        .toContainEqual(expect.objectContaining({ branchKind: 'side', hasUnreadTurn: true })))
+      deltas.length = 0
+      unread = [root]
+      context.triggerNativeStateChange()
+      expect(deltas).toContainEqual(expect.objectContaining({
+        entries: expect.arrayContaining([expect.objectContaining({ key: task.key, readStateOnly: true, hasUnreadTurn: true })])
+      }))
+      expect(context.native.privateBranchEvidence(root)?.branches).toEqual(expect.arrayContaining([
+        expect.objectContaining({ branchKind: 'main', hasUnreadTurn: true }),
+        expect.objectContaining({ branchKind: 'side', hasUnreadTurn: false })
+      ]))
+    } finally {
+      stop()
+      context.triggerPluginOut(true)
+    }
+  })
+
   it('does not fabricate a native read acknowledgement while Desktop IPC is unavailable', async () => {
     const child = new FakeCodexProcess()
     const { bridge } = loadCodexBridge(
@@ -6068,6 +6108,96 @@ draft: v7EvidenceDraft({
       unreadAuthority: 'desktop-persisted'
     })
     bridge.close()
+  })
+
+  it('opens a hot unread target without listing threads and only applies its bound persisted read', async () => {
+    const child = new FakeCodexProcess()
+    const threadId = FIXED_THREAD_IDS[2]!
+    const siblingId = FIXED_THREAD_IDS[3]!
+    const account = 'synthetic-account'
+    const user = 'synthetic-user'
+    const digest = (input: unknown[]) => crypto.createHash('sha256').update(JSON.stringify(input)).digest('hex')
+    const identityKey = digest(['chatgpt', account, user])
+    const executionHostKey = `local:${digest(['local', 'local', null])}`
+    let nativeIds = [threadId, siblingId]
+    let rendererOwner = digest([user, account])
+    let holdRead: Promise<void> | undefined
+    let resumeRead: (() => void) | undefined
+    const nativeState = () => JSON.stringify({
+      ...JSON.parse(nativeRegistryText()),
+      'electron-renderer-content-owner': rendererOwner,
+      'environment-catalog-cache-v2': { accountId: account, userId: user },
+      'electron-thread-read-state-v1': {
+        version: 1,
+        unreadByIdentity: { [identityKey]: { [executionHostKey]: nativeIds } },
+        legacyMigration: { identityKey, adoptedHostIds: { local: executionHostKey } }
+      }
+    })
+    const openState = vi.fn(async () => {
+      const content = Buffer.from(nativeState(), 'utf8')
+      return {
+        stat: async () => ({ isFile: () => true, size: content.length }),
+        read: async (buffer: Buffer, offset: number, count: number, position: number) => {
+          await holdRead
+          return { bytesRead: content.copy(buffer, offset, position, position + count) }
+        },
+        close: async () => undefined
+      }
+    })
+    const context = loadCodexBridge(child, nativeState, null, true, true, null, false, undefined, null, {
+      fileSystem: { promises: { open: openState } }
+    })
+    try {
+      const kernel = context.platform.companionKernel
+      kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 36 })
+      await vi.waitFor(() => expect(kernel.getLatest()).toMatchObject({ complete: true }))
+      const targetKey = crypto.createHash('sha256').update(threadId).digest('hex').slice(0, 32)
+      const siblingKey = crypto.createHash('sha256').update(siblingId).digest('hex').slice(0, 32)
+      expect(kernel.getLatest().views.attentionKeys.completedUnread[0]).toBe(targetKey)
+      const inventoryCount = child.writes.filter(frame => frame.method === 'thread/list').length
+      context.triggerPluginEnter({ code: 'eypc-codex-completed-unread' })
+      await vi.waitFor(() => expect(context.openExternal).toHaveBeenCalledExactlyOnceWith(`codex://threads/${threadId}`))
+      expect(kernel.getLatest().tasks.find((task: { key: string }) => task.key === targetKey).unread).toBe(true)
+      nativeIds = []
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: { key: string }) => task.key === targetKey).unread).toBe(false))
+      expect(kernel.getLatest().tasks.find((task: { key: string }) => task.key === siblingKey).unread).toBe(true)
+      expect(child.writes.filter(frame => frame.method === 'thread/list')).toHaveLength(inventoryCount)
+      expect(openState).toHaveBeenCalledTimes(1)
+      const operationId = context.diagnosticEvents.find(event => event.event === 'shortcut-enter')?.operationId
+      expect(context.diagnosticEvents).toContainEqual(expect.objectContaining({
+        event: 'codex-open-native-read', operationId, outcome: 'confirmed',
+        details: expect.objectContaining({ evidence: 'desktop-persisted' })
+      }))
+
+      nativeIds = [threadId, siblingId]
+      context.triggerNativeStateChange()
+      holdRead = new Promise<void>(resolve => { resumeRead = resolve })
+      await expect(kernel.dispatch({ action: 'open', key: targetKey, source: 'manual-row-open', operationId: 'open-late-read' }))
+        .resolves.toMatchObject({ outcome: 'dispatched' })
+      nativeIds = []
+      await vi.waitFor(() => expect(openState).toHaveBeenCalledTimes(2))
+      nativeIds = [threadId, siblingId]
+      child.stdout.emit('data', `${JSON.stringify({
+        method: 'turn/completed',
+        params: { threadId, turn: { id: 'new-completion', status: 'completed', startedAt: 2_100_000_000, completedAt: 2_100_000_001 } }
+      })}\n`)
+      await vi.waitFor(() => expect(kernel.getLatest().tasks.find((task: { key: string }) => task.key === targetKey))
+        .toMatchObject({ unread: true, terminalAt: 2_100_000_001_000 }))
+      resumeRead?.()
+      await vi.waitFor(() => expect(context.diagnosticEvents).toContainEqual(expect.objectContaining({
+        event: 'codex-open-native-read', operationId: 'open-late-read', outcome: 'superseded'
+      })))
+      expect(kernel.getLatest().tasks.find((task: { key: string }) => task.key === targetKey).unread).toBe(true)
+      rendererOwner = 'signed-out'
+      context.triggerNativeStateChange()
+      expect(context.diagnosticEvents).toContainEqual(expect.objectContaining({
+        event: 'desktop-unread-read', outcome: 'failed',
+        details: expect.objectContaining({ reason: 'binding-unavailable', bindingKnown: false })
+      }))
+    } finally {
+      resumeRead?.()
+      context.triggerPluginOut(true)
+    }
   })
 
   it('does not create a sticky read acknowledgement through an IPC reset and refollow', async () => {

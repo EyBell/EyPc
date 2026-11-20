@@ -258,7 +258,8 @@ async function checkDesktopOwnerDiscovery(require, assetRoot, { helpers, activit
     const bridge = Object.assign(Object.create(prototype), {
       state: 'connected', socket: {}, streamGeneration: 1, inventory: new Set(), sideRecoveryPending: new Set(),
       sideTerminalReads: new Set(), shadows: new Map(), sideShadows: new Map(), streamProtocols: new Map(),
-      liveUnread: new Map(), persistedUnread: new Map(), turnRefreshes: new Map(), unreadRefreshes: new Map(),
+      liveUnread: new Map(), persistedUnread: new Map(), persistedUnreadCompletions: new Map(),
+      turnRefreshes: new Map(), unreadRefreshes: new Map(),
       waitingEdgeRefreshes: new Map(), waitingStates: new Map(),
       send: request => writes.push(request) > 0,
       followAny(threadId, following, clients) { if (clients && following) targeted.push(threadId); return true },
@@ -384,6 +385,51 @@ async function checkDesktopOwnerDiscovery(require, assetRoot, { helpers, activit
     && turn.ordinarySideInterruptedAt === abortTimestamp && turn.terminalAt === turn.turnStartedAt))
   assert.equal(sides.timers.size, 0)
 
+  for (const afterRetry of [false, true]) {
+    const quiet = fixture()
+    quiet.addRoot('parent', completed)
+    quiet.relations.set('side', 'parent')
+    quiet.bridge.followAll(true)
+    if (afterRetry) {
+      quiet.response(quiet.writes[0], { resultType: 'error', error: 'temporarily-unavailable' })
+      quiet.advance(30_000)
+    }
+    const lookups = afterRetry ? 2 : 1
+    assert.equal(quiet.writes.length, lookups)
+    quiet.advance(125)
+    assert.equal(quiet.response(quiet.writes.at(-1)), true)
+    assert.deepEqual(quiet.targeted, ['side'])
+    quiet.advance(4874)
+    assert.deepEqual(quiet.reads, [], 'owner follow can still deliver a frame before the deadline')
+    quiet.advance(1)
+    assert.deepEqual(quiet.reads, ['side'], 'a quiet owner follow wakes one persisted Side read at the deadline')
+    await quiet.finishReads()
+    assert.equal(quiet.terminals.get('parent/side')?.lastTurnStatus, 'interrupted')
+    quiet.advance(30_000)
+    assert.deepEqual(quiet.reads, ['side'])
+    assert.equal(quiet.writes.length, lookups)
+    assert.equal(quiet.timers.size, 0)
+  }
+
+  for (const change of ['trusted-frame', 'stream-generation']) {
+    const current = fixture()
+    current.addRoot('parent', completed)
+    current.relations.set('side', 'parent')
+    current.bridge.followAll(true)
+    current.response(current.writes[0])
+    current.advance(4999)
+    if (change === 'trusted-frame') {
+      current.bridge.sideShadows.set('side', { ownerClientId: 'synthetic-owner', revision: 1, parentThreadId: 'parent' })
+      current.bridge.streamProtocols.set('side', { available: true, generation: 1,
+        ownerClientId: 'synthetic-owner', trustedRevision: 1 })
+      current.owner.codexDesktopReconcileOwnerTarget(current.bridge, 'side')
+    } else current.bridge.streamGeneration += 1
+    current.advance(35_000)
+    assert.deepEqual(current.reads, [], `${change} invalidates the scheduled Side read`)
+    assert.deepEqual(current.sent(), ['side'])
+    assert.equal(current.timers.size, 0)
+  }
+
   const snapshot = fixture()
   snapshot.addRoot('parent', completed)
   snapshot.relations.set('side', 'parent')
@@ -478,7 +524,7 @@ async function checkDesktopOwnerDiscovery(require, assetRoot, { helpers, activit
     diagnostics.syncStage('h:1234567890abcdef', retryStages[index], { outcome, priority: 'targeted' })
   }
   assert.deepEqual(records.slice(-4).map(event => event.details.stage), retryStages, 'a retry logs a new queue timestamp after discard')
-  return 21
+  return 25
 }
 
 function checkInternalReviewMembership(require) {
@@ -554,6 +600,7 @@ async function checkSpawnEdgeReaders(require) {
 export async function checkCompanionLifecycles(assetRoot) {
   const require = createRequire(resolve(assetRoot, 'index.js'))
   const { createCompanionTaskKernel } = require('./companion/task-kernel.cjs')
+  const { createCompanionOpenReadiness } = require('./companion/open-readiness.cjs')
   const { createEvidenceNodeV7, createEvidenceBatchV7, codexBranchObservationV7 } = require('./companion/evidence-adapter-v7.cjs')
   const providers = { codex: true, claude: false, cursor: false, orca: false }
   const lanes = ['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology']
@@ -568,14 +615,16 @@ export async function checkCompanionLifecycles(assetRoot) {
     function publish(rows, generation, { complete = false, remove = [], unreadGeneration = generation, hostEvidence = false } = {}) {
       const family = 'codex:lifecycle'
       const nodes = rows.map(({ key, phase = 'completed', epoch = 100, unread = false, known = true, branch,
-        closedMachineRun, relationOnly, goalVerifying, turnStartedAt = phase === 'unknown' ? 0 : epoch }) => createEvidenceNodeV7({
+        closedMachineRun, machineRunCoverageCurrent, relationOnly, goalVerifying,
+        turnStartedAt = phase === 'unknown' ? 0 : epoch }) => createEvidenceNodeV7({
         key, provider: 'codex', family, role: key === 'main' ? 'root' : 'child', standaloneEligible: key === 'main',
         observedAt: epoch + (phase === 'completed' ? 10 : 0), causalKey: `${key}:${epoch}`,
         capabilities: key === 'main' ? branch ? ['open', 'archive', 'continue-task'] : ['open', 'archive'] : [],
         metadata: { kind: key === 'main' ? 'codex-thread' : 'topology-child',
           actionAlias: key === 'main' ? 'ct_lifecycle_main_1234567890' : '',
           revisionAt: epoch, membershipRevision: generation, visibilityRevision: generation, metadataRevision: generation,
-          lastQuestionAt: 100, createdAt: 50, closedMachineRun, relationOnly },
+          lastQuestionAt: 100, createdAt: 50, closedMachineRun, machineRunCoverageCurrent, relationOnly,
+          idleConfirmed: branch?.idleConfirmed === true },
         observation: branch ? codexBranchObservationV7({ branchKind: key === 'main' ? 'main' : 'side',
           status: 'idle', lastTurnStatus: phase === 'unknown' ? undefined : phase === 'stopped' ? 'interrupted' : 'completed',
           goalStatus: 'none', goalFreshness: 'fresh',
@@ -599,7 +648,11 @@ export async function checkCompanionLifecycles(assetRoot) {
         interactionRef: 'f'.repeat(32), kind: 'user-input', state: row.interactionState || 'opened', sequence: row.epoch || 100,
         turnEpoch: row.epoch || 100, requestSetRevision: generation, authority: 'provider-live', exact: true
       }))
-      const batch = createEvidenceBatchV7({ provider: 'codex', nodes, interactions, relations, relationsComplete: complete,
+      const interactionSets = rows.filter(row => row.requestCoverage === true).map(row => ({
+        revision: 'companion-interaction-evidence-v1', provider: 'codex', taskKey: row.key,
+        requestSetRevision: generation, complete: true
+      }))
+      const batch = createEvidenceBatchV7({ provider: 'codex', nodes, interactions, interactionSets, relations, relationsComplete: complete,
         snapshotLanes: complete ? lanes : [], completeLanes: complete ? lanes : [],
         laneGenerations: Object.fromEntries(lanes.map(lane => [lane, lane === 'unread' ? unreadGeneration : generation])),
         removedKeys: { membership: remove }, health: 'ready' })
@@ -677,6 +730,30 @@ export async function checkCompanionLifecycles(assetRoot) {
       assert.equal(root.capabilities.continueTask, false, name)
       assert.equal(Object.hasOwn(root, 'ordinarySideInterruptedAt'), false, name)
       if (childRow === endedSide && trusted) assert.equal(scenario.kernel.getActivityCheckpoint('side').phase, 'stopped', name)
+    } finally { scenario.kernel.close() }
+  }
+  const clearedPlan = { idleConfirmed: true, planLifecycleState: 'cleared', planClearReason: 'cancel' }
+  const settledRoot = { ...completedMain, epoch: 30_000, requestCoverage: true, unread: true, branch: clearedPlan }
+  const oldMachine = { ...endedSide, epoch: 10_000, requestCoverage: true, closedMachineRun: false,
+    machineRunCoverageCurrent: true, branch: { ...clearedPlan, terminalAt: 20_000 } }
+  for (const [label, machine, phase] of [
+    ['exact interruption earlier than this main Turn', oldMachine, 'completed'],
+    ['request coverage lost', { ...oldMachine, machineRunCoverageCurrent: false }, 'stopped'],
+    ['incomplete request set', { ...oldMachine, requestCoverage: false }, 'stopped'],
+    ['start without an actual end', { ...oldMachine, branch: { ...oldMachine.branch, terminalAt: 10_000 } }, 'stopped'],
+    ['potential overlap within second precision', { ...oldMachine, branch: { ...oldMachine.branch, terminalAt: 30_000 } }, 'stopped'],
+    ['active Goal', { ...oldMachine, branch: { ...oldMachine.branch, goalStatus: 'active' } }, 'running']
+  ]) {
+    const scenario = fixture()
+    try {
+      scenario.publish([settledRoot, machine], 1, { hostEvidence: true })
+      const root = scenario.expectRoot(phase, true, 2, phase !== 'running')
+      assert.equal(root.capabilities.continueTask, false, label)
+      if (phase === 'completed') {
+        assert.equal(scenario.kernel.getActivityCheckpoint('side').phase, 'stopped', 'old machine activity stays in member history')
+        scenario.publish([settledRoot, { ...machine, machineRunCoverageCurrent: false }], 2, { hostEvidence: true })
+        scenario.expectRoot('stopped', true, 2, true)
+      }
     } finally { scenario.kernel.close() }
   }
   const resumed = fixture()
@@ -947,6 +1024,26 @@ export async function checkCompanionLifecycles(assetRoot) {
     assert.deepEqual(stoppedUnread.kernel.getPackage().views.attentionKeys.completedUnread, [])
     assert.deepEqual(stoppedUnread.kernel.getPackage().views.cycleKeys, ['main'])
   } finally { stoppedUnread.kernel.close() }
+  let finishProbe
+  let readinessDispatches = 0
+  const readiness = createCompanionOpenReadiness({
+    strategies: { codex: { probe: () => new Promise(resolve => { finishProbe = resolve }), launch: async () => ({ ok: false }) } }
+  })
+  const staleAttention = fixture(readiness.wrapOpen('codex', async () => {
+    readinessDispatches += 1
+    return { outcome: 'dispatched' }
+  }))
+  try {
+    staleAttention.publish([{ ...main, unread: true }], 1)
+    const opening = staleAttention.kernel.dispatch({ action: 'open-attention', kind: 'completed-unread', source: 'global-shortcut' })
+    for (let index = 0; !finishProbe && index < 20; index += 1) await Promise.resolve()
+    assert.equal(typeof finishProbe, 'function')
+    staleAttention.publish([{ ...main, epoch: 300, unread: true }], 2)
+    finishProbe('running')
+    assert.equal((await opening).errorCode, 'stale-target', 'the old completion cannot dispatch after the readiness await')
+    assert.equal(readinessDispatches, 0)
+    checked++
+  } finally { staleAttention.kernel.close() }
   const remaining = fixture()
   try {
     remaining.publish([main, { ...side, unread: true }, { key: 'sibling', phase: 'running' }], 1)

@@ -113,6 +113,7 @@
         "scripts/validate-preload-entry-budget.mjs",
         "scripts/check-working-preload-mirrors.mjs",
         "scripts/check-runtime-identity.mjs",
+        "scripts/utools-preload-assets.mjs",
         "scripts/utools-runtime-identity.mjs",
         "scripts/utools-runtime-identity.d.mts",
         "tests/platform/runtimeIdentity.test.ts"
@@ -457,7 +458,8 @@
       ],
       "testNames": [
         "consumes a hot previous/next entry in preload without forwarding a duplicate Renderer payload",
-        "retains provider preflight for a cold previous/next preload entry"
+        "retains provider preflight for a cold previous/next preload entry",
+        "opens a hot unread target without listing threads and only applies its bound persisted read"
       ]
     },
     {

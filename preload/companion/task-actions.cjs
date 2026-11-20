@@ -312,7 +312,16 @@ function createCompanionTaskActions(dependencies = {}) {
       return { ...result, operationId: currentOperationId }
     }
     try {
-      const result = normalizeOpenResult(await adapter.open(target, { ...input, operationId: currentOperationId }), target)
+      const request = {
+        ...input,
+        operationId: currentOperationId,
+        isOpenCurrent() {
+          if (disposed || !enabled || !ready || !enabledProviders.has(target.provider)
+            || resolveOpenTarget(input)?.provider !== target.provider) return false
+          return typeof input.isOpenCurrent !== 'function' || input.isOpenCurrent() === true
+        }
+      }
+      const result = normalizeOpenResult(await adapter.open(target, request), target)
       trace('open', result.outcome, target, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source })
       return { ...result, operationId: currentOperationId }
     } catch {

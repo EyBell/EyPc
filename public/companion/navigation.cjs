@@ -457,10 +457,17 @@ function createCompanionNavigation(dependencies = {}) {
       // A rapid sequence may return to the target already being opened. The
       // final intent has then already been satisfied, so do not call Provider
       // twice merely because intermediate presses advanced the logical cursor.
-      if (!directQueue.length && queuedCycle?.target.key === request.target.key) {
+      if ((result.outcome === 'opened' || result.outcome === 'dispatched')
+        && !directQueue.length && queuedCycle?.target.key === request.target.key
+        && queuedCycle.target.phase === request.target.phase
+        && queuedCycle.target.actionAlias === request.target.actionAlias
+        && snapshot.cycleKeys.includes(request.target.key)) {
         const satisfied = queuedCycle
         queuedCycle = null
-        resolveRequest(satisfied, { ...result })
+        record({ level: 'debug', scope: 'navigation', event: 'cycle', outcome: 'reused',
+          operationId: satisfied.operationId, provider: request.target.provider, taskRef: request.target.key,
+          details: { dispatchOperationId: currentOperationId } })
+        resolveRequest(satisfied, { ...result, operationId: satisfied.operationId })
       }
     } catch {
       lastOutcome = 'failed'
@@ -612,6 +619,8 @@ function createCompanionNavigation(dependencies = {}) {
         source,
         operationId: currentOperationId,
         trustedResolvedTarget: input.trustedResolvedTarget === true,
+        attentionKind: input.attentionKind === 'input' || input.attentionKind === 'completed-unread'
+          ? input.attentionKind : '',
         resolve
       })
       pump()

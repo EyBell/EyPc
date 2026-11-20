@@ -1,5 +1,9 @@
 # EyPc Project Status Hub
 
+- 2026-11-20 19:51:31.622，旧机器中断归组、同完成实例的原生读态补核及热态快捷键已通过完整构建。当前产物为 `V7` / `host-d8352f0ac722a56c809a` / `renderer-9f307277830535f194ee`，builtAt `2026-11-20T11:51:31.622Z`。最近宿主握手仍为 18:33 的旧包。新版的 Main、Float、快捷入口和十组窗口到达对照待验。[主检出插件入口](../../dist/plugin.json) · [同版验收](261114/codex-state-sync/delivery.md#shortcut-read-reconciliation-261120)。
+
+- 2026-11-20 18:41:11.853，普通 Side 定向订阅后未收到新帧，按原期限唤醒补读。已有可信帧或连接换代时，旧补读失效。首次查询、重试查询以及两种失效条件已纳入源码和产物的构建校验。当前产物为 `V7` / `host-17f7a83078584838956d` / `renderer-58fd227e70b293410f23`，builtAt `2026-11-20T10:41:11.853Z`。uTools 新包待验。[主检出插件入口](../../dist/plugin.json) · [定向验证](../../scripts/check-companion-lifecycles.mjs#L387)。
+
 - 2026-11-20 15:54:20，提交前按同一源码重新完成 `closeout` 构建。当前产物为 `V7` / `host-76820ccd4e3888194fd9` / `renderer-badaca6d487bfad43880`，builtAt `2026-11-20T07:54:20.445Z`。回执和产物身份一致。uTools 实机待验。[主检出插件入口](../../dist/plugin.json)。
 
 - 2026-11-20 15:35:34，本地 `main` 快进至 `150f1c3`，合入悬浮卡片紧凑化并保留本地 Codex 状态同步改动。合入后的 `closeout` 完整构建通过，`V7` / `host-76820ccd4e3888194fd9` / `renderer-badaca6d487bfad43880`，builtAt `2026-11-20T07:35:34.442Z`。产物身份与回执一致。从[主检出插件入口](../../dist/plugin.json)接入 uTools 后，核验[悬浮卡片](261120/eypc-float-card-compact/task-card.md#影响与验收)和[原生状态同步](261114/codex-state-sync/delivery.md#handoff)。

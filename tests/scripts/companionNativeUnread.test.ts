@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const { createCodexDesktopUnreadRecovery } = require('../../preload/codex/desktop-unread-evidence.cjs')
+const { createCodexDesktopOpenObservation } = require('../../preload/codex/desktop-open-observation.cjs')
 
 function recoveryHarness() {
   let time = 1000
@@ -94,7 +95,7 @@ describe('Codex unread recovery isolation', () => {
 
 describe('Native Codex identity-scoped unread gate', () => {
   it('executes native/legacy source selection, identity isolation and live protocol acceptance', () => {
-    expect(checkCompanionNativeUnread(resolve('preload'))).toBe(23)
+    expect(checkCompanionNativeUnread(resolve('preload'))).toBe(31)
   })
   it('rejects the obsolete live unread protocol policy', () => {
     const temporary = mkdtempSync(join(tmpdir(), 'eypc-native-unread-'))
@@ -148,4 +149,35 @@ describe('Native Codex identity-scoped unread gate', () => {
     } finally { rmSync(temporary, { recursive: true, force: true }) }
   })
 
+})
+
+describe('Native Codex open experiment', () => {
+  it('prepares ten balanced pairs and targets the same verified application once per explicit dispatch', async () => {
+    let app = { path: '/Applications/Synthetic Codex.app', pid: 42, foreground: false }
+    const launches: string[][] = []
+    const experiment = createCodexDesktopOpenObservation({
+      record: () => undefined, platform: 'darwin', pairedBenchmark: true, readMacApp: async () => app,
+      execFile: (file: string, args: string[], _options: unknown, callback: (error: Error | null) => void) => {
+        launches.push([file, ...args])
+        callback(null)
+      }
+    })
+    const target = 'codex://threads/12345678-1234-4234-8234-123456789abc'
+    const pairs: string[] = []
+    for (let index = 0; index < 20; index += 1) {
+      const trial = await experiment.prepareBenchmarkTrial()
+      expect(trial).toMatchObject({ ready: true, app, pair: Math.floor(index / 2) + 1 })
+      pairs.push(trial.arm)
+      await trial.open?.(target)
+      if (index === 0) {
+        app = { ...app, pid: 43 }
+        await expect(experiment.prepareBenchmarkTrial()).resolves.toEqual({ ready: false })
+        app = { ...app, pid: 42 }
+      }
+    }
+    expect(pairs.join(',')).toBe(Array.from({ length: 5 }, () => 'default,explicit,explicit,default').join(','))
+    expect(launches).toEqual(Array.from({ length: 10 }, () => ['/usr/bin/open', '-a', app.path, target]))
+    await expect(experiment.prepareBenchmarkTrial()).resolves.toBeNull()
+    expect(createCodexDesktopOpenObservation({ record: () => undefined, platform: 'darwin' }).prepareBenchmarkTrial).toBeNull()
+  })
 })

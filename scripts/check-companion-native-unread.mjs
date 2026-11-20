@@ -34,6 +34,41 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.throws(() => parse({ 'electron-thread-read-state-v1': { ...state, legacyMigration: { ...state.legacyMigration, cleared: true } } }), /identity/)
   assert.throws(() => parse({ 'electron-thread-read-state-v1': { ...state, version: 2 } }), /invalid/)
   assert.deepEqual(parse({ 'electron-thread-read-state-v1': { version: 1, unreadByIdentity: {} } }, binding), [], 'native exact-context empty bucket is read')
+  const { boundNativeUnreadIds, createCodexDesktopOpenObservation } = require('./codex/desktop-open-observation.cjs')
+  const localHost = `local:${createHash('sha256').update(JSON.stringify(['local', 'local', null])).digest('hex')}`
+  const owner = createHash('sha256').update(JSON.stringify([identity.userId, identity.accountId])).digest('hex')
+  const protectedState = {
+    'electron-renderer-content-owner': owner,
+    'environment-catalog-cache-v2': { accountId: identity.accountId, userId: identity.userId },
+    'electron-thread-read-state-v1': {
+      ...state, legacyMigration: { identityKey, adoptedHostIds: { local: localHost } },
+      unreadByIdentity: { [identityKey]: { [localHost]: [side], 'synthetic-remote-host': [main, remote] } }
+    }
+  }
+  assert.deepEqual([...boundNativeUnreadIds(protectedState, { identityKey, executionHostKey: localHost })], [side],
+    'only the verified current account and local host may clear the target')
+  assert.equal(boundNativeUnreadIds(protectedState, binding), null, 'a receipt from the previous execution host is unknown')
+  assert.equal(boundNativeUnreadIds({ ...protectedState, 'electron-renderer-content-owner': otherKey },
+    { identityKey, executionHostKey: localHost }), null, 'a changed renderer account invalidates the target read')
+  let currentCompletion = 'first'
+  const openEvents = []
+  const observation = createCodexDesktopOpenObservation({
+    record: event => openEvents.push(event), setTimer: () => 1, clearTimer: () => {}
+  })
+  const open = observation.begin({
+    threadId: main, key: 'main', operationId: 'open-first', route: 'electron-deep-link',
+    readScope: { current: () => currentCompletion === 'first', acceptsLive: observed => observed === binding }
+  })
+  open(true)
+  observation.nativeRead(side, binding)
+  observation.nativeRead(main, { ...binding })
+  assert(!openEvents.some(event => event.outcome === 'confirmed'), 'another target or binding cannot confirm the open')
+  currentCompletion = 'second'
+  observation.nativeRead(main, binding)
+  assert(openEvents.some(event => event.operationId === 'open-first' && event.event === 'codex-open-native-read' && event.outcome === 'superseded'),
+    'a delayed receipt settles only its original completion')
+  assert(openEvents.some(event => event.event === 'codex-open-target-visible' && event.outcome === 'unconfirmed'),
+    'dispatch does not establish target visibility')
   const { codexDesktopIpcVersionAccepted } = require('./codex/desktop-protocol.cjs')
   const file = resolve(assetRoot, assetRoot.endsWith('preload') ? 'index.js' : 'preload.js')
   const source = readFileSync(file, 'utf8')
@@ -180,6 +215,13 @@ export function checkCompanionNativeUnread(assetRoot) {
   branches = projectionContext.codexPrivateBranchEvidence(main, known).branches
   assert.equal(branches.find(value => value.branchKind === 'main').turnStartedAt, 500, 'Side completion preserves the newer parent epoch')
   assert.equal(branches.find(value => value.branchKind === 'side').turnStartedAt, 100, 'Side completion keeps its own exact epoch')
+  projectionContext.codexInventorySideBranchEvidence.set(side, { parentThreadId: main, spawnEdgeStatus: 'open' })
+  terminals.set(side, { lastTurnStatus: 'interrupted', lastTurnEvidence: 'turn-completed', turnRef: 'machine-turn',
+    turnStartedAt: 100, terminalAt: 100, sideInterruptedAt: 200, terminalEvidenceSequence: 30 })
+  const machine = projectionContext.codexPrivateBranchEvidence(main, known).branches.find(value => value.branchKind === 'side')
+  assert.equal(machine.closedMachineRun, false, 'an exact open spawn edge is retained as its own fact')
+  assert.equal(machine.terminalAt, 200, 'an exact machine interruption provides its actual end rather than a start-time fallback')
+  projectionContext.codexInventorySideBranchEvidence.delete(side)
   // Exercise the actual cold-idle scheduling method without an IPC payload,
   // messages, process launch or any inferred completion from runtime idle.
   terminals.clear()
@@ -206,7 +248,7 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(queries[0].options.settleSnapshotTerminal, true)
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 0, '', false, true), true, 'exact inactive member terminal can settle at first successful read')
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 200, 'inProgress', true, true), false, 'idle cannot authorize an older member epoch')
-  return 23
+  return 31
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
