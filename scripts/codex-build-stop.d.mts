@@ -17,6 +17,23 @@ export interface HookResponse {
   systemMessage?: string
 }
 
+export interface CloseoutResponse {
+  status: 'rebuilt' | 'reused' | 'failed' | 'locked'
+  source: 'closeout'
+  reason: string
+  identity?: Record<'coreVersion' | 'hostAssetId' | 'rendererAssetId' | 'builtAt', string>
+  buildAttempted: boolean
+  exitCode: number | null
+  message?: string
+}
+
+export function handleCloseout(options?: {
+  root?: string
+  cwd?: string
+  sessionId?: string
+  build?: (root: string) => Promise<BuildResult>
+}): Promise<CloseoutResponse>
+
 export function inputDigest(root: string): string
 export function runBuild(root: string, timeoutMs?: number): Promise<BuildResult>
 export function handleStop(event: StopEvent, options?: {

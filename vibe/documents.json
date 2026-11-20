@@ -1,0 +1,1117 @@
+{
+  "schema": "task-document-catalog/v1",
+  "task_id": "eypc-build-hook-lock-scope",
+  "title": "EyPc 构建边界与任务级规则优化试点",
+  "timezone": "Asia/Shanghai",
+  "documents": [
+    {
+      "id": "eypc-task-action-path-card",
+      "path": "specs/261113/task-action-path/task-card.md",
+      "title": "插件计划实施与任务继续通路核验",
+      "summary": "保留任务事实与历史。O1–O3构建门禁方案仍未实施；2026-11-16的显式closeout入口已另行实现，其它任务成果不混入该方案。",
+      "role": "history",
+      "category": "task",
+      "lifecycle": "mixed",
+      "tags": [
+        "build-hook",
+        "task-history"
+      ],
+      "aliases": [
+        "task-card"
+      ]
+    },
+    {
+      "id": "eypc-build-hook-lock-scope-guide",
+      "path": "specs/261113/task-action-path/build-hook-lock-scope-guide.md",
+      "title": "构建锁与触发边界实施指导",
+      "summary": "唯一实施指导；当前仅为方案，功能未实施，不是生效规则。",
+      "role": "delivery",
+      "category": "guide",
+      "lifecycle": "current",
+      "tags": [
+        "build-hook",
+        "implementation-guide"
+      ],
+      "aliases": [
+        "build-hook-lock-scope-guide"
+      ]
+    },
+    {
+      "id": "eypc-project-documentation-rules",
+      "path": "rules/documentation.md",
+      "title": "EyPc Documentation Rules",
+      "summary": "保留项目现行文档与构建门禁，并提供本次文档关联试点的查询入口。",
+      "role": "navigation",
+      "category": "rules",
+      "lifecycle": "current",
+      "tags": [
+        "build-hook",
+        "sqlite-pilot"
+      ],
+      "aliases": [
+        "documentation-rules"
+      ]
+    },
+    {
+      "id": "eypc-task-prevention-memo",
+      "path": "specs/261113/task-action-path/task-prevention-memo.md",
+      "title": "逐目标预防备忘录",
+      "summary": "O1–O7各对应三条预防，开工、范围变化和交付时消费；没有新增自动执行门禁。",
+      "role": "delivery",
+      "category": "prevention",
+      "lifecycle": "current",
+      "tags": [
+        "task-prevention",
+        "scope-control",
+        "sqlite-pilot"
+      ],
+      "aliases": [
+        "prevention-memo",
+        "O1-O7",
+        "P01-P21"
+      ]
+    },
+    {
+      "id": "eypc-rule-optimization-index",
+      "path": "specs/261113/task-action-path/rule-optimization-index.md",
+      "title": "EyPc 任务级规则优化思路索引",
+      "summary": "十二条项目思路及其来源、独立状态和专门对话职责；全局方向主本保留原归属。",
+      "role": "navigation",
+      "category": "rule-optimization",
+      "lifecycle": "current",
+      "tags": [
+        "rule-ideas",
+        "task-prevention",
+        "sqlite-pilot"
+      ],
+      "aliases": [
+        "rule-optimization-index",
+        "R01-R12"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "eypc-task-indexes-guide",
+      "source": "eypc-task-action-path-card",
+      "target": "eypc-build-hook-lock-scope-guide",
+      "type": "indexes",
+      "source_ref": "specs/261113/task-action-path/task-card.md#sqlite-引用试点"
+    },
+    {
+      "id": "eypc-guide-depends-task",
+      "source": "eypc-build-hook-lock-scope-guide",
+      "target": "eypc-task-action-path-card",
+      "type": "depends-on",
+      "source_ref": "specs/261113/task-action-path/build-hook-lock-scope-guide.md#文档关联维护"
+    },
+    {
+      "id": "eypc-guide-depends-rules",
+      "source": "eypc-build-hook-lock-scope-guide",
+      "target": "eypc-project-documentation-rules",
+      "type": "depends-on",
+      "source_ref": "rules/documentation.md#文档关联-sqlite-试点"
+    },
+    {
+      "id": "eypc-task-indexes-prevention",
+      "source": "eypc-task-action-path-card",
+      "target": "eypc-task-prevention-memo",
+      "type": "indexes",
+      "source_ref": "specs/261113/task-action-path/task-card.md#规则优化与逐目标预防"
+    },
+    {
+      "id": "eypc-task-indexes-rule-ideas",
+      "source": "eypc-task-action-path-card",
+      "target": "eypc-rule-optimization-index",
+      "type": "indexes",
+      "source_ref": "specs/261113/task-action-path/task-card.md#规则优化与逐目标预防"
+    },
+    {
+      "id": "eypc-prevention-depends-guide",
+      "source": "eypc-task-prevention-memo",
+      "target": "eypc-build-hook-lock-scope-guide",
+      "type": "depends-on",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o1"
+    },
+    {
+      "id": "eypc-rule-ideas-record-prevention",
+      "source": "eypc-rule-optimization-index",
+      "target": "eypc-task-prevention-memo",
+      "type": "records",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r04"
+    },
+    {
+      "id": "eypc-rule-ideas-depend-rules",
+      "source": "eypc-rule-optimization-index",
+      "target": "eypc-project-documentation-rules",
+      "type": "depends-on",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#state-contract"
+    },
+    {
+      "id": "eypc-rule-ideas-relate-guide",
+      "source": "eypc-rule-optimization-index",
+      "target": "eypc-build-hook-lock-scope-guide",
+      "type": "related",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#核心方向"
+    },
+    {
+      "id": "eypc-rules-index-rule-ideas",
+      "source": "eypc-project-documentation-rules",
+      "target": "eypc-rule-optimization-index",
+      "type": "indexes",
+      "source_ref": "rules/documentation.md#文档关联-sqlite-试点"
+    }
+  ],
+  "updates": [
+    {
+      "id": "eypc-sqlite-reference-pilot-20261113",
+      "occurred_at": "2026-11-13T22:02:35+08:00",
+      "recorded_at": "2026-11-13T22:02:35+08:00",
+      "summary": "本次仅将三份文档的引用关系改由目录声明；正文各守职责，构建门禁方案未实施。",
+      "source_ref": "specs/261113/task-action-path/task-card.md#sqlite-引用试点",
+      "documents": [
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-project-documentation-rules",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-rule-prevention-pilot-20261114",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "本轮扩展为五份文档；核心功能继续停在方案阶段。逐条状态以专用JSON更新快照承载，不改变通用schema或全局规则。",
+      "source_ref": "specs/261113/task-action-path/task-card.md#规则优化与逐目标预防",
+      "documents": [
+        "eypc-task-action-path-card",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-task-prevention-memo",
+        "eypc-rule-optimization-index",
+        "eypc-project-documentation-rules"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S0-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S0\",\"thread_id\":\"01a1d3cc-ed74-7230-80b6-c06288f2f4f5\",\"title\":\"261114-EYPC-收敛方案与规则统筹\",\"turn_id\":\"01a1d82c-e86f-7942-ba6e-da2fe0a75d8b\",\"message_id\":\"01a1d82c-ea01-7931-9a3b-7bfc52edbc1f\",\"window\":\"2026-11-13/2026-11-14 Asia/Shanghai\",\"body_read\":true,\"pages_this_pass\":1,\"turns_this_pass\":8,\"older_unread\":true,\"completeness\":\"latest-page-plus-carried-task-context;not-full-reread\",\"confirmation\":\"documentation-and-new-dialogue-authorized;core-implementation-not-authorized\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S1-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S1\",\"thread_id\":\"01a1d2c9-3bb3-72d3-a201-684f523946b8\",\"title\":\"261113-NOTE-优化核心方向整理\",\"turn_id\":\"01a1d52c-8639-7cd3-8efa-9adf930bc3c5\",\"message_id\":\"01a1d52c-877f-78c3-8894-47cc26c0835a\",\"message_dates\":[\"2026-11-13\"],\"body_read\":true,\"page_requests\":6,\"includes_rereads\":true,\"older_unread\":false,\"completeness\":\"middle-truncated;latest-user-and-final-read\",\"confirmation\":\"15-directions-pending;earlier-P06-P07-acceptance-is-separate\",\"document_refs\":[\"/Users/gdkmjd/work/czz/CzzProj/CodeNote/vibe/specs/2611/261105/1332-orchestration-continuity/proposals/optimization-core-directions.md\"]}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S2-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S2\",\"thread_id\":\"01a1d52e-fb16-7780-9cf8-976d12904952\",\"title\":\"261113-CN-规则优化方向整合\",\"previous_title\":\"261113-CN-连续对话关联方案\",\"turn_id\":\"01a1d830-7e1a-7313-8957-cdf350ce2006\",\"message_id\":\"01a1d830-7fa5-73b1-bf00-05c0fc0fb440\",\"prior_user_message_id\":\"01a1d52f-0c4c-7ac2-aeb8-f702f74947bd\",\"body_read\":true,\"page_requests\":2,\"message_dates\":[\"2026-11-13\",\"2026-11-14\"],\"completeness\":\"prior-middle-truncated;latest-turn-in-progress\",\"confirmation\":\"research-and-consolidation-authorized;global-candidate-not-adopted\",\"document_refs\":[\"/Users/gdkmjd/work/czz/CzzProj/CodeNote/vibe/specs/2611/261105/1332-orchestration-continuity/proposals/261113-continuity-sqlite-direction-v0.1.md\"]}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S3-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S3\",\"thread_id\":\"01a1d52d-020f-7111-a5bc-646081835d69\",\"title\":\"261113-NOTE-执行对照方向\",\"body_read\":true,\"pages\":1,\"turns\":1,\"message_dates\":[\"2026-11-13\"],\"older_unread\":false,\"completeness\":\"agent-body-only;user-body-unavailable\",\"confirmation\":\"unknown\",\"document_refs\":[\"/Users/gdkmjd/work/czz/CzzProj/CodeNote/vibe/specs/2611/261105/1332-orchestration-continuity/proposals/261113-213925-execution-verification-direction-v0.1.md\"]}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S4-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S4\",\"thread_id\":\"01a1d3bf-c93f-7da2-9933-baa6b59e07ae\",\"title\":\"261114-EYPC-核查额度账号去重\",\"body_read\":true,\"pages\":1,\"turns\":2,\"message_dates\":[\"2026-11-14\"],\"older_unread\":true,\"completeness\":\"latest-two-turns;window-followup-pending\",\"confirmation\":\"flow-corrections-only;quota-feature-excluded\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S5-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S5\",\"thread_id\":\"01a1d523-4483-7e83-9780-0272852f7c9b\",\"title\":\"261113-EYPC-精简悬浮重置提示\",\"body_read\":true,\"pages\":1,\"turns\":2,\"message_dates\":[\"2026-11-13\"],\"older_unread\":true,\"completeness\":\"latest-two-turns;window-followup-pending\",\"confirmation\":\"per-item-correction-and-core-confirmation;product-copy-excluded\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S6-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S6\",\"thread_id\":\"01a1d4e3-3a8b-7cf1-b746-76c575fffd84\",\"title\":\"261113-EYPC-发送安装包到视窗\",\"body_read\":true,\"pages\":1,\"turns\":1,\"message_dates\":[\"2026-11-13\"],\"older_unread\":false,\"confirmation\":\"existing-package-send-only;no-build-or-hook-fix-approval\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-build-hook-lock-scope-guide"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R01-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R01\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"accepted-plan\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"documented\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O1\",\"O5\",\"O6\"],\"source_ids\":[\"S0\",\"S1\",\"S5\"],\"owner_refs\":[\"CodeNote:VibeAi.md#2-task-outcome-and-evidence-stop-contract\"],\"next_action\":\"user-controls-core-implementation-and-global-promotion\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r01",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-build-hook-lock-scope-guide"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R02-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R02\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"accepted-plan\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"not-started\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O1\",\"O2\",\"O5\"],\"source_ids\":[\"S0\",\"S3\"],\"owner_refs\":[\"CodeNote:VibeAi.md#4-action-authority\",\"CodeNote:codex-evolution/orchestration/README.md\"],\"next_action\":\"verify-scope-metadata-before-core-implementation\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r02",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-task-prevention-memo"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R03-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R03\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"pilot\",\"adoption_global\":\"pending-review\",\"execution_state\":\"pilot-applied\",\"verification_state\":\"unverified\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O4\",\"O6\"],\"source_ids\":[\"S0\",\"S1\",\"S2\"],\"owner_refs\":[\"CodeNote:process/documentation-impact.md#structured-asset-projections\"],\"next_action\":\"query-local-pilot;global-storage-owner-stays-candidate\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r03",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-project-documentation-rules"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R04-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R04\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"pilot\",\"adoption_global\":\"pending-review\",\"execution_state\":\"documented\",\"verification_state\":\"unverified\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O1\",\"O2\",\"O3\",\"O4\",\"O5\",\"O6\",\"O7\"],\"source_ids\":[\"S0\",\"S3\"],\"owner_refs\":[\"CodeNote:process/rules.md#23-evolution-candidate-gate\"],\"next_action\":\"check-target-coverage-and-real-consumer;no-auto-blocker\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r04",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R05-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R05\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"accepted-plan\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"documented\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O5\",\"O7\"],\"source_ids\":[\"S0\",\"S1\",\"S3\"],\"owner_refs\":[\"CodeNote:codex-evolution/orchestration/README.md\"],\"next_action\":\"compare-actual-diff-and-current-evidence-at-implementation\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r05",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-task-prevention-memo"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R06-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R06\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"pilot\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"pilot-applied\",\"verification_state\":\"unverified\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O4\",\"O5\",\"O6\",\"O7\"],\"source_ids\":[\"S0\",\"S1\",\"S2\"],\"owner_refs\":[\"CodeNote:process/rules.md\"],\"next_action\":\"query-independent-status-fields;do-not-infer-promotion\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r06",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R07-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R07\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"pilot\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"reported\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O6\",\"O7\"],\"source_ids\":[\"S0\",\"S1\",\"S2\",\"S3\",\"S4\",\"S5\",\"S6\"],\"owner_refs\":[\"CodeNote:process/communication-io.md#structured-asset-retrieval\",\"CodeNote:security/rules.md#privacy-before-observation\"],\"next_action\":\"preserve-truncation-and-window-coverage;complete-only-relevant-gaps\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r07",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R08-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R08\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"covered-existing\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"documented\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"not-requested\",\"objective_ids\":[\"O2\",\"O4\",\"O5\",\"O6\"],\"source_ids\":[\"S0\",\"S1\",\"S3\"],\"owner_refs\":[\"CodeNote:testing/rules.md\",\"CodeNote:process/documentation-impact.md\"],\"next_action\":\"reuse-valid-evidence;no-whole-suite-for-document-closeout\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r08",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-build-hook-lock-scope-guide"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R09-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R09\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"covered-existing\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"documented\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"not-requested\",\"objective_ids\":[\"O5\",\"O7\"],\"source_ids\":[\"S0\",\"S1\",\"S2\"],\"owner_refs\":[\"CodeNote:codex-evolution/orchestration/README.md#operation-model-routing\"],\"next_action\":\"reuse-existing-executors;historical-P06-P07-not-product-acceptance\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r09",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R10-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R10\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"accepted-plan\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"not-started\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O2\",\"O3\",\"O5\"],\"source_ids\":[\"S0\",\"S6\"],\"owner_refs\":[\"CodeNote:process/rules.md\"],\"next_action\":\"bind-future-build-and-package-evidence-to-actual-object\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r10",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-build-hook-lock-scope-guide"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R11-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R11\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"pilot\",\"adoption_global\":\"pending-review\",\"execution_state\":\"not-started\",\"verification_state\":\"unverified\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O6\",\"O7\"],\"source_ids\":[\"S0\",\"S2\",\"S3\"],\"owner_refs\":[\"CodeNote:process/rules.md#23-evolution-candidate-gate\"],\"next_action\":\"create-one-project-detection-dialogue;first-consumption-read-only\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r11",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R12-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R12\",\"evidence_state\":\"candidate\",\"disposition\":\"open\",\"adoption_project\":\"pilot\",\"adoption_global\":\"not-proposed\",\"execution_state\":\"pilot-applied\",\"verification_state\":\"unverified\",\"user_acceptance\":\"not-requested\",\"objective_ids\":[\"O4\",\"O6\"],\"source_ids\":[\"S0\"],\"owner_refs\":[\"CodeNote:scripts/task_document_index.py\"],\"next_action\":\"verify-JSON-snapshots-and-current-state-query;local-mapping-not-historical-approval\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r12",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-project-documentation-rules"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-prevention-O1-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O1\",\"prevention_ids\":[\"P01\",\"P02\",\"P03\"],\"idea_ids\":[\"R01\",\"R02\"],\"execution_state\":\"documented\",\"verification_state\":\"unverified\",\"runtime_state\":\"not-implemented\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o1",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-prevention-O2-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O2\",\"prevention_ids\":[\"P04\",\"P05\",\"P06\"],\"idea_ids\":[\"R02\",\"R08\",\"R10\"],\"execution_state\":\"documented\",\"verification_state\":\"unverified\",\"runtime_state\":\"not-implemented\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o2",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-prevention-O3-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O3\",\"prevention_ids\":[\"P07\",\"P08\",\"P09\"],\"idea_ids\":[\"R10\"],\"execution_state\":\"documented\",\"verification_state\":\"unverified\",\"runtime_state\":\"not-implemented\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o3",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-prevention-O4-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O4\",\"prevention_ids\":[\"P10\",\"P11\",\"P12\"],\"idea_ids\":[\"R03\",\"R06\",\"R12\"],\"execution_state\":\"documented\",\"verification_state\":\"unverified\",\"runtime_state\":\"no-new-runtime-mechanism\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o4",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-project-documentation-rules",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-prevention-O5-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O5\",\"prevention_ids\":[\"P13\",\"P14\",\"P15\"],\"idea_ids\":[\"R01\",\"R02\",\"R05\",\"R06\",\"R09\"],\"execution_state\":\"documented\",\"verification_state\":\"unverified\",\"runtime_state\":\"no-new-runtime-mechanism\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o5",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-prevention-O6-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O6\",\"prevention_ids\":[\"P16\",\"P17\",\"P18\"],\"idea_ids\":[\"R01\",\"R03\",\"R04\",\"R06\",\"R07\",\"R12\"],\"execution_state\":\"documented\",\"verification_state\":\"unverified\",\"runtime_state\":\"global-candidates-not-enabled\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o6",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-prevention-O7-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:04:52+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O7\",\"prevention_ids\":[\"P19\",\"P20\",\"P21\"],\"idea_ids\":[\"R05\",\"R06\",\"R07\",\"R09\",\"R11\"],\"execution_state\":\"documented\",\"verification_state\":\"unverified\",\"runtime_state\":\"dialogue-not-created-yet\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o7",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-rule-optimization-index",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S2-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S2\",\"thread_id\":\"01a1d52e-fb16-7780-9cf8-976d12904952\",\"title\":\"261113-CN-规则优化方向整合\",\"body_read\":true,\"message_dates\":[\"2026-11-13\",\"2026-11-14\"],\"completeness\":\"relevant-user-body-and-final-read;middle-truncated;active-thread\",\"confirmation\":\"consolidation-authorized;global-candidates-not-adopted\",\"user_ref\":{\"turn_id\":\"01a1d830-7e1a-7313-8957-cdf350ce2006\",\"message_id\":\"01a1d830-7fa5-73b1-bf00-05c0fc0fb440\"},\"document_refs\":[\"/Users/gdkmjd/work/czz/CzzProj/CodeNote/vibe/specs/2611/261105/1332-orchestration-continuity/proposals/261113-continuity-sqlite-direction-v0.1.md\",\"/Users/gdkmjd/work/czz/CzzProj/CodeNote/vibe/specs/2611/261105/1332-orchestration-continuity/proposals/optimization-core-directions.md\"],\"document_observation\":\"core-directions-now-16;project-hub-added;not-collectively-effective\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-source-S2-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-source-S4-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S4\",\"thread_id\":\"01a1d3bf-c93f-7da2-9933-baa6b59e07ae\",\"title\":\"261114-EYPC-核查额度账号去重\",\"body_read\":true,\"pages\":9,\"turns\":10,\"message_dates\":[\"2026-11-13\",\"2026-11-14\"],\"older_unread\":false,\"completeness\":\"relevant-user-bodies-complete;tool-details-shortened;one-reread-excluded\",\"confirmation\":\"core-design-user-control;later-product-and-git-approval-not-inherited\",\"user_refs\":[{\"turn_id\":\"01a1d3e4-0dca-74a3-bd32-fedb14b78e18\",\"message_id\":\"01a1d3e4-0ed9-7523-bc9e-0086a8eb9882\"},{\"turn_id\":\"01a1d3fe-6979-7a90-9962-7ad40997b4ed\",\"message_id\":\"01a1d3fe-6abd-74f2-9573-d388e8e49e15\"}],\"document_refs\":[\"specs/261112/magpie-codex-weekly/task-card.md\"],\"document_body_read\":false}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-source-S4-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-source-S5-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S5\",\"thread_id\":\"01a1d523-4483-7e83-9780-0272852f7c9b\",\"title\":\"261113-EYPC-精简悬浮重置提示\",\"body_read\":true,\"pages\":2,\"turns\":3,\"message_dates\":[\"2026-11-13\"],\"older_unread\":false,\"completeness\":\"relevant-user-bodies-complete\",\"confirmation\":\"stop-direct-implementation;core-direction-then-document-detail;product-copy-excluded\",\"user_ref\":{\"turn_id\":\"01a1d523-4706-7ed0-a0bf-b6797b8a61be\",\"message_id\":\"01a1d523-edcd-76c0-babd-af4921ff08fc\"},\"document_refs\":[\"specs/261113/magpie-reset-hint/spec.md\"],\"document_body_read\":false}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-source-S5-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-source-S7-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S7\",\"thread_id\":\"01a1d25b-6069-79a2-9453-d8f699337f54\",\"title\":\"261113-EYPC-修复任务执行通路\",\"body_read\":true,\"pages\":3,\"turns\":4,\"message_dates\":[\"2026-11-13\"],\"older_unread\":true,\"completeness\":\"three-page-limit;middle-truncated;relevant-user-choice-read\",\"confirmation\":\"F2-meant-lightweight-per-run-receipts;not-current-build-scope-approval\",\"user_ref\":{\"turn_id\":\"01a1d3da-a2a7-70f0-9e45-27b4cd032ace\",\"message_id\":\"01a1d3da-a39f-7d30-9adc-6935bfdf1e33\"},\"agent_result_refs\":[\"msg_18e78b2a0d57d7e00000b852\"],\"observed_limit\":\"manual-rebuild-and-cache-reuse-reported;automatic-host-Stop-unverified\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S8-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S8\",\"thread_id\":\"01a1d24e-6d88-7c93-9eae-6b9f716d883f\",\"title\":\"261113-EYPC-核验视窗悬浮差异\",\"body_read\":true,\"pages\":1,\"turns\":2,\"message_dates\":[\"2026-11-13\"],\"older_unread\":false,\"completeness\":\"user-bodies-and-plan-complete;tool-arguments-shortened\",\"confirmation\":\"plan-first;separate-product-implementation-approval;latest-turn-interrupted\",\"user_refs\":[{\"turn_id\":\"01a1d24e-702e-7df2-b4f9-9082f30bfb6e\",\"message_id\":\"01a1d24e-7b85-7ee3-a162-29c6ac9ae93e\"},{\"turn_id\":\"01a1d3bf-1a8e-7781-b92d-c2364925560a\",\"message_id\":\"01a1d3bf-2825-75f2-8a74-7c524336ee7a\"}],\"observed_limit\":\"no-complete-final-Windows-acceptance-receipt\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S9-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S9\",\"thread_id\":\"01a1d307-8d7e-7ee0-866f-021c65e19caf\",\"title\":\"261113-EYPC-核验任务未读同步\",\"body_read\":true,\"pages\":2,\"turns\":4,\"message_dates\":[\"2026-11-13\"],\"older_unread\":false,\"completeness\":\"implementation-middle-truncated;relevant-user-correction-and-plan-read\",\"confirmation\":\"preserve-user-confirmed-status;navigation-plan-only;separate-Grok-selection\",\"user_refs\":[{\"turn_id\":\"01a1d30f-0f06-7fd1-b856-51d996fc8a94\",\"message_id\":\"01a1d30f-0ffe-72c1-91b5-0b98ccc21e32\"},{\"turn_id\":\"01a1d313-8d77-7042-8079-446f41f083c8\",\"message_id\":\"01a1d313-8e70-7641-a844-73b517d31708\"}],\"agent_result_refs\":[\"msg_18e780cd514f08680000933e\",\"msg_18e780eceaf90ee000009397\"],\"observed_limit\":\"late-write-after-announced-takeover;full-stop-authority-chain-unknown;host-effect-unverified\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S10-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S10\",\"thread_id\":\"01a1cf93-3b15-76f1-8c7d-53f7351a3427\",\"title\":\"261112-EP-外环优先展示额度\",\"body_read\":true,\"pages\":2,\"turns\":3,\"message_dates\":[\"2026-11-13\"],\"boundary_read_date\":\"2026-11-12\",\"older_unread\":true,\"completeness\":\"window-user-bodies-complete;older-boundary-turn-middle-truncated;stopped-at-window-boundary\",\"confirmation\":\"Mac-acceptance-and-Windows-send-only;no-explicit-rebuild-in-that-message\",\"user_ref\":{\"turn_id\":\"01a1d248-6258-7193-a44b-b9b8b4004a78\",\"message_id\":\"01a1d248-69c2-7791-be71-42ee06195a46\"},\"agent_result_refs\":[\"msg_18e77309a6ed00d000006140\"],\"observed_limit\":\"transport-hash-reported;package-to-Mac-change-to-Windows-load-binding-unknown\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R01-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R01\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"accepted-plan\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"documented\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O1\",\"O5\",\"O6\"],\"source_ids\":[\"S0\",\"S1\",\"S4\",\"S5\",\"S8\",\"S9\"],\"owner_refs\":[\"CodeNote:VibeAi.md#2-task-outcome-and-evidence-stop-contract\"],\"next_action\":\"user-controls-core-implementation-and-global-promotion;historical-product-approval-not-inherited\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r01",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-build-hook-lock-scope-guide"
+      ],
+      "supersedes": [
+        "eypc-idea-R01-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-idea-R02-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R02\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"accepted-plan\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"not-started\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O1\",\"O2\",\"O5\"],\"source_ids\":[\"S0\",\"S3\",\"S9\"],\"owner_refs\":[\"CodeNote:VibeAi.md#4-action-authority\",\"CodeNote:codex-evolution/orchestration/README.md\"],\"next_action\":\"verify-scope-before-implementation;separate-stop-request-exit-and-late-write-ownership\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r02",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-task-prevention-memo"
+      ],
+      "supersedes": [
+        "eypc-idea-R02-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-idea-R03-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R03\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"pilot\",\"adoption_global\":\"pending-review\",\"execution_state\":\"pilot-applied\",\"verification_state\":\"query-checked\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O4\",\"O6\"],\"source_ids\":[\"S0\",\"S1\",\"S2\"],\"owner_refs\":[\"CodeNote:process/documentation-impact.md#structured-asset-projections\"],\"verification_basis\":{\"dataset\":\"9513c88bcce038584f7e7c105732a03a134e691fb69c3be6ba5ee84475b522be\",\"scope\":\"five-document-relations-and-current-state-query;not-runtime-prevention\"},\"next_action\":\"preserve-declared-source;global-storage-owner-stays-candidate\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r03",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-project-documentation-rules"
+      ],
+      "supersedes": [
+        "eypc-idea-R03-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-idea-R04-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R04\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"pilot\",\"adoption_global\":\"pending-review\",\"execution_state\":\"documented\",\"verification_state\":\"static-checked\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O1\",\"O2\",\"O3\",\"O4\",\"O5\",\"O6\",\"O7\"],\"source_ids\":[\"S0\",\"S3\",\"S7\",\"S9\"],\"owner_refs\":[\"CodeNote:process/rules.md#23-evolution-candidate-gate\"],\"verification_basis\":{\"scope\":\"seven-goals-21-items-and-anchors-reviewed;runtime-effect-unverified\"},\"next_action\":\"real-consumer-check;no-auto-blocker\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r04",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo"
+      ],
+      "supersedes": [
+        "eypc-idea-R04-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-idea-R05-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R05\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"accepted-plan\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"documented\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O5\",\"O7\"],\"source_ids\":[\"S0\",\"S1\",\"S3\",\"S7\",\"S8\",\"S9\"],\"owner_refs\":[\"CodeNote:codex-evolution/orchestration/README.md\"],\"next_action\":\"compare-actual-diff-and-evidence;manual-call-not-automatic-Stop\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r05",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-task-prevention-memo"
+      ],
+      "supersedes": [
+        "eypc-idea-R05-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-idea-R06-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R06\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"pilot\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"pilot-applied\",\"verification_state\":\"query-checked\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O4\",\"O5\",\"O6\",\"O7\"],\"source_ids\":[\"S0\",\"S1\",\"S2\",\"S7\",\"S8\",\"S10\"],\"owner_refs\":[\"CodeNote:process/rules.md\"],\"verification_basis\":{\"dataset\":\"9513c88bcce038584f7e7c105732a03a134e691fb69c3be6ba5ee84475b522be\",\"scope\":\"independent-status-filter-and-conflict-query\"},\"next_action\":\"keep-independent-status-fields;do-not-infer-promotion\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r06",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo"
+      ],
+      "supersedes": [
+        "eypc-idea-R06-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-idea-R07-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R07\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"pilot\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"reported\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O6\",\"O7\"],\"source_ids\":[\"S0\",\"S1\",\"S2\",\"S3\",\"S4\",\"S5\",\"S6\",\"S7\",\"S8\",\"S9\",\"S10\"],\"owner_refs\":[\"CodeNote:process/communication-io.md#structured-asset-retrieval\",\"CodeNote:security/rules.md#privacy-before-observation\"],\"next_action\":\"preserve-partial-coverage-and-short-choice-context;no-full-account-completeness-claim\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r07",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-idea-R07-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-idea-R10-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R10\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"accepted-plan\",\"adoption_global\":\"covered-existing\",\"execution_state\":\"not-started\",\"verification_state\":\"source-reviewed\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O2\",\"O3\",\"O5\"],\"source_ids\":[\"S0\",\"S6\",\"S7\",\"S8\",\"S9\",\"S10\"],\"owner_refs\":[\"CodeNote:process/rules.md\"],\"next_action\":\"bind-evidence-to-actual-build-and-package;unknown-identity-not-unconditional-send-ban\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r10",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-build-hook-lock-scope-guide"
+      ],
+      "supersedes": [
+        "eypc-idea-R10-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-idea-R12-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R12\",\"evidence_state\":\"candidate\",\"disposition\":\"open\",\"adoption_project\":\"pilot\",\"adoption_global\":\"not-proposed\",\"execution_state\":\"pilot-applied\",\"verification_state\":\"query-checked\",\"user_acceptance\":\"not-requested\",\"objective_ids\":[\"O4\",\"O6\"],\"source_ids\":[\"S0\"],\"owner_refs\":[\"CodeNote:scripts/task_document_index.py\"],\"verification_basis\":{\"dataset\":\"9513c88bcce038584f7e7c105732a03a134e691fb69c3be6ba5ee84475b522be\",\"scope\":\"JSON-snapshot-and-supersession-query;local-mapping-only\"},\"next_action\":\"consume-current-only;derive-inverse-relations;do-not-change-global-schema\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r12",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-project-documentation-rules"
+      ],
+      "supersedes": [
+        "eypc-idea-R12-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-prevention-O1-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O1\",\"prevention_ids\":[\"P01\",\"P02\",\"P03\"],\"execution_state\":\"documented\",\"verification_state\":\"static-checked\",\"runtime_state\":\"not-implemented\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o1",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-prevention-O1-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-prevention-O2-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O2\",\"prevention_ids\":[\"P04\",\"P05\",\"P06\"],\"execution_state\":\"documented\",\"verification_state\":\"static-checked\",\"runtime_state\":\"not-implemented\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o2",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-prevention-O2-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-prevention-O3-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O3\",\"prevention_ids\":[\"P07\",\"P08\",\"P09\"],\"execution_state\":\"documented\",\"verification_state\":\"static-checked\",\"runtime_state\":\"not-implemented\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o3",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-prevention-O3-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-prevention-O4-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O4\",\"prevention_ids\":[\"P10\",\"P11\",\"P12\"],\"execution_state\":\"documented\",\"verification_state\":\"query-checked\",\"runtime_state\":\"no-new-runtime-mechanism\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o4",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-project-documentation-rules",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-prevention-O4-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-prevention-O5-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O5\",\"prevention_ids\":[\"P13\",\"P14\",\"P15\"],\"execution_state\":\"documented\",\"verification_state\":\"static-checked\",\"runtime_state\":\"no-new-runtime-mechanism\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o5",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-build-hook-lock-scope-guide",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-prevention-O5-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-prevention-O6-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O6\",\"prevention_ids\":[\"P16\",\"P17\",\"P18\"],\"execution_state\":\"documented\",\"verification_state\":\"source-reviewed\",\"runtime_state\":\"global-candidates-not-enabled\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o6",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-prevention-O6-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-prevention-O7-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:09:23+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O7\",\"prevention_ids\":[\"P19\",\"P20\",\"P21\"],\"execution_state\":\"documented\",\"verification_state\":\"static-checked\",\"runtime_state\":\"dialogue-not-created-yet\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o7",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-rule-optimization-index",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": [
+        "eypc-prevention-O7-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-consumer-C01-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:25:33+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"consumer\",\"entity_id\":\"C01\",\"thread_id\":\"01a1d847-1750-7c23-8b36-9d5a095f4ea9\",\"host_id\":\"local\",\"title\":\"261114-EYPC-规则优化统筹\",\"root_thread_id\":\"01a1d3cc-ed74-7230-80b6-c06288f2f4f5\",\"created\":true,\"reading_state\":\"confirmed\",\"detection_state\":\"completed\",\"root_acceptance\":\"accepted\",\"acceptance_scope\":\"initial-document-and-index-review-with-stated-gaps;not-functional-acceptance\",\"observed_dataset\":\"7cc8b43242225bd8651549461364418951659e0bd0c4028ff0816705bcfaf3a4\",\"review_turn_id\":\"01a1d847-185a-7643-a09b-126292e159d7\",\"review_message_id\":\"msg_18e7ceb4ce137db800010717\",\"observed_model\":\"unknown\",\"findings\":[{\"id\":\"C01-P2A\",\"summary\":\"post-creation-state-not-yet-recorded\",\"disposition\":\"resolved-by-root-receipt\"},{\"id\":\"C01-P2B\",\"summary\":\"P19-new-action-evidence-must-not-imply-existing-hooks-off\",\"disposition\":\"corrected-by-root\",\"verification\":\"wording-static-checked\"}],\"unverified\":[\"runtime-prevention-effect\",\"actual-Stop-trigger\",\"package-format-and-identity-parser\",\"core-functional-behavior\"],\"write_handoff\":\"prepared;effective-only-after-root-explicit-release\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#consumer-contract",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-idea-R11-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:25:33+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"rule-idea\",\"entity_id\":\"R11\",\"evidence_state\":\"source-verified\",\"disposition\":\"accepted\",\"adoption_project\":\"pilot\",\"adoption_global\":\"pending-review\",\"execution_state\":\"reviewed\",\"verification_state\":\"query-checked\",\"user_acceptance\":\"direction-accepted\",\"objective_ids\":[\"O6\",\"O7\"],\"source_ids\":[\"S0\",\"S2\",\"S3\"],\"owner_refs\":[\"CodeNote:process/rules.md#23-evolution-candidate-gate\"],\"consumer_id\":\"C01\",\"verification_basis\":{\"dataset\":\"7cc8b43242225bd8651549461364418951659e0bd0c4028ff0816705bcfaf3a4\",\"scope\":\"real-new-dialogue-first-read-only-review;not-background-execution\"},\"next_action\":\"reuse-C01-for-event-triggered-project-candidate-review;never-create-duplicate-dialogue\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#r11",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": [
+        "eypc-idea-R11-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-prevention-O7-20261114-v3",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:25:33+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"prevention-map\",\"entity_id\":\"O7\",\"prevention_ids\":[\"P19\",\"P20\",\"P21\"],\"execution_state\":\"reviewed\",\"verification_state\":\"query-checked\",\"runtime_state\":\"first-dialogue-review-completed;no-new-background-driver\",\"consumer_id\":\"C01\"}",
+      "source_ref": "specs/261113/task-action-path/task-prevention-memo.md#o7",
+      "documents": [
+        "eypc-task-prevention-memo",
+        "eypc-rule-optimization-index",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": [
+        "eypc-prevention-O7-20261114-v2"
+      ]
+    },
+    {
+      "id": "eypc-consumer-C01-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T12:30:16+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"consumer\",\"entity_id\":\"C01\",\"thread_id\":\"01a1d847-1750-7c23-8b36-9d5a095f4ea9\",\"host_id\":\"local\",\"title\":\"261114-EYPC-规则优化统筹\",\"root_thread_id\":\"01a1d3cc-ed74-7230-80b6-c06288f2f4f5\",\"created\":true,\"reading_state\":\"confirmed\",\"detection_state\":\"completed\",\"root_acceptance\":\"accepted\",\"acceptance_scope\":\"initial-document-and-index-review-with-stated-gaps;not-functional-acceptance\",\"observed_dataset\":\"7cc8b43242225bd8651549461364418951659e0bd0c4028ff0816705bcfaf3a4\",\"review_turn_id\":\"01a1d847-185a-7643-a09b-126292e159d7\",\"review_message_id\":\"msg_18e7ceb4ce137db800010717\",\"observed_model\":\"unknown\",\"findings\":[{\"id\":\"C01-P2A\",\"summary\":\"post-creation-state-not-yet-recorded\",\"disposition\":\"resolved-by-root-receipt\"},{\"id\":\"C01-P2B\",\"summary\":\"P19-new-action-evidence-must-not-imply-existing-hooks-off\",\"disposition\":\"corrected-by-root\",\"verification\":\"wording-static-checked\"}],\"unverified\":[\"runtime-prevention-effect\",\"actual-Stop-trigger\",\"package-format-and-identity-parser\",\"core-functional-behavior\"],\"write_handoff\":\"received;exclusive-daily-document-maintenance\",\"maintenance_handoff\":{\"received_at\":\"2026-11-14T12:30:16+08:00\",\"observed_dataset\":\"01418c8bcaacc1387d9b95e3dde43bf08cc2ffeae8a986347149c713aa7a26d7\",\"native_basis\":\"当前codex_delegation.source_thread_id与root_thread_id一致；CODEX_THREAD_ID与thread_id一致\",\"turn_id\":null,\"message_id\":null,\"previous_writer_released\":true,\"write_scope\":[\"vibe/documents.json\",\"vibe/specs/261113/task-action-path/rule-optimization-index.md\",\"vibe/specs/261113/task-action-path/task-prevention-memo.md\",\"vibe/rules/documentation.md#文档关联-sqlite-试点\",\"vibe/specs/261113/task-action-path/task-card.md#规则优化与逐目标预防\"],\"retained_authority\":\"原Root与用户保留指导核心、功能实现、扩围及最终功能验收；CodeNote全局主本和owner不移交\",\"mode\":\"仅事件净增量文档维护；原禁区保留；新全局语义、权限、产品行为或实施范围交用户与原owner\"}}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#consumer-contract",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": [
+        "eypc-consumer-C01-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-source-S4-20261114-v3",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T18:26:48+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"body_read\":true,\"observed_at\":\"2026-11-14T18:26:48+08:00\",\"delta_after\":\"2026-11-14T12:36:30+08:00\",\"pages\":1,\"has_more\":true,\"older_pages_reread\":false,\"entity_id\":\"S4\",\"thread_id\":\"01a1d3bf-c93f-7da2-9933-baa6b59e07ae\",\"title\":\"261114-EYPC-精简账号重置提示\",\"prior_coverage_ref\":\"eypc-source-S4-20261114-v2\",\"turns\":2,\"middle_items_truncated\":true,\"completeness\":\"latest-visible-user-and-agent-bodies;not-continuous-coverage\",\"user_refs\":[{\"turn_id\":\"01a1d8eb-667e-73b2-8acd-919a8c9af4f1\",\"message_id\":\"01a1d8eb-6869-7b90-b2c7-593e56c767a7\"},{\"turn_id\":\"01a1d97b-00a4-7c30-bb3a-c5f17371dfe0\",\"message_ids\":[\"01a1d97b-0ea5-7112-9af5-01083b7ea8ca\",\"01a1d97b-e659-7690-a162-623080a62fe3\",\"01a1d980-d2a8-7af2-9d64-ed2ea6a008d2\"]}],\"result_refs\":{\"git\":\"msg_18e7d92333bcf7e8000110ca\",\"display_review\":\"msg_18e7e23d77d87d580000010f\",\"build_call\":\"call_99afdb018ee64fe09447fec293408f5a\"},\"outcomes\":{\"git\":\"reported-pushed\",\"display\":\"in-progress;no-final-message\",\"projection\":\"reported\",\"build\":\"invocation-exit0;receipt-output-unread\",\"host_acceptance\":\"unverified\"},\"confirmation\":\"later-same-turn-clarification-controls;original-product-and-git-grants-not-inherited\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-source-S4-20261114-v2"
+      ]
+    },
+    {
+      "id": "eypc-source-S6-20261114-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T18:26:48+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"body_read\":true,\"observed_at\":\"2026-11-14T18:26:48+08:00\",\"delta_after\":\"2026-11-14T12:36:30+08:00\",\"pages\":1,\"has_more\":true,\"older_pages_reread\":false,\"entity_id\":\"S6\",\"thread_id\":\"01a1d4e3-3a8b-7cf1-b746-76c575fffd84\",\"title\":\"261114-EYPC-推送新版到视窗\",\"prior_coverage_ref\":\"eypc-source-S6-20261114-v1\",\"turns\":1,\"middle_items_truncated\":false,\"completeness\":\"latest-user-and-final-visible;prior-coverage-retained-by-reference\",\"user_refs\":[{\"turn_id\":\"01a1d8ec-2a09-7bc3-b192-476b5eb8830b\",\"message_id\":\"01a1d8ec-3508-74a2-ac39-43e061b8582d\"}],\"result_refs\":{\"transfer\":\"msg_18e7d846e5ce2a2000010ffd\"},\"outcomes\":{\"transfer\":\"reported-complete;two-end-sha-match\",\"package_identity\":\"unverified\",\"installation_and_host_loading\":\"unverified\",\"functional_acceptance\":\"unverified\"},\"confirmation\":\"original-send-only;no-build-hook-change-or-functional-acceptance\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-source-S6-20261114-v1"
+      ]
+    },
+    {
+      "id": "eypc-goal-confirmation-20261114-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-14T19:11:10+08:00",
+      "summary": "用户以本轮F1确认上一轮提出的核心目标及五项结果：EyPc多对话推进中持续承接需求与决定，围绕目标实施，以对应证据完成功能验收，并复用有证据的规则改进。五项结果为项目进展清楚、对话承接正确、实施围绕已确认目标、功能完成有实际依据、改进可持续复用。F1绑定上一轮目标确认选项；不沿用此前补录选项含义。当前仅目标层确认，方向、细则、实施方案和后续阶段待逐项展开，不推进既有功能实施或最终接受。原生来源thread=01a1d847-1750-7c23-8b36-9d5a095f4ea9，turn=01a1d9be-517a-70d3-b511-2be3e0ea874e，message=01a1d9be-52c4-7470-9100-369360f0e4d0。",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#core-goal",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S11-20261117-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T11:51:12+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S11\",\"thread_id\":\"01a1e2d0-c9b9-7b80-83f0-8d230cd471a4\",\"title\":\"261116-EYPC-前置构建收尾反馈\",\"body_read\":true,\"observed_at\":\"2026-11-17T11:51:12+08:00\",\"coverage\":{\"start\":\"2026-11-16T13:44:08+08:00\",\"end\":\"2026-11-16T13:56:16+08:00\",\"pages\":2,\"turns\":2,\"has_more\":true},\"older_pages_reread\":false,\"choice_ref\":{\"turn_id\":\"01a1e2e2-5fb6-7060-9d41-23375c2b9f9d\",\"user_message_id\":\"01a1e2e2-60dd-75e0-a9fb-b598ae239803\",\"final_message_id\":\"msg_18e8705626fd27b000003950\"},\"delivery_ref\":{\"turn_id\":\"01a1e2e5-1b5d-7490-9bdf-86ed3791dfd5\",\"user_message_id\":\"01a1e2e5-1c80-75b2-a9ee-b33cbc62a727\",\"final_message_id\":\"msg_18e870e363feb29000003a08\"},\"net\":\"11/16单独授权开发收尾前置、共用检查器锁缓存，并以自然Stop兜底；取代S4当时仅Stop口径，不回写历史。原任务报告代码规则已改、完整构建成功及同输入reused；安装、重载和快捷跳转未验。O1范围、O2等待、O3发送包身份未实现。\",\"completeness\":\"relevant-user-and-final-visible;command-abbreviation-not-body-truncation;not-exhaustive\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S12-20261117-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T11:51:12+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S12\",\"thread_id\":\"01a1e21f-555c-72a3-926c-47c894add9cf\",\"title\":\"261116-EP-任务状态误判修复方案\",\"body_read\":true,\"observed_at\":\"2026-11-17T11:51:12+08:00\",\"coverage\":{\"start\":\"2026-11-16T11:55:29+08:00\",\"end\":\"2026-11-16T13:15:38+08:00\",\"pages\":3,\"turns\":4,\"has_more\":true},\"older_pages_reread\":false,\"recent_refs\":[{\"kind\":\"failure\",\"turn_id\":\"01a1e27e-e407-7632-bb94-5555f14c2d0a\",\"user_message_id\":\"01a1e27e-e54d-7a83-82da-879a0ab429c6\",\"final_message_id\":\"msg_18e86a7051fed030000034c4\"},{\"kind\":\"hook\",\"turn_id\":\"01a1e2b7-a24a-7c53-8eb0-2603c797ae92\",\"user_message_id\":\"01a1e2b7-a371-7ac0-aba1-f75e092b9961\",\"final_message_id\":\"msg_18e86dd2397d7a380000365a\"},{\"kind\":\"git\",\"turn_id\":\"01a1e2bd-2a27-77a3-9a37-e9209af41a2c\",\"user_message_id\":\"01a1e2bd-2b58-78c3-b4e6-ed64ccd54191\",\"final_message_id\":\"msg_18e86e9c00fa1e8000003759\"},{\"kind\":\"model-correction\",\"turn_id\":\"01a1e2c7-bc5f-7d20-b006-c44fe5112530\",\"user_message_id\":\"01a1e2c7-bda3-7891-aaa4-d6d0e3c2ba1f\",\"final_message_id\":\"msg_18e86eac3fa7a3e000003779\"}],\"document_ref\":\"specs/261114/codex-state-sync/status-read-investigation-261116.md\",\"net\":\"构建校验环境依赖、自然Hook成功回执和bb420f6提交推送均为原任务历史报告。当前产物加载及宿主场景V01-V12未验，未见用户功能接受。Git由主控完成，未核实Grok调用，不能写成继承即Grok。\",\"unknown\":\"early-investigation-original-plan-and-approval-unread\",\"completeness\":\"four-turn-cap;not-exhaustive\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S13-20261117-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T11:51:12+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S13\",\"thread_id\":\"01a1da14-2fa1-7ab3-aa58-a24ebed05ffa\",\"title\":\"261114-EP-完成任务状态同步排查\",\"body_read\":true,\"observed_at\":\"2026-11-17T11:51:12+08:00\",\"coverage\":{\"start\":\"2026-11-16T09:01:36+08:00\",\"end\":\"2026-11-16T10:00:03+08:00\",\"pages\":3,\"turns\":3,\"has_more\":true},\"older_pages_reread\":false,\"refs\":{\"scene\":{\"turn_id\":\"01a1e1df-b128-7552-88b1-ee7de313495a\",\"user_message_id\":\"01a1e1df-bd55-7de1-92f4-a699cc6ef6be\",\"final_message_id\":\"msg_18e861771660be0000002ada\"},\"implementation\":{\"turn_id\":\"01a1e1f1-6a6e-7ea2-9439-45c65ae0cb20\",\"user_message_id\":\"01a1e1f1-6be8-7e72-af9b-be90bde48e14\",\"final_message_id\":\"msg_18e862f722942cf800002bb7\"},\"acceptance_git\":{\"turn_id\":\"01a1e20c-07c3-7991-8428-9b531d766cae\",\"user_message_ids\":[\"01a1e20c-0963-7cc1-a259-e9f5a0237fb1\",\"01a1e20c-370a-71c3-a43e-1d6ff6de75dc\"],\"final_message_id\":\"msg_18e863fcfc5dd57800002c75\"}},\"document_ref\":\"specs/261114/codex-state-sync/raw-requirement.md\",\"net\":\"用户已装最新插件，既有诊断报告与实际加载匹配，不能笼统推回未更新。存量未读身份绑定修复有源码、两次真实采样和自然Hook历史成功；用户当轮接受并授权Git，36cf051报告已push。全场景和Windows未验，S12后继问题不抹去已接受范围。\",\"completeness\":\"relevant-user-and-final-visible;not-exhaustive\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S4-20261117-v4",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T11:51:12+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S4\",\"thread_id\":\"01a1d3bf-c93f-7da2-9933-baa6b59e07ae\",\"title\":\"261114-EYPC-同步构建钩子规则\",\"body_read\":true,\"observed_at\":\"2026-11-17T11:51:12+08:00\",\"coverage\":{\"start\":\"2026-11-14T18:54:56+08:00\",\"end\":\"2026-11-14T21:35:50+08:00\",\"pages\":2,\"turns\":2,\"has_more\":true},\"older_pages_reread\":false,\"prior_coverage_ref\":\"eypc-source-S4-20261114-v3\",\"boundary_ref\":{\"turn_id\":\"01a1d9b2-332f-7fc3-abe9-34278bfb7af4\",\"user_message_ids\":[\"01a1d9d6-6dd9-7782-999b-5ed594fcc8f5\",\"01a1d9d8-1716-7500-9d90-b64eeed0b48d\"],\"final_message_id\":\"msg_18e7e7f2ffe979a800000817\"},\"rule_sync_ref\":{\"turn_id\":\"01a1d9f5-4bc7-7f02-9bc8-c1048c565690\",\"user_message_ids\":[\"01a1d9f5-4cdf-7973-ab67-a44a666caba5\",\"01a1d9f6-34b2-7511-969c-a8f4c9ccf557\"],\"final_message_id\":\"msg_18e7eccf0495844800001032\"},\"net\":\"11/14先只改逻辑、不做模型构建，后明确自然Hook触发和失败模型修复，并授权Hook相关规则同步及子Grok提交推送。f83091f报告已推且仅改失败提示，执行语义当时未改，O1、O2仍是方案。S11后继取代仅Stop口径；原Git和构建授权不转本聊天。旧额度显示的进行中证据保留，不补造宿主验收。\",\"completeness\":\"same-turn-context-located;not-continuous-or-exhaustive\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-source-S4-20261114-v3"
+      ]
+    },
+    {
+      "id": "eypc-source-S2-20261117-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T11:51:12+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S2\",\"thread_id\":\"01a1d52e-fb16-7780-9cf8-976d12904952\",\"title\":\"261116-CN-ALL规则进化\",\"body_read\":true,\"observed_at\":\"2026-11-17T11:51:12+08:00\",\"coverage\":{\"start\":\"2026-11-16T20:53:02+08:00\",\"end\":\"2026-11-16T21:22:58+08:00\",\"pages\":1,\"turns\":1,\"has_more\":true},\"older_pages_reread\":false,\"prior_coverage_ref\":\"eypc-source-S2-20261114-v2\",\"turn_id\":\"01a1e46b-0933-7473-8e10-bcacd432e838\",\"scope_correction_user_message_id\":\"01a1e476-6bcf-7ac3-9729-9995ed950700\",\"new_root_confirmation_user_message_id\":\"01a1e477-2302-74a0-8370-7b38596892a1\",\"final_message_id\":\"msg_18e889431fedadb800004ab1\",\"document_ref\":\"/Users/gdkmjd/work/czz/CzzProj/CodeNote/vibe/specs/2611/261116/2107-cross-project-rule-evolution/README.md\",\"net\":\"同轮先拟全量交原专题，用户随后纠正过宽并撤回，另建总体Root S14。旧长任务和主子协调继续原专题，本源不再重复统筹。不是EyPc Root迁移，也不是全局候选或整月人审完成。旧16方向观察仅保留历史，本轮未回读旧文最新字节。\",\"completeness\":\"relevant-user-and-final-visible;not-exhaustive\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": [
+        "eypc-source-S2-20261114-v2"
+      ]
+    },
+    {
+      "id": "eypc-source-S14-20261117-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T11:51:12+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S14\",\"thread_id\":\"01a1e47d-6e20-7562-af88-630033cc6474\",\"title\":\"261116-NOTE-跨项目经验规则统筹\",\"body_read\":true,\"observed_at\":\"2026-11-17T11:51:12+08:00\",\"coverage\":{\"start\":\"2026-11-16T21:13:08+08:00\",\"end\":\"2026-11-16T21:56:25+08:00\",\"pages\":2,\"turns\":2,\"has_more\":false},\"older_pages_reread\":false,\"handoff_ref\":{\"turn_id\":\"01a1e47d-6ece-7582-8ff8-ecb44d86b59a\",\"user_message_id\":null,\"final_message_id\":\"msg_18e88a8775b1a4a800004da6\"},\"review_ref\":{\"turn_id\":\"01a1e49e-7e6c-7381-b01c-b9b8fbb51844\",\"user_message_id\":\"01a1e49e-7fa1-7522-98ce-8888b7562670\",\"final_message_id\":\"msg_18e88b0d398221c000004f67\"},\"monthly_task\":\"cn-orch-261116-monthly-rule-review\",\"document_refs\":[\"/Users/gdkmjd/work/czz/CzzProj/CodeNote/vibe/specs/2611/261116/2107-cross-project-rule-evolution/README.md\",\"review/README.md\",\"assessment/relations-owner-delta.md\"],\"net\":\"新总体Root承接跨项目规则和月度，要求逐项展示EP-M01至M05并继续无依赖工作。五项人工校准未见；M02必要信息或仅额度、M03新版对象未决。M01旧确认不倒填本轮方向一，也不能接受其余四项。关联净方案未实施或生效；整月覆盖、C06截断、S9未读和自然采用仍有缺口。月度命名空间不混入C01，其task id不冒充EyPc任务。\",\"completeness\":\"current-window-complete;broader-gaps-remain\"}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#source-coverage",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-direction-1-confirmation-20261117-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T11:51:12+08:00",
+      "summary": "用户以2026-11-17本轮F1确认方向一：原任务承接、多对话关联、项目入口汇总，并继续必要的维护统筹。确认不授予全方案实施、扩围或功能接受。当前thread=01a1d847-1750-7c23-8b36-9d5a095f4ea9；本消息turn与message ID未核实，记null。",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#direction-one",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-consumer-C01-20261117-v3",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T11:51:12+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"consumer\",\"entity_id\":\"C01\",\"thread_id\":\"01a1d847-1750-7c23-8b36-9d5a095f4ea9\",\"host_id\":\"local\",\"title\":\"261117-EYPC-项目增量统筹复核\",\"root_thread_id\":\"01a1d3cc-ed74-7230-80b6-c06288f2f4f5\",\"created\":true,\"reading_state\":\"confirmed\",\"detection_state\":\"completed\",\"root_acceptance\":\"accepted\",\"acceptance_scope\":\"initial-document-and-index-review-with-stated-gaps;not-functional-acceptance\",\"observed_dataset\":\"7cc8b43242225bd8651549461364418951659e0bd0c4028ff0816705bcfaf3a4\",\"review_turn_id\":\"01a1d847-185a-7643-a09b-126292e159d7\",\"review_message_id\":\"msg_18e7ceb4ce137db800010717\",\"observed_model\":\"unknown\",\"last_maintenance_observed_at\":\"2026-11-17T11:51:12+08:00\",\"findings\":[{\"id\":\"C01-P2A\",\"summary\":\"post-creation-state-not-yet-recorded\",\"disposition\":\"resolved-by-root-receipt\"},{\"id\":\"C01-P2B\",\"summary\":\"P19-new-action-evidence-must-not-imply-existing-hooks-off\",\"disposition\":\"corrected-by-root\",\"verification\":\"wording-static-checked\"}],\"unverified\":[\"runtime-prevention-effect\",\"actual-Stop-trigger\",\"package-format-and-identity-parser\",\"core-functional-behavior\"],\"write_handoff\":\"received;exclusive-daily-document-maintenance\",\"maintenance_handoff\":{\"received_at\":\"2026-11-14T12:30:16+08:00\",\"observed_dataset\":\"01418c8bcaacc1387d9b95e3dde43bf08cc2ffeae8a986347149c713aa7a26d7\",\"native_basis\":\"当前codex_delegation.source_thread_id与root_thread_id一致；CODEX_THREAD_ID与thread_id一致\",\"turn_id\":null,\"message_id\":null,\"previous_writer_released\":true,\"write_scope\":[\"vibe/documents.json\",\"vibe/specs/261113/task-action-path/rule-optimization-index.md\",\"vibe/specs/261113/task-action-path/task-prevention-memo.md\",\"vibe/rules/documentation.md#文档关联-sqlite-试点\",\"vibe/specs/261113/task-action-path/task-card.md#规则优化与逐目标预防\"],\"retained_authority\":\"原Root与用户保留指导核心、功能实现、扩围及最终功能验收；CodeNote全局主本和owner不移交\",\"mode\":\"仅事件净增量文档维护；原禁区保留；新全局语义、权限、产品行为或实施范围交用户与原owner\"}}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#consumer-contract",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": [
+        "eypc-consumer-C01-20261114-v2"
+      ]
+    },
+    {
+      "id": "eypc-global-evolution-goal-20261117-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T22:26:29+08:00",
+      "summary": "用户确认最终目标是从相关对话抽取经验，对照并进化全局规则，落到唯一全局主本、相关Skill和加载入口，并核验实际采用。2026-11-17由Root纠正前轮推进主次；项目承接和产品验收是支撑证据，不替代全局闭环，也不表示用户刚改变原始目标。本轮F批准沿既有全局统筹推进，当前thread=01a1d847-1750-7c23-8b36-9d5a095f4ea9，全局thread=01a1e47d-6e20-7562-af88-630033cc6474；本消息turn与message ID未核实，记null。此确认不是15或16个方向及EP-M02、M03全部接受。",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#core-goal",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-consumer-C01-20261117-v4",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T22:26:29+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"consumer\",\"entity_id\":\"C01\",\"thread_id\":\"01a1d847-1750-7c23-8b36-9d5a095f4ea9\",\"host_id\":\"local\",\"title\":\"261117-EYPC-全局规则进化落地\",\"root_thread_id\":\"01a1d3cc-ed74-7230-80b6-c06288f2f4f5\",\"created\":true,\"reading_state\":\"confirmed\",\"detection_state\":\"completed\",\"root_acceptance\":\"accepted\",\"acceptance_scope\":\"initial-document-and-index-review-with-stated-gaps;not-functional-acceptance\",\"observed_dataset\":\"7cc8b43242225bd8651549461364418951659e0bd0c4028ff0816705bcfaf3a4\",\"review_turn_id\":\"01a1d847-185a-7643-a09b-126292e159d7\",\"review_message_id\":\"msg_18e7ceb4ce137db800010717\",\"observed_model\":\"unknown\",\"last_maintenance_observed_at\":\"2026-11-17T22:26:29+08:00\",\"findings\":[{\"id\":\"C01-P2A\",\"summary\":\"post-creation-state-not-yet-recorded\",\"disposition\":\"resolved-by-root-receipt\"},{\"id\":\"C01-P2B\",\"summary\":\"P19-new-action-evidence-must-not-imply-existing-hooks-off\",\"disposition\":\"corrected-by-root\",\"verification\":\"wording-static-checked\"}],\"unverified\":[\"runtime-prevention-effect\",\"actual-Stop-trigger\",\"package-format-and-identity-parser\",\"core-functional-behavior\"],\"write_handoff\":\"received;exclusive-daily-document-maintenance\",\"maintenance_handoff\":{\"received_at\":\"2026-11-14T12:30:16+08:00\",\"observed_dataset\":\"01418c8bcaacc1387d9b95e3dde43bf08cc2ffeae8a986347149c713aa7a26d7\",\"native_basis\":\"当前codex_delegation.source_thread_id与root_thread_id一致；CODEX_THREAD_ID与thread_id一致\",\"turn_id\":null,\"message_id\":null,\"previous_writer_released\":true,\"write_scope\":[\"vibe/documents.json\",\"vibe/specs/261113/task-action-path/rule-optimization-index.md\",\"vibe/specs/261113/task-action-path/task-prevention-memo.md\",\"vibe/rules/documentation.md#文档关联-sqlite-试点\",\"vibe/specs/261113/task-action-path/task-card.md#规则优化与逐目标预防\"],\"retained_authority\":\"原Root与用户保留指导核心、功能实现、扩围及最终功能验收；CodeNote全局主本和owner不移交\",\"mode\":\"仅事件净增量文档维护；原禁区保留；新全局语义、权限、产品行为或实施范围交用户与原owner\"}}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#consumer-contract",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-prevention-memo",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": [
+        "eypc-consumer-C01-20261117-v3"
+      ]
+    },
+    {
+      "id": "eypc-source-S14-20261117-v2",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T22:58:03+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S14\",\"thread_id\":\"01a1e47d-6e20-7562-af88-630033cc6474\",\"title\":\"261116-NOTE-跨项目经验规则统筹\",\"title_state\":\"inherited\",\"body_read\":\"public-final-only\",\"observed_at\":\"2026-11-17T22:58:03+08:00\",\"prior_coverage_ref\":\"eypc-source-S14-20261117-v1\",\"coverage\":{\"turn_id\":\"01a1e9e4-e73a-73b0-a9a0-70c027327ffd\",\"start\":\"2026-11-17T22:24:15+08:00\",\"end\":\"2026-11-17T22:55:31+08:00\",\"read_surface\":\"native-wait-final\",\"full_turn_read\":false,\"pages\":null,\"has_more\":null},\"final_message_id\":\"msg_18e8dce457ea51b80000b904\",\"canonical_path\":\"/Users/gdkmjd/work/czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/process/structured-relations.md\",\"canonical_sha256\":\"9d7c1a64438fd56d43a7581cbf784206d02720d5b218da7e846ebdd909dfc4bd\",\"net\":\"原总体Root已交付公共关系主本及入口，并接受该限定源文交付。本观察只读原生wait公开final和当前主本；逐消息ID、整轮工具执行和隐藏推理未读。\",\"unverified\":[\"all-directions\",\"EP-M02\",\"EP-M03\",\"formal-governance\",\"cross-host-adoption\"]}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#global-rule-adoption",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": [
+        "eypc-source-S14-20261117-v1"
+      ]
+    },
+    {
+      "id": "eypc-global-rule-adoption-20261117-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-17T22:58:03+08:00",
+      "summary": "本C01已读取并按当前公共关系主本，定向更新S14当前状态快照、保留旧证据，并记录S11对S4仅Stop口径的局部取代。主本为process/structured-relations.md，SHA-256=9d7c1a64438fd56d43a7581cbf784206d02720d5b218da7e846ebdd909dfc4bd。交付来源定位沿S14当前快照。这只是当前任务的显式定向采用；O1–O3、业务接受、其它项目、新会话、跨宿主自然遵循、运行效果和正式CLI治理绑定均未据此通过。本次沿既有supersedes及原文定位，不新增corrects/reply_to枚举，也不借替代删除旧事实。",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#global-rule-adoption",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-relation-interface-check-20261118-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-18T08:55:17+08:00",
+      "summary": "2026-11-18已核对回应与更正接口。task-documents白名单没有reply_to和corrects，实际替代沿updates.supersedes。通信exchange可用reply_to，correction没有独立corrects目标字段，确有替代时沿原通信门槛使用supersedes。通信合同把更正一概写成supersedes，state-cli把换key与替代捆绑，交原接口owner收敛。task_document_index.py的SHA256为87f1d8f77c4445c8ac2e7a90b5358a6b50d98789b63a734d0f136096b160c92d。orch_exchange.py的SHA256为8523b02161e510e04de64a47b085faa82592ede8b7bfc248c54d5bdf46026022。",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#relation-interface-mapping",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-source-S14-20261118-v3",
+      "occurred_at": null,
+      "recorded_at": "2026-11-18T09:31:57+08:00",
+      "summary": "{\"schema\":\"eypc-task-record/v1\",\"kind\":\"source-review\",\"entity_id\":\"S14\",\"thread_id\":\"01a1e47d-6e20-7562-af88-630033cc6474\",\"title\":\"261116-NOTE-跨项目经验规则统筹\",\"title_state\":\"inherited\",\"body_read\":\"public-final-only\",\"observed_at\":\"2026-11-18T09:28:55+08:00\",\"prior_coverage_ref\":\"eypc-source-S14-20261117-v2\",\"coverage\":{\"turn_id\":\"01a1ec3b-c5dc-7180-b80d-d116851ceaf4\",\"start\":\"2026-11-18T09:18:22+08:00\",\"end\":\"2026-11-18T09:28:28+08:00\",\"read_surface\":\"native-wait-final\",\"full_turn_read\":false,\"pages\":null,\"has_more\":null},\"final_message_id\":\"msg_18e8ff6ec29504700000006c\",\"canonical_path\":\"/Users/gdkmjd/work/czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/process/structured-relations.md\",\"canonical_sha256\":\"9d7c1a64438fd56d43a7581cbf784206d02720d5b218da7e846ebdd909dfc4bd\",\"revised_refs\":[{\"path\":\"communication-contract.md\",\"line\":60,\"sha256\":\"7f0b6fe2c20bb1c23ba71bb6dcff330043cb93763f5ac71c753a64b86f371af0\"},{\"path\":\"state-cli.md\",\"line\":329,\"sha256\":\"eb5f177778fff3a6bfae8999497b74ab093c83e7fc4ccd1a27035b42fa71219b\"}],\"net\":\"2026-11-18原负责人已修订两处旧说明。正文或登记内容变化使用新key。局部勘误使用correction、reply_to和正文定位，并保留旧记录。确有替代且符合原发送阶段与权限约束时才登记supersedes。定向只读检查通过。真实交流采用待证。本记录只更新来源观察，不替代局部勘误所指的原交流。此前公共关系主本指纹已复核匹配。\",\"unverified\":[\"real-exchange\",\"natural-task\",\"cross-host-adoption\",\"business-acceptance\",\"EP-calibration\",\"formal-governance\"]}",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#relation-interface-mapping",
+      "documents": [
+        "eypc-rule-optimization-index",
+        "eypc-task-action-path-card"
+      ],
+      "supersedes": [
+        "eypc-source-S14-20261117-v2"
+      ]
+    },
+    {
+      "id": "eypc-two-month-self-check-20261119-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-19T21:51:42+08:00",
+      "summary": "EyPc 双月自查 v1，上海时间 2026-09-19 至 11-19。主侧本机 Codex 活跃4页、归档6页用于发现。定向核8聊的相关读段，EP-M01–05复用同源5聊11轮12条用户消息，9月两项沿项目文档。按文档批次、局部纠偏、固定通路、版本现场验收及命名五主题核对现行做法，原消息与读段见正文。原任务回执支持 R1–R8 反查、需求局部替代与定向命名采用。RAW-221 与 Codex 原生清读口径的生效范围待原需求维护者核定，固定摘要差异回原实现负责人。九月原聊、旧页、裁剪段和其它宿主缺口留正文，21:49 新包相关现场证据待原任务。",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#two-month-self-check",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "eypc-raw-221-codex-read-scope-20261120-v1",
+      "occurred_at": null,
+      "recorded_at": "2026-11-20T08:36:34+08:00",
+      "summary": "RAW-221 清读范围回执。本机 Codex 按目标原生确认清读。11-05 用户确认原生打开后的读态同步及固定通路。20:44:09 的 cd634b8 为共享快捷投影增设 confirmsRead 门槛。11-06 08:23:41 V7 实机 H4/H5 证明两次派发后各目标收到原生读确认。11-19 B05/B06 的 R17 随 19:46:03.890 版构建，20:21:29.637 同版加载，实机核到完成组清读，停态组仍为回放证据。支持 Codex 限定验收口径的局部后继，正式取代登记及 Claude、Cursor、Orca 的后继语义和同版实机待核。共享门槛跨 Provider，原证据与旧登记保留。",
+      "source_ref": "specs/261113/task-action-path/rule-optimization-index.md#raw-221-codex-read-20261120",
+      "documents": [
+        "eypc-rule-optimization-index"
+      ],
+      "supersedes": []
+    }
+  ]
+}
