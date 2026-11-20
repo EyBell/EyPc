@@ -378,6 +378,27 @@
       "boundary": "原需求恢复：本地打开键重复、透明水球收起代次及未读恢复版本顺序；不替代原生宿主因果与像素验收。 本轮新增待继续豁免动态窗及当前页搜索范围/计数，见任务账定向选择器。"
     },
     {
+      "id": "float-card-presentation",
+      "sources": [
+        "SPEC-261113-MAGPIE-RESET-HINT::RAW-001"
+      ],
+      "paths": [
+        "src/FloatApp.vue",
+        "src/components/CompanionQuotaResetRow.vue",
+        "src/components/FloatTaskSectionHeading.vue",
+        "src/components/OperationTooltipLayer.vue",
+        "src/domain/companionQuota.ts",
+        "src/styles/float.css",
+        "tests/ui/codexCompanion.test.ts",
+        "tests/ui/operationTooltip.test.ts"
+      ],
+      "checks": [
+        "float-card-presentation",
+        "operation-tooltip"
+      ],
+      "boundary": "展开卡额度与分组展示、页签搜索与拖拽、悬停和聚焦提示。实际 uTools 尺寸和交互由手测验收。"
+    },
+    {
       "id": "codex-continue-task",
       "sources": [
         "SPEC-261106-TASK-STATE-RECOVERY::RAW-001"
@@ -769,6 +790,30 @@
       "testNames": [
         "local opening shortcut repeat regression",
         "water collapse callback regression"
+      ]
+    },
+    {
+      "id": "float-card-presentation",
+      "kind": "vitest",
+      "files": [
+        "tests/ui/codexCompanion.test.ts"
+      ],
+      "testNames": [
+        "aligns quota resets with the leading group and preserves multiline hints",
+        "shows tab-specific search counts and the saved dynamic range without counting collapsed rows away",
+        "retains the rail through expansion, pins independently, and lets the tab bar handle drag"
+      ]
+    },
+    {
+      "id": "operation-tooltip",
+      "kind": "vitest",
+      "files": [
+        "tests/ui/operationTooltip.test.ts"
+      ],
+      "testNames": [
+        "replaces native titles and exposes one accessible tooltip on focus",
+        "reads tooltip metadata from explicit operation attributes",
+        "uses legacy data-tip details and refreshes active metadata changes"
       ]
     },
     {

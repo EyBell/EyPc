@@ -2174,7 +2174,7 @@ describe('Codex Companion V4 UI contract', () => {
     expect(ball.attributes('aria-describedby')).toBe('eypc-operation-tooltip')
   })
 
-  it('shows Magpie reset countdowns beside quota without a collapsed row', async () => {
+  it('aligns quota resets with the leading group and preserves multiline hints', async () => {
     vi.useFakeTimers({ now: NOW })
     const source = {
       ...floatSnapshot('ongoing', quota(true, true)),
@@ -2185,22 +2185,36 @@ describe('Codex Companion V4 UI contract', () => {
         magpieQuota: { status: 'ok' as const, updatedAt: NOW, providers: [
           { provider: 'codex', windows: [{ name: '7 days', remaining: 0, resetsAt: new Date(NOW + 5 * 86_400_000).toISOString() }] },
           { provider: 'grok', windows: [{ name: '7 days', remaining: 85, resetsAt: new Date(NOW + 3_600_000).toISOString() }] },
-          { provider: 'cursor', windows: [{ name: 'Cursor Models', remaining: 80, resetsAt: new Date(NOW + 10 * 60_000).toISOString() }] }
+          { provider: 'cursor', windows: [
+            { name: 'Cursor Models', remaining: 80, resetsAt: new Date(NOW + 10 * 60_000).toISOString() },
+            { name: 'Grok Bot', remaining: 70, resetsAt: new Date(NOW + 30 * 60_000).toISOString() }
+          ] }
         ] }
       }
     }
-    const { wrapper } = mountFloat(true, source)
+    const { wrapper, action } = mountFloat(true, source)
     await wrapper.vm.$nextTick()
-    const row = wrapper.get('.float-quota-text')
-    const reset = row.get('.float-magpie-reset-inline')
-    expect(reset.findAll('.float-magpie-reset-item').map(item => item.text())).toEqual(['C 5天', 'G 1时', 'U 10分'])
-    expect(reset.attributes('aria-label')).toContain('Codex')
-    expect(wrapper.find('.float-magpie-reset-bar').exists()).toBe(false)
-    expect(reset.attributes('tabindex')).toBeUndefined()
-    await reset.trigger('pointerenter')
-    vi.advanceTimersByTime(200)
-    await wrapper.vm.$nextTick()
-    expect(wrapper.get('.float-action-hint').text()).toContain('Cursor')
+    const row = wrapper.get('.float-leading-row')
+    expect(row.get('.float-section-label').text()).toBe('待输入')
+    expect(wrapper.findAll('.companion-reset-row')).toHaveLength(1)
+    const buttons = row.findAll('.companion-reset-button')
+    expect(buttons.map(button => button.get('.companion-reset-name').text())).toEqual(['Codex', 'Grok', 'Cursor'])
+    const cursor = buttons[2]
+    expect(cursor.get('span').text()).toBe('10M')
+    expect(cursor.attributes('aria-label')).toContain('Cursor重置 10M')
+
+    await cursor.trigger('focus')
+    await vi.advanceTimersByTimeAsync(199)
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(document.querySelector('.operation-tooltip--preserve-lines')?.textContent)
+      .toContain('gk-10M-0718-1650\nbo-30M-0718-1710')
+
+    await cursor.trigger('keydown', { key: 'Enter' })
+    expect(action).toHaveBeenCalledWith('codex.quota.refresh', { source: 'float-quota-chip', provider: 'codex' })
+    await wrapper.get('input[type="search"]').setValue('没有匹配的任务')
+    expect(wrapper.get('.float-leading-row').find('.float-section-label').exists()).toBe(false)
+    expect(wrapper.get('.float-leading-row').findAll('.companion-reset-button')).toHaveLength(3)
   })
 
   it('keeps the quota area on one line and moves titles into hover help', async () => {
