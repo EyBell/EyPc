@@ -1,0 +1,830 @@
+{
+  "schema": "task-document-catalog/v1",
+  "task_id": "SPEC-261114-CODEX-STATE-SYNC",
+  "title": "EyPc Codex 任务状态统一改造",
+  "timezone": "Asia/Shanghai",
+  "documents": [
+    {
+      "id": "V7-NAV",
+      "path": "README.md",
+      "title": "Codex 状态改造统筹入口",
+      "summary": "从原需求进入设计、分批进度、规则和查询方法。",
+      "role": "navigation",
+      "category": "统筹",
+      "lifecycle": "current",
+      "tags": [
+        "统筹",
+        "SQLite",
+        "文档索引"
+      ],
+      "aliases": [
+        "总控",
+        "主题入口"
+      ]
+    },
+    {
+      "id": "V7-SPEC",
+      "path": "raw-requirement.md",
+      "title": "Codex 数据与状态同步需求",
+      "summary": "原需求、范围调整、S01–S10 验收及专题边界。",
+      "role": "requirements",
+      "category": "需求",
+      "lifecycle": "mixed",
+      "tags": [
+        "需求",
+        "验收",
+        "兼容"
+      ],
+      "aliases": [
+        "RAW-001",
+        "S01–S10"
+      ]
+    },
+    {
+      "id": "V7-DESIGN",
+      "path": "v7-state-redesign-plan.md",
+      "title": "V7 任务状态统一改造方案",
+      "summary": "两次分发、一处业务裁决，以及 R1–R8 的触发顺序和失效条件。",
+      "role": "delivery",
+      "category": "架构方案",
+      "lifecycle": "current",
+      "tags": [
+        "V7",
+        "状态判断",
+        "风险"
+      ],
+      "aliases": [
+        "架构",
+        "设计评审"
+      ]
+    },
+    {
+      "id": "V7-DELIVERY",
+      "path": "delivery.md",
+      "title": "分批计划与执行进度",
+      "summary": "唯一当前进度。按批次和风险记录范围、依赖、验收差异、证据及下一步。",
+      "role": "delivery",
+      "category": "执行进度",
+      "lifecycle": "current",
+      "tags": [
+        "计划",
+        "执行进度",
+        "验收"
+      ],
+      "aliases": [
+        "批次",
+        "B01",
+        "B02",
+        "B03",
+        "B07–B09",
+        "风险矩阵"
+      ]
+    },
+    {
+      "id": "V7-FIELD",
+      "path": "status-read-investigation-261116.md",
+      "title": "状态调查与实机事件记录",
+      "summary": "保留调查、原生事件、成员证据、构建、握手、发布与应用的实际观察。",
+      "role": "evidence",
+      "category": "现场证据",
+      "lifecycle": "mixed",
+      "tags": [
+        "实机",
+        "握手",
+        "时延"
+      ],
+      "aliases": [
+        "V01–V12",
+        "现场顺序"
+      ]
+    },
+    {
+      "id": "V7-RECOVERY",
+      "path": "host-evidence-recovery-plan.md",
+      "title": "宿主证据恢复与分段计时",
+      "summary": "前序恢复设计、已交付的局部改动、取证方法和当时的验收边界。",
+      "role": "verification",
+      "category": "宿主恢复",
+      "lifecycle": "mixed",
+      "tags": [
+        "补读",
+        "时延",
+        "宿主"
+      ],
+      "aliases": [
+        "owner",
+        "准入"
+      ]
+    },
+    {
+      "id": "V7-RULES",
+      "path": "rule-extraction.md",
+      "title": "规则提取与适用范围",
+      "summary": "项目判断、现行依据、连接换代后的候选和可供跨项目复用的表述。",
+      "role": "delivery",
+      "category": "规则提取",
+      "lifecycle": "current",
+      "tags": [
+        "规则",
+        "候选",
+        "适用范围"
+      ],
+      "aliases": [
+        "经验提取",
+        "规则复用"
+      ]
+    },
+    {
+      "id": "V7-META",
+      "path": "documents.json",
+      "title": "文档身份与关系声明",
+      "summary": "任务内 SQLite 和导航的元数据来源，保存关系方向和原事件定位。",
+      "role": "metadata",
+      "category": "索引声明",
+      "lifecycle": "current",
+      "tags": [
+        "元数据",
+        "SQLite"
+      ],
+      "aliases": [
+        "文档目录",
+        "关系"
+      ]
+    },
+    {
+      "id": "V7-PARITY",
+      "path": "native-status-parity-plan.md",
+      "title": "Codex 原生状态一致性复核与改造方案",
+      "summary": "对照官方协议、现场与 V7 源码，登记待继续、主子并发、连接换代与状态证据恢复方案。",
+      "role": "delivery",
+      "category": "架构方案",
+      "lifecycle": "current",
+      "tags": [
+        "原生一致性",
+        "待继续",
+        "主子对话"
+      ],
+      "aliases": [
+        "原生状态",
+        "R9–R15",
+        "B04–B06",
+        "Codex 更新后"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "V7-INDEX-DELIVERY",
+      "source": "V7-NAV",
+      "target": "V7-DELIVERY",
+      "type": "indexes",
+      "source_ref": "README.md#catalog"
+    },
+    {
+      "id": "V7-INDEX-RULES",
+      "source": "V7-NAV",
+      "target": "V7-RULES",
+      "type": "indexes",
+      "source_ref": "README.md#catalog"
+    },
+    {
+      "id": "V7-DESIGN-SCOPE",
+      "source": "V7-DESIGN",
+      "target": "V7-SPEC",
+      "type": "depends-on",
+      "source_ref": "v7-state-redesign-plan.md#L3"
+    },
+    {
+      "id": "V7-DESIGN-FIELD",
+      "source": "V7-DESIGN",
+      "target": "V7-FIELD",
+      "type": "depends-on",
+      "source_ref": "v7-state-redesign-plan.md#L34"
+    },
+    {
+      "id": "V7-DELIVERY-SCOPE",
+      "source": "V7-DELIVERY",
+      "target": "V7-SPEC",
+      "type": "depends-on",
+      "source_ref": "delivery.md#current"
+    },
+    {
+      "id": "V7-DELIVERY-RECOVERY",
+      "source": "V7-DELIVERY",
+      "target": "V7-RECOVERY",
+      "type": "related",
+      "source_ref": "delivery.md#handoff"
+    },
+    {
+      "id": "V7-FIELD-RECOVERY",
+      "source": "V7-FIELD",
+      "target": "V7-RECOVERY",
+      "type": "verifies",
+      "source_ref": "status-read-investigation-261116.md#L244"
+    },
+    {
+      "id": "V7-RULES-DESIGN",
+      "source": "V7-RULES",
+      "target": "V7-DESIGN",
+      "type": "related",
+      "source_ref": "rule-extraction.md#disposition"
+    },
+    {
+      "id": "V7-RULES-FIELD",
+      "source": "V7-RULES",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "rule-extraction.md#recovery"
+    },
+    {
+      "id": "V7-R1",
+      "source": "V7-DELIVERY",
+      "target": "V7-DESIGN",
+      "type": "depends-on",
+      "source_ref": "delivery.md#r1"
+    },
+    {
+      "id": "V7-R2",
+      "source": "V7-DELIVERY",
+      "target": "V7-DESIGN",
+      "type": "depends-on",
+      "source_ref": "delivery.md#r2"
+    },
+    {
+      "id": "V7-R3",
+      "source": "V7-DELIVERY",
+      "target": "V7-DESIGN",
+      "type": "depends-on",
+      "source_ref": "delivery.md#r3"
+    },
+    {
+      "id": "V7-R4",
+      "source": "V7-DELIVERY",
+      "target": "V7-DESIGN",
+      "type": "depends-on",
+      "source_ref": "delivery.md#r4"
+    },
+    {
+      "id": "V7-R5",
+      "source": "V7-DELIVERY",
+      "target": "V7-DESIGN",
+      "type": "depends-on",
+      "source_ref": "delivery.md#r5"
+    },
+    {
+      "id": "V7-R6",
+      "source": "V7-DELIVERY",
+      "target": "V7-DESIGN",
+      "type": "depends-on",
+      "source_ref": "delivery.md#r6"
+    },
+    {
+      "id": "V7-R7",
+      "source": "V7-DELIVERY",
+      "target": "V7-DESIGN",
+      "type": "depends-on",
+      "source_ref": "delivery.md#r7"
+    },
+    {
+      "id": "V7-R8",
+      "source": "V7-DELIVERY",
+      "target": "V7-DESIGN",
+      "type": "depends-on",
+      "source_ref": "delivery.md#r8"
+    },
+    {
+      "id": "V7-INDEX-PARITY",
+      "source": "V7-NAV",
+      "target": "V7-PARITY",
+      "type": "indexes",
+      "source_ref": "README.md#catalog"
+    },
+    {
+      "id": "V7-PARITY-FIELD",
+      "source": "V7-PARITY",
+      "target": "V7-FIELD",
+      "type": "depends-on",
+      "source_ref": "native-status-parity-plan.md#native-contract"
+    },
+    {
+      "id": "V7-R9",
+      "source": "V7-PARITY",
+      "target": "V7-DESIGN",
+      "type": "related",
+      "source_ref": "native-status-parity-plan.md#r9"
+    },
+    {
+      "id": "V7-R10",
+      "source": "V7-PARITY",
+      "target": "V7-DESIGN",
+      "type": "related",
+      "source_ref": "native-status-parity-plan.md#r10"
+    },
+    {
+      "id": "V7-R11",
+      "source": "V7-PARITY",
+      "target": "V7-DESIGN",
+      "type": "related",
+      "source_ref": "native-status-parity-plan.md#r11"
+    },
+    {
+      "id": "V7-R12",
+      "source": "V7-PARITY",
+      "target": "V7-DESIGN",
+      "type": "related",
+      "source_ref": "native-status-parity-plan.md#r12"
+    },
+    {
+      "id": "V7-R13",
+      "source": "V7-PARITY",
+      "target": "V7-DESIGN",
+      "type": "related",
+      "source_ref": "native-status-parity-plan.md#r13"
+    },
+    {
+      "id": "V7-R14",
+      "source": "V7-PARITY",
+      "target": "V7-DESIGN",
+      "type": "related",
+      "source_ref": "native-status-parity-plan.md#r14"
+    },
+    {
+      "id": "V7-R15",
+      "source": "V7-PARITY",
+      "target": "V7-DESIGN",
+      "type": "related",
+      "source_ref": "native-status-parity-plan.md#r15"
+    },
+    {
+      "id": "V7-R16",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r16"
+    },
+    {
+      "id": "V7-R17",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r17"
+    },
+    {
+      "id": "V7-R18",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r18"
+    },
+    {
+      "id": "V7-R19",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r19"
+    },
+    {
+      "id": "V7-R20",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r20"
+    },
+    {
+      "id": "V7-R21",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r21"
+    },
+    {
+      "id": "V7-R22",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r22"
+    },
+    {
+      "id": "V7-R23",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r23"
+    },
+    {
+      "id": "V7-R24",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r24"
+    },
+    {
+      "id": "V7-R25",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r25"
+    },
+    {
+      "id": "V7-R26",
+      "source": "V7-DELIVERY",
+      "target": "V7-FIELD",
+      "type": "related",
+      "source_ref": "delivery.md#r26"
+    },
+    {
+      "id": "V7-R27",
+      "source": "V7-DELIVERY",
+      "target": "V7-PARITY",
+      "type": "related",
+      "source_ref": "delivery.md#r27"
+    },
+    {
+      "id": "V7-R28",
+      "source": "V7-DELIVERY",
+      "target": "V7-PARITY",
+      "type": "related",
+      "source_ref": "delivery.md#r28"
+    },
+    {
+      "id": "V7-B07",
+      "source": "V7-DELIVERY",
+      "target": "V7-PARITY",
+      "type": "depends-on",
+      "source_ref": "delivery.md#b07"
+    },
+    {
+      "id": "V7-B08",
+      "source": "V7-DELIVERY",
+      "target": "V7-PARITY",
+      "type": "depends-on",
+      "source_ref": "delivery.md#b08"
+    },
+    {
+      "id": "V7-B09",
+      "source": "V7-DELIVERY",
+      "target": "V7-PARITY",
+      "type": "depends-on",
+      "source_ref": "delivery.md#b09"
+    },
+    {
+      "id": "V7-POST-UPDATE-RULES",
+      "source": "V7-RULES",
+      "target": "V7-PARITY",
+      "type": "related",
+      "source_ref": "rule-extraction.md#connection-and-evidence-validity"
+    }
+  ],
+  "updates": [
+    {
+      "id": "V7-OBS-LOAD",
+      "occurred_at": "2026-11-19T11:03:26.047+08:00",
+      "recorded_at": "2026-11-19T15:02:07+08:00",
+      "summary": "10:31 构建的宿主握手，关联该版的后续现场样本。",
+      "source_ref": "status-read-investigation-261116.md#L246",
+      "documents": [
+        "V7-FIELD",
+        "V7-RECOVERY",
+        "V7-DELIVERY"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-OBS-BUILD",
+      "occurred_at": "2026-11-19T14:11:01.228+08:00",
+      "recorded_at": "2026-11-19T15:02:07+08:00",
+      "summary": "owner 排队与同轮中断续修构建。后续加载情况以同构建握手为准。",
+      "source_ref": "status-read-investigation-261116.md#L264",
+      "documents": [
+        "V7-FIELD",
+        "V7-DELIVERY"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E01",
+      "occurred_at": null,
+      "recorded_at": "2026-11-19T15:02:07+08:00",
+      "summary": "11 月 19 日的八项风险设计评审，秒级发生时间未记录。",
+      "source_ref": "delivery.md#event-design",
+      "documents": [
+        "V7-DESIGN",
+        "V7-DELIVERY"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E02",
+      "occurred_at": null,
+      "recorded_at": "2026-11-19T15:02:07+08:00",
+      "summary": "11 月 19 日的专题文档统筹，登记对应导航、进度和规则提取资料。",
+      "source_ref": "delivery.md#event-docs",
+      "documents": [
+        "V7-NAV",
+        "V7-SPEC",
+        "V7-DELIVERY",
+        "V7-RULES",
+        "V7-META"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E03",
+      "occurred_at": null,
+      "recorded_at": "2026-11-19T15:03:52+08:00",
+      "summary": "任务内索引已生成并回读，八条风险各自回到验收行，逐项核到批次、设计和规则。原操作没有独立的核验结束时间戳。",
+      "source_ref": "delivery.md#event-index",
+      "documents": [
+        "V7-NAV",
+        "V7-DELIVERY",
+        "V7-DESIGN",
+        "V7-RULES",
+        "V7-META"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E04",
+      "occurred_at": null,
+      "recorded_at": "2026-11-19T16:29:46+08:00",
+      "summary": "用户授权实施三个批次，八条风险已接入源码。",
+      "source_ref": "delivery.md#event-implementation",
+      "documents": [
+        "V7-SPEC",
+        "V7-DESIGN",
+        "V7-DELIVERY",
+        "V7-RULES"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E05",
+      "occurred_at": "2026-11-19T16:38:03.606+08:00",
+      "recorded_at": "2026-11-19T16:38:37+08:00",
+      "summary": "V7 三个批次的前置完整构建通过，实机等待对应身份握手。",
+      "source_ref": "delivery.md#event-build",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E06",
+      "occurred_at": "2026-11-19T17:26:01.345+08:00",
+      "recorded_at": "2026-11-19T17:28:47+08:00",
+      "summary": "全链复核修正后完整构建通过，S01–S10 和八项实机结果等待新版证据。",
+      "source_ref": "delivery.md#event-review",
+      "documents": [
+        "V7-SPEC",
+        "V7-DESIGN",
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-RULES"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E07",
+      "occurred_at": null,
+      "recorded_at": "2026-11-19T18:44:25+08:00",
+      "summary": "追加原生状态一致性复核，登记 R9–R15 及待实施的 B04–B06。",
+      "source_ref": "delivery.md#event-parity-review",
+      "documents": [
+        "V7-PARITY",
+        "V7-DESIGN",
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-RULES"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E08",
+      "occurred_at": null,
+      "recorded_at": "2026-11-19T19:18:20+08:00",
+      "summary": "B04–B06 已接入源码。修复成员活动隔离、原生状态与读态独立及同版消费。",
+      "source_ref": "delivery.md#event-parity-implementation",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-SPEC",
+        "V7-PARITY",
+        "V7-RULES"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E09",
+      "occurred_at": "2026-11-19T19:16:14.323+08:00",
+      "recorded_at": "2026-11-19T19:18:20+08:00",
+      "summary": "B04–B06 前置完整构建通过，105 组产物一致。",
+      "source_ref": "delivery.md#event-parity-build",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E10",
+      "occurred_at": null,
+      "recorded_at": "2026-11-19T19:18:20+08:00",
+      "summary": "真实匿名五成员样本回放与定向回归通过。最新版实机仍待目标开发项目重载。",
+      "source_ref": "delivery.md#event-parity-verification",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E11",
+      "occurred_at": "2026-11-19T19:23:13.333+08:00",
+      "recorded_at": "2026-11-19T19:24:10+08:00",
+      "summary": "B04–B06 扩展兼容复核后最终完整构建与 98 项定向检查通过。实机仍待新包接入。",
+      "source_ref": "delivery.md#event-parity-closeout",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY"
+      ],
+      "supersedes": [
+        "V7-E09"
+      ]
+    },
+    {
+      "id": "V7-E12",
+      "occurred_at": "2026-11-19T19:46:03.890+08:00",
+      "recorded_at": "2026-11-19T19:47:13+08:00",
+      "summary": "R16–R20 兼容复核补齐，当前 V7 完整构建及 84 项定向检查通过，同版宿主验收开放。",
+      "source_ref": "delivery.md#event-parity-regression",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY",
+        "V7-RULES"
+      ],
+      "supersedes": [
+        "V7-E11"
+      ]
+    },
+    {
+      "id": "V7-E13",
+      "occurred_at": "2026-11-19T20:21:29.637+08:00",
+      "recorded_at": "2026-11-19T20:37:47+08:00",
+      "summary": "19:46 构建已匹配新版宿主握手，记录同轮冷启动状态切换、历史 Side 终态、完成组的原生清读和浮窗时延。交叉审批及停态组清读实机仍开放。",
+      "source_ref": "delivery.md#event-parity-host",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E14",
+      "occurred_at": "2026-11-19T20:42:01.852+08:00",
+      "recorded_at": "2026-11-19T20:48:51+08:00",
+      "summary": "同版实机补得完成组后续一轮的原生清读和同版浮窗回执。交叉审批、停态组清读及 R21 跨重载首包仍缺样本。",
+      "source_ref": "delivery.md#event-parity-controlled-followup",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E15",
+      "occurred_at": "2026-11-19T21:02:44.683+08:00",
+      "recorded_at": "2026-11-19T21:09:00+08:00",
+      "summary": "R21 的同轮来源冲突已复现，V7 收紧主轮库存中断准入。修复包构建及身份复核通过，实机握手仍待核。",
+      "source_ref": "delivery.md#event-r21-build",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E16",
+      "occurred_at": "2026-11-19T21:07:49.903+08:00",
+      "recorded_at": "2026-11-19T21:09:00+08:00",
+      "summary": "原生同轮仍运行，诊断仍为 19:46 包。交叉审批、停态组清读及修复包重载首包未取得实机样本。",
+      "source_ref": "delivery.md#event-parity-retest",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E17",
+      "occurred_at": "2026-11-19T21:15:24.132+08:00",
+      "recorded_at": "2026-11-19T21:17:00+08:00",
+      "summary": "R21 正常首包入口的七项定向桥接回放通过。复验构建更新构建时间，Host 和 Renderer 保持同一身份，实机握手和两组受控样本开放。",
+      "source_ref": "delivery.md#event-r21-rebuild",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY"
+      ],
+      "supersedes": [
+        "V7-E15"
+      ]
+    },
+    {
+      "id": "V7-E18",
+      "occurred_at": "2026-11-19T21:18:51.005+08:00",
+      "recorded_at": "2026-11-19T21:20:00+08:00",
+      "summary": "R21 和两组指定顺序的九项桥接回放通过，随包检查通过。当前修复包仍待原生同轮重载与两组实机样本。",
+      "source_ref": "delivery.md#event-r21-final-build",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY"
+      ],
+      "supersedes": [
+        "V7-E17"
+      ]
+    },
+    {
+      "id": "V7-E19",
+      "occurred_at": "2026-11-19T21:49:20.277+08:00",
+      "recorded_at": "2026-11-19T21:49:37+08:00",
+      "summary": "R22 空 Side 修复随包构建通过，定向证据跨库存重扫保留。真实任务证据回放按完成归组，等待同版宿主握手。",
+      "source_ref": "delivery.md#event-r22-build",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY",
+        "V7-RULES"
+      ],
+      "supersedes": [
+        "V7-E18"
+      ]
+    },
+    {
+      "id": "V7-E20",
+      "occurred_at": "2026-11-20T13:34:00.291+08:00",
+      "recorded_at": "2026-11-20T13:47:27+08:00",
+      "summary": "同标识 V7 宿主握手后，R22 从未知恢复完成。R21 的同一运行 Turn 遇库存中断，首发为进行中，两例均有同窗回执。登记 R23 漏查已完成 Side、补证延迟和成员覆盖。两组受控场景及合法待继续仍待实机。",
+      "source_ref": "delivery.md#event-v7-live-261120",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E21",
+      "occurred_at": "2026-11-20T14:03:22.886+08:00",
+      "recorded_at": "2026-11-20T14:25:24+08:00",
+      "summary": "Codex 更新后旧桌面实时连接失效。同版 V7 仍应用进行中和完成未读。R22 回到根未知，R23 的真实主轮中断一度被 Side 缺证遮蔽。登记 R24、R25 及 B07–B09。",
+      "source_ref": "delivery.md#event-codex-update-261120",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY",
+        "V7-RULES"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E22",
+      "occurred_at": "2026-11-20T14:23:07.486+08:00",
+      "recorded_at": "2026-11-20T14:28:36+08:00",
+      "summary": "已完成主轮受旧机器成员中断影响，V7 将根组投影到待继续，#1867 已应用。登记 R26，关联 B08 补证与 B09 归组。",
+      "source_ref": "delivery.md#event-machine-stop-261120",
+      "documents": [
+        "V7-DELIVERY",
+        "V7-FIELD",
+        "V7-PARITY",
+        "V7-RULES"
+      ],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E23",
+      "occurred_at": "2026-11-20T14:33:40.102+08:00",
+      "recorded_at": "2026-11-20T14:59:00+08:00",
+      "summary": "重开后原包对照运行中的置顶、已有 Plan 待输入和进入新轮。R22 同组仍未知。登记 R27 置顶增量和 R28 Plan 热取证。",
+      "source_ref": "delivery.md#event-reopen-parity-261120",
+      "documents": ["V7-DELIVERY", "V7-FIELD", "V7-PARITY"],
+      "supersedes": []
+    },
+    {
+      "id": "V7-E24",
+      "occurred_at": "2026-11-20T14:58:19.889+08:00",
+      "recorded_at": "2026-11-20T14:59:00+08:00",
+      "summary": "B07–B09 连接降级、置顶与 Side 补证、Plan 热更新及已核主停态续修完整构建通过。新包握手及原生同组验收开放。",
+      "source_ref": "delivery.md#event-reopen-parity-build-261120",
+      "documents": ["V7-DELIVERY", "V7-FIELD", "V7-PARITY", "V7-RULES"],
+      "supersedes": []
+    }
+  ]
+}

@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 70 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-94a52604d80652934760 / renderer-b8e50f43a7ff42bc9146` · `artifact-ready` |
-| 当前构建时间 | `2026/11/16 09:48:56`（`2026-11-16T01:48:56.412Z`） |
+| 当前构建产物 | `host-76820ccd4e3888194fd9 / renderer-badaca6d487bfad43880` · `artifact-ready` |
+| 当前构建时间 | `2026/11/20 15:54:20`（`2026-11-20T07:54:20.445Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-94a52604d80652934760",
-    "renderer_asset": "renderer-b8e50f43a7ff42bc9146",
+    "host_asset": "host-76820ccd4e3888194fd9",
+    "renderer_asset": "renderer-badaca6d487bfad43880",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-11-16T01:48:56.412Z",
-    "built_at_local": "2026/11/16 09:48:56",
+    "built_at": "2026-11-20T07:54:20.445Z",
+    "built_at_local": "2026/11/20 15:54:20",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "7968b2ed6c32b6a54aadd33a32fd36abf2cab9b1f24305ced22072d5fe2f06b0",
-    "raw_sources": "2b8047e292d9d5163c76964deaacd5f0886f57b5c3b932ed568641bce665e87b",
-    "source_anchor_catalog": "c9623bfb03e0b5bd13b57e88ffbd3a223313c5832b484dcdd5200456dc23d792",
-    "product_body": "4a9e330c69b5d56621914244627d59966a83575c85e5ef069dbff0ad756ecd44",
-    "architecture": "ccecda5f625a8c0b84cfa3b1626b47f707d99c5f8845f6f6760955593b9b301b",
-    "runtime_contract": "b5f017a1f7599cad95ecc2406b819d780077cd8b2c376e82c117bdf2d59971f1"
+    "requirement_registry": "652728f00fa3a1cdcfa69ac221c946443b56fd042314a0bdf38ba9df72d4b1cd",
+    "raw_sources": "f3d2aae7773255e1d475b5ed6d341e2e60480592d258e78c802aa81e43282f66",
+    "source_anchor_catalog": "3ebff5a33ad91018f97b7a66444551bbf57771e4a56153c464773592d8637d15",
+    "product_body": "75b89c14208d37cc855161c2217d213da1ef227c989e06dbf2d5d3cf312deaad",
+    "architecture": "abf12e4b963f3b76c5c952962dc1e62ec109321a0be8c383ab89be688fd31ce6",
+    "runtime_contract": "ab456acb55babcbd02dee378ba94924214ca34e1cc454b0a1c6e71133baf5667"
   }
 }
 ```
@@ -281,6 +281,10 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 事件钩子注册是插件唯一一次写入用户的 Claude 安装，需用户在设置中显式操作，保留用户已有钩子与状态栏并可干净卸载。对话正文、工具参数与凭证值永不进入观测、诊断或落盘文件。
 
 ## Codex Companion
+
+Codex 原生事实按成员送入 V7。当前实例的交互、Goal 和 Plan 独立于轮次归约。命令回执只结算原操作。首包接纳期间按来源代次暂存，浮窗按当前窗口实际应用的版本确认交付。旧暂停收据可完整读取但迁移写入失败时，仅暂缓涉事根组。无法界定收据范围时，继续阻断共享启动。上述条件的实机验收由原专题记录。[状态链执行范围](261114/codex-state-sync/raw-requirement.md#v7-execution) · [条件与验收](261114/codex-state-sync/delivery.md#risk-map)
+
+Codex 原生分区给出置顶事实。有完整原生分区顺序时，用于应用置顶项的手动排序。置顶与未读、轮次及待办分别感知。匹配当前轮的未实施 Plan 参与待输入归组。主轮停态已确认而 Side 待核验时，仍展示主轮结果及待核成员，继续与归档需要当前整组证据。[重开续修范围](261114/codex-state-sync/native-status-parity-plan.md#reopen-parity-plan-261120)
 
 - Magpie Codex 周额度按本地／远端各自排除 free 账号后，对所有有效普通 `7days` 周窗口取均值；真实 0 参与，缺失、NaN、Infinity、unlimited、text 不按 0。单账号第一项／last 不替代均值，不跨来源混账号。验收算例 `0+85=42.5%`，Token 344.98 不抢占正周；最终最多一位小数，`0<p<1` 显示 `<1%`。来源候选为 fresh 正周＞fresh 正 Token＞stale 正周＞stale 正 Token＞明确零＞缺失，同层远端优先。周为零或缺失时余额只选单账号、不求和，按 promax→last→原序兜底。
 - 球心格、允许补环、实际展开卡、设置／外观预览共用同一 Magpie 周读数与完整 snapshot（含 Claude 权限）。grid 优先，Magpie 正周允许补入 Codex 0／缺失的普通周环，移环后球心去重，零值格收缩隐藏不改变均值；Codex 原生正周和 Claude 真实 0 不替代，Claude-only 缺普通周隐藏轨道；Claude 短周期／scoped、Token／Grok／Cursor 不驱动环。液面、卡片形态与贴边线仍用原生。
