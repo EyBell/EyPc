@@ -50,43 +50,47 @@
       "source_owner": "vibe/specs/261120/eypc-shortcut-optimization/spec.md",
       "source_documents": [
         "vibe/specs/261120/eypc-shortcut-optimization/spec.md",
-        "vibe/specs/261120/eypc-shortcut-optimization/raw-requirement.md"
+        "vibe/specs/261120/eypc-shortcut-optimization/raw-requirement.md",
+        "vibe/specs/261120/eypc-shortcut-optimization/jump-cache-component.md",
+        "vibe/specs/261120/eypc-shortcut-optimization/shortcut-requirement-migration-index.md"
       ],
       "control_record": "docs/worktree-control/261120-eypc-shortcut-optimization.md",
-      "progress": "runtime-evidence-pending",
-      "core_plan": "对照旧条款核查状态轮次、热态专用键盘点和冷态首按",
-      "verification": "static-checked-host-pending",
-      "integration": "not-started",
-      "next_action": "以热键及新任务样本对账快照更新、选中和原生打开",
+      "progress": "local-main-ready",
+      "core_plan": "分来源发布跳转缓存，复核轮次与派发，收敛主窗、浮窗和 Runner 键位",
+      "verification": "merged-build-and-focused-regressions-passed; host-pending",
+      "integration": "merged-to-main",
+      "next_action": "从主检出产物接入 uTools",
       "retention": "active",
-      "resume_condition": "在已附加的工作树核对真实宿主样本",
+      "resume_condition": "核对同版加载、连续按键、实际窗口到达和原生清读",
       "cache_refs": [],
-      "observed_at": "2026-11-20T15:21:27+08:00",
+      "observed_at": "2026-11-20T20:24:43+08:00",
       "observed": {
         "branch": "codex/261120-eypc-shortcut-optimization",
-        "head": "81bf91bee14992b10e009b8ea0eeacbbd755b3f9",
-        "target_head": "81bf91bee14992b10e009b8ea0eeacbbd755b3f9",
-        "worktree": "dirty",
-        "status_digest": "858c5c12b62be8b0ecf25a29d674da784a5ef633b376b1f04afbda4cf6530bcf",
-        "dirty_metadata_digest": "3731bb3d37f55a076ede3af67bab748793af79179cb7b80b647109cfd0df7cbc",
+        "head": "bf12bb07ba9e963eefefe1e72bf2df5ced3050a9",
+        "target_head": "24242378d3cd1277f840b71fd3e993a9406f61dc",
+        "worktree": "clean",
+        "status_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "dirty_metadata_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "source_documents": {
-          "vibe/specs/261120/eypc-shortcut-optimization/spec.md": "b1fd3743cd98cd336185b1c82dd8227a9734c73e2dcb8a33623b99cfa28531d0",
-          "vibe/specs/261120/eypc-shortcut-optimization/raw-requirement.md": "10f3e4cf38ea2f5889ec704f6f00a1d2e1c421163e2f088fe01a5c1ed75a06a3"
+          "vibe/specs/261120/eypc-shortcut-optimization/spec.md": "7ffed7a06b3b1dbea0ef46af8f561e35a697fceafab0618b5437d80e91ec5bf9",
+          "vibe/specs/261120/eypc-shortcut-optimization/raw-requirement.md": "1b564ffee99eeecdb49166a60328ac986c7e73741b315a828c17a2024a52be6c",
+          "vibe/specs/261120/eypc-shortcut-optimization/jump-cache-component.md": "2d7e81b32dbd325b0cd6766c869a2e1277d088a1b5c23b4372c9d18e811021e1",
+          "vibe/specs/261120/eypc-shortcut-optimization/shortcut-requirement-migration-index.md": "8d01410273d6086d3d9522170619ebe00c48b5f13e978c4999efea44dc43100f"
         },
         "control_documents": {},
-        "control_record_digest": "2cf8167af3fbf93e7f6778f7ea3bb994e5e87d5cfd155fcf4e9c0c1ac2dc4705",
+        "control_record_digest": "2ce29ad72a0dccfcffa09444028e772e507a00831eed1f6990e4923aa00c1b61",
         "cache_refs": [],
         "upstream": null,
         "upstream_head": null,
         "remote_observation": "no-upstream",
-        "target_only_commits": 0,
+        "target_only_commits": 2,
         "source_only_commits": 0,
         "lifecycle": {
           "state": "unmanaged",
           "digest": null
         }
       },
-      "marker": "a1d75ee530f02472"
+      "marker": "9833786ee842fa8e"
     }
   ]
 }

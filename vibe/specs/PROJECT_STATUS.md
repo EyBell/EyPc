@@ -383,7 +383,7 @@ Claude 的唯一当前行是下表首行；其余 Claude 行保留为历史检�
 | 任务与主目录记录 | 进度 / 保留 | 核心规划 | 下一步 / 恢复条件 | 标记 |
 | --- | --- | --- | --- | --- |
 | [261120-eypc-float-card-compact](../../docs/worktree-control/261120-eypc-float-card-compact.md) | local-main-ready / active | 页签顶格，额度与首组标题同排，最后 30 分钟读分钟 | 从主检出产物接入 uTools 并手测外观及交互；手测反馈后在功能工作树继续 | `ace43c208b7ff2fe` |
-| [261120-eypc-shortcut-optimization](../../docs/worktree-control/261120-eypc-shortcut-optimization.md) | runtime-evidence-pending / active | 对照旧条款核查状态轮次、热态专用键盘点和冷态首按 | 以热键及新任务样本对账快照更新、选中和原生打开；在已附加的工作树核对真实宿主样本 | `a1d75ee530f02472` |
+| [261120-eypc-shortcut-optimization](../../docs/worktree-control/261120-eypc-shortcut-optimization.md) | local-main-ready / active | 分来源发布跳转缓存，复核轮次与派发，收敛主窗、浮窗和 Runner 键位 | 从主检出产物接入 uTools；核对同版加载、连续按键、实际窗口到达和原生清读 | `9833786ee842fa8e` |
 
 [Git、规划摘要与缓存引用记录](../../docs/worktree-control/index.json#L1)
 <!-- worktree-control-observations:end -->
