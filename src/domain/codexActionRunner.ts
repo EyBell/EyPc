@@ -102,6 +102,13 @@ export interface CodexActionLogDeltaV1 {
   baseCursor?: number
 }
 
+export interface CodexActionRunnerQuickJumpBindingV1 {
+  actionId: 'quickJump.openForward' | 'quickJump.openBackward'
+  shortcutId: string
+  when: string
+  weight: number
+}
+
 export interface CodexActionRunnerSnapshotV1 {
   version: 1
   catalog: CodexActionRunnerCatalogV1
@@ -110,6 +117,8 @@ export interface CodexActionRunnerSnapshotV1 {
   view: CodexActionRunnerView
   pinned: boolean
   capabilities?: string[]
+  /** Omission uses defaults. An empty list disables both directions. */
+  quickJumpBindings?: readonly CodexActionRunnerQuickJumpBindingV1[]
   loading: boolean
   message?: string
   generatedAt: number

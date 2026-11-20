@@ -8,8 +8,8 @@
 
 - 当前增量权威：[EyPc V7 Global Refactor](../../260824/eypc-v7-global-refactor/spec.md#L1)
 - V6 历史基础：[Companion Task Topology V6 corrective revision](../../260823/companion-task-topology-v5/spec.md#L1)
-- 当前条款正文：[companion-task-topology-v5/raw-requirement.md](../../260823/companion-task-topology-v5/raw-requirement.md#L1)
 - 历史基础：[install-runtime-diagnostics/spec.md](../../260810/1155-install-runtime-diagnostics/spec.md#L1)
+- 任务跳转轮次与缓存：[跳转缓存组件](../../261120/eypc-shortcut-optimization/jump-cache-component.md#L1)
 - 每节下的编号条款已按 `RAW-nnn#n` 单独入册，见下方「编号条款」与 [coverage](../coverage.md#L1)。
 
 ## Primary Requirements
@@ -26,11 +26,11 @@
 - [RAW-177#3](../shared-raw-177-clause-003.md#L1) — `active` · 原生交接与 ACK 边界
 - [RAW-179#1](../shared-raw-179-clause-001.md#L1) — `active` · interaction 与 Plan artifact 独立生命周期
 - [RAW-179#2](../shared-raw-179-clause-002.md#L1) — `active` · 七条 evidence lane、生成合同与唯一 V7 Kernel
-- [RAW-182](../shared-raw-182.md#L1) — `active` · 循环层序并集、环冻结、游标归属与角标可达性同源
-- [RAW-183](../shared-raw-183.md#L1) — `active` · 本地置顶作为暂存待查通道：置顶分组、退出循环环、已完成未读入口承载
-- [RAW-185](../shared-raw-185.md#L1) — `active` · 置顶豁免活动时间窗（任何相位）与「循环可达必然列表可见」不变式
+- [RAW-182](../shared-raw-182.md#L1) — `active` · 进程游标的方向承接与后继位置，候选层及冻结资格见 RAW-222
+- [RAW-183](../shared-raw-183.md#L1) — `active` · 置顶暂存与稳定进度身份，分组及快捷入口分别见 RAW-215、188、222
+- [RAW-185](../shared-raw-185.md#L1) — `active` · 任意相位置顶豁免活动时间窗，循环项必须在动态列表可见
 - [RAW-187](../shared-raw-187.md#L1) — `active` · 状态未知任务可手动指定正常状态：episode 退休、canonicalPhase 保值、Cmd/Ctrl 手势
-- [RAW-188](../shared-raw-188.md#L1) — `active` · 已完成未读与置顶互斥，并为 input/completedUnread 保持一轮稳定的实例顺序
+- [RAW-188](../shared-raw-188.md#L1) — `active` · 已完成未读独立轮次与置顶互斥兜底，待输入新增规则见恢复 RAW-003
 - [RAW-189](../shared-raw-189.md#L1) — `active` · 置顶显式稳定顺序与折叠编号；所有精确当前 interaction 的直接切换、App Server running 因果优先、旧 Plan 结构化消费及当前宿主构建身份可见性
 - [RAW-205](../shared-raw-205.md#L1) — `active` · 原生置顶（Codex 分区 / Host pinned / Claude 星标 / Cursor 置顶）进入 Kernel providerPin；写出站只保留 Codex / CodexHost，Claude App 与 Cursor 插件自持、应用内置顶入站；#5 manifest `pin` 策略单点 + Codex/CodexHost 入站实时 + 叠加本地置顶
 - [RAW-201](../shared-raw-201.md#L1) — `active` · 额度读数块点击即强制刷新两个来源；Claude 额度车道每次读取写有界 `quota/claude-quota-read` 诊断
@@ -47,6 +47,9 @@
 - [RAW-220](../shared-raw-220.md#L1) — `active` · Orca 标签栏已完成未读应按窗格导出；未导出前 EyPc 中转：曾观测进行中不得直接已完成已读，插件跳转/点击后才已读
 - [RAW-221](../shared-raw-221.md#L1) — `active` · 四 Provider 快捷打开成功派发后立即清本轮 EyPc 未读；动态变化与原生交接分开
 - [RAW-222](../shared-raw-222.md#L1) — `active` · 上一／下一只循环最高非空类别；进行中优先，隐藏即时排除
+- [快捷键管理 RAW-001](../shortcut-management-raw-001.md#L1) — `active` · 状态轮次承接与统一跳转缓存
+- [快捷键管理 RAW-002](../shortcut-management-raw-002.md#L1) — `active` · 分来源快照发布与无缓存结束当次
+- [快捷键管理 RAW-003](../shortcut-management-raw-003.md#L1) — `active` · 重排承接、派发资格与回执归属
 
 
 ### 编号条款

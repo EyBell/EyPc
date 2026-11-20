@@ -76,6 +76,7 @@ export interface KeybindingDefinition {
   profileId?: ShortcutProfileId
   executionOwner: CommandExecutionOwner
   surfaceExecutionOwners?: CommandSurfaceExecutionOwnersV7
+  surfaces?: readonly CommandSurfaceIdV7[]
 }
 
 export interface ShortcutCommandRow {
@@ -128,7 +129,10 @@ interface ShortcutCommandProfile {
   profileId?: ShortcutProfileId
   executionOwner?: CommandExecutionOwner
   surfaceExecutionOwners?: CommandSurfaceExecutionOwnersV7
+  surfaces?: readonly CommandSurfaceIdV7[]
 }
+
+const MAIN_TAB_SURFACES = ['main'] as const
 
 const SOURCE_WEIGHT = {
   user: 300,
@@ -235,7 +239,8 @@ function featureTabProfiles(featureConfigs?: FeatureConfig[]): ShortcutCommandPr
     shortcutIds: [feature.shortcutId],
     when: '!textInputFocused',
     weight: 100,
-    executionOwner: 'shell'
+      executionOwner: 'shell',
+      surfaces: MAIN_TAB_SURFACES
     }]
   })
 }
@@ -558,9 +563,9 @@ function activeLayers(context: KeybindingContext): KeybindingLayerId[] {
   return [...resolveLayerStackV7(context).interactiveIds]
 }
 
-function contextWithLayerFlags(context: KeybindingContext): KeybindingContext {
-  const next = { ...context }
-  for (const layer of activeLayers(context)) {
+export function resolveKeybindingContextV7(context: KeybindingContext) {
+  const next = { ...context, activeLayers: activeLayers(context) }
+  for (const layer of next.activeLayers) {
     ;(next as Record<string, unknown>)[layer.replace(/-/g, '_')] = true
   }
   return next
@@ -631,6 +636,7 @@ function makeBindings(profiles: ShortcutCommandProfile[]): KeybindingDefinition[
     profileId: profile.profileId || profileIdForCommand(profile.actionId),
     executionOwner: executionPolicy.executionOwner,
     surfaceExecutionOwners: executionPolicy.surfaceExecutionOwners,
+    surfaces: profile.surfaces,
     order: profileIndex * 100 + shortcutIndex
     }))
   })
@@ -701,10 +707,11 @@ function whenSpecificity(when: string): number {
   }
 }
 
-function score(binding: KeybindingDefinition, context: KeybindingContext): number {
-  const layerScore = activeLayers(context).includes(binding.layer) ? LAYER_PRIORITY[binding.layer] * 10000 : -1000000
-  return layerScore + SOURCE_WEIGHT[binding.source] * 100 + binding.weight + whenSpecificity(binding.when) - (binding.order || 0) / 10000
+export function keybindingPriorityV7(binding: KeybindingDefinition): number {
+  return SOURCE_WEIGHT[binding.source] * 100 + binding.weight + whenSpecificity(binding.when) - (binding.order || 0) / 10000
 }
+
+type KeybindingSurfaceScope = Pick<KeybindingDefinition, 'executionOwner' | 'surfaceExecutionOwners' | 'surfaces'>
 
 const EXECUTION_OWNERS_BY_SURFACE_V7: Readonly<Record<CommandSurfaceIdV7, ReadonlySet<CommandExecutionOwner>>> = Object.freeze({
   main: new Set<CommandExecutionOwner>(['runtime-action', 'shell', 'main-quick-jump']),
@@ -720,10 +727,26 @@ export function keybindingExecutionOwnerForSurfaceV7(
 }
 
 export function keybindingAvailableOnSurfaceV7(
-  binding: Pick<KeybindingDefinition, 'executionOwner' | 'surfaceExecutionOwners'>,
+  binding: KeybindingSurfaceScope,
   surfaceId: CommandSurfaceIdV7
 ): boolean {
-  return EXECUTION_OWNERS_BY_SURFACE_V7[surfaceId].has(keybindingExecutionOwnerForSurfaceV7(binding, surfaceId))
+  return (!binding.surfaces || binding.surfaces.includes(surfaceId))
+    && EXECUTION_OWNERS_BY_SURFACE_V7[surfaceId].has(keybindingExecutionOwnerForSurfaceV7(binding, surfaceId))
+}
+
+const DEFAULT_BINDING_SCOPE_BY_COMMAND = new Map<string, KeybindingSurfaceScope>(
+  DEFAULT_KEYBINDINGS.map((binding) => [binding.actionId, binding])
+)
+for (const featureId of FEATURE_MODULE_IDS) {
+  if (featureId === 'settings') continue
+  DEFAULT_BINDING_SCOPE_BY_COMMAND.set(`tab.select.${featureId}`, { executionOwner: 'shell', surfaces: MAIN_TAB_SURFACES })
+}
+
+function keybindingScopesOverlap(left?: KeybindingSurfaceScope, right?: KeybindingSurfaceScope): boolean {
+  return (Object.keys(EXECUTION_OWNERS_BY_SURFACE_V7) as CommandSurfaceIdV7[]).some((surfaceId) =>
+    (!left || keybindingAvailableOnSurfaceV7(left, surfaceId))
+    && (!right || keybindingAvailableOnSurfaceV7(right, surfaceId))
+  )
 }
 
 function sortedCandidates(
@@ -733,14 +756,13 @@ function sortedCandidates(
   surfaceId: CommandSurfaceIdV7
 ): KeybindingDefinition[] {
   const normalized = normalizeShortcutId(shortcutId)
-  const resolvedContext = contextWithLayerFlags(context)
+  const resolvedContext = resolveKeybindingContextV7(context)
   // A modal barrier has already removed every lower feature layer. Its own
   // user-rebound commands must remain resolvable while an input has focus.
   if (!resolveLayerStackV7(resolvedContext).blockingLayer && shouldBlockTextInputShortcut(normalized, resolvedContext)) return []
-  const layers = activeLayers(resolvedContext)
   return bindings
     .filter((item) => keybindingAvailableOnSurfaceV7(item, surfaceId))
-    .filter((item) => layers.includes(item.layer))
+    .filter((item) => resolvedContext.activeLayers.includes(item.layer))
     .filter((item) => item.shortcutId === normalized || item.shortcutId === '*')
     .filter((item) => {
       try {
@@ -749,7 +771,8 @@ function sortedCandidates(
         return false
       }
     })
-    .sort((a, b) => score(b, resolvedContext) - score(a, resolvedContext))
+    .sort((a, b) => (LAYER_PRIORITY[b.layer] - LAYER_PRIORITY[a.layer]) * 10000
+      + keybindingPriorityV7(b) - keybindingPriorityV7(a))
 }
 
 export function resolveKeybinding(
@@ -780,10 +803,12 @@ export function previewKeybindingResolution(
 
 export function getShortcutReservationConflicts(shortcutId: string, options: { commandId?: string; when?: string } = {}): ShortcutReservationRule[] {
   const normalized = normalizeShortcutId(shortcutId)
+  const bindingScope = DEFAULT_BINDING_SCOPE_BY_COMMAND.get(options.commandId || '')
   const optionIdentifiers = new Set((options.when || '').match(/[A-Za-z_][A-Za-z0-9_.-]*/g) || [])
   return SHORTCUT_RESERVATION_RULES
     .filter((rule) => normalizeShortcutId(rule.shortcutId) === normalized)
     .filter((rule) => rule.commandId !== options.commandId)
+    .filter((rule) => keybindingScopesOverlap(bindingScope, DEFAULT_BINDING_SCOPE_BY_COMMAND.get(rule.commandId)))
     .filter((rule) => canWhenClausesOverlap(options.when || '', rule.when))
     .sort((a, b) => {
       const aScore = (a.when.match(/[A-Za-z_][A-Za-z0-9_.-]*/g) || []).filter((item) => optionIdentifiers.has(item)).length
@@ -796,6 +821,7 @@ export function detectShortcutConflicts(row: ShortcutCommandRow, rows: ShortcutC
   const conflicts: ShortcutConflict[] = []
   for (const other of rows) {
     if (other.commandId === row.commandId || !other.enabled) continue
+    if (!keybindingScopesOverlap(row.bindings[0], other.bindings[0])) continue
     for (const shortcutId of row.shortcutIds) {
       if (!other.shortcutIds.includes(shortcutId)) continue
       if (other.layer !== row.layer && LAYER_PRIORITY[other.layer] !== LAYER_PRIORITY[row.layer]) continue

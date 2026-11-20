@@ -7,6 +7,9 @@ authority: user-stated
 source_annotations: "automated-verified-host-pending / supersedes-RAW-146-attention-order / permission-attention-and-latest-first-progress"
 scoped_relations:
   - kind: refined-by
+    target: eypc-req-shared-raw-188
+    scope: "专用键按进程轮次维护实例顺序，已完成未读与置顶兜底互斥，失败可重试。按 DEC-20260829-02，公开候选及新轮改按最近提问时间排序，普通元数据更新不移动本轮既有实例"
+  - kind: refined-by
     target: eypc-req-task-recovery-input-cycle-raw-003
     scope: "仅待输入新增实例改为重启整轮；普通刷新保持进度，未读专用入口不变"
 ---

@@ -3,9 +3,11 @@ import { buildMqttInlinePayloadPreviewSegments } from '../domain/mqttPayloadPrev
 import { mqttPublishTemplateOperationTime, type MqttTopicVisual } from '../domain/mqtt'
 import type { MqttMessageRecord, MqttPublishTemplate } from '../domain/types'
 import type { MqttRecordListId, MqttRecordListState } from '../runtime/appRuntime'
+import { quickJumpCommandTargetV7, useQuickJumpTargetV7 } from '../ui/quickJumpRegistry'
 
 type PublishRecordRow = MqttMessageRecord | MqttPublishTemplate
 
+const vQuickJumpTarget = useQuickJumpTargetV7()
 const props = defineProps<{
   listId: Extract<MqttRecordListId, 'templates' | 'history'>
   title: string
@@ -14,6 +16,7 @@ const props = defineProps<{
   selectedKind: 'message' | 'publish-template' | null
   selectedId: string | null
   topicVisual: (topic: string) => MqttTopicVisual
+  focusArgs: (row: PublishRecordRow) => Record<string, unknown>
 }>()
 
 const emit = defineEmits<{
@@ -93,6 +96,7 @@ function selected(row: PublishRecordRow) {
       <article
         v-for="(row, index) in rows"
         :key="row.id"
+        v-quick-jump-target="quickJumpCommandTargetV7({ featureId: 'mqtt', commandId: 'mqtt.record.focus', args: focusArgs(row), label: rowRouteLabel(row), searchText: `${rowTopic(row)} ${payloadSnippet(row.payload)}`, occurrence: listId })"
         class="mqtt-publish-record-row mqtt-message-row outgoing"
         role="option"
         tabindex="-1"
@@ -100,8 +104,6 @@ function selected(row: PublishRecordRow) {
         data-operation-description="单击聚焦；双击选择；右键显示相关操作"
         :class="{ focused: isFocused(row), selected: selected(row), active: index === state.activeIndex }"
         :data-mqtt-preview-target="previewTargetValue(row)"
-        :data-quick-jump-label="rowRouteLabel(row)"
-        :data-quick-jump-search="`${rowTopic(row)} ${payloadSnippet(row.payload)}`"
         :aria-selected="selected(row) || isFocused(row)"
         :style="rowStyle(row)"
         @click="emit('focusRow', row)"

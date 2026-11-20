@@ -32,6 +32,7 @@ import {
 import { createWindowRebindState, transitionWindowRebind, windowInteractionAllowed, windowRebindView, type WindowInteractionPolicy, type WindowRebindEvent, type WindowRebindState, type WindowRebindView } from '../domain/windowRebind'
 import type { CodexFloatPosition, CodexManualPhaseValue, CodexSettings } from '../domain/codex'
 import { CODEX_MANUAL_PHASE_VALUES } from '../domain/codex'
+import type { CodexActionRunnerQuickJumpBindingV1 } from '../domain/codexActionRunner'
 import { FEATURE_MODULE_IDS, type AppState, type AppTabId, type FavoriteNode, type FavoritePlatform, type FavoriteRunnerConfig, type FavoriteRunRecord, type FeatureConfig, type KillRequest, type MqttArchiveState, type MqttConnectionConfig, type MqttConnectionGroup, type MqttInfoFilter, type MqttLayoutPrefs, type MqttMessageRecord, type MqttPublishDraft, type MqttPublishDraftHistoryEntry, type MqttPublishTemplate, type MqttQos, type MqttStorageStatus, type PortGroup, type PortGroupFolder, type PortGroupTarget, type PortProcess, type RuntimeDiagnosticsLevel, type ShortcutProfileId, type ShortcutProfileMap, type ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
 import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFavoriteRunResult, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FavoriteRunResult, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type RuntimeDiagnosticsSnapshotV3, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
@@ -45,6 +46,7 @@ import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feat
 import { buildCommandCatalogV7, buildEffectiveKeybindings, normalizeShortcutId } from './keybinding/keybindingRuntime'
 import type { KeybindingContext } from './keybinding/keybindingRuntime'
 import { createKeybindingIndexV7, type KeybindingIndexV7 } from './keybinding/keybindingIndex'
+import { projectActionRunnerQuickJumpBindings, projectFloatKeybindings } from './keybinding/companionKeybindings'
 import { featureTargetRefForCommandV7 } from './navigation/navigationIntent'
 import { resolveMqttConnect, type MqttRuntimeClient } from './mqttClientModule'
 import { createCodexController, type CodexFloatSnapshotV1, type CodexRuntimeView } from './codexController'
@@ -236,6 +238,7 @@ export interface CompanionPresentationRuntimeSnapshotV7 {
   snapshot: CodexFloatSnapshotV1
   position: CodexSettings['position']
   expandedSizes: CodexSettings['expandedSizes']
+  quickJumpBindings: readonly CodexActionRunnerQuickJumpBindingV1[]
 }
 
 export type RuntimeNotificationDomainV7 = 'shell' | 'companion' | AppTabId
@@ -727,9 +730,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let featureActionHost!: FeatureActionHostV7
   let keybindingRevision = 1
   let cachedKeybindingIndex: KeybindingIndexV7 | null = null
+  let cachedCompanionBindings: {
+    float: ReturnType<typeof projectFloatKeybindings>
+    runner: readonly CodexActionRunnerQuickJumpBindingV1[]
+  } | null = null
   function invalidateKeybindingIndex(): void {
     keybindingRevision += 1
     cachedKeybindingIndex = null
+    cachedCompanionBindings = null
   }
   function keybindingIndex(): KeybindingIndexV7 {
     if (!cachedKeybindingIndex) {
@@ -6493,26 +6501,21 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return keybindingIndex().labelRecord
   }
 
-  function companionFloatKeybindings() {
-    return keybindingIndex().bindings
-      .filter((binding) => (binding.actionId.startsWith('codex.') || binding.actionId.startsWith('quickJump.')) && !binding.disabled && Boolean(binding.shortcutId))
-      .map((binding) => ({
-        actionId: binding.actionId,
-        shortcutId: binding.shortcutId,
-        layer: binding.layer,
-        when: binding.when,
-        weight: binding.weight,
-        executionOwner: commandCatalog.executionOwnerFor(binding.actionId, 'float')
-      }))
-  }
-
   function companionPresentationSnapshot(): CompanionPresentationRuntimeSnapshotV7 {
     const codex = codexController.view()
+    if (!cachedCompanionBindings) {
+      const bindings = keybindingIndex().bindings
+      cachedCompanionBindings = {
+        float: projectFloatKeybindings(bindings),
+        runner: Object.freeze(projectActionRunnerQuickJumpBindings(bindings))
+      }
+    }
     return Object.freeze({
       visible: currentVisibleFeatures().some((feature) => feature.id === 'codex') && codex.settings.floatEnabled,
-      snapshot: codexController.floatSnapshot(companionFloatKeybindings()),
+      snapshot: codexController.floatSnapshot(cachedCompanionBindings.float),
       position: codex.settings.position,
-      expandedSizes: codex.settings.expandedSizes
+      expandedSizes: codex.settings.expandedSizes,
+      quickJumpBindings: cachedCompanionBindings.runner
     })
   }
 
@@ -10046,6 +10049,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     },
     dispatch(actionId: string, args?: Record<string, unknown>) {
       return actions.dispatch({ actionId, context: context(), args })
+    },
+    tryHandleAppHideShortcut(shortcutId: string, input: ShortcutInputContext) {
+      const binding = keybindingIndex().resolve(shortcutId, keybindingContext(input), 'main')
+      return binding?.actionId === 'app.hide' && dispatchCatalogOwnedShortcut('app.hide', input) === 'app.hide'
     },
     handleShortcut(shortcutId: string, inputContext: boolean | ShortcutInputContext): ShortcutHandlingResultV7 {
       const input = normalizeShortcutInput(inputContext)

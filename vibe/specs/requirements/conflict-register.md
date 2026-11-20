@@ -204,3 +204,14 @@ Environment Action 的 39 条有序来源条款继续由其来源/spec/PRD 承�
 ## 2026-11-06：待继续时间豁免及搜索提示
 
 [RAW-002](task-recovery-visibility-raw-002.md#L1)为本轮最新用户决定：撤回统一30天方案，保留独立可调动态范围；默认一周，待继续不受动态窗口限制。截图确认现有两个配置入口已存在，修复搜索右侧误用总体范围/数量。局部精化RAW-134旧默认与普通中断过窗退出规则；隐藏/暂停、完整库存范围、真实状态证据不变。decision_status=explicit-current-request。
+
+## 2026-11-20 快捷键管理与跳转缓存
+
+`decision_status: explicit-current-request`。2026-11-20 用户确认按[快捷键管理 Spec r5](../261120/eypc-shortcut-optimization/spec.md#两批实施)实施。对照本轮规范化需求、PRD、登记及原件，保留 `81bf91b` 历史排查，实施以 `981418b` 为基线。
+
+1. 整条迁移宿主绑定回读 RAW-085/086，替代为 RAW-087。补登记 RAW-084、105、106、109、136 中旧通用候选与 RAW-222 的局部关系，固定 6 小时另归任务恢复 RAW-002。
+2. RAW-146 的首项规则由 RAW-149 替代，RAW-188 和任务恢复 RAW-003 分别细化进程轮次及待输入重开。RAW-152 的固定延时由 RAW-155 局部取代。
+3. 专用入口排序复核到 [DEC-20260829-02](#2026-08-29dec-20260829-02-attention-稳定轮次)。RAW-149 的状态进入时间排序已作为历史，现行公开候选和新轮使用最近提问时间，RAW-003 继续决定待输入重开时机。
+4. `DEC-20261120-01`（局部取代）。采用[本专题 RAW-002](shortcut-management-raw-002.md#L1)。取代 [Codex RAW-152](codex-raw-152.md#L1) 的全部来源齐备门槛和冷按键盘点／等待。废止专题草稿的冷态等待、回放和超时反馈方案。后台分来源发布，完全无可用缓存即结束本次。
+5. `DEC-20261120-02`（局部取代）。采用[本专题 RAW-004](shortcut-management-raw-004.md#L1)。取代 [共享 RAW-221](shared-raw-221.md#L1) 中 Codex 原生任务派发即清 EyPc 完成未读的时点。Codex 原生确认按对应任务和完成实例清读，其余来源继续使用各自现行逻辑。
+6. [本专题 RAW-003](shortcut-management-raw-003.md#L1)在 [RAW-222](shared-raw-222.md#L1)、[RAW-188](shared-raw-188.md#L1) 基础上补齐重排承接、派发资格及回执归属。[本专题 RAW-005](shortcut-management-raw-005.md#L1)细化 [V7 交互](interaction-raw-179-clause-004.md#L1)和 [Codex RAW-114](codex-raw-114.md#L1) 的窗口与键位范围。当前语义写入 PRD，原件及历史代码继续经[迁移索引](../261120/eypc-shortcut-optimization/shortcut-requirement-migration-index.md#L1)定位。验收入口见[第一批](../261120/eypc-shortcut-optimization/jump-cache-component.md#第一批缓存与派发验收)及[第二批](../261120/eypc-shortcut-optimization/spec.md#第二批窗口与键位验收)，本轮实现实测待核。

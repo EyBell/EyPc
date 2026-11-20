@@ -42,6 +42,7 @@ import { layoutShortcutHints } from '../domain/shortcutHintLayout'
 import type { ShortcutHintAnchor, ShortcutHintPlacement } from '../domain/shortcutHintLayout'
 import MqttPublishRecordList from '../components/MqttPublishRecordList.vue'
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
+import { quickJumpCommandTargetV7, quickJumpMenuTargetV7, useQuickJumpTargetV7 } from '../ui/quickJumpRegistry'
 
 interface MqttShortcutHintEntry {
   id: string
@@ -56,6 +57,7 @@ type MqttCommandTargetKind = NonNullable<MqttRuntimeSliceV7['mqttSelectedRecord'
 type MqttConnectionRow = MqttRuntimeSliceV7['mqttConnectionRows'][number]
 type MqttConnectionDropPosition = 'before' | 'inside' | 'after'
 
+const vQuickJumpTarget = useQuickJumpTargetV7()
 const props = defineProps<{ snapshot: MqttRuntimeSliceV7; showShortcutHints?: boolean; shiftPreview?: boolean }>()
 const emit = defineEmits<{
   dispatch: [actionId: string, args?: Record<string, unknown>]
@@ -1048,6 +1050,17 @@ function connectionRowArgs(row: MqttConnectionRow): Record<string, unknown> {
   return commandArgs(kind, row.id)
 }
 
+function quickJumpConnectionRow(row: MqttConnectionRow) {
+  return quickJumpCommandTargetV7({
+    featureId: 'mqtt',
+    commandId: row.kind === 'group' ? 'mqtt.connectionGroup.focus' : 'mqtt.config.focus',
+    args: { id: row.id },
+    target: { kind: row.kind === 'group' ? 'mqtt-connection-group' : 'mqtt-config', key: row.id },
+    label: row.name,
+    searchText: row.config?.url || row.name
+  })
+}
+
 function connectionTreeTargetArgs(row: MqttConnectionRow, prefix = 'target'): Record<string, unknown> {
   return {
     [`${prefix}Kind`]: row.kind,
@@ -1985,6 +1998,7 @@ onUnmounted(() => {
         <article
           v-for="row in props.snapshot.mqttConnectionRows"
           :key="row.rowId"
+          v-quick-jump-target="quickJumpConnectionRow(row)"
           class="mqtt-connection-row"
           :class="[
             row.kind === 'group' ? 'mqtt-connection-group-row' : 'mqtt-config-card',
@@ -2008,8 +2022,6 @@ onUnmounted(() => {
           :aria-level="row.depth + 1"
           :aria-expanded="row.kind === 'group' ? !row.collapsed : undefined"
           :aria-selected="row.focused || row.active"
-          :data-quick-jump-label="row.name"
-          :data-quick-jump-search="row.config?.url || row.name"
           @click="selectConnectionRow(row)"
           @focus="focusConnectionRow(row)"
           @contextmenu.prevent="row.kind === 'group' ? openConnectionGroupMenu(row) : row.config && openConnectionMenu(row.config)"
@@ -2135,6 +2147,7 @@ onUnmounted(() => {
         <article
           v-for="row in props.snapshot.mqttSubscriptionRows"
           :key="row.topic"
+          v-quick-jump-target="quickJumpCommandTargetV7({ featureId: 'mqtt', commandId: 'mqtt.subscription.select', args: { topic: row.topic }, target: { kind: 'mqtt-subscription', key: row.topic }, label: row.displayName, searchText: row.topic, occurrence: props.snapshot.mqttActiveConfig?.id })"
           class="mqtt-subscription-row"
           data-context-menu-target
           data-role="mqtt-subscriptions"
@@ -2145,8 +2158,6 @@ onUnmounted(() => {
           :aria-selected="row.selected || row.focused || row.active"
           :class="{ active: row.active, selected: row.selected && !row.active, focused: row.focused }"
           :title="subscriptionTitle(row)"
-          :data-quick-jump-label="row.displayName"
-          :data-quick-jump-search="row.topic"
           @click.stop="selectSubscription(row.topic)"
           @contextmenu.prevent="openSubscriptionMenu(row.topic)"
           @dblclick.stop="emit('dispatch', 'mqtt.subscription.editor.open')"
@@ -2662,6 +2673,7 @@ onUnmounted(() => {
             :selected-kind="activeRecordSelectedKind"
             :selected-id="props.snapshot.mqttSelectedRecord?.id || null"
             :topic-visual="mqttTopicVisual"
+            :focus-args="(row) => publishRecordArgs(row, activePublishRecordListId)"
             @focus-row="(row) => focusPublishRecord(row, activePublishRecordListId)"
             @toggle-select="(row, range) => togglePublishRecord(row, activePublishRecordListId, range)"
             @apply="(row) => applyPublishRecord(row, activePublishRecordListId)"
@@ -2684,6 +2696,7 @@ onUnmounted(() => {
             <article
               v-for="message in props.snapshot.mqttMessageRows"
               :key="message.id"
+              v-quick-jump-target="quickJumpCommandTargetV7({ featureId: 'mqtt', commandId: 'mqtt.record.focus', args: commandArgs('message', message.id, 'messages'), label: messageRouteLabel(message), searchText: `${message.topic} ${payloadSnippet(message.payload)}`, occurrence: 'messages' })"
               class="mqtt-message-row"
               data-context-menu-target
               role="option"
@@ -2692,8 +2705,6 @@ onUnmounted(() => {
               :data-operation-tooltip="`消息 ${messageRouteLabel(message)}`"
               data-operation-description="单击聚焦；右键打开快捷操作；预览/详情/更多见行内按钮"
               :data-mqtt-preview-target="previewTargetValue('message', message.id)"
-              :data-quick-jump-label="messageRouteLabel(message)"
-              :data-quick-jump-search="`${message.topic} ${payloadSnippet(message.payload)}`"
               :aria-selected="recordSelected('message', message.id) || props.snapshot.mqttRecordListStates.messages.selectedIds.includes(message.id)"
               :style="topicVisualStyle(message.topic)"
               @click="selectRecord('message', message.id, 'messages')"
@@ -2845,16 +2856,15 @@ onUnmounted(() => {
                     <article
                       v-for="(row, index) in props.snapshot.mqttPublishDraftHistoryRows"
                       :key="row.id"
+                      v-quick-jump-target="quickJumpCommandTargetV7({ featureId: 'mqtt', commandId: 'mqtt.publish.draft.focus', args: publishDraftHistoryRowArgs(row), label: publishDraftHistoryTitle(row), searchText: `${row.topic} ${payloadSnippet(row.payload)}` })"
                       class="mqtt-publish-draft-row"
                       data-role="mqtt-publish-draft"
                       role="option"
                       data-context-menu-target
                       tabindex="-1"
                       :data-mqtt-preview-target="previewTargetValue('publish-draft-history', row.id)"
-                      :data-quick-jump-label="publishDraftHistoryTitle(row)"
                       data-operation-tooltip="右键打开草稿操作"
                       data-operation-shortcut="Ctrl+→"
-                      :data-quick-jump-search="`${row.topic} ${payloadSnippet(row.payload)}`"
                       :aria-selected="publishDraftHistorySelected(row) || index === props.snapshot.mqttPublishDraftHistoryActiveIndex"
                       :class="{ active: index === props.snapshot.mqttPublishDraftHistoryActiveIndex, selected: publishDraftHistorySelected(row) }"
                       :title="`${row.topic}\n${row.payload}`"
@@ -3372,6 +3382,7 @@ onUnmounted(() => {
           <button
             v-for="(item, index) in props.snapshot.mqttDrawerItems"
             :key="`${item.commandId}:${index}`"
+            v-quick-jump-target="quickJumpMenuTargetV7(item)"
             type="button"
             class="drawer-action mqtt-drawer-action"
             :class="{ active: index === props.snapshot.mqttDrawer.activeIndex, danger: item.risk === 'destructive' || item.commandId.includes('delete') }"

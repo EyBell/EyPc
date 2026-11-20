@@ -7,15 +7,15 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 ## Current Authorities And Routes
 
 - 状态流结构兼容与本次验收：[Codex 数据与状态同步组件](../../261114/codex-state-sync/raw-requirement.md#L1)
-- 当前跨来源运行时权威：[Companion Task Topology V6 corrective revision](../../260823/companion-task-topology-v5/spec.md#L1)
-- Codex Tab 当前功能权威：[codex-quota-float](../../260718/1148-codex-quota-float/spec.md#L1) · [Environment Action](../../260729/1435-codex-environment-actions/spec.md#L1) · [快速任务查看](../../260813/1455-companion-quick-task-view/spec.md#L1) · [搜索栏收纳](../../260817/0859-float-search-status-compact/spec.md#L1) · [确认气泡](../../260817/1618-float-action-hint-popover/spec.md#L1) · [Side 重载恢复提示](../../260825/codex-side-reload-recovery/spec.md#L1)
-- 条款正文：[raw-requirement.md](../../260718/1148-codex-quota-float/raw-requirement.md#L1)
+- 当前跨来源运行时依据：[EyPc V7](../../260824/eypc-v7-global-refactor/spec.md#L1)
+- Codex Tab 功能增量：[快捷键管理](../../261120/eypc-shortcut-optimization/spec.md#L1) · [Environment Action](../../260729/1435-codex-environment-actions/spec.md#L1) · [快速任务查看](../../260813/1455-companion-quick-task-view/spec.md#L1) · [搜索栏收纳](../../260817/0859-float-search-status-compact/spec.md#L1) · [确认气泡](../../260817/1618-float-action-hint-popover/spec.md#L1) · [Side 重载恢复提示](../../260825/codex-side-reload-recovery/spec.md#L1)
 - 额外进程归档双向实时：[companion-status-archive-sync/spec.md](../../260905/companion-status-archive-sync/spec.md#L1)
 - 产品语义：[PRODUCT_REQUIREMENTS](../../PRODUCT_REQUIREMENTS.md#L1)
 
 ## Primary Requirements
 
 - [状态流结构兼容 RAW-001](../codex-state-sync-raw-001.md#L1) — `active`
+- [快捷键管理 RAW-004](../shortcut-management-raw-004.md#L1) — `active` · Codex 原生任务按匹配原生确认清读
 
 2026-11-14 Hook 规则裁决：收尾构建只由同步 Stop Hook 执行。未回结果只报缺口，模型不手动 build，不伪装调用处理器。真实失败后才修复并交自然 Stop 重验。本条不产生新产物身份。
 
@@ -222,3 +222,4 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 ## Historical Or Migration Sources
 
 - [Historical Consolidated Map Through RAW-034](../../260718/1148-codex-quota-float/raw-requirement.md#L1) 保留早期合并记录，不进入自动路由。
+- [快捷键原始需求迁移索引](../../261120/eypc-shortcut-optimization/shortcut-requirement-migration-index.md#L1)可定位 Codex 早期键位、跳转轮次与历史实现。

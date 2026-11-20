@@ -4,7 +4,9 @@ import { resolve } from 'node:path'
 
 const require_ = createRequire(import.meta.url)
 const openerModule = require_(resolve(process.cwd(), 'preload/orca/open.cjs')) as {
-  createOpener: (dependencies: Record<string, unknown>) => { openTask: (paneKey: string, options?: { handle?: string }) => Promise<Record<string, unknown>> }
+  createOpener: (dependencies: Record<string, unknown>) => {
+    openTask: (paneKey: string, options?: { handle?: string; cacheOnly?: boolean }) => Promise<Record<string, unknown>>
+  }
   normalizePaneKey: (value: unknown) => string
 }
 
@@ -70,6 +72,14 @@ describe('Orca terminal opener', () => {
   it('only admits pane keys', () => {
     expect(openerModule.normalizePaneKey(PANE.toUpperCase())).toBe(PANE)
     expect(openerModule.normalizePaneKey('term_abc')).toBe('')
+  })
+
+  it('ends a cache-only jump with a missing handle without doing an inventory lookup', async () => {
+    const context = opener()
+    await expect(context.value.openTask(PANE, { cacheOnly: true })).resolves.toMatchObject({ outcome: 'unavailable' })
+    expect(context.calls).toEqual([])
+    await expect(context.value.openTask(PANE, { cacheOnly: true, handle: HANDLE })).resolves.toMatchObject({ outcome: 'dispatched' })
+    expect(context.calls).toEqual([['terminal', 'switch', '--terminal', HANDLE]])
   })
 
   it('switches the tab then activates the Orca window like a Codex jump', async () => {

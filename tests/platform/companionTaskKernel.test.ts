@@ -2915,10 +2915,98 @@ describe('CompanionTaskKernel', () => {
       waiting('codex-b', 200, 200)
     ], 2).views.attentionKeys.input).toEqual(['codex-new', 'codex-c', 'codex-a', 'codex-b'])
     releaseFirst()
-    await Promise.all([first, second, third])
+    await first
+    await expect(second).resolves.toMatchObject({ errorCode: 'stale-target' })
+    await expect(third).resolves.toMatchObject({ errorCode: 'stale-target' })
+    await kernel.dispatch({ action: 'open-attention', kind: 'input' })
+    await kernel.dispatch({ action: 'open-attention', kind: 'input' })
     await kernel.dispatch({ action: 'open-attention', kind: 'input' })
 
     expect(opened).toEqual(['codex-a', 'codex-new', 'codex-c', 'codex-a'])
+  })
+
+  it('jumps from a partial cache and preserves the cursor when another source completes', async () => {
+    const opened: string[] = []
+    const refreshProviders = vi.fn(async () => undefined)
+    const configuration = { enabled: true, providers: { codex: true, claude: true } }
+    const open = async (target: { key: string }) => {
+      opened.push(target.key)
+      return { outcome: 'dispatched' }
+    }
+    const kernel = createCompanionTaskKernel({ initialConfiguration: configuration, refreshProviders,
+      adapters: { codex: { open }, claude: { open } } })
+    const lease = kernel.attach(configuration).lease
+    const running = (key: string, lastQuestionAt: number, provider = 'codex') =>
+      task({ key, provider, phase: 'running', lastQuestionAt, actionAlias: key })
+    const publish = (provider: string, revision: number, rows: unknown[], epoch = kernel.providerEpoch(provider)) => {
+      const value = draft(rows, revision, { producer: 'host-preflight', complete: false })
+      for (const source of ['codex', 'claude']) {
+        if (source === provider) continue
+        for (const channel of Object.values(value.evidenceBatches[source].channels)) {
+          Object.assign(channel, { mode: 'delta', complete: false })
+        }
+        value.evidenceBatches[source].relationMode = 'delta'
+        value.evidenceBatches[source].relationsComplete = false
+      }
+      return kernel.publishEvidence(value, { provider, epoch })
+    }
+    const next = () => kernel.dispatch({ action: 'cycle', source: 'global-shortcut' })
+    const coldPress = next()
+    expect(publish('codex', 1, [running('codex-a', 300), running('codex-b', 100)])).toMatchObject({
+      complete: false, views: { cycleKeys: ['codex-a', 'codex-b'] }
+    })
+    await expect(coldPress).resolves.toMatchObject({ errorCode: 'inventory-not-ready' })
+    expect(opened).toEqual([])
+    await expect(next()).resolves.toMatchObject({ key: 'codex-a' })
+    await expect(kernel.dispatch({ action: 'open', key: 'codex-missing', source: 'manual-quick-jump' }))
+      .resolves.toMatchObject({ errorCode: 'stale-target' })
+    const oldEpoch = kernel.providerEpoch('claude')
+    expect(publish('claude', 2, [running('claude:middle', 200, 'claude')])).toMatchObject({
+      complete: true, views: { cycleKeys: ['codex-a', 'claude:middle', 'codex-b'] }
+    })
+    await expect(next()).resolves.toMatchObject({ key: 'claude:middle' })
+    expect(refreshProviders).toHaveBeenCalledTimes(1)
+    kernel.configure({ enabled: true, lease, providers: { codex: true, claude: false } })
+    expect(kernel.getLatest().views.cycleKeys).toEqual(['codex-a', 'codex-b'])
+    expect(publish('claude', 3, [running('claude:late', 500, 'claude')], oldEpoch)).toBeNull()
+    expect(opened).toEqual(['codex-a', 'claude:middle'])
+    kernel.close()
+  })
+
+  it('keeps a new unread completion selectable after an older open receives its receipt', async () => {
+    const opened: string[] = []
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const configuration = { enabled: true, providers: { codex: true, claude: false } }
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: configuration,
+      adapters: { codex: { open: async (target: { key: string }) => {
+        opened.push(target.key)
+        if (opened.length === 1) await firstGate
+        return nativeOpened()
+      } } }
+    })
+    const { lease } = kernel.attach(configuration)
+    const completed = (key: string, epoch: number) => task({
+      key, phase: 'completed', unread: true, unreadKnown: true,
+      revisionAt: epoch + 1, phaseRevision: epoch + 1, statusEnteredAt: epoch + 1,
+      turnStartedAt: epoch, terminalAt: epoch + 1, lastQuestionAt: epoch
+    })
+    kernel.syncPackage({ lease, draft: draft([completed('codex-a', 300), completed('codex-b', 200)], 1, {
+      providers: configuration.providers
+    }) })
+    const nextUnread = () => kernel.dispatch({ action: 'open-attention', kind: 'completed-unread', source: 'global-shortcut' })
+    const first = nextUnread()
+    expect(opened).toEqual(['codex-a'])
+    kernel.syncPackage({ lease, draft: draft([completed('codex-a', 400), completed('codex-b', 200)], 2, {
+      providers: configuration.providers
+    }) })
+    releaseFirst()
+    await first
+    expect(kernel.getLatest().views.attentionKeys.completedUnread).toContain('codex-a')
+    await expect(nextUnread()).resolves.toMatchObject({ key: 'codex-a' })
+    expect(opened).toEqual(['codex-a', 'codex-a'])
+    kernel.close()
   })
 
   it('drops pin progress while unread exists and restarts pin fallback after it clears', async () => {

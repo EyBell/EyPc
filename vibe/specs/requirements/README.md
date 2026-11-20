@@ -47,6 +47,8 @@
 
 每条叶子必须恰好出现在一个模块的 `Primary Requirements`。模块不复制条款正文。
 
+快捷键的实施与验收入口见[快捷键管理](../261120/eypc-shortcut-optimization/spec.md#L1)。新的缓存与清读裁决在[冲突登记](conflict-register.md#2026-11-20-快捷键管理与跳转缓存)。旧行为及实现从[原始需求迁移索引](../261120/eypc-shortcut-optimization/shortcut-requirement-migration-index.md#L1)回查。
+
 ## 冲突门禁
 
 1. 后写入的条款优先，前者转 `superseded` 并登记依据。
@@ -66,4 +68,4 @@
 
 ## 尚未入册
 
-见 [覆盖账](coverage.md#L1)。当前已发现且能按来源现成 `RAW-nnn(#n)` 直接抽取的身份均已入册；这不等于全文需求都已机器化。机器复测识别出 102 条没有 RAW 父身份的围栏外有序来源条款，它们已有稳定 `SA-*` 来源锚点，但仍不是登记叶子；只有逐条确认语义与模块后才可升级为 active requirement。
+见 [覆盖账](coverage.md#L1)。当前来源覆盖和登记总数取自[生成快照](../PRODUCT_REQUIREMENTS.md#全局当前真值快照)。已有 `SA-*` 地址的来源仍须逐条确认语义和模块才能进入登记。

@@ -1,6 +1,6 @@
 # EyPc Port Tab Interaction Spec
 
-Tool: codex
+> 历史基线。固定 `Ctrl+1/2/3` 全局切换和非端口页的 `Tab` 切页已迁移。现行键位见[快捷键管理](../261120/eypc-shortcut-optimization/spec.md#L1)，原实现见[迁移索引](../261120/eypc-shortcut-optimization/shortcut-requirement-migration-index.md#通用与各功能快捷键)。
 
 ## Goal
 

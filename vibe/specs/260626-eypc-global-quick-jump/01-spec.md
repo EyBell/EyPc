@@ -1,6 +1,6 @@
 # Global Quick Jump Spec
 
-Tool: codex
+> 首版需求。触发键及目标选择沿用，标记位置和导航身份已演进。现行入口见[快捷键管理](../261120/eypc-shortcut-optimization/spec.md#L1)，旧规则及实现见[迁移索引](../261120/eypc-shortcut-optimization/shortcut-requirement-migration-index.md#通用与各功能快捷键)。
 
 ## Goal
 

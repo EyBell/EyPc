@@ -1,10 +1,20 @@
+import { inject, type InjectionKey, type ObjectDirective } from 'vue'
 import { assignQuickJumpMarkers, type QuickJumpTarget } from '../domain/quickJump'
 import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from '../domain/quickJumpHitTest'
-import type { FeatureTargetRefV7 } from '../runtime/navigation/navigationIntent'
+import type { AppTabId } from '../domain/types'
+import type { ActionMenuItemV7 } from '../runtime/action/actionMenu'
+import { createNavigationIntentV7, featureTargetRefForCommandV7, type FeatureTargetRefV7, type NavigationIntentV7 } from '../runtime/navigation/navigationIntent'
+
+interface QuickJumpInvocationV7 {
+  intent: NavigationIntentV7
+  args?: Record<string, unknown>
+  dispatch?: (commandId: string, args: Record<string, unknown>) => unknown
+}
 
 export interface QuickJumpDomTargetV7 extends QuickJumpTarget {
   element: HTMLElement
   target?: FeatureTargetRefV7
+  invocation?: QuickJumpInvocationV7
 }
 
 export interface QuickJumpRegistrationV7 {
@@ -12,10 +22,12 @@ export interface QuickJumpRegistrationV7 {
   label: string
   searchText?: string
   target?: FeatureTargetRefV7
+  invocation?: QuickJumpInvocationV7
 }
 
 export interface QuickJumpCollectOptionsV7 {
   backward?: boolean
+  domOrder?: boolean
   accept?: (element: HTMLElement) => boolean
 }
 
@@ -27,11 +39,78 @@ export interface QuickJumpRegistryOptionsV7 {
 
 export interface QuickJumpRegistryV7 {
   register(element: HTMLElement, target: QuickJumpRegistrationV7): () => void
+  registrationFor(element: HTMLElement): QuickJumpRegistrationV7 | undefined
   collect(options?: QuickJumpCollectOptionsV7): QuickJumpDomTargetV7[]
   clear(): void
 }
 
 export const QUICK_JUMP_FALLBACK_SELECTOR_V7 = '[data-quick-jump-target]'
+export const quickJumpRegistryKeyV7: InjectionKey<QuickJumpRegistryV7> = Symbol('quick-jump-registry-v7')
+
+export function quickJumpCommandTargetV7(input: {
+  featureId: AppTabId
+  commandId: string
+  args?: Record<string, unknown>
+  label: string
+  searchText?: string
+  target?: Pick<FeatureTargetRefV7, 'key' | 'kind' | 'keys'>
+  occurrence?: string
+  disposition?: NavigationIntentV7['disposition']
+  dispatch?: QuickJumpInvocationV7['dispatch']
+}): QuickJumpRegistrationV7 {
+  const target = input.target
+    ? { ...input.target, featureId: input.featureId, surfaceId: 'main' as const }
+    : featureTargetRefForCommandV7(input)
+  const intent = createNavigationIntentV7({
+    commandId: input.commandId,
+    target,
+    source: 'quick-jump',
+    disposition: input.disposition ?? 'focus'
+  })
+  return {
+    id: JSON.stringify([target.featureId, target.kind, target.key, target.keys, input.commandId, input.occurrence]),
+    label: input.label,
+    searchText: input.searchText,
+    target: intent.target,
+    invocation: { intent, args: input.args, dispatch: input.dispatch }
+  }
+}
+
+export function quickJumpMenuTargetV7(
+  item: ActionMenuItemV7,
+  dispatch?: QuickJumpInvocationV7['dispatch']
+): QuickJumpRegistrationV7 | null {
+  if (!item.target) return null
+  return quickJumpCommandTargetV7({
+    featureId: item.target.featureId,
+    target: item.target,
+    commandId: item.commandId,
+    args: item.args,
+    label: item.title,
+    searchText: item.description,
+    occurrence: 'drawer',
+    disposition: item.navigationIntent?.disposition ?? 'execute',
+    dispatch
+  })
+}
+
+export function useQuickJumpTargetV7(): ObjectDirective<HTMLElement, QuickJumpRegistrationV7 | null> {
+  const registry = inject(quickJumpRegistryKeyV7, null)
+  if (!registry) return {}
+  const disposals = new WeakMap<HTMLElement, () => void>()
+
+  function unregister(element: HTMLElement) {
+    disposals.get(element)?.()
+    disposals.delete(element)
+  }
+
+  const update = (element: HTMLElement, { value }: { value: QuickJumpRegistrationV7 | null }) => {
+    unregister(element)
+    if (value) disposals.set(element, registry.register(element, value))
+  }
+
+  return { mounted: update, updated: update, beforeUnmount: unregister }
+}
 
 function textAttribute(element: HTMLElement, name: string): string {
   return (element.getAttribute(name) || '').replace(/\s+/g, ' ').trim()
@@ -103,8 +182,14 @@ export function createQuickJumpRegistryV7(options: QuickJumpRegistryOptionsV7): 
   const registrations = new Map<HTMLElement, QuickJumpRegistrationV7>()
   return {
     register(element, target) {
-      registrations.set(element, { ...target })
-      return () => registrations.delete(element)
+      const registration = { ...target }
+      registrations.set(element, registration)
+      return () => {
+        if (registrations.get(element) === registration) registrations.delete(element)
+      }
+    },
+    registrationFor(element) {
+      return registrations.get(element)
     },
     collect(collectOptions = {}) {
       const root = options.root() || document.body
@@ -112,7 +197,7 @@ export function createQuickJumpRegistryV7(options: QuickJumpRegistryOptionsV7): 
       const elements = [...registrations.keys(), ...fallback]
       const seen = new Set<HTMLElement>()
       const targets = elements.flatMap((element, index) => {
-        if (seen.has(element)) return []
+        if (seen.has(element) || !root.contains(element)) return []
         seen.add(element)
         if (collectOptions.accept && !collectOptions.accept(element)) return []
         const registered = registrations.get(element)
@@ -124,9 +209,14 @@ export function createQuickJumpRegistryV7(options: QuickJumpRegistryOptionsV7): 
           label,
           searchText: registered?.searchText || quickJumpElementSearchTextV7(element),
           target: registered?.target,
+          invocation: registered?.invocation,
           element
         }]
       })
+      if (collectOptions.domOrder) {
+        targets.sort((left, right) =>
+          left.element.compareDocumentPosition(right.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)
+      }
       return assignQuickJumpMarkers(collectOptions.backward ? targets.reverse() : targets)
     },
     clear() {

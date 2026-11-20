@@ -120,7 +120,8 @@ function createOpener(dependencies = {}) {
   function openTask(paneKey, options = {}) {
     const key = normalizePaneKey(paneKey)
     if (!key) return Promise.resolve(outcome('unavailable', '任务标识无效'))
-    const request = { key, handle: options.handle }
+    if (dispatchInFlight && options.cacheOnly) return Promise.resolve(outcome('unavailable', '跳转进行中'))
+    const request = { key, options }
     pendingOpen = request
     if (dispatchInFlight) return Promise.resolve(outcome('unavailable', '跳转进行中'))
     dispatchInFlight = true
@@ -128,8 +129,12 @@ function createOpener(dependencies = {}) {
       .then(async () => {
         const latest = pendingOpen
         pendingOpen = null
-        const handle = await resolveHandle(latest.key, latest.handle)
+        const handle = latest.options.cacheOnly ? normalizeHandle(latest.options.handle)
+          : await resolveHandle(latest.key, latest.options.handle)
         if (!handle) return outcome('unavailable', '找不到该 Orca 终端')
+        if (latest.options.isCurrent?.() === false) {
+          return { ...outcome('unavailable', '任务已变化，请重试'), errorCode: 'stale-target' }
+        }
         return dispatch(handle)
       })
       .catch(() => outcome('failed', '唤起 Orca 任务失败'))
@@ -138,7 +143,7 @@ function createOpener(dependencies = {}) {
         if (pendingOpen) {
           const next = pendingOpen
           pendingOpen = null
-          void openTask(next.key, { handle: next.handle })
+          void openTask(next.key, next.options)
         }
       })
   }

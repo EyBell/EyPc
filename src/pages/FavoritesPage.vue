@@ -8,7 +8,9 @@ import { normalizeFavoriteRunnerConfig, resolveFavoriteRunner } from '../domain/
 import type { FavoriteDraft, FavoritePickReviewItem } from '../runtime/appRuntime'
 import type { FavoritesRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
 import type { FavoriteKind, FavoriteNode } from '../domain/types'
+import { quickJumpCommandTargetV7, quickJumpMenuTargetV7, useQuickJumpTargetV7 } from '../ui/quickJumpRegistry'
 
+const vQuickJumpTarget = useQuickJumpTargetV7()
 const props = defineProps<{ snapshot: FavoritesRuntimeSliceV7; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
   dispatch: [actionId: string, args?: Record<string, unknown>]
@@ -496,6 +498,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
           <div
             v-for="item in virtualRows()"
             :key="item.id"
+            v-quick-jump-target="quickJumpCommandTargetV7({ featureId: 'favorites', commandId: item.kind === 'group' ? 'favorites.group.focus' : 'favorites.item.focus', args: { id: item.id }, label: item.name, searchText: item.path, occurrence: 'items' })"
             class="favorite-row favorite-item-row"
             data-context-menu-target
             role="row"
@@ -605,6 +608,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
           <div
             v-for="entry in props.snapshot.favoriteDirectoryEntries"
             :key="entry.path"
+            v-quick-jump-target="quickJumpCommandTargetV7({ featureId: 'favorites', commandId: 'favorites.directory.focus', args: { path: entry.path }, label: entry.name, searchText: entry.path })"
             class="favorite-row favorite-directory-row"
             data-context-menu-target
             role="row"
@@ -699,6 +703,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
           <button
             v-for="(item, index) in props.snapshot.favoriteDrawerItems"
             :key="item.commandId"
+            v-quick-jump-target="quickJumpMenuTargetV7(item, (_commandId, args) => emit('dispatch', `favorites.drawer.select.${index + 1}`, args))"
             type="button"
             class="drawer-action"
             :class="{ active: props.snapshot.favoriteDrawer.activeIndex === index, danger: item.risk === 'destructive' }"

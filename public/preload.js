@@ -1573,6 +1573,7 @@ let codexNativePlanExecutionCapabilityPromise = null
 let codexNativePlanExecutionCapability = null
 const codexRpcPending = new Map()
 const codexThreadActions = new Map()
+const companionCodexOpenEntries = new Map()
 const codexProjectActions = new Map()
 const codexActivityListeners = new Set()
 let codexActivityInventory = new Map()
@@ -1668,6 +1669,7 @@ let codexThreadFirstPromptScanGeneration = 0
 const codexActionRunnerActionListeners = new Set()
 let codexActionRunnerWindow = null
 let codexActionRunnerCatalog = { version: 1, projects: [], generatedAt: 0 }
+let codexActionRunnerQuickJumpBindings
 let codexActionRunnerPreference = { pinned: false, view: 'records', runtimeByProject: {} }
 let codexActionRunnerPreferenceLoaded = false
 let codexActionRunnerForceClose = false
@@ -4157,12 +4159,16 @@ async function setCodexLaunchPath(pathValue) {
   const exists = codexLaunchPathIsFile(manualPath)
   const plan = exists ? codexLaunchPlan(manualPath, 'manual', true) : null
   if (!plan || !plan.detected) throw codexError('runtime-unavailable', '所选 Codex CLI 路径不可用，请选择可执行文件本身')
+  const previous = readCodexLaunchPathPreference()
   if (!writeCodexLaunchPathPreference(manualPath)) throw codexError('unavailable', '无法保存手动 Codex CLI 位置')
+  if (previous !== manualPath) invalidateCompanionCodexSource()
   return inspectCodexEnvironment()
 }
 
 async function clearCodexLaunchPath() {
+  const previous = readCodexLaunchPathPreference()
   if (!writeCodexLaunchPathPreference('')) throw codexError('unavailable', '无法清除手动 Codex CLI 位置')
+  if (previous) invalidateCompanionCodexSource()
   return inspectCodexEnvironment()
 }
 
@@ -6468,9 +6474,10 @@ class CodexDesktopCompanionBridge {
       this.setState('connected')
       this.refreshPersistedUnread(false)
       this.followAll(true)
-      if (codexActivitySourceFingerprint || companionTaskKernel?.getPackage?.()?.complete === true) {
+      if (codexInventoryMembershipEnabled()) {
         ensureCodexInventoryMembershipWatchers({ reconcile: false })
-        requestCodexInventoryMembershipReconciliation('desktop-ipc-connected', { forceTasksOnly: true })
+        if (companionHostReconcileInFlight.has('codex')) queueCompanionHostReconciliation('codex')
+        else requestCodexInventoryMembershipReconciliation('desktop-ipc-connected', { forceTasksOnly: true })
       }
       return
     }
@@ -8018,6 +8025,7 @@ function codexArchivedActivityKey(threadId) {
   codexThreadFirstPromptCache.delete(threadId)
   codexInteractionSemanticFingerprints.delete(known.key)
   codexActivityInventory.delete(threadId)
+  companionCodexOpenEntries.delete(known.key)
   return known.key
 }
 
@@ -8035,6 +8043,7 @@ function codexInventoryMembershipReason(value) {
 function codexInventoryMembershipEnabled() {
   const current = companionTaskKernel?.getPackage?.()
   return current?.enabled === true && current.providers?.codex === true
+    && (current.complete || companionTaskKernel.isProviderCached('codex') || companionHostReconcileInFlight.has('codex'))
 }
 
 function requestCodexPinReconciliation() {
@@ -8458,6 +8467,7 @@ function registerCodexLiveThreadMembership(thread, registry, project, desktop = 
     sourceFingerprint: registry?.fingerprint || codexActivitySourceFingerprint || '',
     cwd: codexNormalizeNativeRoot(thread.cwd)
   })
+  companionCodexOpenEntries.set(action.key, { threadId })
   const connector = desktop ? sanitizeCodexActivityStatus(thread.status) : null
   const displayName = desktop && typeof thread.name === 'string' ? codexNativeString(thread.name.trim().slice(0, 120)) : ''
   const known = {
@@ -8504,6 +8514,10 @@ function handleCodexServerMessage(message) {
   if (!message || typeof message !== 'object' || typeof message.method !== 'string') return false
   const method = message.method
   const params = codexRecord(message.params)
+  if (method === 'account/updated') {
+    invalidateCompanionCodexSource()
+    return true
+  }
   if (method === 'thread/started') codexObserveThreadMembership([params.thread])
   if (codexRejectInternalReviewThread(params.threadId || codexRecord(params.thread).id)) return true
   if (method === 'thread/section/changed') {
@@ -8784,6 +8798,7 @@ function onCodexProcessEnd(processRef = codexProcess, reason = null) {
   codexNativePlanExecutionCapabilityPromise = null
   codexNativePlanExecutionCapability = null
   resetCodexThreadSessionState({ preserveDesktopActivity: true })
+  if (companionTaskKernel?.isProviderCached('codex')) queueCompanionHostReconciliation('codex', false)
 }
 
 function handleCodexStdout(chunk) {
@@ -9507,6 +9522,7 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
 
 function codexThreadAlias(threadId, now, metadata = {}) {
   const key = codexThreadKey(threadId)
+  if (metadata.sourceFingerprint) companionCodexOpenEntries.set(key, { threadId })
   for (const [alias, entry] of codexThreadActions) {
     if (entry.expiresAt <= now) codexThreadActions.delete(alias)
     else if (entry.key === key && entry.threadId === threadId) {
@@ -11431,13 +11447,18 @@ function codexOpenHandoff(handoffId, stage) {
   }
 }
 
-async function openCodexThread(actionAlias) {
+async function openCodexThread(actionAlias, request) {
   if (typeof actionAlias !== 'string' || !/^ct_[A-Za-z0-9_-]{16,80}$/.test(actionAlias)) return { outcome: 'failed', errorCode: 'invalid-alias', message: '线程动作已失效' }
   const entry = codexThreadActions.get(actionAlias)
   if (!entry || entry.expiresAt <= Date.now() || !validCodexThreadId(entry.threadId)) {
     codexThreadActions.delete(actionAlias)
     return { outcome: 'failed', errorCode: 'expired-alias', message: '线程动作已过期，请刷新后重试' }
   }
+  return dispatchCodexThreadOpen(entry, request)
+}
+
+async function dispatchCodexThreadOpen(entry, request) {
+  if (request?.isCurrent?.() === false) return companionOpenTargetUnavailable()
   const handoffId = `coh_${crypto.randomBytes(12).toString('base64url')}`
   const target = `codex://threads/${encodeURIComponent(entry.threadId)}`
   const shell = electronShell()
@@ -11712,8 +11733,10 @@ function publishCompanionCodexAlias(key, actionAlias, fallbackTarget = null, met
 
 async function readCompanionCodexOpenTarget(key) {
   if (typeof key !== 'string' || !/^[a-f0-9]{32}$/.test(key)) return null
+  const domain = codexCausalDomain
   const registry = readCodexNativeRegistry()
   const rows = await listAllCodexThreads(false)
+  if (domain !== codexCausalDomain) return null
   const matches = rows.filter((value) => {
     const thread = codexRecord(value)
     return validCodexThreadId(thread.id)
@@ -11758,10 +11781,28 @@ function resolveCompanionCodexOpenTarget(key, excludedAlias = '') {
   return operation
 }
 
-async function openCompanionCodexTarget(target) {
+function companionOpenTargetUnavailable() {
+  return { outcome: 'unavailable', errorCode: 'stale-target', message: '任务或打开位置已变化，请重试' }
+}
+
+function invalidateCompanionCodexSource() {
+  companionCodexOpenEntries.clear()
+  companionCodexVerifiedSnapshotCacheV7 = null
+  resetCodexThreadSessionState()
+  companionTaskKernel?.invalidateProvider('codex')
+  queueCompanionHostReconciliation('codex')
+}
+
+async function openCompanionCodexTarget(target, request) {
   const key = typeof target?.key === 'string' ? target.key : ''
   if (!/^[a-f0-9]{32}$/.test(key)) {
     return { outcome: 'failed', errorCode: 'invalid-target', message: '线程身份无效' }
+  }
+  if (request?.cacheOnly === true) {
+    const entry = companionCodexOpenEntries.get(key)
+    return entry && validCodexThreadId(entry.threadId)
+      ? dispatchCodexThreadOpen(entry, request)
+      : companionOpenTargetUnavailable()
   }
   let resolved = companionCodexActionForHint(key, target.actionAlias)
   if (!resolved) {
@@ -11769,54 +11810,42 @@ async function openCompanionCodexTarget(target) {
   }
   if (!resolved) return { outcome: 'failed', errorCode: 'target-missing', message: '未找到同一任务，未跳转到其它任务' }
   publishCompanionCodexAlias(key, resolved.alias, target, resolved.metadata)
-  let result = await openCodexThread(resolved.alias)
+  let result = await openCodexThread(resolved.alias, request)
   if (!['expired-alias', 'invalid-alias', 'stale-alias'].includes(result?.errorCode || '')) return result
   if (codexThreadActions.get(resolved.alias)?.key === key) codexThreadActions.delete(resolved.alias)
   let refreshed = null
   try { refreshed = await resolveCompanionCodexOpenTarget(key, resolved.alias) } catch {}
   if (!refreshed) return result
   publishCompanionCodexAlias(key, refreshed.alias, target, refreshed.metadata)
-  result = await openCodexThread(refreshed.alias)
+  result = await openCodexThread(refreshed.alias, request)
   return result
 }
 
-async function openCompanionClaudeTarget(target) {
+async function openCompanionClaudeTarget(target, request) {
   const exactAlias = typeof target?.key === 'string' && target.key.startsWith('claude:')
     ? target.key.slice('claude:'.length)
     : ''
-  const result = await (claudeBridge
-    ? claudeBridge.openTask(exactAlias || target.actionAlias)
-    : claudeUnavailable('open'))
-  if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
-    queueMicrotask(() => queueCompanionHostReconciliation('claude'))
-  }
-  return result
+  return claudeBridge
+    ? claudeBridge.openTask(exactAlias || target.actionAlias, request)
+    : claudeUnavailable('open')
 }
 
-async function openCompanionCursorTarget(target) {
+async function openCompanionCursorTarget(target, request) {
   const exactAlias = typeof target?.key === 'string' && target.key.startsWith('cursor:')
     ? target.key.slice('cursor:'.length)
     : ''
-  const result = cursorBridge
-    ? await cursorBridge.openTask(String(exactAlias || target.actionAlias || ''))
+  return cursorBridge
+    ? cursorBridge.openTask(String(exactAlias || target.actionAlias || ''), request)
     : cursorUnavailable('open')
-  if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
-    queueMicrotask(() => queueCompanionHostReconciliation('cursor'))
-  }
-  return result
 }
 
-async function openCompanionOrcaTarget(target) {
+async function openCompanionOrcaTarget(target, request) {
   const exactAlias = typeof target?.key === 'string' && target.key.startsWith('orca:')
     ? target.key.slice('orca:'.length)
     : ''
-  const result = orcaBridge
-    ? await orcaBridge.openTask(String(exactAlias || target.actionAlias || ''))
+  return orcaBridge
+    ? orcaBridge.openTask(String(exactAlias || target.actionAlias || ''), request)
     : orcaUnavailable('open')
-  if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
-    queueMicrotask(() => queueCompanionHostReconciliation('orca'))
-  }
-  return result
 }
 
 function codexPrivateThreadSettings(...values) {
@@ -12773,7 +12802,7 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       : isRoot && rootSource.nativePinLane === 'mirror' ? 'app-server' : ''
     const capabilities = isRoot
       ? [
-          ...(rootActionAlias ? ['open'] : []),
+          ...(companionCodexOpenEntries.has(key) ? ['open'] : []),
           ...(terminalCandidate ? ['archive'] : []),
           ...(observation.planState === 'available' ? ['pause', 'resume', 'execute-plan'] : []),
           ...(rootActionAlias && !hostExternal ? ['continue-task'] : []),
@@ -13276,7 +13305,7 @@ function companionOrcaEvidenceV7(sessionValue, input = {}) {
       alias,
       ...companionProviderProjectFields(session)
     }),
-    capabilities: ['open', 'pin', ...(terminal ? ['archive'] : [])],
+    capabilities: [...(session.handle ? ['open'] : []), 'pin', ...(terminal ? ['archive'] : [])],
     standaloneEligible: true
   })
   const interactionBundle = companionSyntheticInteractionBundleV7({
@@ -13499,7 +13528,7 @@ async function preflightCompanionTaskPackageV7(input = {}) {
       Promise.resolve(claudeBridge?.readCodeSnapshot({ now: Date.now() })),
       Promise.resolve(claudeBridge?.readCodeUnread())
     ]).then(([value, unread]) => {
-      if (!claudeBridge || !value || !Array.isArray(value.sessions) || value.truncated === true) {
+      if (!claudeBridge || !value || value.available === false || !Array.isArray(value.sessions) || value.truncated === true) {
         return { provider: 'claude', status: 'unavailable', errorCode: 'claude-task-preflight-failed' }
       }
       if (!unread || !Array.isArray(unread.ids)) {
@@ -13528,6 +13557,7 @@ async function preflightCompanionTaskPackageV7(input = {}) {
   }
   if (!reads.length) throw new Error('no-enabled-provider')
   const rows = await Promise.all(reads)
+  if (input.isCurrent?.() === false) return null
   const persisted = companionPersistedTaskState()
   const dynamicCutoff = Date.now() - configuration.dynamicTaskWindowHours * 60 * 60 * 1_000
   const sourceLaneGenerations = Object.fromEntries(companionProviderOrder.map((provider) => [
@@ -13901,7 +13931,7 @@ companionTaskKernel = typeof createCompanionTaskKernel === 'function' && compani
       persistInteractionTombstones: persistCompanionInteractionTombstones,
       migrateHiddenPlan: migrateHiddenCompanionPlan,
       applyPreference: persistCompanionPreference,
-      preflight: preflightCompanionTaskPackageV7,
+      refreshProviders: (providers) => Promise.all(providers.map((provider) => queueCompanionHostReconciliation(provider, false))),
       preparePendingEvidence: preparePendingCodexEvidence,
       hostRegistry: companionHostRegistry,
       diagnosticTaskRef: companionDiagnosticTaskRef,
@@ -14079,7 +14109,7 @@ try {
 } catch { codexFloatBridge = null }
 
 let companionHostDraftSequence = 0
-let companionHostReconcileInFlight = null
+const companionHostReconcileInFlight = new Map()
 const companionHostReconcilePendingProviders = new Set()
 let companionClaudeStateDispose = null
 let companionClaudeInventoryDispose = null
@@ -14258,7 +14288,7 @@ function companionInteractionEvidenceV1(task, authority = 'provider-live') {
 
 function publishCompanionEvidenceBatchesV3(input = {}) {
   const current = companionTaskKernel?.getPackage?.()
-  if (!current?.complete || !companionTaskKernel?.publishEvidence) return false
+  if (!current?.enabled || !companionTaskKernel?.publishEvidence) return false
   const providers = companionProviderOrder
   const requestedBatches = codexRecord(input.evidenceBatches)
   const requestedLanes = codexRecord(input.sourceLaneGenerations)
@@ -14305,7 +14335,7 @@ function publishCompanionEvidenceBatchesV3(input = {}) {
     acceptedAt: companionEvidenceSequenceV7(input.acceptedAt, Date.now()),
     enabled: current.enabled,
     providers: current.providers,
-    complete: true,
+    complete: current.complete,
     focusedKey: current.focusedKey,
     sourceGenerations: Object.fromEntries(providers.map((provider) => [
       provider,
@@ -14329,7 +14359,7 @@ function applyCodexActivityToCompanionKernel(delta, removedMemberKeys = [], opti
   const entries = Array.isArray(source.entries) ? source.entries.map(codexRecord) : []
   const archivedKeys = [...new Set((Array.isArray(source.archivedKeys) ? source.archivedKeys : [])
     .filter((key) => typeof key === 'string' && key))]
-  if (!current || !generation || (current.complete ? !current.providers?.codex : !companionTaskConfiguration().providers.codex)) {
+  if (!current || !generation || (current.enabled ? !current.providers?.codex : !companionTaskConfiguration().providers.codex)) {
     recordCompanionProbeGate('codex-activity-v7-gate', 'prerequisite-missing', {
       packageComplete: current?.complete === true,
       providerEnabled: current?.providers?.codex === true,
@@ -14337,7 +14367,9 @@ function applyCodexActivityToCompanionKernel(delta, removedMemberKeys = [], opti
     })
     return false
   }
-  if (current.complete && source.inventoryChanged === true) queueCompanionHostReconciliation('codex')
+  if (source.inventoryChanged === true && (current.complete || companionTaskKernel.isProviderCached('codex'))) {
+    queueCompanionHostReconciliation('codex')
+  }
   const persisted = companionPersistedTaskState()
   const dynamicCutoff = Date.now() - companionTaskConfiguration().dynamicTaskWindowHours * 60 * 60 * 1_000
   const nodesByKey = new Map()
@@ -14425,7 +14457,7 @@ function applyCodexActivityToCompanionKernel(delta, removedMemberKeys = [], opti
     providerHealth: { codex: providerHealth }
   }
   retirePendingCodexMembers([...archivedKeys, ...removedMemberKeys])
-  if (!current.complete) {
+  if (!companionTaskKernel.isProviderCached('codex')) {
     retainCodexActivity(batch, generation, source.sourceFingerprint)
     return 'buffered'
   }
@@ -14471,7 +14503,7 @@ function applyCodexActivityToCompanionKernel(delta, removedMemberKeys = [], opti
 function applyClaudeStateToCompanionKernel() {
   const startedAt = Date.now()
   const current = companionTaskKernel?.getPackage?.()
-  if (!current?.complete || current.providers?.claude !== true || !claudeBridge?.readCodeStateSnapshot) {
+  if (!current?.enabled || !companionTaskKernel.isProviderCached('claude') || !claudeBridge?.readCodeStateSnapshot) {
     recordCompanionProbeGate('claude-state-v7-gate', 'prerequisite-missing', {
       packageComplete: current?.complete === true,
       providerEnabled: current?.providers?.claude === true,
@@ -14601,8 +14633,8 @@ function applyClaudeStateToCompanionKernel() {
 
 async function applyClaudeUnreadToCompanionKernel() {
   const startedAt = Date.now()
-  const current = companionTaskKernel?.getPackage?.()
-  if (!current?.complete || current.providers?.claude !== true || !claudeBridge?.readCodeUnread) {
+  let current = companionTaskKernel?.getPackage?.()
+  if (!current?.enabled || !companionTaskKernel.isProviderCached('claude') || !claudeBridge?.readCodeUnread) {
     recordCompanionProbeGate('claude-unread-v7-gate', 'prerequisite-missing', {
       packageComplete: current?.complete === true,
       providerEnabled: current?.providers?.claude === true,
@@ -14610,6 +14642,7 @@ async function applyClaudeUnreadToCompanionKernel() {
     })
     return false
   }
+  const epoch = companionTaskKernel.providerEpoch('claude')
   let snapshot
   try { snapshot = await Promise.resolve(claudeBridge.readCodeUnread()) } catch {
     runtimeDiagnostics.record({
@@ -14624,6 +14657,8 @@ async function applyClaudeUnreadToCompanionKernel() {
     })
     return false
   }
+  if (epoch !== companionTaskKernel.providerEpoch('claude')) return false
+  current = companionTaskKernel.getPackage()
   const source = codexRecord(snapshot)
   if (!Array.isArray(source.ids)) return false
   const generation = companionEvidenceSequenceV7(source.generation, source.readAt)
@@ -14709,7 +14744,7 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
   const startedAt = Date.now()
   const source = codexRecord(delta)
   const current = companionTaskKernel?.getPackage?.()
-  if (!current?.complete || current.providers?.claude !== true || !Array.isArray(source.mutations)) {
+  if (!current?.enabled || !companionTaskKernel.isProviderCached('claude') || !Array.isArray(source.mutations)) {
     queueCompanionHostReconciliation('claude')
     return false
   }
@@ -14832,63 +14867,62 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
   return changed
 }
 
-function queueCompanionHostReconciliation(provider = '') {
-    const freezeSpan = freezeTrace.begin('main.reconciliation-dispatch')
-    try {
-  if (!companionTaskKernel) return
-  const requestedProvider = companionProviderOrder.includes(provider) ? provider : ''
-  if (companionHostReconcileInFlight) {
-    companionHostReconcilePendingProviders.add(requestedProvider)
-    recordCompanionProbeGate('reconciliation-gate', 'coalesced', {
-      requestedProvider: requestedProvider || 'all',
-      pendingProviders: [...companionHostReconcilePendingProviders]
-    })
-    return
+function queueCompanionHostReconciliation(provider, retryIfBusy = true) {
+  const base = companionTaskKernel?.getPackage()
+  if (!base?.enabled || base.providers[provider] !== true) return Promise.resolve(null)
+  const epoch = companionTaskKernel.providerEpoch(provider)
+  if (epoch === undefined) return Promise.resolve(null)
+  const inFlight = companionHostReconcileInFlight.get(provider)
+  if (inFlight) {
+    if (inFlight.epoch !== epoch) {
+      return inFlight.operation.then(() => queueCompanionHostReconciliation(provider, false))
+    }
+    if (retryIfBusy) companionHostReconcilePendingProviders.add(provider)
+    return inFlight.operation
   }
   const startedAt = Date.now()
-  companionHostReconcileInFlight = Promise.resolve()
-    .then(() => {
-      const base = companionTaskKernel.getPackage()
-      const single = base.complete && requestedProvider && base.providers[requestedProvider] ? requestedProvider : ''
-      const requestedProviders = single
-        ? Object.fromEntries(companionProviderOrder.map(id => [id, id === single]))
-        : base.providers
-      return preflightCompanionTaskPackageV7({ providers: requestedProviders }).then(draft => {
-        const current = companionTaskKernel.getPackage()
-        if (base.enabled !== current.enabled || companionProviderOrder.some(id => base.providers[id] !== current.providers[id])) {
-          throw new Error('configuration-changed')
-        }
-        if (!single) return draft
-        return {
-          ...draft, providers: current.providers,
-          focusedKey: current.focusedKey,
-          sourceGenerations: { ...current.sourceGenerations, [single]: draft.sourceGenerations[single] },
-          sourceLaneGenerations: { ...current.sourceLaneGenerations, [single]: draft.sourceLaneGenerations[single] },
-          providerHealth: { ...current.providerHealth, [single]: draft.providerHealth[single] },
-          evidenceBatches: Object.fromEntries(companionProviderOrder.map(id => [id, id === single
-            ? draft.evidenceBatches[id]
-            : createCompanionEvidenceBatchV7({ provider: id, laneGenerations: current.sourceLaneGenerations[id],
-                health: current.providerHealth[id]?.status })]))
-        }
-      })
-    })
+  const isCurrent = () => epoch === companionTaskKernel.providerEpoch(provider)
+  const operation = Promise.resolve()
+    .then(() => isCurrent()
+      ? preflightCompanionTaskPackageV7({ providers: { [provider]: true }, isCurrent })
+      : null)
     .then((draft) => {
+      if (!draft) return null
+      const current = companionTaskKernel.getPackage()
+      const batch = draft.evidenceBatches[provider]
       const result = companionTaskKernel.publishEvidence?.({
         ...draft,
-        sourceTaskStateRevision: companionTaskKernel.getPackage().sourceTaskStateRevision
-      })
+        providers: current.providers,
+        complete: current.complete,
+        focusedKey: current.focusedKey,
+        sourceGenerations: { ...current.sourceGenerations, [provider]: draft.sourceGenerations[provider] },
+        sourceLaneGenerations: { ...current.sourceLaneGenerations, [provider]: draft.sourceLaneGenerations[provider] },
+        providerHealth: { ...current.providerHealth, [provider]: draft.providerHealth[provider] },
+        evidenceBatches: Object.fromEntries(companionProviderOrder.map(id => [id, id === provider
+          ? batch
+          : createCompanionEvidenceBatchV7({
+            provider: id, laneGenerations: current.sourceLaneGenerations[id], health: current.providerHealth[id]?.status
+          })]))
+      }, { provider, epoch })
+      if (result && provider === 'codex' && batch.channels.membership.complete) {
+        const roots = new Set(result.tasks.filter((task) => task.provider === 'codex').map((task) => task.key))
+        for (const key of companionCodexOpenEntries.keys()) if (!roots.has(key)) companionCodexOpenEntries.delete(key)
+      }
       runtimeDiagnostics.record({
         level: result ? 'info' : 'error',
         scope: 'task-recovery',
-        event: 'reconciliation',
+        event: 'provider-cache-publication',
         outcome: result ? 'accepted' : 'rejected',
+        provider,
         durationMs: Date.now() - startedAt,
         slowMs: 500,
-        count: Object.values(draft.evidenceBatches || {}).reduce((total, batch) => total + (Array.isArray(batch?.nodes) ? batch.nodes.length : 0), 0),
+        count: batch?.nodes.length || 0,
         cache: 'cold-read',
         details: {
-          requestedProvider: requestedProvider || 'all',
-          taskCount: Object.values(draft.evidenceBatches || {}).reduce((total, batch) => total + (Array.isArray(batch?.nodes) ? batch.nodes.length : 0), 0)
+          cached: companionTaskKernel.isProviderCached(provider),
+          complete: result?.complete === true,
+          cycleCount: result?.views.cycleKeys.length || 0,
+          taskCount: result?.tasks.length || 0
         }
       })
       return result
@@ -14907,19 +14941,14 @@ function queueCompanionHostReconciliation(provider = '') {
       return undefined
     })
     .finally(() => {
-      companionHostReconcileInFlight = null
-      if (companionHostReconcilePendingProviders.size) {
-        const nextProvider = companionHostReconcilePendingProviders.has('')
-          ? ''
-          : companionHostReconcilePendingProviders.values().next().value
-        companionHostReconcilePendingProviders.delete(nextProvider)
-        if (!nextProvider) companionHostReconcilePendingProviders.clear()
-        queueMicrotask(() => queueCompanionHostReconciliation(nextProvider))
+      companionHostReconcileInFlight.delete(provider)
+      if (companionHostReconcilePendingProviders.delete(provider)) {
+        queueMicrotask(() => queueCompanionHostReconciliation(provider, false))
       }
     })
-
-    } finally { freezeTrace.end(freezeSpan) }
-  }
+  companionHostReconcileInFlight.set(provider, { epoch, operation })
+  return operation
+}
 
 if (companionTaskKernel) {
   codexActivityListeners.add(applyCodexActivityToCompanionKernel)
@@ -14937,6 +14966,9 @@ if (companionTaskKernel) {
   try { companionCursorEventDispose = cursorBridge?.watchEvents?.(() => queueCompanionHostReconciliation('cursor')) || null } catch {}
   try { companionCursorInventoryDispose = cursorBridge?.watchInventory?.(() => queueCompanionHostReconciliation('cursor')) || null } catch {}
   try { companionOrcaInventoryDispose = orcaBridge?.watchInventory?.(() => queueCompanionHostReconciliation('orca'), { isEnabled: () => companionTaskConfiguration().providers.orca }) || null } catch {}
+  if (process.type === 'renderer' && globalThis.utools) {
+    companionTaskKernel.warmPendingProviders()
+  }
 }
 
 function runtimeIdentityHandshake(input = {}) {
@@ -15032,10 +15064,6 @@ if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') 
   globalThis.utools.onPluginEnter((action) => {
     const freezeSpan = freezeTrace.begin('main.plugin-enter')
     try {
-    if (!['eypc-codex-task-previous', 'eypc-codex-task-next'].includes(action?.code) || companionTaskKernel?.getLatest?.()?.complete !== true) {
-      ensureCodexInventoryMembershipWatchers({ reconcile: false })
-      requestCodexInventoryMembershipReconciliation('plugin-enter', { forceTasksOnly: true })
-    }
     codexFloatBridge?.handlePluginEnter?.(action)
     // 快速任务查看的载体是宿主自己拥有的悬浮子窗口，不依赖 Renderer 挂载。
     // 冷启动直接激活，避免"全局快捷键第一次按没反应、第二次才生效"。
@@ -15456,6 +15484,7 @@ function pushCodexActionRunnerSnapshot(message = '') {
   const snapshot = {
     version: 1,
     catalog,
+    ...(codexActionRunnerQuickJumpBindings === undefined ? {} : { quickJumpBindings: codexActionRunnerQuickJumpBindings }),
     capabilities: ['node-runtime-selection-v1', 'log-cursor-v1', 'explicit-window-geometry-v1'],
     runs: codexActionRunMemorySnapshot().map((run) => ({
       version: 1,
@@ -15493,6 +15522,22 @@ function pushCodexActionRunnerSnapshot(message = '') {
     generatedAt: Date.now()
   }
   try { codexActionRunnerWindow.webContents.send(CODEX_ACTION_RUNNER_CHANNELS.snapshot, snapshot); return true } catch { return false }
+}
+
+function syncCodexActionRunnerQuickJumpBindings(value) {
+  let bindings
+  if (value !== undefined) {
+    if (!Array.isArray(value) || value.length > 32) return
+    bindings = value.map(codexRecord).map(({ actionId, shortcutId, when, weight }) => ({ actionId, shortcutId, when, weight }))
+    if (!bindings.every(({ actionId, shortcutId, when, weight }) => (
+      (actionId === 'quickJump.openForward' || actionId === 'quickJump.openBackward')
+      && typeof shortcutId === 'string' && shortcutId.trim() && shortcutId !== '*' && shortcutId.length <= 80
+      && typeof when === 'string' && when.length <= 1024 && Number.isFinite(weight)
+    ))) return
+  }
+  if (JSON.stringify(bindings) === JSON.stringify(codexActionRunnerQuickJumpBindings)) return
+  codexActionRunnerQuickJumpBindings = bindings
+  if (codexActionRunnerAlive()) pushCodexActionRunnerSnapshot()
 }
 
 function codexActionRunnerDevelopmentEntry() {
@@ -16120,7 +16165,10 @@ window.eypcPlatform = {
     // window" as vacuously reset), diagnostics reads the static not-checked
     // shape, and onAction hands back an inert unsubscribe. No caller learns
     // a new case.
-    sync: (payload) => codexFloatBridge ? codexFloatBridge.sync(payload) : false,
+    sync: (payload) => {
+      syncCodexActionRunnerQuickJumpBindings(payload?.quickJumpBindings)
+      return codexFloatBridge ? codexFloatBridge.sync(payload) : false
+    },
     activate: (payload) => codexFloatBridge ? codexFloatBridge.activate(payload) : false,
     setCrossDesktopPin: (enabled) => codexFloatBridge?.setCrossDesktopPin?.(enabled) ?? false,
     diagnostics: () => codexFloatBridge ? codexFloatBridge.diagnostics() : {

@@ -234,7 +234,9 @@ function createCursorBridge(dependencies) {
     watchInventory,
     install,
     uninstall,
-    openTask: (composerId) => opener.openTask(String(composerId || ''), { platform: dependencies.platform }),
+    openTask: (composerId, options) => opener.openTask(String(composerId || ''), {
+      platform: dependencies.platform, isCurrent: options?.isCurrent
+    }),
     archiveTask: (composerId) => Promise.resolve(archiver.archiveTask(String(composerId || ''))),
     diagnostics() {
       return {

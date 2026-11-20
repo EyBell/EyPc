@@ -71,12 +71,14 @@ export function checkCompanionNativeUnread(assetRoot) {
     provider: 'codex', key, family: 'codex:root-key', role: index ? 'child' : 'root',
     metadata: { kind: index ? 'topology-child' : 'codex-thread', revisionAt: 30 }
   }))
+  const configuration = { enabled: true, providers: { codex: true, claude: true }, dynamicTaskWindowHours: 24 }
+  const taskPackage = { enabled: true, providers: configuration.providers, complete: true, sourceLaneGenerations: {}, packageRevision: 1 }
   let published
   const applyContext = vm.createContext({ Date,
     codexDesktopBridge: null,
     codexRecord: value => value || {}, companionEvidenceSequenceV7: (...values) => Math.max(0, ...values.map(value => Number(value) || 0)),
-    companionTaskKernel: { getPackage: () => ({ complete: true, providers: { codex: true }, sourceLaneGenerations: {}, packageRevision: 1 }) },
-    companionPersistedTaskState: () => ({}), companionTaskConfiguration: () => ({ dynamicTaskWindowHours: 24 }),
+    companionTaskKernel: { getPackage: () => taskPackage, isProviderCached: provider => provider === 'codex' },
+    companionPersistedTaskState: () => ({}), companionTaskConfiguration: () => configuration,
     companionCodexEvidenceV7: () => ({ nodes: members,
       relations: [], interactions: projected.interactions, interactionSets: projected.interactionSets }),
     createCompanionInteractionEvidenceV7: value => value, createCompanionInteractionSetV7: value => value,
@@ -85,10 +87,14 @@ export function checkCompanionNativeUnread(assetRoot) {
     runtimeDiagnostics: { record() {} }, codexActivitySourceFingerprint: 'synthetic'
   })
   const apply = vm.runInContext(`${selection}\n${retirement}\n${source.slice(applyStart, applyEnd)}; applyCodexActivityToCompanionKernel`, applyContext)
-  apply({ generation: 30, entries: [{ key: 'root-key' }] })
-  assert(validateCompanionEvidenceBatchV3(published.evidenceBatches.codex, 'codex'), 'member evidence passes the Kernel input contract')
-  assert.equal(published.evidenceBatches.codex.interactions[0].taskKey, 'codex-child:synthetic-side-ref',
-    'unchanged open member input survives activity-only replay')
+  for (const complete of [true, false]) {
+    taskPackage.complete = complete
+    published = null
+    assert.equal(apply({ generation: 30, entries: [{ key: 'root-key' }] }), true, 'cached Codex evidence publishes independently of other sources')
+    assert(validateCompanionEvidenceBatchV3(published.evidenceBatches.codex, 'codex'), 'member evidence passes the Kernel input contract')
+    assert.equal(published.evidenceBatches.codex.interactions[0].taskKey, 'codex-child:synthetic-side-ref',
+      'unchanged open member input survives activity-only replay')
+  }
   const cacheGuard = source.match(/if \((queryThreadId === threadId[\s\S]*?codexApplyCachedCompletedTurnEvidence\(known, threadId\))\) \{/)
   assert(cacheGuard, 'cached parent completion is limited to parent query')
   let cachedRead = false

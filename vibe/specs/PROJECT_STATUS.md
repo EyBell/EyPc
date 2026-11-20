@@ -1,5 +1,7 @@
 # EyPc Project Status Hub
 
+- 2026-11-20 20:04:03，快捷键管理工作树的前置完整构建通过。当前工作树产物为 `V7` / `host-a3230dfd4394e3fae4ae` / `renderer-53b55ff805c289fdffa1`，builtAt `2026-11-20T12:04:03.006Z`。同版 uTools 加载和实机验收待完成。[快捷键管理验收](261120/eypc-shortcut-optimization/spec.md#实施交付与验收状态)
+
 - 2026-11-20 15:54:20，提交前按同一源码重新完成 `closeout` 构建。当前产物为 `V7` / `host-76820ccd4e3888194fd9` / `renderer-badaca6d487bfad43880`，builtAt `2026-11-20T07:54:20.445Z`。回执和产物身份一致。uTools 实机待验。[主检出插件入口](../../dist/plugin.json)。
 
 - 2026-11-20 15:35:34，本地 `main` 快进至 `150f1c3`，合入悬浮卡片紧凑化并保留本地 Codex 状态同步改动。合入后的 `closeout` 完整构建通过，`V7` / `host-76820ccd4e3888194fd9` / `renderer-badaca6d487bfad43880`，builtAt `2026-11-20T07:35:34.442Z`。产物身份与回执一致。从[主检出插件入口](../../dist/plugin.json)接入 uTools 后，核验[悬浮卡片](261120/eypc-float-card-compact/task-card.md#影响与验收)和[原生状态同步](261114/codex-state-sync/delivery.md#handoff)。

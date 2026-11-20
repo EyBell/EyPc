@@ -2,7 +2,10 @@
 import type { AppTabId } from '../domain/types'
 import { formatShortcutLabel } from '../domain/shortcuts'
 import type { TabShellRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
+import { quickJumpCommandTargetV7, useQuickJumpTargetV7 } from '../ui/quickJumpRegistry'
 import CommandHints from './CommandHints.vue'
+
+const vQuickJumpTarget = useQuickJumpTargetV7()
 
 defineProps<{
   activeTab: AppTabId
@@ -19,6 +22,7 @@ defineEmits<{ select: [tab: AppTabId] }>()
       <button
         v-for="feature in snapshot.visibleFeatures"
         :key="feature.id"
+        v-quick-jump-target="quickJumpCommandTargetV7({ featureId: feature.id, commandId: feature.shortcutCommandId, label: feature.title, searchText: feature.description, disposition: 'open' })"
         type="button"
         class="tab-button"
         :class="{ active: feature.id === activeTab, 'shortcut-hinting': showShortcutHints }"

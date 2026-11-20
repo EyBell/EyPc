@@ -957,6 +957,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   const diagnosticStateSignatures = new Map()
   const diagnosticActivitySignatures = new Map()
   const preflight = typeof dependencies.preflight === 'function' ? dependencies.preflight : null
+  const refreshProviders = typeof dependencies.refreshProviders === 'function' ? dependencies.refreshProviders : null
   const persistPlanPause = typeof dependencies.persistPlanPause === 'function' ? dependencies.persistPlanPause : () => true
   const persistInteractionTombstones = typeof dependencies.persistInteractionTombstones === 'function'
     ? dependencies.persistInteractionTombstones
@@ -975,6 +976,10 @@ function createCompanionTaskKernel(dependencies = {}) {
   let topologySequence = 0
   let topologyFingerprint = ''
   let currentPackage = emptyPackage(providers)
+  const providerEpochs = Object.fromEntries(PROVIDERS.map((provider) => [provider, 0]))
+  const providerCacheStates = new Map()
+  const taskIncarnations = new Map()
+  let tasksByKey = new Map()
   const lastDraftRevisionByProducer = new Map()
   let lastSemantic = semanticPackage(currentPackage)
   let disposed = false
@@ -1015,22 +1020,18 @@ function createCompanionTaskKernel(dependencies = {}) {
     completedUnread: []
   }
   const attentionRounds = {
-    input: 0
+    input: 0,
+    completedUnread: 0
   }
   const inputAttentionStates = new Map()
-  const inputAttentionTokens = new Map()
-  let inputOpenReceipt = null
-  let inputAttentionOperationSequence = 0
+  let unreadFallback = false
   const readAcknowledgements = new Map()
   const shortcutReads = createShortcutReadReceipts()
   let shortcutReadInputs = new Map()
   const consumerAcknowledgements = new Map()
   const commandResults = new Map()
   const commandQueues = new Map()
-  const attentionQueues = {
-    input: Promise.resolve(),
-    completedUnread: Promise.resolve()
-  }
+  const pendingAttention = new Set()
   for (const value of Array.isArray(dependencies.initialPauseReceipts) ? dependencies.initialPauseReceipts : []) {
     if (!value || typeof value !== 'object' || typeof value.key !== 'string') continue
     const revision = finiteInteger(value.planLifecycleRevision)
@@ -1053,63 +1054,72 @@ function createCompanionTaskKernel(dependencies = {}) {
     clearTimeout: clearTimer,
     queueMicrotask: dependencies.queueMicrotask,
     record,
+    captureTarget: (target) => {
+      const task = taskForKey(target.key)
+      return {
+        epoch: providerEpochs[target.provider],
+        incarnation: taskIncarnations.get(target.key),
+        lifecycle: openLifecycle(task),
+        attention: Object.fromEntries(Object.keys(attentionRounds).map((kind) => [kind, captureAttention(kind, task)]))
+      }
+    },
+    isSameTarget: sameOpenTarget,
+    canOpenTarget: (request) => {
+      if (disposed || !enabled || providers[request.target.provider] !== true || !sameOpenTarget(request)) return false
+      const task = taskForKey(request.target.key)
+      if (!task) return request.trustedResolvedTarget === true && currentPackage.complete
+      if (!task.capabilities.open) return false
+      if (request.cycle && (task.hidden || task.paused)) return false
+      if ((request.cycle || request.cacheOnly) && openLifecycle(task) !== request.context.lifecycle) return false
+      if (request.attention) {
+        return currentAttention(request.attention, task) && !attentionSeen[request.attention.kind].has(request.attention.instance)
+      }
+      return true
+    },
     openTarget: async (target, request) => {
       const before = shortcutReadInputs.get(target.key)
       const source = request?.source || 'task-cycle'
       const token = shortcutReads.capture(before?.task, before?.members, source)
-      const operationId = typeof request?.operationId === 'string' ? request.operationId : ''
-      const queuedInput = operationId ? inputAttentionTokens.get(operationId) : null
-      let capturedInput = queuedInput || null
-      if (!capturedInput) {
-        const openingTask = taskForKey(target.key)
-        const instance = openingTask ? attentionInstance('input', openingTask) : ''
-        if (instance) capturedInput = { round: attentionRounds.input, instance, key: target.key }
-      }
       const result = await actions.open({
         key: target.key,
         target,
         trustedResolvedTarget: request?.trustedResolvedTarget === true,
-        source: request?.source || 'task-cycle',
-        operationId: request?.operationId
+        cacheOnly: request.cycle === true || request.cacheOnly === true || Boolean(request.attention),
+        isCurrent: request.isCurrent,
+        source,
+        operationId: request.operationId
       })
+      if (disposed || !sameOpenTarget(request)) return result
+      if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
+        markAttentionOpened(taskForKey(target.key), request.context.attention,
+          ['card-click', 'manual-row-open', 'manual-quick-jump', 'global-shortcut', 'local-shortcut', 'task-cycle'].includes(source))
+      }
       const current = shortcutReadInputs.get(target.key)
-      if (!disposed && shortcutReads.accept(token, current?.task, current?.members, result?.outcome, result?.confirmsRead === true)) {
+      if (shortcutReads.accept(token, current?.task, current?.members, result?.outcome, result?.confirmsRead === true)) {
         publishPrivateTopology('shortcut-open-local-read')
         record({ level: 'info', scope: 'task-kernel', event: 'shortcut-local-read',
           outcome: 'applied', provider: target.provider, taskRef: target.key,
           source: request?.source, operationId: request?.operationId,
           packageRevision: currentPackage.packageRevision })
-      } else if (!disposed && !isShortcutSource(source)) {
+      } else if (!isShortcutSource(source)) {
         acknowledgeOpenedTask(before?.task, result)
       }
-      inputOpenReceipt = capturedInput
       return result
     }
   })
   let navigationLease = 0
 
   function beginNavigation() {
-    const receipt = navigation.begin({ enabled, providers })
+    const receipt = navigation.begin({ enabled, providers, retainSources: Boolean(refreshProviders) })
     navigationLease = receipt.lease
   }
 
   beginNavigation()
   navigation.onResult((event) => {
-    const inputReceipt = inputOpenReceipt
-    inputOpenReceipt = null
     if (event.outcome !== 'opened' && event.outcome !== 'dispatched') return
     const key = typeof event.key === 'string' ? event.key : ''
     const task = taskForKey(key)
     if (!task) return
-    const rotateSources = new Set([
-      'card-click',
-      'manual-row-open',
-      'manual-quick-jump',
-      'global-shortcut',
-      'local-shortcut',
-      'task-cycle'
-    ])
-    markAttentionOpened(task, { rotate: rotateSources.has(event.source), inputReceipt })
     if (currentPackage.focusedKey === key) return
     currentPackage = { ...currentPackage, focusedKey: key }
     const semantic = semanticPackage(currentPackage)
@@ -1119,6 +1129,15 @@ function createCompanionTaskKernel(dependencies = {}) {
     lastSemantic = semantic
     emitPackage(currentPackage)
   })
+
+  function sameOpenTarget({ target, context }) {
+    return context && context.epoch === providerEpochs[target.provider]
+      && context.incarnation === taskIncarnations.get(target.key)
+  }
+
+  function openLifecycle(task) {
+    return task && JSON.stringify([task.phase, task.turnStartedAt, task.terminalAt, task.statusEnteredAt])
+  }
 
   function interactionStoreKey(interaction) {
     return `${interaction.provider}\0${interaction.taskKey}\0${interaction.branchRef}\0${interaction.interactionRef}`
@@ -1433,7 +1452,14 @@ function createCompanionTaskKernel(dependencies = {}) {
       const state = inputAttentionStates.get(task.key)
       return state ? `input:${task.key}:${state.generation}` : ''
     }
-    if (task.dynamicGroup === 'pinned') return `${kind}:${task.key}:pinned`
+    if (!hasCompletedUnread(task)) return `${kind}:${task.key}:pinned`
+    if (task.provider === 'codex') {
+      const unreadMembers = (shortcutReadInputs.get(task.key)?.members || [])
+        .filter((member) => member.unread === true && member.activityPhase === 'completed')
+        .map((member) => JSON.stringify([member.key, member.turnStartedAt, member.terminalAt, member.statusEnteredAt]))
+        .sort()
+      if (unreadMembers.length) return `${kind}:${task.key}:${unreadMembers.join(',')}`
+    }
     const lifecycleAt = Math.max(
       finiteInteger(task.statusEnteredAt),
       finiteInteger(task.terminalAt),
@@ -1462,10 +1488,18 @@ function createCompanionTaskKernel(dependencies = {}) {
     return attentionWalks[kind]
   }
 
-  function reconcileAttentionProgress(packageValue = currentPackage) {
+  function reconcileAttentionProgress(packageValue = currentPackage, reorder = false) {
     syncInputAttentionStates(packageValue)
     for (const kind of ['input', 'completedUnread']) {
       const current = attentionEntries(kind, packageValue)
+      if (kind === 'completedUnread') {
+        const fallback = current.length > 0 && !hasCompletedUnread(taskForKey(current[0].key))
+        if (fallback !== unreadFallback) {
+          unreadFallback = fallback
+          attentionRounds.completedUnread += 1
+          attentionSeen.completedUnread.clear()
+        }
+      }
       const currentByInstance = new Map(current.map((entry) => [entry.instance, entry]))
       const valid = new Set(currentByInstance.keys())
       for (const instance of attentionSeen[kind]) if (!valid.has(instance)) attentionSeen[kind].delete(instance)
@@ -1481,23 +1515,30 @@ function createCompanionTaskKernel(dependencies = {}) {
         attentionRounds.input += 1
         continue
       }
-      attentionWalks[kind] = [...added, ...retained]
+      attentionWalks[kind] = reorder ? current : [...added, ...retained]
     }
   }
 
-  function markAttentionOpened(task, options = {}) {
+  function captureAttention(kind, task) {
+    if (!task || !currentPackage.views.attentionKeys[kind].includes(task.key)) return null
+    const instance = attentionInstance(kind, task)
+    return instance ? { kind, round: attentionRounds[kind], instance, key: task.key } : null
+  }
+
+  function currentAttention(receipt, task) {
+    return receipt && task?.key === receipt.key && receipt.round === attentionRounds[receipt.kind]
+      && currentPackage.views.attentionKeys[receipt.kind].includes(task.key)
+      && attentionInstance(receipt.kind, task) === receipt.instance
+  }
+
+  function markAttentionOpened(task, receipts, rotate) {
     if (!task) return
     for (const kind of ['input', 'completedUnread']) {
-      if (!currentPackage.views.attentionKeys[kind].includes(task.key)) continue
-      if (kind === 'input') {
-        const receipt = options.inputReceipt
-        const instance = attentionInstance('input', task)
-        if (!receipt || receipt.key !== task.key || receipt.round !== attentionRounds.input || !instance || receipt.instance !== instance) continue
-      }
-      const instance = attentionInstance(kind, task)
-      if (!instance) continue
+      const receipt = receipts[kind]
+      if (!currentAttention(receipt, task)) continue
+      const instance = receipt.instance
       attentionSeen[kind].add(instance)
-      if (options.rotate === false) continue
+      if (!rotate) continue
       const walk = attentionWalks[kind]
       const index = walk.findIndex((entry) => entry.key === task.key && entry.instance === instance)
       if (index < 0) continue
@@ -1542,7 +1583,7 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   function scheduleVisibilityTransition() {
     clearVisibilityTimer()
-    if (disposed || !enabled || !currentPackage.complete) return
+    if (disposed || !enabled || !currentPackage.tasks.length) return
     const currentTime = now()
     let dueAt = 0
     for (const task of currentPackage.tasks) {
@@ -1720,9 +1761,14 @@ function createCompanionTaskKernel(dependencies = {}) {
     attentionWalks.input = []
     attentionWalks.completedUnread = []
     attentionRounds.input += 1
+    attentionRounds.completedUnread += 1
+    unreadFallback = false
     inputAttentionStates.clear()
-    inputAttentionTokens.clear()
-    inputOpenReceipt = null
+    pendingAttention.clear()
+    for (const provider of PROVIDERS) providerEpochs[provider] += 1
+    providerCacheStates.clear()
+    taskIncarnations.clear()
+    tasksByKey.clear()
     readAcknowledgements.clear()
     shortcutReads.clear()
     shortcutReadInputs.clear()
@@ -1735,10 +1781,56 @@ function createCompanionTaskKernel(dependencies = {}) {
     topologyFingerprint = ''
     currentPackage = next
     lastSemantic = semanticPackage(next)
-    actions.sync({ enabled, ready: false, providers, targets: [] })
+    actions.sync({ enabled, ready: false, providers, targets: [], authoritative: true })
     navigation.sync({ lease: navigationLease, enabled, providers, ready: false, targets: [], cycleKeys: [] })
     emitPackage(currentPackage)
     return reason
+  }
+
+  function clearProviderCache(provider) {
+    providerEpochs[provider] += 1
+    providerCacheStates.delete(provider)
+    for (const [key, task] of nodeStore) {
+      if (task.provider !== provider) continue
+      nodeStore.delete(key)
+      readAcknowledgements.delete(key)
+    }
+    for (const [key, relation] of relationStore) if (relation.provider === provider) relationStore.delete(key)
+    for (const [key, interaction] of interactionStore) if (interaction.provider === provider) interactionStore.delete(key)
+    if (provider === 'codex') completeCodexRequestSets.clear()
+  }
+
+  function cacheComplete() {
+    return PROVIDERS.every((provider) => !providers[provider] || providerCacheStates.has(provider))
+  }
+
+  function isProviderCached(provider) {
+    const state = providerCacheStates.get(provider)
+    return state === 'cached' || !state && currentPackage.complete && providers[provider] === true
+  }
+
+  function publishCacheReset(changedProviders) {
+    const sourceGenerations = { ...currentPackage.sourceGenerations }
+    const sourceLaneGenerations = { ...currentPackage.sourceLaneGenerations }
+    const providerHealth = { ...currentPackage.providerHealth }
+    const emptyHealth = emptyProviderHealth(providers)
+    const emptyLanes = emptySourceLaneGenerations()
+    for (const provider of changedProviders) {
+      clearProviderCache(provider)
+      sourceGenerations[provider] = 0
+      sourceLaneGenerations[provider] = emptyLanes[provider]
+      providerHealth[provider] = emptyHealth[provider]
+    }
+    return publishPrivateTopology('provider-cache-reset', {
+      enabled, providers: { ...providers }, complete: cacheComplete(),
+      sourceGenerations, sourceLaneGenerations, providerHealth
+    })
+  }
+
+  function invalidateProvider(provider) {
+    if (disposed || !enabled || providers[provider] !== true) return false
+    publishCacheReset([provider])
+    return true
   }
 
   function configure(input = {}) {
@@ -1750,29 +1842,42 @@ function createCompanionTaskKernel(dependencies = {}) {
     const nextDynamicWindowMs = requestedWindowHours * 60 * 60 * 1_000
     const windowChanged = dynamicWindowMs !== nextDynamicWindowMs
     const changed = enabled !== nextEnabled || !sameProviders(providers, nextProviders)
+    const changedProviders = PROVIDERS.filter((provider) => providers[provider] !== nextProviders[provider])
     enabled = nextEnabled
     providers = nextProviders
     dynamicWindowMs = nextDynamicWindowMs
     if (changed) {
       beginNavigation()
-      invalidate(enabled ? 'provider-configuration-changed' : 'disabled')
+      if (refreshProviders && enabled && currentPackage.enabled) {
+        publishCacheReset(changedProviders)
+        if (windowChanged) refreshCanonicalTasks('dynamic-window-changed')
+      } else {
+        invalidate(enabled ? 'provider-configuration-changed' : 'disabled')
+      }
+      if (enabled && refreshProviders) warmPendingProviders()
     } else if (windowChanged && currentPackage.tasks.length) {
       refreshCanonicalTasks('dynamic-window-changed')
     }
     return changed || windowChanged
   }
 
-  function syncConsumers(packageValue) {
+  function syncConsumers(packageValue, reorder = false) {
     const freezeSpan = freezeTrace.begin('companion.sync-consumers')
     try {
-    reconcileAttentionProgress(packageValue)
     const retainedKeys = new Set(packageValue.tasks.map((task) => task.key))
+    tasksByKey = new Map(packageValue.tasks.map((task) => [task.key, task]))
+    for (const key of taskIncarnations.keys()) if (!retainedKeys.has(key)) taskIncarnations.delete(key)
+    for (const key of retainedKeys) if (!taskIncarnations.has(key)) taskIncarnations.set(key, {})
+    reconcileAttentionProgress(packageValue, reorder)
     for (const key of readAcknowledgements.keys()) if (!retainedKeys.has(key)) readAcknowledgements.delete(key)
     const actionTargets = packageValue.tasks.map(actionTargetForTask)
+    const openReady = packageValue.complete || actionTargets.length > 0
     actions.sync({
       enabled,
       providers,
       ready: packageValue.complete,
+      openReady,
+      authoritative: true,
       targets: actionTargets,
       focusedKey: packageValue.focusedKey,
       attentionKeys: packageValue.views.attentionKeys.archive
@@ -1781,7 +1886,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       lease: navigationLease,
       enabled,
       providers,
-      ready: packageValue.complete,
+      ready: openReady,
+      reorder,
       // Direct row open remains available from the hidden/paused page; only
       // selector-owned cycleKeys and attentionKeys exclude those tasks.
       targets: actionTargets,
@@ -2086,7 +2192,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     }) })
   }
 
-  function publishTaskPackage(next, { evidenceDraft, rescheduleNoop = false, onChanged } = {}) {
+  function publishTaskPackage(next, { evidenceDraft, rescheduleNoop = false, reorder = false, onChanged } = {}) {
     const semantic = semanticPackage(next)
     const previous = currentPackage
     if (semantic === lastSemantic) {
@@ -2098,6 +2204,7 @@ function createCompanionTaskKernel(dependencies = {}) {
           packageRevision: previous.packageRevision, count: next.tasks.length
         })
       }
+      if (reorder) syncConsumers(currentPackage, true)
       if (evidenceDraft || rescheduleNoop) scheduleVisibilityTransition()
       return currentPackage
     }
@@ -2109,7 +2216,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       recordPhaseTransitionsOnChange(previous.tasks, next.tasks, evidenceDraft)
       recordGroupCountsOnChange(next)
     }
-    syncConsumers(next)
+    syncConsumers(next, reorder)
     emitPackage(next)
     scheduleVisibilityTransition()
     onChanged?.()
@@ -2599,7 +2706,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   /** 吃证据的唯一入口：schema/revision 失败则整批丢掉，且不消耗 producer revision。 */
-  function commitDraft(draft, hostEvidence = false) {
+  function commitDraft(draft, hostEvidence = false, cacheProvider = '') {
     const freezeSpan = freezeTrace.begin('companion.commit-draft')
     try {
     if (disposed || !draft || draft.schema !== COMPANION_TASK_DRAFT_REVISION) return null
@@ -2631,8 +2738,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       })
       return null
     }
-    const pending = hostEvidence && draft.complete
-      ? dependencies.preparePendingEvidence?.(draft) : null
+    const pending = hostEvidence ? dependencies.preparePendingEvidence?.(draft) : null
     if (pending === false || hostEvidence && (!sameProviders(providers, draftProviders) || draftEnabled !== enabled)) return null
     const normalizePending = batch => normalizeEvidenceBatch(batch, 'codex', draft, 'host-evidence')
     const before = (pending?.before || []).map(normalizePending)
@@ -2642,7 +2748,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     configure({ enabled: draft.enabled, providers: draftProviders })
     if (!enabled) return currentPackage
     if (!sameProviders(providers, draftProviders)) return null
-    if (currentPackage.complete && draft.complete !== true) return currentPackage
+    if (currentPackage.complete && draft.complete !== true && !cacheProvider) return currentPackage
 
     const lanes = normalizeSourceLaneGenerations(currentPackage.sourceLaneGenerations)
     const observedKeys = new Set()
@@ -2679,6 +2785,15 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     refreshInteractionProjections()
     const materialized = materializePrivateTopology()
+    let reorder = false
+    if (cacheProvider) {
+      const wasCached = providerCacheStates.get(cacheProvider) === 'cached'
+      const cached = batches[cacheProvider].channels.membership.complete === true
+      const recovering = currentPackage.providerHealth[cacheProvider]?.status !== 'ready'
+        && draft.providerHealth?.[cacheProvider]?.status === 'ready'
+      providerCacheStates.set(cacheProvider, wasCached || cached ? 'cached' : 'unavailable')
+      reorder = cached && (!wasCached || recovering) || !currentPackage.complete && cacheComplete()
+    }
     const nextTasks = materialized.tasks
     const freshness = materialized.freshness
     const nextTopologyRevision = materialized.topologyRevision
@@ -2697,7 +2812,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       publishedAt: finiteInteger(draft.acceptedAt, now()),
       enabled,
       providers: { ...providers },
-      complete: draft.complete === true,
+      complete: cacheProvider ? cacheComplete() : draft.complete === true,
       freshness,
       focusedKey,
       sourceGenerations: Object.fromEntries(PROVIDERS.map((provider) => [
@@ -2728,7 +2843,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     lastDraftRevisionByProducer.set(producer, draftRevision)
     pending?.acknowledge()
-    return publishTaskPackage(next, { evidenceDraft: draft })
+    return publishTaskPackage(next, { evidenceDraft: draft, reorder })
 
     } finally {
       freezeTrace.end(freezeSpan)
@@ -2821,7 +2936,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (disposed) return { revision: COMPANION_TASK_KERNEL_REVISION, lease: 0, retained: false, ready: false, package: currentPackage }
     configure(input)
     activeLease = ++leaseSequence
-    if (enabled && !currentPackage.complete) void ensureReady().catch(() => undefined)
+    if (enabled && !currentPackage.complete) warmPendingProviders()
     return {
       revision: COMPANION_TASK_KERNEL_REVISION,
       packageRevision: COMPANION_TASK_PACKAGE_REVISION,
@@ -2859,7 +2974,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       // synchronously, but do not advance revision or notify renderers.
       syncConsumers(next)
     }
-    if (enabled && !currentPackage.complete) void ensureReady().catch(() => undefined)
+    if (enabled && !currentPackage.complete) warmPendingProviders()
     return currentPackage
 
     } finally { freezeTrace.end(freezeSpan) }
@@ -2939,10 +3054,12 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   /** Host 证据提交；语义无变化则 packageRevision 不涨。 */
-  function publishEvidence(draft) {
+  function publishEvidence(draft, cache = {}) {
+    const provider = cache.provider || ''
+    if (provider && (providers[provider] !== true || cache.epoch !== providerEpochs[provider])) return null
     const startedAt = now()
     const beforeRevision = currentPackage.packageRevision
-    const result = commitDraft(draft, true)
+    const result = commitDraft(draft, true, provider)
     const published = Boolean(result && currentPackage.packageRevision > beforeRevision)
     record({
       level: published ? 'info' : 'debug',
@@ -3053,22 +3170,25 @@ function createCompanionTaskKernel(dependencies = {}) {
     return packageValue.tasks.reduce((total, task) => total + (task.freshness === 'verifying' ? 1 : 0), 0)
   }
 
-  /**
-   * Readiness for one Kernel action.
-   *
-   * `complete` means every enabled Provider lane has settled — the only
-   * membership guarantee previous/next and the attention entries need: hot and
-   * trusted dispatches directly, and only cold start, reconnect or an explicit
-   * membership gap waits for the tasks-only inventory. `verifying` is a
-   * per-task phase qualifier (an interrupted edge or an unknown Claude session
-   * still under confirmation), not a membership gap. Open-only selectors
-   * therefore dispatch from the complete process package even while a phase is
-   * verifying. Treating whole-package `verifying` as stale used to force the
-   * full cold read under the 5-second timeout, so one unknown Claude session
-   * turned every global shortcut into a slow or silently failing preflight.
-   * Mutations (archive/pause/resume/execute) keep the exact-target freshness
-   * requirement because they act on the phase itself.
-   */
+  function warmPendingProviders() {
+    if (disposed || !enabled) return
+    if (refreshProviders) {
+      queueMicrotask(() => {
+        if (disposed || !enabled) return
+        const pending = PROVIDERS.filter((provider) => providers[provider]
+          && !providerCacheStates.has(provider) && !isProviderCached(provider))
+        if (!pending.length) return
+        if (!currentPackage.enabled) {
+          currentPackage = { ...currentPackage, enabled: true }
+          lastSemantic = semanticPackage(currentPackage)
+        }
+        void refreshProviders(pending)
+      })
+    } else {
+      void ensureReady().catch(() => undefined)
+    }
+  }
+
   async function ensureReady(targetKey = '', options = {}) {
     const startedAt = now()
     const action = typeof options.action === 'string' ? options.action : ''
@@ -3079,7 +3199,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (!targetKey && currentPackage.complete
       && (currentPackage.freshness === 'fresh' || options.allowVerifying === true)) return currentPackage
     if (!enabled) throw new Error('disabled')
-    if (!preflight) throw new Error('preflight-unavailable')
+    if (!preflight && !refreshProviders) throw new Error('preflight-unavailable')
     if (preflightInFlight) return preflightInFlight
     record({
       level: 'info',
@@ -3101,11 +3221,14 @@ function createCompanionTaskKernel(dependencies = {}) {
     const timeout = new Promise((_resolve, reject) => {
       timeoutTimer = setTimer(() => reject(new Error('preflight-timeout')), PREFLIGHT_TIMEOUT_MS)
     })
-    const operation = Promise.race([
-      Promise.resolve().then(() => preflight({ providers: { ...providers } })),
-      timeout
-    ]).then((draft) => {
-      const accepted = commitDraft(draft, true)
+    const requestedProviders = currentPackage.complete && exactTarget
+      ? [exactTarget.provider]
+      : PROVIDERS.filter((provider) => providers[provider])
+    const refresh = Promise.resolve().then(() => refreshProviders
+      ? refreshProviders(requestedProviders)
+      : preflight({ providers: { ...providers } }))
+    const operation = Promise.race([refresh, timeout]).then((draft) => {
+      const accepted = refreshProviders ? currentPackage : commitDraft(draft, true)
       if (!accepted?.complete) throw new Error('preflight-incomplete')
       record({
         level: 'info',
@@ -3129,7 +3252,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function taskForKey(key) {
-    return currentPackage.tasks.find((task) => task.key === key) || null
+    return tasksByKey.get(key) || null
   }
 
   function ephemeralOpenTarget(key, actionAlias = '') {
@@ -3160,73 +3283,47 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function dispatchAttention(kind, input) {
-    const run = attentionQueues[kind].catch(() => undefined).then(async () => {
-      reconcileAttentionProgress()
-      let candidates = attentionWalks[kind].map((entry) => {
-        const task = taskForKey(entry.key)
-        return task && attentionInstance(kind, task) === entry.instance ? task : null
-      }).filter(Boolean)
-      if (!candidates.length) {
-        record({
-          level: 'info',
-          scope: 'task-kernel',
-          event: 'open-attention',
-          outcome: 'no-task',
-          operationId: typeof input.operationId === 'string' ? input.operationId : undefined,
-          source: input.source || 'attention-shortcut',
-          packageRevision: currentPackage.packageRevision,
-          details: {
-            kind,
-            complete: currentPackage.complete,
-            freshness: currentPackage.freshness,
-            inputCount: currentPackage.views.attentionKeys.input.length,
-            completedUnreadCount: currentPackage.views.attentionKeys.completedUnread.length,
-            taskCount: currentPackage.tasks.length
-          }
-        })
-        return { outcome: 'unavailable', errorCode: 'no-task', message: '当前没有符合条件的任务' }
-      }
-      let task = candidates.find((candidate) => {
-        const instance = attentionInstance(kind, candidate)
-        return instance && !attentionSeen[kind].has(instance)
-      })
-      if (!task) {
-        attentionSeen[kind].clear()
-        if (kind === 'input') attentionRounds.input += 1
-        // A completed round adopts the latest published order exactly once;
-        // the new round is then stable until it too is exhausted.
-        resetAttentionWalk(kind)
-        candidates = attentionWalks[kind].map((entry) => taskForKey(entry.key)).filter(Boolean)
-        task = candidates[0]
-      }
-      const suppliedOperationId = typeof input.operationId === 'string' && /^[a-z0-9:_-]{6,160}$/i.test(input.operationId)
-        ? input.operationId
-        : ''
-      let operationId = suppliedOperationId
-      if (kind === 'input') {
-        if (!operationId) {
-          inputAttentionOperationSequence += 1
-          operationId = `inattn-${attentionRounds.input}-${inputAttentionOperationSequence}`
+    if (!attentionWalks[kind].length) {
+      record({
+        level: 'info',
+        scope: 'task-kernel',
+        event: 'open-attention',
+        outcome: 'no-task',
+        operationId: typeof input.operationId === 'string' ? input.operationId : undefined,
+        source: input.source || 'attention-shortcut',
+        packageRevision: currentPackage.packageRevision,
+        details: {
+          kind,
+          complete: currentPackage.complete,
+          freshness: currentPackage.freshness,
+          inputCount: currentPackage.views.attentionKeys.input.length,
+          completedUnreadCount: currentPackage.views.attentionKeys.completedUnread.length,
+          taskCount: currentPackage.tasks.length
         }
-        inputAttentionTokens.set(operationId, {
-          round: attentionRounds.input,
-          instance: attentionInstance('input', task),
-          key: task.key
-        })
-      }
-      try {
-        return await navigation.open({
-          key: task.key,
-          target: actionTargetForTask(task),
-          source: input.source || 'attention-shortcut',
-          operationId: operationId || input.operationId
-        })
-      } finally {
-        if (kind === 'input' && operationId) inputAttentionTokens.delete(operationId)
-      }
-    })
-    attentionQueues[kind] = run.then(() => undefined, () => undefined)
-    return run
+      })
+      return { outcome: 'unavailable', errorCode: 'no-task', message: '当前没有符合条件的任务' }
+    }
+    let unseen = attentionWalks[kind].filter(({ instance }) => !attentionSeen[kind].has(instance))
+    if (!unseen.length) {
+      attentionSeen[kind].clear()
+      attentionRounds[kind] += 1
+      unseen = resetAttentionWalk(kind)
+    }
+    const pending = new Set([...pendingAttention].filter((receipt) => (
+      receipt.kind === kind && receipt.round === attentionRounds[kind]
+    )).map((receipt) => receipt.instance))
+    const selected = unseen.find(({ instance }) => !pending.has(instance)) || unseen[0]
+    const task = taskForKey(selected.key)
+    const attention = captureAttention(kind, task)
+    if (!attention) return { outcome: 'unavailable', errorCode: 'stale-target', message: '任务已变化，请重试' }
+    pendingAttention.add(attention)
+    return navigation.open({
+      key: task.key,
+      target: actionTargetForTask(task),
+      attention,
+      source: input.source || 'attention-shortcut',
+      operationId: input.operationId
+    }).finally(() => pendingAttention.delete(attention))
   }
 
   async function dispatchLegacyIntent(input = {}) {
@@ -3244,8 +3341,8 @@ function createCompanionTaskKernel(dependencies = {}) {
         await ensureReady(targetKey, {
           action: input.action
         })
-      } else if (!currentPackage.complete) {
-        return { outcome: 'unavailable', errorCode: 'inventory-not-ready', message: '任务缓存尚未就绪，请稍后重试' }
+      } else if (!currentPackage.complete && !currentPackage.tasks.length) {
+        return { outcome: 'unavailable', errorCode: 'inventory-not-ready', message: '当前没有可用的缓存任务' }
       }
     } catch (error) {
       // This exit used to be invisible: the press was consumed, the shortcut
@@ -3282,14 +3379,15 @@ function createCompanionTaskKernel(dependencies = {}) {
     // 打开：用当前 Snapshot 身份走 navigation.open，避免与 cycle 抢 Adapter。
     if (input.action === 'open') {
       const task = taskForKey(input.key)
-      const target = task
-        ? actionTargetForTask(task)
-        : ephemeralOpenTarget(input.key)
+      const cacheOnly = isShortcutSource(input.source)
+      const target = task?.capabilities.open ? actionTargetForTask(task)
+        : !task && !cacheOnly ? ephemeralOpenTarget(input.key) : null
       if (!target) return { outcome: 'unavailable', errorCode: 'stale-target', message: '任务身份已失效，请刷新后重试' }
       const result = await navigation.open({
         key: target.key,
         target,
         trustedResolvedTarget: !task,
+        cacheOnly,
         source: input.source || 'manual-row-open',
         operationId: input.operationId
       })
@@ -3619,9 +3717,10 @@ function createCompanionTaskKernel(dependencies = {}) {
     // Navigation owns cycle selection/coalescing as well as the single open
     // lane. Queuing cycle commands here until each open finishes would turn
     // a burst into one native open per press before Navigation can merge it.
-    const serialize = command.command !== 'cycle'
+    const serialize = command.command !== 'cycle' && command.command !== 'open-attention'
+      && !(command.command === 'open' && isShortcutSource(command.source))
     const previous = (serialize && commandQueues.get(key)) || Promise.resolve()
-    const operation = previous.catch(() => undefined).then(() => executeCommand(command))
+    const operation = serialize ? previous.catch(() => undefined).then(() => executeCommand(command)) : executeCommand(command)
     if (serialize) commandQueues.set(key, operation)
     commandResults.set(operationId, operation)
     if (commandResults.size > 500) commandResults.delete(commandResults.keys().next().value)
@@ -3702,6 +3801,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     void dispatch(intent).then((result) => {
       if (result?.outcome === 'opened' || result?.outcome === 'dispatched' || result?.errorCode === 'superseded') return
       reportFailure(typeof result?.errorCode === 'string' && result.errorCode ? result.errorCode : 'failed')
+      if (result?.errorCode === 'inventory-not-ready' && intent.action !== 'archive-focused') return
       notify(result?.message || '任务切换失败，请重试')
     }).catch(() => {
       reportFailure('exception')
@@ -3758,6 +3858,9 @@ function createCompanionTaskKernel(dependencies = {}) {
       cycleCount: currentPackage.views.cycleKeys.length,
       topologyRevision: currentPackage.topologyRevision,
       providerHealth: currentPackage.providerHealth,
+      providerCache: Object.fromEntries(PROVIDERS.map((provider) => [provider, !enabled || !providers[provider]
+        ? 'disabled'
+        : providerCacheStates.get(provider) || 'warming'])),
       consumerAcknowledgements: Object.fromEntries(consumerAcknowledgements),
       preflightInFlight: Boolean(preflightInFlight),
       openInteractionCount: interactionStore.size,
@@ -3801,6 +3904,10 @@ function createCompanionTaskKernel(dependencies = {}) {
     syncPackage,
     /** Host-only provider evidence path; never exposed as a Renderer authority. */
     publishEvidence,
+    warmPendingProviders,
+    invalidateProvider,
+    providerEpoch: (provider) => disposed ? undefined : providerEpochs[provider],
+    isProviderCached,
     getActivityCheckpoint,
     /** Only a verified Provider archive transaction may call this commit gate. */
     commitArchived,
