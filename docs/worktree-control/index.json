@@ -1,5 +1,92 @@
 {
   "schema": "worktree-control-observation/v1",
   "control_branch": "main",
-  "records": []
+  "records": [
+    {
+      "task_id": "261120-eypc-float-card-compact",
+      "branch": "codex/261120-eypc-float-card-compact",
+      "target_branch": "main",
+      "source_owner": "vibe/specs/261120/eypc-float-card-compact/task-card.md",
+      "source_documents": ["vibe/specs/261120/eypc-float-card-compact/task-card.md"],
+      "control_record": "docs/worktree-control/261120-eypc-float-card-compact.md",
+      "progress": "local-main-ready",
+      "core_plan": "页签顶格，额度与首组标题同排，最后 30 分钟读分钟",
+      "verification": "merged-closeout-build-passed; host-manual-pending",
+      "integration": "origin-main-verified; local-main-fast-forwarded",
+      "next_action": "从主检出产物接入 uTools 并手测外观及交互",
+      "retention": "active",
+      "resume_condition": "手测反馈后在功能工作树继续",
+      "cache_refs": [],
+      "observed_at": "2026-11-20T15:40:40+08:00",
+      "observed": {
+        "branch": "codex/261120-eypc-float-card-compact",
+        "cache_refs": [],
+        "control_documents": {},
+        "control_record_digest": "e0eb586575dbd0bbfc3206ac033e51da85f9be15c20e9ed573e4d1300fcea99f",
+        "dirty_metadata_digest": "2b2369a51ba0621eaacda27ddd03ea89c65e4089cfc3c65614951620183bfdde",
+        "head": "150f1c3e5470bf4ad6041b8efff88b8e663ed6ef",
+        "lifecycle": {
+          "digest": null,
+          "state": "unmanaged"
+        },
+        "remote_observation": "local-refs-only",
+        "source_documents": {
+          "vibe/specs/261120/eypc-float-card-compact/task-card.md": "30e48810da728956ac83b001d03f62e74861c998b356e83e4ed7354d0f297713"
+        },
+        "source_only_commits": 0,
+        "status_digest": "553ae9fdc2f89b43f53a54f8b90816782906682c05419ac72200466a52616d21",
+        "target_head": "150f1c3e5470bf4ad6041b8efff88b8e663ed6ef",
+        "target_only_commits": 0,
+        "upstream": "origin/codex/261120-eypc-float-card-compact",
+        "upstream_head": "150f1c3e5470bf4ad6041b8efff88b8e663ed6ef",
+        "worktree": "dirty"
+      },
+      "marker": "ace43c208b7ff2fe"
+    },
+    {
+      "task_id": "261120-eypc-shortcut-optimization",
+      "branch": "codex/261120-eypc-shortcut-optimization",
+      "target_branch": "main",
+      "source_owner": "vibe/specs/261120/eypc-shortcut-optimization/spec.md",
+      "source_documents": [
+        "vibe/specs/261120/eypc-shortcut-optimization/spec.md",
+        "vibe/specs/261120/eypc-shortcut-optimization/raw-requirement.md"
+      ],
+      "control_record": "docs/worktree-control/261120-eypc-shortcut-optimization.md",
+      "progress": "runtime-evidence-pending",
+      "core_plan": "对照旧条款核查状态轮次、热态专用键盘点和冷态首按",
+      "verification": "static-checked-host-pending",
+      "integration": "not-started",
+      "next_action": "以热键及新任务样本对账快照更新、选中和原生打开",
+      "retention": "active",
+      "resume_condition": "在已附加的工作树核对真实宿主样本",
+      "cache_refs": [],
+      "observed_at": "2026-11-20T15:21:27+08:00",
+      "observed": {
+        "branch": "codex/261120-eypc-shortcut-optimization",
+        "head": "81bf91bee14992b10e009b8ea0eeacbbd755b3f9",
+        "target_head": "81bf91bee14992b10e009b8ea0eeacbbd755b3f9",
+        "worktree": "dirty",
+        "status_digest": "858c5c12b62be8b0ecf25a29d674da784a5ef633b376b1f04afbda4cf6530bcf",
+        "dirty_metadata_digest": "3731bb3d37f55a076ede3af67bab748793af79179cb7b80b647109cfd0df7cbc",
+        "source_documents": {
+          "vibe/specs/261120/eypc-shortcut-optimization/spec.md": "b1fd3743cd98cd336185b1c82dd8227a9734c73e2dcb8a33623b99cfa28531d0",
+          "vibe/specs/261120/eypc-shortcut-optimization/raw-requirement.md": "10f3e4cf38ea2f5889ec704f6f00a1d2e1c421163e2f088fe01a5c1ed75a06a3"
+        },
+        "control_documents": {},
+        "control_record_digest": "2cf8167af3fbf93e7f6778f7ea3bb994e5e87d5cfd155fcf4e9c0c1ac2dc4705",
+        "cache_refs": [],
+        "upstream": null,
+        "upstream_head": null,
+        "remote_observation": "no-upstream",
+        "target_only_commits": 0,
+        "source_only_commits": 0,
+        "lifecycle": {
+          "state": "unmanaged",
+          "digest": null
+        }
+      },
+      "marker": "a1d75ee530f02472"
+    }
+  ]
 }

@@ -1,6 +1,44 @@
 # EyPc Project Status Hub
 
-- 2026-11-20 悬浮卡片紧凑化在独立检出完成构建，`closeout` 回执和当前产物一致。`V7` / `host-23b4139e435cd9886f47` / `renderer-a65f9bb41f739bf30516`，builtAt `2026-11-20T06:52:29.476Z`。uTools 视觉和交互待手测。[任务卡](261120/eypc-float-card-compact/task-card.md#构建与待验)。
+- 2026-11-20 15:54:20，提交前按同一源码重新完成 `closeout` 构建。当前产物为 `V7` / `host-76820ccd4e3888194fd9` / `renderer-badaca6d487bfad43880`，builtAt `2026-11-20T07:54:20.445Z`。回执和产物身份一致。uTools 实机待验。[主检出插件入口](../../dist/plugin.json)。
+
+- 2026-11-20 15:35:34，本地 `main` 快进至 `150f1c3`，合入悬浮卡片紧凑化并保留本地 Codex 状态同步改动。合入后的 `closeout` 完整构建通过，`V7` / `host-76820ccd4e3888194fd9` / `renderer-badaca6d487bfad43880`，builtAt `2026-11-20T07:35:34.442Z`。产物身份与回执一致。从[主检出插件入口](../../dist/plugin.json)接入 uTools 后，核验[悬浮卡片](261120/eypc-float-card-compact/task-card.md#影响与验收)和[原生状态同步](261114/codex-state-sync/delivery.md#handoff)。
+
+- 2026-11-20 悬浮卡片紧凑化在独立检出完成构建，`closeout` 回执和当前产物一致。`V7` / `host-23b4139e435cd9886f47` / `renderer-a65f9bb41f739bf30516`，builtAt `2026-11-20T06:52:29.476Z`。该产物的 uTools 视觉和交互待手测。[任务卡](261120/eypc-float-card-compact/task-card.md#构建与待验)。
+
+- 2026-11-20 14:58:19.889，Codex B07–B09 续修完整构建通过。V7 / `host-76820ccd4e3888194fd9` / `renderer-9a264f891dc65f33aae9`。已接通连接降级、置顶分区、Side 补证、Plan 热更新与已确认主停态展示。最近实机握手仍为 14:33 的旧包。新包与原生同组验收、实时接替及机器成员覆盖仍开放。[统筹入口](261114/codex-state-sync/README.md) · [分批和构建](261114/codex-state-sync/delivery.md#event-reopen-parity-build-261120)
+
+- 2026-11-19 21:49:20.277，Codex 空 Side 的未知状态修复完整构建通过。V7 / `host-384f67caea0f00df3087` / `renderer-ef6e6ea439e2aed98c72`，builtAt `2026-11-19T13:49:20.277Z`。原任务证据回放归完成，人工 Side 显示「尚未开始」。新包握手、原卡现场核验和浮窗时延待验。 [R22 与现场进度](261114/codex-state-sync/delivery.md#r22)
+
+- 2026-11-19 21:18:51.005，R21 修复包完整构建及两组受控顺序的桥接回放通过。19:46 包为最近一次实机握手，修复包首包及两组交叉实测待验。 [R21 与同版验收台账](261114/codex-state-sync/delivery.md#r21)
+
+- 2026-11-19 20:21:29.637，uTools 确认加载 19:46:03.890 的 V7。历史 Side 中断的归组、完成组清读和浮窗同版时延已核。新登记同一 Turn 冷启动先停后跑（R21）。交叉审批与停态组清读待验。 [当前交付台账](261114/codex-state-sync/delivery.md#current)
+
+- 2026-11-19 19:46:03.890，Codex 状态链 B04–B06 兼容复核补齐 R16–R20，完整构建通过。V7 / `host-8139f1428135e2c4b7f2` / `renderer-35a1dc0b3fe5be0f717e`。最近实机握手仍为 14:57:54.948 的旧包。新版加载、原生对照和渲染时延待验。[当前进度](261114/codex-state-sync/delivery.md#current)
+
+- 2026-11-19 19:23:13.333，Codex B04–B06 已实现并通过完整构建。V7 / `host-3c269c2b404e905a00b3` / `renderer-f6e2e3b2bac16abd4a84`。现场五成员样本回放通过，最终状态链及合同、展示和隐私共 98 项定向检查通过。当前 uTools 仍缺新版握手，逐项原生对照及应用时延待核。[进度与范围](261114/codex-state-sync/delivery.md#b04-b06-review) · [验收证据](261114/codex-state-sync/status-read-investigation-261116.md#b04-b06-verification)
+
+- 2026-11-19 17:26:01.345，Codex 状态链架构复核完成本地交付。V7 / `host-32d3135875e45ff28b54` / `renderer-4ee3b08ea90bb1f64b26`，builtAt `2026-11-19T09:26:01.345Z`。105 组产物一致。uTools 新包加载与八项实机验收待核。[全链核验与阻断条件](261114/codex-state-sync/delivery.md#architecture-review) · [构建与现场依据](261114/codex-state-sync/status-read-investigation-261116.md#v7-architecture-review)
+
+- 2026-11-19 16:38:03.606，Codex 状态链 B01–B03 已完成本地源码与完整构建交付。V7 / `host-30e5fad3b0197c435fa1` / `renderer-d62dca844568c23d8c4d`，builtAt `2026-11-19T08:38:03.606Z`。R1–R8 的新版宿主握手、分段时延和用户手测待验。[分批计划与执行进度](261114/codex-state-sync/delivery.md#current)
+
+- 2026-11-19 16:12:15.155，V7 普通 Side 历史中断归组续修构建通过，Host `host-11cdb9502f572422ef02`，Renderer `renderer-10a9f59fe11946ec8525`。旧 Side 的明确中断早于已完成主轮时，任务按完成与原生读态归组。当前主轮明确中断时保留待继续。等待新版宿主握手和浮窗回执。[归组修复与核验](261114/codex-state-sync/status-read-investigation-261116.md#2026-11-19-普通-side-的历史中断归组续修)
+
+- 2026-11-19 14:57:54.948，uTools 确认加载 14:11:01.228 的 V7。冷启动后台 owner 发出前最长排队 789 毫秒，旧包的 122.065 秒积压在本次未复现。更新时中断的四条样本均已开新轮，仍未续跑的同类实机样本待验。另确认一组已读完成主轮受旧普通 Side 影响进入待继续。[重载实机回读](261114/codex-state-sync/status-read-investigation-261116.md#2026-11-19-1457-v7-重载实机回读) · [Codex 状态改造统筹入口](261114/codex-state-sync/README.md#catalog)
+
+- 2026-11-19 11:03:26.047 宿主加载 10:31:20.044 的 V7。Host `host-2005c6b8259ef4a1b9f5`，Renderer `renderer-7f567d6a5922c44955dc`。「服务器免密运维」恢复为完成未读，与 Codex 的浮窗计数已对齐。冷启动优先 owner 查询均即时发出，后台查询最长仍排队 122.065 秒。[实机回读](261114/codex-state-sync/status-read-investigation-261116.md#2026-11-19-1103-v7-重载验收)
+
+- 2026-11-19 10:11:53.746 Codex 同轮终态确认和实时置顶续修构建通过。V7 / `host-078b38e9bf2b6e875e03` / `renderer-442c1840598a5dee1577`。10:00 截图现场复现「服务器免密运维」完成未读漏项和 EyPc 已读任务置顶跳组，最新包待宿主重载核验。[截图回读与续修](261114/codex-state-sync/status-read-investigation-261116.md#2026-11-19-1000-截图回读与续修)
+
+- 2026-11-18 19:38:25.151 普通 Side 离线恢复续修已构建 V7，`host-ecc2bbb04b9eb53d3f94`，`renderer-20f51a687caa3aacf0dc`。19:18 包已在 19:23 完成实际握手，两条海报机器子任务正确闭合，普通 Side 的 owner 超时后仍未知。续修接入定向持久轮次读取，五条回归通过。待 19:38 包加载后核验海报已完成，BOT 未读及推送、XL 的同目标新样本仍待取得。[重载对照与续修](261114/codex-state-sync/status-read-investigation-261116.md#2026-11-18-1923-重载回读)。
+
+- 2026-11-18 19:18:04.878，Codex 状态恢复与分段计时续修已生成 V7。新增宿主兼容闭合读取，普通 Side 重载询证，关系占位识别和同轮启动、完成分别计时。源码和随包各 81 个生命周期检查点、9 个诊断隐私检查点通过，两个定向门禁文件 19 项通过。19:18 回读 uTools 仍在用 17:57 包，待新包握手与现场样本核验。[实施与验收](261114/codex-state-sync/host-evidence-recovery-plan.md#6-现场回读与下一轮验证)。
+
+- 2026-11-18 Codex 待继续与未读归组续修已构建，`closeout/rebuilt/build-passed/exit0`，V7 / `host-6056027ecd74f7944bdd` / `renderer-3c74bc21c91e0e5c5a72` / `2026-11-18T09:57:15.037Z`（上海时间 17:57:15）。已关闭机器子任务和已确认完成未读按新规则聚合。本机已验 17:08 版的普通 Side Chat 完成接纳，新归组的宿主加载待验。[现场核验与归组修复](261114/codex-state-sync/status-read-investigation-261116.md#更新后的待继续与未读归组)。
+
+- 2026-11-16 F1 已落实：最终回复前通过 `--closeout` 运行同一构建检查器，Stop 保持兜底，来源分开记录、锁与成功缓存共用。本轮 `closeout/rebuilt/build-passed/exit0`，V7 / `host-87ced8e99b3df0963edb` / `renderer-5ecbdd9c38811304ef55` / `builtAt=2026-11-16T05:51:16.341Z`（上海时间13:51:16）；需求真值已同步。未安装、重载或实机验收。[构建流程](../rules/documentation.md#build-and-core-version-sync-required)。
+
+- 2026-11-16 快捷跳转误清其他未读：已修正原生集合变化时的过宽清理，只处理本次确实移出的任务，并排除 CodexHost 外部会话。源码与镜像同步，已包含在上述前置构建产物；多任务宿主手测待验，未安装或重载。[原因、范围与待测](261105/codex-unread-linkage/task-card.md#2026-11-16-快捷跳转误清其他未读)。
 
 - 2026-11-16 13:00 Codex两类状态误判修复已实现，自然Hook最新回执为hook/rebuilt/build-passed/exit0：稳定Turn身份、受限旧节点恢复及机器来源登记已接通，身份补查仅更新未读；当前inputDigest匹配成功状态，七个源码与public/dist镜像一致。当前生成包晚于回执且未获对应回执核验，未安装、加载及V01–V12未验，S02/S04/S06不关闭。用户已授权Root提交推送，Git结果另报；[实现、历史失败与最新构建证据](261114/codex-state-sync/status-read-investigation-261116.md#7-本轮实现与验收边界)。
 
@@ -330,6 +368,21 @@ Claude 的唯一当前行是下表首行；其余 Claude 行保留为历史检�
 | Historical Claude deliveries | [retrieval index above](#historical-claude-related-delivery-evidence) | Superseded/partial evidence; not current acceptance |
 | Shortcut selector readiness | [spec](260821/2045-shortcut-selector-readiness/spec.md#L1) / [raw](260821/2045-shortcut-selector-readiness/raw-requirement.md#L1) | Complete-package selector dispatch plus silent-exit diagnostics; focused suites and build pass, real-host shortcut acceptance pending after plugin reload |
 | Cursor Agent Companion | [spec](260818/1335-cursor-companion-feasibility/spec.md#L1) / [raw](260818/1335-cursor-companion-feasibility/raw-requirement.md#L1) | Phase 3 jump implemented via official `agent?id` deeplink (`dispatched`, verified on 3.17.8); archive is status-gated and mirrors Cursor's own `isArchived`; navigation v4 production bridge forwarding and strict capability gate are automated-verified (`311/311`, build/mirrors pass), real-host Cursor shortcut dispatch pending after reload; dedicated Cursor ownership tone; hook opt-in; Cloud Agent excluded; not current Codex/Claude contract |
+
+### 当前工作树
+
+<!-- worktree-control-observations:start -->
+| 任务与主目录记录 | 进度 / 保留 | 核心规划 | 下一步 / 恢复条件 | 标记 |
+| --- | --- | --- | --- | --- |
+| [261120-eypc-float-card-compact](../../docs/worktree-control/261120-eypc-float-card-compact.md) | local-main-ready / active | 页签顶格，额度与首组标题同排，最后 30 分钟读分钟 | 从主检出产物接入 uTools 并手测外观及交互；手测反馈后在功能工作树继续 | `ace43c208b7ff2fe` |
+| [261120-eypc-shortcut-optimization](../../docs/worktree-control/261120-eypc-shortcut-optimization.md) | runtime-evidence-pending / active | 对照旧条款核查状态轮次、热态专用键盘点和冷态首按 | 以热键及新任务样本对账快照更新、选中和原生打开；在已附加的工作树核对真实宿主样本 | `a1d75ee530f02472` |
+
+[Git、规划摘要与缓存引用记录](../../docs/worktree-control/index.json#L1)
+<!-- worktree-control-observations:end -->
+
+### 悬浮卡片紧凑化 Worktree
+
+- 独立分支 `codex/261120-eypc-float-card-compact` 基于 `main@81bf91b`。展示改动和验收进度见[工作树合入索引](../../WORKTREE_TASKS.md#L1)。
 
 ### 已关闭工作树：260829-completed-unread-pin-sequence
 
