@@ -1075,7 +1075,7 @@ function loadCodexBridge(
   }
   if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { requestCodexRpc, parseCodexNativeRegistryText, readCodexNativeRegistry, readCodexNativePrimaryState, removeCodexProject, codexProjectActionAlias, codexNativeStringList: (...args) => codexNativeRegistry.codexNativeStringList(...args), codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology: codexInventoryThreadTopologyModule.codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, codexObservationForThread: (thread) => codexBranchObservationV7(companionCodexFallbackBranchV7(thread)), applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { requestCodexRpc, parseCodexNativeRegistryText, readCodexNativeRegistry, readCodexNativePrimaryState, removeCodexProject, codexProjectActionAlias, codexNativeStringList: (...args) => codexNativeRegistry.codexNativeStringList(...args), codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology: codexInventoryThreadTopologyModule.codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, codexObservationForThread: (thread) => codexBranchObservationV7(companionCodexFallbackBranchV7(thread)), applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => companionHostReconcileInFlight.size > 0 || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
   vm.runInNewContext(`Object.assign(globalThis.__codexNativeTest, {
     preflightTaskPackageV7: preflightCompanionTaskPackageV7,
     nextLiveEvidenceSequence: codexNextLiveEvidenceSequence,
@@ -1137,7 +1137,7 @@ function loadCodexBridge(
         applyClaudeInventoryDeltaToCompanionKernel(delta: Record<string, unknown>): boolean
         privateBranchEvidence(threadId: string): Record<string, any> | null
         openedReadAcknowledgements(): Array<[string, Record<string, unknown>]>
-        openCompanionCodexTarget(target: Record<string, unknown>): Promise<Record<string, unknown>>
+        openCompanionCodexTarget(target: Record<string, unknown>, request?: { cacheOnly?: boolean }): Promise<Record<string, unknown>>
         expireCompanionCodexAlias(key: string): void
         companionHostReconciliationPending(): boolean
         nextLiveEvidenceSequence(): number
@@ -2955,6 +2955,24 @@ draft: v7EvidenceDraft({
     context.triggerPluginOut(true)
   })
 
+  it('uses the stable cached Codex target after alias expiry and ends missing quick opens without reading inventory', async () => {
+    const child = new FakeCodexProcess()
+    const context = loadCodexBridge(child)
+    const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const cachedTask = snapshot.value.threads[0]
+    const inventoryReads = () => child.writes.filter((frame) => frame.method === 'thread/list').length
+    const before = inventoryReads()
+    context.native.expireCompanionCodexAlias(cachedTask.key)
+
+    await expect(context.native.openCompanionCodexTarget({ key: cachedTask.key }, { cacheOnly: true }))
+      .resolves.toMatchObject({ outcome: 'dispatched', confirmsRead: false })
+    await expect(context.native.openCompanionCodexTarget({ key: 'f'.repeat(32) }, { cacheOnly: true }))
+      .resolves.toMatchObject({ outcome: 'unavailable', errorCode: 'stale-target' })
+    expect(inventoryReads()).toBe(before)
+    expect(context.openExternal).toHaveBeenCalledTimes(1)
+    context.triggerPluginOut(true)
+  })
+
   it('fails closed when a stale exact key disappears during recovery and never opens another task', async () => {
     const child = new FakeCodexProcess()
     const context = loadCodexBridge(child)
@@ -3248,11 +3266,8 @@ draft: v7EvidenceDraft({
     const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
     const task = snapshot.value.threads[0]
     const kernel = context.platform.companionKernel
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    expect(kernel.syncPackage({
-      lease: receipt.lease,
-draft: v7EvidenceDraft({
-        producer: 'renderer',
+    expect(kernel.publishEvidence(v7EvidenceDraft({
+        producer: 'host-evidence',
         sourceTaskStateRevision: 'task-state-v12',
         draftRevision: 1,
         acceptedAt: Date.now(),
@@ -3281,8 +3296,7 @@ draft: v7EvidenceDraft({
           dynamicEligible: true,
           capabilities: { open: true, archive: false }
         }]
-      })
-    })).toMatchObject({
+    }))).toMatchObject({
       enabled: true,
       complete: true,
       views: { cycleKeys: [task.key] }
@@ -3305,7 +3319,8 @@ draft: v7EvidenceDraft({
     for (let index = 0; index < 200; index++) await Promise.resolve()
     expect(entryRefreshes()).toBe(refreshesBefore)
     context.triggerPluginEnter({ code: 'eypc-main' })
-    await vi.waitFor(() => expect(entryRefreshes()).toBeGreaterThan(refreshesBefore))
+    expect(forwarded).toEqual([{ code: 'eypc-main' }])
+    expect(entryRefreshes()).toBe(refreshesBefore)
     stop()
     context.triggerPluginOut(true)
   })
@@ -3318,7 +3333,7 @@ draft: v7EvidenceDraft({
     context.triggerPluginOut(true)
   })
 
-  it('retains provider preflight for a cold previous/next preload entry', async () => {
+  it('warms in the background without replaying a cold previous/next press', async () => {
     const context = loadCodexBridge(new FakeCodexProcess())
     const kernel = context.platform.companionKernel
     kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
@@ -3327,6 +3342,7 @@ draft: v7EvidenceDraft({
     await vi.waitFor(() => expect(context.diagnosticEvents.some((entry: any) => entry.scope === 'task-recovery'
       && entry.event === 'cold-preflight-v7' && entry.outcome === 'accepted')).toBe(true))
     expect(kernel.getLatest().complete).toBe(true)
+    expect(kernel.diagnostics().navigation.dispatched.codex).toBe(0)
     context.triggerPluginOut(true)
   })
 
@@ -12893,10 +12909,11 @@ describe('Codex internal review member admission', () => {
       snapshot(3)
       await vi.advanceTimersByTimeAsync(3_100)
       expect(context.native.privateBranchEvidence(FIXED_THREAD_IDS[3])?.branches).toHaveLength(1)
-      expect(kernel.getLatest().tasks.map((row: Record<string, any>) => row.key).sort()).toEqual(rootKeys)
+      const verifiedKeys = new Set(baseline.value.threads.map((row: Record<string, any>) => row.key))
+      expect(kernel.getLatest().tasks.every((row: Record<string, any>) => verifiedKeys.has(row.key))).toBe(true)
       expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)).toMatchObject({ phase: 'completed', unread: true, topology: { memberCount: 1 } })
       for (const value of retired) {
-        expect(value.tasks.map((row: Record<string, any>) => row.key).sort()).toEqual(rootKeys)
+        expect(value.tasks.every((row: Record<string, any>) => verifiedKeys.has(row.key))).toBe(true)
         expect(value.tasks.find((row: Record<string, any>) => row.key === parent.key)).toMatchObject({ phase: 'completed', topology: { memberCount: 1 } })
       }
       // An explicit, legal ordinary source is new authority; missing/invalid

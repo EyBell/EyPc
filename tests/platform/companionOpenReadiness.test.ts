@@ -80,6 +80,23 @@ describe('companion open readiness', () => {
     expect(records[2]?.details).toMatchObject({ launcher: 'open-b', source: 'shortcut', operationId: 'op-1', waitedMs: 1500 })
   })
 
+  it('rechecks the selected target after launch and before native dispatch', async () => {
+    let current = true
+    const open = vi.fn()
+    const { readiness } = harness({
+      codex: {
+        label: 'Codex', probe: closedThenRunning(1),
+        launch: () => {
+          current = false
+          return { ok: true, launcher: 'open-b' }
+        }
+      }
+    })
+    await expect(readiness.wrapOpen('codex', open)({ key: 'k' }, { isCurrent: () => current }))
+      .resolves.toMatchObject({ outcome: 'unavailable', errorCode: 'stale-target' })
+    expect(open).not.toHaveBeenCalled()
+  })
+
   it('records launch-requested before the strategy runs, so a slow launcher does not hide the issue time', async () => {
     const open = vi.fn(async () => ({ outcome: 'dispatched', confirmsRead: false }))
     let seenAtLaunch: unknown[] = []

@@ -19,8 +19,9 @@ import {
 } from '../runtime/keybinding/keybindingRuntime'
 import type { KeybindingContext, KeybindingLayerId, ShortcutCommandRow } from '../runtime/keybinding/keybindingRuntime'
 import { createKeybindingIndexV7 } from '../runtime/keybinding/keybindingIndex'
-import { blockHandledShortcutEvent } from '../runtime/keyboardEvent'
+import { blockHandledShortcutEvent, isEditableTarget } from '../runtime/keyboardEvent'
 import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutFromEvent as shortcutFromKeyboardEvent } from '../domain/shortcuts'
+import { COMMAND_MODIFIER_LABEL, hasCommandModifier } from '../ui/commandModifier'
 
 type SettingsTabId = 'shortcuts' | 'maintenance'
 type ShortcutScopeId = 'all' | ShortcutProfileId
@@ -109,6 +110,7 @@ const draftShortcutProfiles = ref<ShortcutProfileMap>(cloneShortcutProfiles(prop
 const draftFeatureConfigs = ref<FeatureConfig[]>(cloneFeatureConfigs(props.featureConfigs))
 const draggingFeatureId = ref<AppTabId | null>(null)
 const featureHelpDoc = ref<FeatureHelpDoc | null>(null)
+const settingsSurface = ref<HTMLElement | null>(null)
 const contextPanel = ref<'detail' | 'actions' | null>(null)
 let contextPanelTrigger: HTMLElement | null = null
 
@@ -122,7 +124,7 @@ const layerRows = computed(() => (Object.entries(LAYER_PRIORITY) as Array<[Keybi
   .map(([id, priority]) => ({ id, priority })))
 
 const activePreviewContext = computed(() => previewContexts.find((item) => item.id === previewContextId.value) || previewContexts[0])
-const selectedRow = computed(() => commandRows.value.find((row) => row.commandId === selectedCommandId.value) || filteredRows.value[0] || null)
+const selectedRow = computed(() => commandRows.value.find((row) => row.commandId === selectedCommandId.value) || primaryShortcutRows.value[0] || null)
 const recordingRow = computed(() => recordingCommandId.value ? commandRows.value.find((row) => row.commandId === recordingCommandId.value) || null : null)
 const whenRow = computed(() => whenCommandId.value ? commandRows.value.find((row) => row.commandId === whenCommandId.value) || null : null)
 const storageModeLabel = computed(() => props.mqttStorageStatus.mode === 'sqlite' ? 'SQLite 本机存储' : props.mqttStorageStatus.mode === 'legacy-dbStorage' ? 'uTools dbStorage 降级' : '浏览器 localStorage')
@@ -137,9 +139,10 @@ const featureRows = computed(() => draftFeatureConfigs.value
     locked: config.id === 'settings'
   })))
 
-const filteredCommandRows = computed(() => {
+const primaryShortcutRows = computed(() => {
   const query = keyword.value.trim().toLowerCase()
   return commandRows.value.filter((row) => {
+    if (isMaintenanceShortcutRow(row)) return false
     if (!matchesShortcutScope(row, shortcutScopeId.value)) return false
     if (stateFilter.value === 'conflict' && !row.conflicts.length && !row.reservationConflicts.length) return false
     if (stateFilter.value === 'user' && row.source !== 'user') return false
@@ -157,9 +160,11 @@ const filteredCommandRows = computed(() => {
     ].join(' ').toLowerCase().includes(query)
   })
 })
-const primaryShortcutRows = computed(() => filteredCommandRows.value.filter((row) => !isMaintenanceShortcutRow(row)))
-const maintenanceShortcutRows = computed(() => filteredCommandRows.value.filter(isMaintenanceShortcutRow))
-const filteredRows = computed(() => primaryShortcutRows.value)
+const maintenanceShortcutRows = computed(() => commandRows.value.filter(isMaintenanceShortcutRow))
+const visibleCommandRows = computed(() => {
+  if (settingsTabId.value === 'shortcuts') return primaryShortcutRows.value
+  return maintenanceSectionId.value === 'commands' ? maintenanceShortcutRows.value : null
+})
 
 const previewResult = computed(() => previewKeybindingResolution([...effectiveBindings.value], previewShortcut.value, activePreviewContext.value.context))
 const maintenanceSections = computed<Array<{ id: MaintenanceSectionId; label: string; meta: string }>>(() => [
@@ -281,13 +286,10 @@ const recordShortcutIds = computed(() => shortcutRecordMergedIds.value)
 const recordValidation = computed(() => validateCandidate(recordingRow.value, recordShortcutIds.value, recordingRow.value?.when || ''))
 const whenValidation = computed(() => validateWhenDraft(whenRow.value, whenDraft.value))
 
-watch(filteredRows, (rows) => {
-  if (!rows.length) {
-    selectedCommandId.value = null
-    return
-  }
-  if (!selectedCommandId.value || !rows.some((row) => row.commandId === selectedCommandId.value)) {
-    selectedCommandId.value = rows[0].commandId
+watch(visibleCommandRows, (rows) => {
+  if (rows && !rows.some((row) => row.commandId === selectedCommandId.value)) {
+    closeContextPanel(false)
+    selectedCommandId.value = rows[0]?.commandId ?? null
   }
 }, { immediate: true })
 
@@ -308,6 +310,7 @@ watch(() => props.initialMaintenanceSection, (section) => {
 }, { immediate: true })
 
 watch([settingsTabId, maintenanceSectionId], ([tab, section]) => {
+  closeContextPanel(false)
   emit('dispatch', 'settings.path.set', { tabId: tab, sectionId: section })
 })
 
@@ -514,58 +517,63 @@ function focusShortcutSearch() {
 }
 
 function isConfirmSaveShortcut(event: KeyboardEvent) {
-  if (!(event.ctrlKey || event.metaKey)) return false
+  if (!hasCommandModifier(event)) return false
   return event.key.toLowerCase() === 's' || event.key === 'Enter'
 }
 
 function handleSettingsKeydown(event: KeyboardEvent) {
-  if (event.defaultPrevented) return
-  if (settingsTabId.value !== 'shortcuts') return
-  if (event.ctrlKey || event.metaKey) shortcutModifierHinting.value = true
-  if (recordingRow.value || whenRow.value) return
-  if (event.key === 'Escape' && contextPanel.value) {
+  if (event.defaultPrevented || event.isComposing || recordingRow.value || whenRow.value) return
+  const onShortcuts = settingsTabId.value === 'shortcuts'
+  const commandModifier = hasCommandModifier(event)
+  if (onShortcuts && commandModifier) shortcutModifierHinting.value = true
+  if (!visibleCommandRows.value) return
+  if (contextPanel.value && shortcutFromKeyboardEvent(event) === 'Escape') {
     blockHandledShortcutEvent(event)
     closeContextPanel()
     return
   }
-  if ((event.ctrlKey || event.metaKey) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+  if (commandModifier && !event.altKey && !event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
     const target = event.target instanceof HTMLElement ? event.target : null
-    if (target?.matches('input, textarea, select, [contenteditable="true"]')) return
+    if (isEditableTarget(target) || target?.closest('[role="textbox"], [role="searchbox"]')) return
     const rowElement = target?.closest<HTMLElement>('.shortcut-compact-row:not(.shortcut-row-head)')
-    const fromOpenPanel = Boolean(contextPanel.value && target?.closest('.settings-context-panel'))
-    if (!rowElement && !fromOpenPanel) return
-    const row = (rowElement ? commandRows.value.find((item) => item.commandId === rowElement.dataset.commandId) : null) || selectedRow.value
+    const row = rowElement
+      ? visibleCommandRows.value.find((item) => item.commandId === rowElement.dataset.commandId)
+      : contextPanel.value && target?.closest('.settings-context-panel') && selectedRow.value
     if (!row) return
     blockHandledShortcutEvent(event)
-    openContextPanel(event.key === 'ArrowLeft' ? 'detail' : 'actions', row, rowElement || contextPanelTrigger)
+    openContextPanel(event.key === 'ArrowLeft' ? 'detail' : 'actions', row, rowElement)
     return
   }
+  if (!onShortcuts) return
   if (isConfirmSaveShortcut(event) && shortcutDraftDirty.value) {
     blockHandledShortcutEvent(event)
     saveShortcutDraft()
     return
   }
-  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'f') return
+  if (!commandModifier || event.key.toLowerCase() !== 'f') return
   blockHandledShortcutEvent(event)
   focusShortcutSearch()
 }
 
 function openContextPanel(panel: 'detail' | 'actions', row: ShortcutCommandRow, trigger?: HTMLElement | null) {
-  if (!contextPanel.value) contextPanelTrigger = trigger || document.activeElement as HTMLElement | null
+  if (trigger || !contextPanel.value) contextPanelTrigger = trigger || document.activeElement as HTMLElement | null
   selectedCommandId.value = row.commandId
   contextPanel.value = panel
-  requestAnimationFrame(() => document.querySelector<HTMLElement>('.settings-context-panel button:not([disabled])')?.focus())
+  requestAnimationFrame(() => settingsSurface.value?.querySelector<HTMLElement>('.settings-context-panel button:not([disabled])')?.focus())
 }
 
 function closeContextPanel(restoreFocus = true) {
+  const trigger = contextPanelTrigger
+  const commandId = selectedCommandId.value
+  contextPanelTrigger = null
   contextPanel.value = null
   if (!restoreFocus) return
   requestAnimationFrame(() => {
-    const target = contextPanelTrigger?.isConnected && contextPanelTrigger !== document.body
-      ? contextPanelTrigger
-      : document.querySelector<HTMLElement>(`.shortcut-compact-row[data-command-id="${CSS.escape(selectedCommandId.value || '')}"]`)
+    if (contextPanel.value || !settingsSurface.value) return
+    const target = trigger && settingsSurface.value.contains(trigger)
+      ? trigger
+      : settingsSurface.value.querySelector<HTMLElement>(`.shortcut-compact-row[data-command-id="${CSS.escape(commandId || '')}"]`)
     target?.focus()
-    contextPanelTrigger = null
   })
 }
 
@@ -868,6 +876,7 @@ function isRecordableShortcutId(shortcutId: string) {
 
 <template>
   <section
+    ref="settingsSurface"
     class="settings-page"
     @keydown.capture="handleSettingsSurfaceKeydown"
     @keyup.capture="handleSettingsKeyup"
@@ -929,7 +938,7 @@ function isRecordableShortcutId(shortcutId: string) {
           tabindex="0"
           :data-command-id="row.commandId"
           data-operation-tooltip="右键打开命令操作"
-          data-operation-shortcut="Ctrl+→"
+          :data-operation-shortcut="`${COMMAND_MODIFIER_LABEL}+→`"
           :class="{ selected: selectedRow?.commandId === row.commandId, disabled: !row.enabled }"
           @click="selectedCommandId = row.commandId"
           @keydown.enter.prevent="selectedCommandId = row.commandId"
@@ -1172,7 +1181,7 @@ function isRecordableShortcutId(shortcutId: string) {
               tabindex="0"
               :data-command-id="row.commandId"
               data-operation-tooltip="右键打开命令操作"
-              data-operation-shortcut="Ctrl+→"
+              :data-operation-shortcut="`${COMMAND_MODIFIER_LABEL}+→`"
               :class="{ selected: selectedRow?.commandId === row.commandId, disabled: !row.enabled }"
               @click="selectedCommandId = row.commandId"
               @keydown.enter.prevent="selectedCommandId = row.commandId"

@@ -1,5 +1,5 @@
 import type { ShortcutProfileId } from '../../domain/types'
-import type { CommandExecutionOwner, CommandSurfaceExecutionOwnersV7, KeybindingLayerId } from '../command/types'
+import type { CommandExecutionOwner, CommandSurfaceExecutionOwnersV7, CommandSurfaceIdV7, KeybindingLayerId } from '../command/types'
 
 export interface ShortcutCommandProfileConfig {
   title: string
@@ -14,6 +14,7 @@ export interface ShortcutCommandProfileConfig {
   profileId?: ShortcutProfileId
   executionOwner?: CommandExecutionOwner
   surfaceExecutionOwners?: CommandSurfaceExecutionOwnersV7
+  surfaces?: readonly CommandSurfaceIdV7[]
 }
 
 export interface ShortcutCommandProfile extends ShortcutCommandProfileConfig {

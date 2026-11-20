@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7 } from '../../src/ui/quickJumpRegistry'
+import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, quickJumpCommandTargetV7 } from '../../src/ui/quickJumpRegistry'
 
 function visible(element: HTMLElement, left: number) {
   element.style.display = 'block'
@@ -38,5 +38,37 @@ describe('QuickJumpRegistry V7', () => {
     expect(targets[0]).toMatchObject({ id: 'explicit-id', label: '已注册', searchText: 'registered' })
     expect(targets[1].id).toContain('test:')
     expect(targets.map((target) => target.marker)).toEqual(['a', 's'])
+  })
+
+  it('keeps semantic identity across label and order changes and replaces registrations safely', () => {
+    const root = document.createElement('main')
+    const control = document.createElement('button')
+    const row = document.createElement('article')
+    control.dataset.quickJumpTarget = ''
+    root.append(control, row)
+    const registry = createQuickJumpRegistryV7({ surfaceId: 'main', root: () => root })
+    const args = { kind: 'message', id: 'message-42', targetKind: 'message', targetId: 'message-42', list: 'history' }
+    const registration = quickJumpCommandTargetV7({ featureId: 'mqtt', commandId: 'mqtt.record.focus', args, label: 'Original', occurrence: 'history' })
+    const dispose = registry.register(row, registration)
+    registry.register(row, quickJumpCommandTargetV7({ featureId: 'mqtt', commandId: 'mqtt.record.focus', args, label: 'Updated', occurrence: 'history' }))
+    dispose()
+
+    const [fallback, target] = registry.collect({ domOrder: true })
+    expect(fallback.element).toBe(control)
+    expect(target).toMatchObject({
+      id: registration.id,
+      label: 'Updated',
+      invocation: {
+        args,
+        intent: {
+          commandId: 'mqtt.record.focus',
+          source: 'quick-jump',
+          target: { featureId: 'mqtt', surfaceId: 'main', kind: 'mqtt-message', key: 'message-42' }
+        }
+      }
+    })
+    expect(registry.collect({ domOrder: true, backward: true })[0].id).toBe(registration.id)
+    row.remove()
+    expect(registry.collect()).toHaveLength(1)
   })
 })

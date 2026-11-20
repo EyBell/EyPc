@@ -5,7 +5,9 @@ import { favoriteTreeMoveTarget } from '../domain/favorites'
 import type { FavoriteNode, FavoriteTreeNode } from '../domain/types'
 import type { FavoriteTreeDropPosition } from '../domain/favorites'
 import type { FavoriteDraft } from '../runtime/appRuntime'
+import { quickJumpCommandTargetV7, useQuickJumpTargetV7 } from '../ui/quickJumpRegistry'
 
+const vQuickJumpTarget = useQuickJumpTargetV7()
 const props = defineProps<{
   nodes: FavoriteNode[]
   rows: FavoriteTreeNode[]
@@ -96,6 +98,7 @@ function isRenaming(id: string) {
     <div
       v-for="row in props.rows"
       :key="row.node.id"
+      v-quick-jump-target="quickJumpCommandTargetV7({ featureId: 'favorites', commandId: 'favorites.group.focus', args: { id: row.node.id }, label: row.node.name, searchText: row.node.path, occurrence: 'containers' })"
       class="favorite-row"
       data-context-menu-target
       role="treeitem"

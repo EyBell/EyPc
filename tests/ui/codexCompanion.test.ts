@@ -36,6 +36,8 @@ import { contrastRatio } from '../../src/domain/codexAppearance'
 import { emptyClaudeEnvironment, emptyClaudeQuota, normalizeClaudeQuota } from '../../src/domain/claude'
 import { mergeCompanionConversations } from '../../src/domain/companionAggregate'
 import type { CodexFloatSnapshotV1, CodexRuntimeView } from '../../src/runtime/codexController'
+import { projectFloatKeybindings } from '../../src/runtime/keybinding/companionKeybindings'
+import { buildEffectiveKeybindings } from '../../src/runtime/keybinding/keybindingRuntime'
 
 const NOW = 1_784_364_000_000
 const PROJECT_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -1657,6 +1659,7 @@ describe('Codex Companion V4 UI contract', () => {
     expect(wrapper.find(`[data-focus-key="task:${TASK_FAILED}"]`).exists()).toBe(false)
     expect(wrapper.get('.float-search-meta').text()).toBe(initialSearchCount)
     expect(wrapper.findAll('.status-quick-index').map((badge) => badge.text())).toEqual(['1'])
+    expect(pinnedHeader.get('.status-section-toggle').attributes('aria-label')).toContain('快捷键 Alt+1 展开')
     expect(wrapper.findAll('.task-quick-index')[0]?.text()).toBe('2')
 
     const root = wrapper.get('.codex-float-root')
@@ -1689,7 +1692,7 @@ describe('Codex Companion V4 UI contract', () => {
     const search = wrapper.get('input[aria-label="搜索当前 Codex 页签"]')
     expect(setExpansion).toHaveBeenCalledWith(true, false)
     expect(document.activeElement).toBe(search.element)
-    expect(search.attributes('placeholder')).toBe('筛选任务，c-1…0 直接打开')
+    expect(search.attributes('placeholder')).toBe('筛选任务，按行内提示跳转')
 
     const badges = wrapper.findAll('.task-quick-index')
     expect(badges.length).toBeGreaterThan(0)
@@ -1704,7 +1707,7 @@ describe('Codex Companion V4 UI contract', () => {
 
     // 在搜索框里直接按 Ctrl+1 打开第 1 条，不需要先离开输入框。
     await search.trigger('keydown', { key: '1', code: 'Digit1', ctrlKey: true })
-    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ source: 'local-shortcut' }))
+    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ source: 'manual-quick-jump' }))
     // 意图已消费：退出筛选模式，但编号保留给常驻的 Alt 路径。
     await wrapper.vm.$nextTick()
     const afterOpen = wrapper.findAll('.float-task-row').filter((row) => row.find('.task-quick-index').exists())
@@ -1724,6 +1727,54 @@ describe('Codex Companion V4 UI contract', () => {
     action.mockClear()
     await root.trigger('keydown', { key: '0', code: 'Digit0', altKey: true })
     expect(action).not.toHaveBeenCalledWith('codex.task.open', expect.anything())
+  })
+
+  it('shows and dispatches only the effective numbered bindings from a partial task snapshot', async () => {
+    const source = floatSnapshot('ongoing')
+    source.taskSnapshot!.complete = false
+    source.keybindings = projectFloatKeybindings(buildEffectiveKeybindings([
+      { commandId: 'codex.task.openIndex.1', shortcutIds: ['Alt+X'] },
+      { commandId: 'codex.task.openIndex.2', enabled: false },
+      { commandId: 'codex.task.openIndex.3', shortcutIds: ['Ctrl+Shift+1'] }
+    ]))
+    const onSnapshot = vi.fn((_listener: (snapshot: CodexFloatSnapshotV1) => void) => () => undefined)
+    const { wrapper, action } = mountFloat(true, source, { onSnapshot })
+    await wrapper.vm.$nextTick()
+    const rows = wrapper.findAll('.float-task-row')
+    expect(rows.length).toBeGreaterThanOrEqual(3)
+    expect(rows[0].get('.task-quick-index').text()).toBe('Alt+X')
+    expect(rows[0].attributes('aria-label')).toContain('快捷键 Alt+X 打开')
+    expect(rows[1].find('.task-quick-index').exists()).toBe(false)
+    expect(rows[1].attributes('aria-label')).not.toContain('Alt+2')
+    expect(rows[2].get('.task-quick-index').text()).toBe('Ctrl+Shift+1')
+    const root = wrapper.get('.codex-float-root')
+    await root.trigger('keydown', { key: '1', code: 'Digit1', altKey: true })
+    await root.trigger('keydown', { key: '2', code: 'Digit2', altKey: true })
+    expect(action).not.toHaveBeenCalledWith('codex.task.open', expect.anything())
+    await root.trigger('keydown', { key: 'x', code: 'KeyX', altKey: true })
+    expect(action).toHaveBeenCalledWith('codex.task.open', { key: rows[0].attributes('data-focus-key')?.slice(5), source: 'local-shortcut' })
+    await root.trigger('keydown', { key: '!', code: 'Digit1', ctrlKey: true, shiftKey: true })
+    expect(action).toHaveBeenCalledWith('codex.task.open', { key: rows[2].attributes('data-focus-key')?.slice(5), source: 'local-shortcut' })
+    expect(action).not.toHaveBeenCalledWith('codex.action.run.1', expect.anything())
+
+    onSnapshot.mock.calls[0][0]({ ...source, baseRevision: 2, keybindings: projectFloatKeybindings(buildEffectiveKeybindings()) })
+    await wrapper.vm.$nextTick()
+    expect(rows[0].get('.task-quick-index').text()).toBe('1')
+    expect(rows[1].get('.task-quick-index').text()).toBe('2')
+    await root.trigger('keydown', { key: '!', code: 'Digit1', ctrlKey: true, shiftKey: true })
+    expect(action).toHaveBeenCalledWith('codex.action.run.1', { source: 'float-shortcut' })
+    const search = wrapper.get('input[aria-label="搜索当前 Codex 页签"]')
+    await search.trigger('keydown', { key: '!', code: 'Digit1', ctrlKey: true, shiftKey: true })
+    expect(action.mock.calls.filter(([command]) => command === 'codex.action.run.1')).toHaveLength(1)
+  })
+
+  it('identifies quick-mode clicks as exact task opens', async () => {
+    const { wrapper, action } = mountFloat(true, floatSnapshot('ongoing'))
+    await wrapper.get('.codex-float-root').trigger('keydown', { key: 'k', code: 'KeyK', ctrlKey: true, altKey: true })
+    await wrapper.get('.task-title-button').trigger('click')
+    expect(action).toHaveBeenLastCalledWith('codex.task.open', expect.objectContaining({ source: 'manual-quick-jump' }))
+    await wrapper.get('.float-task-row').trigger('click')
+    expect(action).toHaveBeenLastCalledWith('codex.task.open', expect.objectContaining({ source: 'manual-quick-jump' }))
   })
 
   it('gives Alt+F a task-only Quick Jump whose marker opens the conversation instead of only focusing it', async () => {

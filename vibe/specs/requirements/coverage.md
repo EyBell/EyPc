@@ -2,9 +2,9 @@
 
 登记必须能回答「这条现在还作数吗」，所以也必须诚实回答「哪些还没进来」。一份看起来完整、实则只覆盖一部分的登记，比没有登记更危险。
 
-Date: 2026-08-24
+现行计数见[全局当前真值快照](../PRODUCT_REQUIREMENTS.md#全局当前真值快照)和[来源目录](../source-anchors/catalog.json#L1)。2026-11-20 快捷键盘点另包含早期规格与任务账，按实际效力索引至[快捷键迁移索引](../261120/eypc-shortcut-optimization/shortcut-requirement-migration-index.md#L1)。无父 RAW 的来源继续按原路径与 `SA-*` 定位。
 
-## 语料实测
+## 2026-08-24 历史语料实测
 
 当前由 [Source Anchor Catalog](../source-anchors/README.md#L1) 确定性扫描 30 个 `raw-requirement.md`。扫描忽略 Markdown 围栏内的原始 Prompt、转录和实施计划，只给围栏外的来源结构建索引；同一文件可能同时包含父 RAW heading 与编号子条款，因此文件数不是互斥总和：
 
@@ -89,7 +89,7 @@ install-runtime-diagnostics 的 `companion-shared` 六条是**章节级**登记�
 
 当时识别为散在 13 个任务；最大的两处是 [codex-environment-actions](../260729/1435-codex-environment-actions/raw-requirement.md#L1)（39 条）与 [window-jump-workbench](../260724/1527-window-jump-workbench/raw-requirement.md#L1)（8 条）。它们没有任何父 id，且序号会跨小节重启，不能用扁平序号冒充需求身份。
 
-## 2026-08-23 当前机器复测：102 条来源锚点
+## 2026-08-23 机器复测：102 条来源锚点
 
 当前目录扫描得到 207 条围栏外有序来源条款：105 条位于单一 RAW 父标题下且全部已登记；另外 **102 条分布在 14 个任务**，没有 RAW 父身份。历史 87/13 不是可复现真值，主要遗漏了后续 Cursor 与 selector-readiness 等来源。
 
@@ -99,7 +99,7 @@ install-runtime-diagnostics 的 `companion-shared` 六条是**章节级**登记�
 
 [companion-quick-task-view](../260813/1455-companion-quick-task-view/raw-requirement.md#L1) 的 H1 `RAW-167` 与 install-runtime-diagnostics 曾使用的同号需求属于**不同任务**。本次按既有 `SPEC-<任务>::RAW-nnn` qualified identity 补入父叶子，并按来源已经写下的 #1–#3 序号抽取三条同轮追加需求；没有创造新编号或新语义。其余未编号的规范化 bullets 继续由父叶子与来源正文承载，不伪造独立叶子。
 
-## 仍未入册
+## 2026-08-24 尚未入册快照
 
 | 来源 | 形态 | 条目 | 阻塞原因 |
 | --- | --- | ---: | --- |

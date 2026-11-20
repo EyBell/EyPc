@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 70,
+    "source_documents": 71,
     "ordered_anchors": 356,
     "raw_parent_ordered": 230,
     "unparented_ordered": 126,
@@ -709,6 +709,16 @@
       "spec_id": null,
       "content_sha256": "3cdbc1e639e58ab4de31f3933c1aacc540a4d45b52cb0dbd68e8733a0ff6835c",
       "raw_identity_count": 1,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "261120/eypc-shortcut-optimization",
+      "source_path": "vibe/specs/261120/eypc-shortcut-optimization/raw-requirement.md",
+      "spec_id": "SPEC-261120-EYPC-SHORTCUT-OPTIMIZATION",
+      "content_sha256": "1b564ffee99eeecdb49166a60328ac986c7e73741b315a828c17a2024a52be6c",
+      "raw_identity_count": 5,
       "ordered_anchor_count": 0,
       "raw_parent_ordered_count": 0,
       "unparented_ordered_count": 0

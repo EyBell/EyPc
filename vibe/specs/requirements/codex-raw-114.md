@@ -9,6 +9,9 @@ scoped_relations:
   - kind: refines
     target: eypc-req-codex-raw-047
     scope: "supersedes-visible-float-slots-in-260729-1435-and"
+  - kind: refined-by
+    target: eypc-req-shortcut-management-raw-005
+    scope: "区分主窗切页与 Float 局部槽位键，保留浮窗无独立槽位 UI 与 Controller 单一执行链"
 ---
 
 # RAW-114 · companion-codex

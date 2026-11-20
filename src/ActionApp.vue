@@ -7,14 +7,21 @@ import { moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import { codexActionRunCanArchive, formatCodexActionRunTimestamp, type CodexActionLogDeltaV1, type CodexActionRunRecordV1, type CodexActionRunnerActionV1, type CodexActionRunnerSnapshotV1 } from './domain/codexActionRunner'
 import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, type QuickJumpDomTargetV7 } from './ui/quickJumpRegistry'
 import { shortcutFromEvent } from './domain/shortcuts'
-import { buildCommandCatalogV7 } from './runtime/keybinding/keybindingRuntime'
+import { projectActionRunnerQuickJumpBindings } from './runtime/keybinding/companionKeybindings'
+import { DEFAULT_KEYBINDINGS, evaluateWhenExpression, resolveKeybindingContextV7 } from './runtime/keybinding/keybindingRuntime'
 
 type QuickJumpDomTarget = QuickJumpDomTargetV7
 
 const root = ref<HTMLElement | null>(null)
 const quickJumpRegistry = createQuickJumpRegistryV7({ surfaceId: 'action', root: () => root.value })
-const actionCommandCatalog = buildCommandCatalogV7()
+const hideShortcut = DEFAULT_KEYBINDINGS.find((binding) => binding.actionId === 'action.runner.hide')?.shortcutId
+const defaultQuickJumpBindings = projectActionRunnerQuickJumpBindings(DEFAULT_KEYBINDINGS)
+const quickJumpContext = resolveKeybindingContextV7({ confirmOpen: false, textInputFocused: false })
 const snapshot = ref<CodexActionRunnerSnapshotV1 | null>(window.eypcActionRunner?.getSnapshot() || null)
+const confirmOpen = computed(() => Boolean(snapshot.value?.catalog.confirmLaneId))
+const quickJumpBindings = computed(() =>
+  [...(snapshot.value?.quickJumpBindings ?? defaultQuickJumpBindings)].sort((left, right) => right.weight - left.weight)
+)
 const selectedLaneId = ref(snapshot.value?.selectedLaneId || '')
 const expandedRunId = ref('')
 const collapsedProjects = ref(new Set<string>())
@@ -143,6 +150,7 @@ function applyLogDelta(delta: CodexActionLogDeltaV1) {
 }
 
 function acceptSnapshot(value: CodexActionRunnerSnapshotV1) {
+  if (value.catalog.confirmLaneId && quickJump.value.open) closeQuickJump()
   const previous = new Map((snapshot.value?.runs || []).map((run) => [run.runId, run]))
   const requests: Array<{ runId: string; cursor: number }> = []
   value.runs = value.runs.map((run) => {
@@ -190,6 +198,7 @@ function endWindowPointerInteraction() {
 
 function hideRunner() {
   endWindowPointerInteraction()
+  closeQuickJump()
   window.eypcActionRunner?.hide()
 }
 
@@ -211,7 +220,6 @@ function syncQuickJumpActive() {
 }
 
 function openQuickJump(backward: boolean) {
-  if (snapshot.value?.catalog.confirmLaneId) return
   const targets = collectQuickJumpTargets(backward)
   if (!targets.length) return
   quickJump.value = { open: true, query: '', sourceTargets: targets, targets, activeTargetId: targets[0]?.id || null }
@@ -225,30 +233,28 @@ function activateQuickJumpTarget() {
   target?.element.click()
 }
 
-function isEditableTarget(target: EventTarget | null) {
-  return target instanceof HTMLElement && (target.matches('input, textarea, select, [contenteditable="true"]') || Boolean(target.closest('input, textarea, select, [contenteditable="true"]')))
-}
-
-function actionOwnedCommand(event: KeyboardEvent): string {
-  const shortcutId = shortcutFromEvent(event)
-  return actionCommandCatalog.all()
-    .filter((descriptor) => actionCommandCatalog.executionOwnerFor(descriptor.id, 'action') === 'action-local')
-    .find((descriptor) => descriptor.defaultBindings.some((binding) => binding.shortcutIds.includes(shortcutId)))?.id || ''
+function isEditableTarget(event: KeyboardEvent) {
+  const target = event.target instanceof Element ? event.target : document.activeElement
+  const editable = target?.closest('[contenteditable]')?.getAttribute('contenteditable')
+  return Boolean(target?.closest('input, textarea, select') || (editable != null && editable.toLowerCase() !== 'false'))
 }
 
 function onKeydown(event: KeyboardEvent) {
-  const command = actionOwnedCommand(event)
-  if (command === 'action.runner.hide') {
+  const shortcutId = shortcutFromEvent(event)
+  if (shortcutId === hideShortcut) {
     event.preventDefault()
+    event.stopPropagation()
     hideRunner()
     return
   }
+  if (event.isComposing) return
   if (event.key === 'Escape' && resizingWindow) {
     event.preventDefault()
     window.eypcActionRunner?.resizeCancel()
     resizingWindow = ''
     return
   }
+  if (confirmOpen.value || isEditableTarget(event)) return
   if (quickJump.value.open) {
     event.preventDefault(); event.stopPropagation()
     if (event.key === 'Escape') closeQuickJump()
@@ -256,7 +262,8 @@ function onKeydown(event: KeyboardEvent) {
     else if (event.key === 'ArrowDown') { quickJump.value.activeTargetId = moveQuickJumpActive(quickJump.value.targets, quickJump.value.activeTargetId, 1); syncQuickJumpActive() }
     else if (event.key === 'ArrowUp') { quickJump.value.activeTargetId = moveQuickJumpActive(quickJump.value.targets, quickJump.value.activeTargetId, -1); syncQuickJumpActive() }
     else {
-      const next = event.key === 'Backspace' ? quickJump.value.query.slice(0, -1) : /^[a-z]$/i.test(event.key) ? `${quickJump.value.query}${event.key.toLowerCase()}` : null
+      const next = shortcutId === 'Backspace' ? quickJump.value.query.slice(0, -1)
+        : !event.repeat && /^[A-Z]$/.test(shortcutId) ? `${quickJump.value.query}${shortcutId.toLowerCase()}` : null
       if (next !== null) {
         const result = resolveQuickJumpQuery(quickJump.value.sourceTargets, next)
         quickJump.value = { ...quickJump.value, query: result.query, targets: result.targets, activeTargetId: result.activeTargetId }
@@ -266,9 +273,15 @@ function onKeydown(event: KeyboardEvent) {
     }
     return
   }
-  if ((command === 'quickJump.openForward' || command === 'quickJump.openBackward') && !isEditableTarget(event.target)) {
-    event.preventDefault(); event.stopPropagation(); openQuickJump(command === 'quickJump.openBackward')
-  }
+  if (event.repeat) return
+  const binding = quickJumpBindings.value.find((candidate) => {
+    if (candidate.shortcutId !== shortcutId) return false
+    try { return evaluateWhenExpression(candidate.when, quickJumpContext) } catch { return false }
+  })
+  if (!binding) return
+  event.preventDefault()
+  event.stopPropagation()
+  openQuickJump(binding.actionId === 'quickJump.openBackward')
 }
 
 watch(() => snapshot.value?.selectedLaneId, (laneId) => { if (laneId) selectedLaneId.value = laneId })

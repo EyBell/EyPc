@@ -1519,6 +1519,33 @@ describe('app runtime', () => {
     runtime.dispose()
   })
 
+  it('publishes Runner bindings on companion sync even when the Float is disabled', () => {
+    const { state } = installPlatform()
+    const runtime = createAppRuntime(state)
+    const published = vi.fn(runtime.companionPresentationSnapshot)
+    const unsubscribe = runtime.subscribeDomain('companion', published)
+
+    expect(runtime.companionPresentationSnapshot()).toMatchObject({
+      visible: false,
+      quickJumpBindings: [
+        { actionId: 'quickJump.openForward', shortcutId: 'F' },
+        { actionId: 'quickJump.openBackward', shortcutId: 'Shift+F' }
+      ]
+    })
+    runtime.updateKeybinding({ commandId: 'quickJump.openForward', shortcutIds: ['Ctrl+L'], when: '!confirmOpen' })
+    expect(published).toHaveLastReturnedWith(expect.objectContaining({
+      quickJumpBindings: expect.arrayContaining([
+        expect.objectContaining({ actionId: 'quickJump.openForward', shortcutId: 'Ctrl+L', when: '!confirmOpen' })
+      ])
+    }))
+    runtime.updateKeybinding({ commandId: 'quickJump.openForward', disabled: true })
+    runtime.updateKeybinding({ commandId: 'quickJump.openBackward', disabled: true })
+    expect(published).toHaveLastReturnedWith(expect.objectContaining({ quickJumpBindings: [] }))
+
+    unsubscribe()
+    runtime.dispose()
+  })
+
   it('routes Codex Ctrl+T to the float composer only in the Codex profile and outside text input', async () => {
     const activate = vi.fn(() => true)
     const { state } = installPlatform({
@@ -1612,6 +1639,7 @@ describe('app runtime', () => {
       { id: 'ports', shortcutId: 'Ctrl+Shift+3', commandId: 'tab.select.ports' },
       { id: 'codex', shortcutId: 'Ctrl+Shift+4', commandId: 'tab.select.codex' }
     ])
+    runtime.setTab('codex')
     expect(runtime.handleShortcut('Ctrl+Shift+1', false)).toBe('tab.select.favorites')
     expect(runtime.snapshot().state.activeTab).toBe('favorites')
     expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBe('tab.select.mqtt')

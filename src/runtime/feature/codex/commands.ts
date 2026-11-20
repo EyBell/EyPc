@@ -36,7 +36,8 @@ export const CODEX_COMMAND_PROFILES = {
       weight: 125,
       risk: 'data-write' as const,
       profileId: 'codex' as const,
-      description: 'EyPc 等价执行 Environment Action'
+      surfaces: ['float'] as const,
+      description: '在浮窗执行 Environment Action'
     }]
   })),
   'codex.quick.activate': { title: '快速任务查看', group: 'Codex 会话', layer: 'app', shortcutIds: ['Ctrl+Alt+K'], when: 'true', weight: 1002, description: '展开动态列表并编号筛选', profileId: 'codex' },

@@ -83,6 +83,9 @@ function createOpener(dependencies) {
     const settings = options || {}
     const localId = normalizeComposerId(composerId)
     if (!localId) return Promise.resolve(outcome('unavailable', '该任务不是可定位的 Cursor 本地会话'))
+    if (settings.isCurrent?.() === false) {
+      return Promise.resolve({ ...outcome('unavailable', '任务已变化，请重试'), errorCode: 'stale-target' })
+    }
     return dispatchDeepLink(agentDeepLink(localId), settings.platform)
   }
 

@@ -172,6 +172,7 @@ function createOrcaBridge(dependencies = {}) {
   let lastWakeSig = null
   let lastFullReadAt = 0
   let freshSnapshot = null
+  let cachedOpenHandles = new Map()
   let wakeCovered = null
   // Orca keeps entries for closed panes; ones a full read did not return stop triggering reads.
   let stalePanes = new Set()
@@ -206,6 +207,10 @@ function createOrcaBridge(dependencies = {}) {
     cache.reason = typeof snapshot.reason === 'string' ? snapshot.reason : 'unknown'
     cache.readAt = Number(snapshot.readAt) || Date.now()
     cache.fingerprint = fingerprintOf(cache.sessions)
+    if (cache.available && snapshot.truncated !== true) {
+      cachedOpenHandles = new Map(cache.sessions.filter((session) => session.handle)
+        .map((session) => [session.paneKey, session.handle]))
+    }
   }
 
   function broadcast() {
@@ -382,9 +387,10 @@ function createOrcaBridge(dependencies = {}) {
       }
     },
     openTask: async (paneKey, options) => {
-      const result = await opener.openTask(String(paneKey || ''), options || {})
+      const key = String(paneKey || '').toLowerCase()
+      const openOptions = options?.cacheOnly === true ? { ...options, handle: cachedOpenHandles.get(key) } : options
+      const result = await opener.openTask(key, openOptions)
       if (result?.outcome === 'opened' && result.confirmsRead === true) {
-        const key = String(paneKey || '').toLowerCase()
         const native = cache.sessions.find((session) => session.paneKey === key)?.nativeUnread === true
         if (typeof unreadBridge.ready === 'function') await unreadBridge.ready()
         if (!native) unreadBridge.markViewed(paneKey)

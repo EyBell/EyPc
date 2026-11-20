@@ -5,6 +5,10 @@ status: active
 domain: interaction-shell
 authority: user-stated
 parent_requirement: eypc-req-invariants-raw-179
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-shortcut-management-raw-005
+    scope: "补齐设置维护行、Quick Jump、Float 提示、各窗口键位接管及 Runner 改绑"
 ---
 
 # RAW-179#4 · interaction-shell

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { BookmarkPlus, CircleStop, Info, MoreHorizontal, Zap } from '@lucide/vue'
 import type { PortProcess } from '../domain/types'
+import { quickJumpCommandTargetV7, useQuickJumpTargetV7 } from '../ui/quickJumpRegistry'
+
+const vQuickJumpTarget = useQuickJumpTargetV7()
 
 defineProps<{
   items: PortProcess[]
@@ -20,6 +23,7 @@ defineEmits<{
     <div
       v-for="item in items"
       :key="item.id"
+      v-quick-jump-target="quickJumpCommandTargetV7({ featureId: 'ports', commandId: 'ports.port.focus', args: { portId: item.id }, label: `:${item.port} ${item.command}`, searchText: `PID ${item.pid} ${item.address}` })"
       class="port-row"
       :id="`port-row-${item.id}`"
       data-context-menu-target

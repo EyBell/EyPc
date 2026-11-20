@@ -201,7 +201,7 @@ function createCompanionOpenReadiness(dependencies = {}) {
           launch: launchField({ ...readiness, outcome: 'ready' })
         }
       }
-      if (typeof request?.isOpenCurrent === 'function' && request.isOpenCurrent() !== true) {
+      if (request?.isCurrent?.() === false) {
         return {
           outcome: 'unavailable',
           errorCode: 'stale-target',

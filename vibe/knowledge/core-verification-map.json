@@ -458,7 +458,7 @@
       ],
       "testNames": [
         "consumes a hot previous/next entry in preload without forwarding a duplicate Renderer payload",
-        "retains provider preflight for a cold previous/next preload entry",
+        "warms in the background without replaying a cold previous/next press",
         "opens a hot unread target without listing threads and only applies its bound persisted read"
       ]
     },

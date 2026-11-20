@@ -437,7 +437,10 @@ function createClaudeBridge(dependencies) {
   }
 
   // Only the App-owned local id is accepted. No CLI import route exists.
-  function openTask(sessionId) {
+  function openTask(sessionId, options = {}) {
+    if (options.cacheOnly === true) {
+      return opener.openTask(String(sessionId || ''), { platform: dependencies.platform, isCurrent: options.isCurrent })
+    }
     const current = codeSessions.readSessionState(String(sessionId || ''))
     if (current.status !== 'found' || current.isArchived === true) {
       return Promise.resolve({
@@ -449,7 +452,7 @@ function createClaudeBridge(dependencies) {
           : 'Claude 任务身份已变化，请刷新后重试'
       })
     }
-    return opener.openTask(String(sessionId || ''), { platform: dependencies.platform })
+    return opener.openTask(String(sessionId || ''), { platform: dependencies.platform, isCurrent: options.isCurrent })
   }
 
   function archiveCodeSession(sessionId) {

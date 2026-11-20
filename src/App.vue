@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { FEATURE_MODULE_IDS, type AppTabId } from './domain/types'
 import { normalizeAppState } from './domain/state'
 import { getPlatform } from './platform/eypcPlatform'
@@ -17,7 +17,7 @@ import { selectTabShellRuntimeSliceV7 } from './runtime/feature/featureRuntimeSl
 import { createRuntimeSliceV7, type RuntimeSliceOwnerV7 } from './runtime/runtimeSlice'
 import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget, shortcutFromEvent, shouldEnableShiftPreview } from './runtime/keyboardEvent'
 import { createShortcutHintTiming } from './runtime/shortcutHintTiming'
-import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, type QuickJumpDomTargetV7 } from './ui/quickJumpRegistry'
+import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, quickJumpRegistryKeyV7, type QuickJumpDomTargetV7 } from './ui/quickJumpRegistry'
 import { dispatchKeyboardContextMenuV7 } from './ui/contextMenuKeyboard'
 
 const platform = getPlatform()
@@ -161,6 +161,7 @@ const QUICK_JUMP_EDITING_SELECTOR = [
   '[data-role="settings-shortcut-record"]'
 ].join(',')
 const quickJumpRegistry = createQuickJumpRegistryV7({ surfaceId: 'main', root: () => appRoot.value, fallbackSelector: QUICK_JUMP_TARGET_SELECTOR })
+provide(quickJumpRegistryKeyV7, quickJumpRegistry)
 
 const quickJump = ref<QuickJumpState>({
   open: false,
@@ -194,7 +195,7 @@ function isVisibleQuickJumpTarget(element: HTMLElement) {
 }
 
 function collectQuickJumpTargets(direction: QuickJumpDirection): QuickJumpDomTarget[] {
-  return quickJumpRegistry.collect({ backward: direction === 'backward', accept: isVisibleQuickJumpTarget })
+  return quickJumpRegistry.collect({ backward: direction === 'backward', domOrder: true, accept: isVisibleQuickJumpTarget })
 }
 
 function clearQuickJumpActiveTarget() {
@@ -244,10 +245,28 @@ function activateQuickJumpTarget(targetId = quickJump.value.activeTargetId) {
     ? quickJump.value.sourceTargets.find((item) => item.id === targetId) || quickJump.value.targets.find((item) => item.id === targetId)
     : null
   if (!target) return false
-  runtime.dispatch('codex.quickJump.activate', { source: 'manual-quick-jump' })
   closeQuickJump()
+  if (!appRoot.value?.contains(target.element) || !isVisibleQuickJumpTarget(target.element)) return false
+  const registration = quickJumpRegistry.registrationFor(target.element)
+  const invocation = registration?.invocation
+  if ((target.invocation || invocation) && (registration?.id !== target.id || !invocation)) return false
+
+  const featureId = invocation?.intent.target.featureId
+  const selectsTab = invocation?.intent.commandId === `tab.select.${featureId}`
+  if (invocation && !selectsTab && featureId !== snapshot.value.state.activeTab) return false
+
+  const source = 'manual-quick-jump'
+  runtime.dispatch('codex.quickJump.activate', { source, ...(invocation ? { navigationIntent: invocation.intent } : {}) })
   target.element.focus({ preventScroll: true })
-  target.element.click()
+  if (invocation) {
+    const { commandId } = invocation.intent
+    const args = { ...invocation.args, source, navigationIntent: invocation.intent }
+    if (invocation.dispatch) invocation.dispatch(commandId, args)
+    else if (selectsTab) runtime.dispatch(commandId, args)
+    else activePageBinding.value.on.dispatch(commandId, args)
+  } else {
+    target.element.click()
+  }
   return true
 }
 
@@ -268,64 +287,52 @@ function quickJumpLetter(shortcutId: string) {
 }
 
 function handleQuickJumpShortcut(shortcutId: string) {
-  if (!quickJump.value.open) return false
   if (shortcutId === 'Escape') {
-    if (quickJump.value.query) {
-      applyQuickJumpQuery('')
-      return true
-    }
-    closeQuickJump()
-    return true
-  }
-  if (shortcutId === 'Enter') {
-    activateQuickJumpTarget()
-    return true
-  }
-  if (shortcutId === 'ArrowDown' || shortcutId === 'Ctrl+J') {
-    quickJump.value.activeTargetId = moveQuickJumpActive(quickJump.value.targets, quickJump.value.activeTargetId, 1)
-    syncQuickJumpActiveTarget(true)
-    return true
-  }
-  if (shortcutId === 'ArrowUp' || shortcutId === 'Ctrl+K') {
-    quickJump.value.activeTargetId = moveQuickJumpActive(quickJump.value.targets, quickJump.value.activeTargetId, -1)
-    syncQuickJumpActiveTarget(true)
-    return true
-  }
-  if (shortcutId === 'Backspace') {
-    applyQuickJumpQuery(quickJump.value.query.slice(0, -1))
-    return true
-  }
-  const letter = quickJumpLetter(shortcutId)
-  if (letter) {
-    applyQuickJumpQuery(`${quickJump.value.query}${letter}`)
-    return true
-  }
-  return true
-}
-
-function onKeydown(event: KeyboardEvent) {
-  operationTooltipLayer.value?.handleSurfaceKeydown(event)
-  if (dispatchKeyboardContextMenuV7(event, appRoot.value || document)) return
-  shiftPreview.value = shouldEnableShiftPreview(event)
-  const shortcutId = shortcutFromEvent(event)
-  // Own Escape/Quick Jump in capture before uTools host exit and before defaultPrevented short-circuits.
-  if (quickJump.value.open && shortcutId === 'Escape') {
-    blockHandledShortcutEvent(event)
     if (quickJump.value.query) applyQuickJumpQuery('')
     else closeQuickJump()
     return
   }
-  if (handleQuickJumpShortcut(shortcutId)) {
-    blockHandledShortcutEvent(event)
+  if (shortcutId === 'Enter') {
+    activateQuickJumpTarget()
     return
   }
+  if (shortcutId === 'ArrowDown' || shortcutId === 'Ctrl+J') {
+    quickJump.value.activeTargetId = moveQuickJumpActive(quickJump.value.targets, quickJump.value.activeTargetId, 1)
+    syncQuickJumpActiveTarget(true)
+    return
+  }
+  if (shortcutId === 'ArrowUp' || shortcutId === 'Ctrl+K') {
+    quickJump.value.activeTargetId = moveQuickJumpActive(quickJump.value.targets, quickJump.value.activeTargetId, -1)
+    syncQuickJumpActiveTarget(true)
+    return
+  }
+  if (shortcutId === 'Backspace') {
+    applyQuickJumpQuery(quickJump.value.query.slice(0, -1))
+    return
+  }
+  const letter = quickJumpLetter(shortcutId)
+  if (letter) applyQuickJumpQuery(`${quickJump.value.query}${letter}`)
+}
+
+function onKeydown(event: KeyboardEvent) {
+  operationTooltipLayer.value?.handleSurfaceKeydown(event)
+  const shortcutId = shortcutFromEvent(event)
+  const shortcutInput = {
+    textInputFocused: isEditableTarget(event.target),
+    activeInputRole: activeInputRoleFromTarget(event.target, snapshot.value.state.activeTab)
+  }
+  if (quickJump.value.open) {
+    blockHandledShortcutEvent(event)
+    const hideHandled = runtime.tryHandleAppHideShortcut?.(shortcutId, shortcutInput)
+    if (hideHandled) closeQuickJump()
+    else handleQuickJumpShortcut(shortcutId)
+    return
+  }
+  if (dispatchKeyboardContextMenuV7(event, appRoot.value || document)) return
+  shiftPreview.value = shouldEnableShiftPreview(event)
   if (event.defaultPrevented) return
   shortcutHintTiming.keydown(event)
-  const textInputFocused = isEditableTarget(event.target)
-  const handled = runtime.handleShortcut(shortcutId, {
-    textInputFocused,
-    activeInputRole: activeInputRoleFromTarget(event.target, snapshot.value.state.activeTab)
-  })
+  const handled = runtime.handleShortcut(shortcutId, shortcutInput)
   if (handled && typeof handled === 'object') {
     if (handled.consumed) blockHandledShortcutEvent(event)
     return

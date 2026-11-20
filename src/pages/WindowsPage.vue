@@ -3,7 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { AppWindow, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Folder, FolderOpen, Keyboard, LoaderCircle, Pencil, Pin, Power, RefreshCw, ScrollText, ShieldAlert, SquareArrowOutUpRight, Star, X } from '@lucide/vue'
 import type { WindowRow } from '../domain/windowTree'
 import type { WindowsRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
+import { quickJumpCommandTargetV7, useQuickJumpTargetV7 } from '../ui/quickJumpRegistry'
 
+const vQuickJumpTarget = useQuickJumpTargetV7()
 const props = defineProps<{ snapshot: WindowsRuntimeSliceV7; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
   dispatch: [actionId: string, args?: Record<string, unknown>]
@@ -162,8 +164,8 @@ function clearSlot(slot: number) {
   emit('dispatch', 'windows.slot.clear', { slot })
 }
 
-function focusSlot(slot: number) {
-  emit('dispatch', 'windows.slot.focus', { slot })
+function focusSlot(slot: number, navigationArgs?: Record<string, unknown>) {
+  emit('dispatch', 'windows.slot.focus', { ...navigationArgs, slot })
 }
 
 function slotTargetLabel(slot: number) {
@@ -197,9 +199,13 @@ function onSlotChipPointerDown(slot: number, event: PointerEvent) {
     enterSlotBinding(slot)
     return
   }
+  selectSlotChip(slot)
+}
+
+function selectSlotChip(slot: number, navigationArgs?: Record<string, unknown>) {
   if (slotAssigned(slot)) {
     exitSlotBinding()
-    focusSlot(slot)
+    focusSlot(slot, navigationArgs)
     return
   }
   enterSlotBinding(slot)
@@ -214,7 +220,7 @@ function exitSlotBinding() {
   slotPickerSlot.value = null
 }
 
-function assignPickerRow(row: WindowRow) {
+function assignPickerRow(row: WindowRow, navigationArgs?: Record<string, unknown>) {
   const slot = slotPickerSlot.value
   if (slot == null) return
   if (row.kind === 'child-window') return
@@ -222,8 +228,36 @@ function assignPickerRow(row: WindowRow) {
     exitSlotBinding()
     return
   }
-  emit('dispatch', 'windows.slot.assign', { slot, rowId: row.id })
+  emit('dispatch', 'windows.slot.assign', { ...navigationArgs, slot, rowId: row.id })
   exitSlotBinding()
+}
+
+function quickJumpWindowSlot(slot: number) {
+  return quickJumpCommandTargetV7({
+    featureId: 'windows',
+    commandId: 'windows.slot.focus',
+    args: { slot },
+    target: { kind: 'row', key: `slot:${slot}` },
+    label: `窗口槽 ${slot}`,
+    searchText: slotTargetLabel(slot),
+    dispatch: (_commandId, args) => selectSlotChip(slot, args)
+  })
+}
+
+function quickJumpWindowRow(row: WindowRow) {
+  const slot = showCandidateHint.value ? null : slotPickerSlot.value
+  return quickJumpCommandTargetV7({
+    featureId: 'windows',
+    commandId: slot == null ? 'windows.item.focus' : 'windows.slot.assign',
+    args: slot == null ? { id: row.id } : { slot, rowId: row.id },
+    label: `${row.displayName} ${row.appName}`,
+    searchText: `${row.title} ${row.appName}`,
+    ...(slot != null ? {
+      occurrence: `slot:${slot}`,
+      disposition: 'execute' as const,
+      dispatch: (_commandId: string, args: Record<string, unknown>) => assignPickerRow(row, args)
+    } : {})
+  })
 }
 
 function onWindowRowClick(row: WindowRow) {
@@ -623,6 +657,7 @@ onBeforeUnmount(() => {
             <button
               v-for="slot in 10"
               :key="slot"
+              v-quick-jump-target="quickJumpWindowSlot(slot)"
               type="button"
               class="window-slot-chip"
               data-context-menu-target
@@ -631,8 +666,6 @@ onBeforeUnmount(() => {
               role="listitem"
               :title="slotChipTitle(slot)"
               :data-operation-tooltip="slotChipTitle(slot)"
-              data-quick-jump-target
-              :data-quick-jump-label="`窗口槽 ${slot}`"
               @pointerdown="onSlotChipPointerDown(slot, $event)"
               @contextmenu.prevent="openSlotActions(slot)"
             >
@@ -668,6 +701,7 @@ onBeforeUnmount(() => {
               v-for="row in snapshot.windowRows"
               :id="rowDomId(row.id)"
               :key="row.id"
+              v-quick-jump-target="quickJumpWindowRow(row)"
               class="window-row"
               data-context-menu-target
               :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable, cached: row.cached, candidate: row.candidate, binding: slotPickerSlot != null, 'binding-assigned': bindingSlotAssignedRowId === row.id, 'file-manager-group': row.kind === 'file-manager-group', 'tree-level-2': row.treeLevel === 2 }"
@@ -678,9 +712,6 @@ onBeforeUnmount(() => {
               :aria-selected="row.kind === 'window' && !showCandidateHint ? row.selected : undefined"
               :data-operation-tooltip="rowIdentityLabel(row)"
               :data-operation-description="row.kind === 'file-manager-group' ? '单击聚焦；双击或 Enter 激活最近主窗口；左右方向键展开或收起；右键打开操作' : row.kind === 'child-window' ? '单击聚焦；双击或 Enter 精确激活该子窗口；右键打开精确操作' : row.candidate ? '单击聚焦；双击或按 Enter 确认换绑；按 Escape 取消' : '单击聚焦；双击或 Enter 激活主窗口当前子窗口；左右方向键展开或收起；右键打开操作'"
-              :data-quick-jump-target="true"
-              :data-quick-jump-label="`${row.displayName} ${row.appName}`"
-              :data-quick-jump-search="`${row.title} ${row.appName}`"
               @click="onWindowRowClick(row)"
               @dblclick="onWindowRowDoubleClick(row)"
               @contextmenu.prevent="openActions(row)"

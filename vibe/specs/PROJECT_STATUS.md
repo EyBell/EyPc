@@ -1,5 +1,9 @@
 # EyPc Project Status Hub
 
+- 2026-11-20 20:20:45，主检出的会话状态与快捷键合并版完成完整构建。产物为 `V7` / `host-9ae616bb36a8140759b4` / `renderer-1e6d771023b2e9b5aff7`，builtAt `2026-11-20T12:20:45.469Z`。冷态无补跳、逐来源缓存、Codex 绑定读态与迟到回执的定向回归通过。同版 uTools 加载与实际窗口到达待验。[主检出插件入口](../../dist/plugin.json) · [快捷键验收](261120/eypc-shortcut-optimization/spec.md#实施交付与验收状态)
+
+- 2026-11-20 20:04:03，快捷键管理工作树的前置完整构建通过。工作树产物为 `V7` / `host-a3230dfd4394e3fae4ae` / `renderer-53b55ff805c289fdffa1`，builtAt `2026-11-20T12:04:03.006Z`。构建时同版 uTools 加载和实机验收待完成。[快捷键管理验收](261120/eypc-shortcut-optimization/spec.md#实施交付与验收状态)
+
 - 2026-11-20 19:51:31.622，旧机器中断归组、同完成实例的原生读态补核及热态快捷键已通过完整构建。当前产物为 `V7` / `host-d8352f0ac722a56c809a` / `renderer-9f307277830535f194ee`，builtAt `2026-11-20T11:51:31.622Z`。最近宿主握手仍为 18:33 的旧包。新版的 Main、Float、快捷入口和十组窗口到达对照待验。[主检出插件入口](../../dist/plugin.json) · [同版验收](261114/codex-state-sync/delivery.md#shortcut-read-reconciliation-261120)。
 
 - 2026-11-20 18:41:11.853，普通 Side 定向订阅后未收到新帧，按原期限唤醒补读。已有可信帧或连接换代时，旧补读失效。首次查询、重试查询以及两种失效条件已纳入源码和产物的构建校验。当前产物为 `V7` / `host-17f7a83078584838956d` / `renderer-58fd227e70b293410f23`，builtAt `2026-11-20T10:41:11.853Z`。uTools 新包待验。[主检出插件入口](../../dist/plugin.json) · [定向验证](../../scripts/check-companion-lifecycles.mjs#L387)。

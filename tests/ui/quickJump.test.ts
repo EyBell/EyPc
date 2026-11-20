@@ -104,27 +104,16 @@ describe('global quick jump UI wiring', () => {
   })
 
   it('owns Escape in capture phase so uTools host cannot exit over Quick Jump', () => {
-    const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
     const float = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
 
-    expect(app).toContain("window.addEventListener('keydown', onKeydown, true)")
-    expect(app).toContain("window.removeEventListener('keydown', onKeydown, true)")
-    expect(app).toMatch(/if \(quickJump\.value\.open && shortcutId === 'Escape'\) \{[\s\S]*?blockHandledShortcutEvent\(event\)/)
     expect(float).toContain("window.addEventListener('keydown', onWindowKeydown, true)")
     expect(float).toContain("window.removeEventListener('keydown', onWindowKeydown, true)")
   })
 
   it('cancels Quick Jump Escape in layers without mapping to app hide', () => {
-    const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
     const float = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
-    const handler = app.slice(
-      app.indexOf('function handleQuickJumpShortcut'),
-      app.indexOf('function onKeydown')
-    )
 
-    expect(app).toMatch(/if \(quickJump\.value\.open && shortcutId === 'Escape'\) \{[\s\S]*?if \(quickJump\.value\.query\) applyQuickJumpQuery\(''\)[\s\S]*?else closeQuickJump\(\)/)
     expect(float).toMatch(/if \(quickJump\.value\.open\) \{[\s\S]*?if \(quickJump\.value\.query\) \{[\s\S]*?resolveQuickJumpQuery\(quickJump\.value\.sourceTargets, ''\)[\s\S]*?closeQuickJump\(true\)/)
-    expect(handler).not.toContain('app.hide')
   })
 
   it('uses target rectangles directly without title-anchor positioning', () => {

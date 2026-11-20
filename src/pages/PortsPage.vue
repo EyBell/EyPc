@@ -5,7 +5,9 @@ import type { PortsRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlice
 import type { PortGroupTarget } from '../domain/types'
 import SelectableList from '../components/SelectableList.vue'
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
+import { quickJumpCommandTargetV7, quickJumpMenuTargetV7, useQuickJumpTargetV7 } from '../ui/quickJumpRegistry'
 
+const vQuickJumpTarget = useQuickJumpTargetV7()
 const props = defineProps<{ snapshot: PortsRuntimeSliceV7; shiftPreview?: boolean; showShortcutHints?: boolean }>()
 const groupForm = reactive({ name: '', entriesText: '', color: '#00A676', folderId: '' })
 let draggingGroupId = ''
@@ -268,6 +270,7 @@ function groupSearchStatus() {
       <div
         v-for="row in props.snapshot.portGroupRows"
         :key="row.rowId"
+        v-quick-jump-target="quickJumpCommandTargetV7({ featureId: 'ports', commandId: 'ports.groupTarget.focus', args: targetArgs(row.target), label: row.name, occurrence: row.target.kind })"
         class="group-row"
         data-context-menu-target
         :data-context-menu-active="isGroupRowFocused(row)"
@@ -472,6 +475,7 @@ function groupSearchStatus() {
           <button
             v-for="(item, index) in props.snapshot.portDrawerItems"
             :key="`${item.commandId}:${index}`"
+            v-quick-jump-target="quickJumpMenuTargetV7(item, (_commandId, args) => emit('dispatch', `ports.drawer.select.${index + 1}`, args))"
             type="button"
             class="drawer-action"
             :class="{ active: props.snapshot.portDrawer.activeIndex === index, danger: item.risk === 'destructive' }"

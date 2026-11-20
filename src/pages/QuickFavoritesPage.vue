@@ -4,7 +4,9 @@ import { AlertTriangle, Copy, File, Files, Folder, LocateFixed, MoreHorizontal, 
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 import { favoritePathIdentityKey } from '../domain/favorites'
 import type { QuickFavoritesRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
+import { quickJumpCommandTargetV7, quickJumpMenuTargetV7, useQuickJumpTargetV7 } from '../ui/quickJumpRegistry'
 
+const vQuickJumpTarget = useQuickJumpTargetV7()
 const props = defineProps<{ snapshot: QuickFavoritesRuntimeSliceV7; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
   dispatch: [actionId: string, args?: Record<string, unknown>]
@@ -151,6 +153,7 @@ watch(() => [
       <div
         v-for="(item, index) in props.snapshot.favoriteItemRows"
         :key="item.id"
+        v-quick-jump-target="quickJumpCommandTargetV7({ featureId: 'favorites', commandId: 'favorites.item.focus', args: { id: item.id }, label: item.name, searchText: item.path })"
         class="favorite-row favorite-item-row quick-favorite-row"
         data-context-menu-target
         role="row"
@@ -246,6 +249,7 @@ watch(() => [
           <button
             v-for="(item, index) in props.snapshot.favoriteDrawerItems"
             :key="item.commandId"
+            v-quick-jump-target="quickJumpMenuTargetV7(item, (_commandId, args) => emit('dispatch', `favorites.drawer.select.${index + 1}`, args))"
             type="button"
             class="drawer-action"
             :class="{ active: props.snapshot.favoriteDrawer.activeIndex === index }"

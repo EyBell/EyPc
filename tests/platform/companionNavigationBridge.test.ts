@@ -197,6 +197,25 @@ describe('process-lifetime companion navigation', () => {
     expect(opened).toEqual(firstSucceeded ? ['codex-a'] : ['codex-a', 'codex-a'])
   })
 
+  it('dispatches a still-eligible same-target tail after the leading open fails', async () => {
+    let failFirst!: (result: Record<string, unknown>) => void
+    const firstGate = new Promise<Record<string, unknown>>((resolve) => { failFirst = resolve })
+    const openTarget = vi.fn().mockReturnValueOnce(firstGate).mockResolvedValueOnce(nativeOpened())
+    const { navigation, receipt } = readyNavigation({ openTarget })
+    navigation.sync({
+      lease: receipt.lease, enabled: true, providers: { codex: true, claude: true },
+      ready: true, targets, cycleKeys: ['codex-a']
+    })
+
+    const first = navigation.cycle(1, { operationId: 'first-cycle' })
+    const tail = navigation.cycle(-1, { operationId: 'trailing-cycle' })
+    failFirst({ outcome: 'failed' })
+
+    await expect(first).resolves.toMatchObject({ outcome: 'failed', operationId: 'first-cycle' })
+    await expect(tail).resolves.toMatchObject({ outcome: 'opened', operationId: 'trailing-cycle' })
+    expect(openTarget).toHaveBeenCalledTimes(2)
+  })
+
   it('commits the cycle cursor only after Host confirms the exact target opened', async () => {
     const opened: string[] = []
     let failFirst = true

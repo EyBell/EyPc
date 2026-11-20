@@ -64,8 +64,8 @@ import { createQuickJumpRegistryV7, defaultQuickJumpTargetVisibleV7, type QuickJ
 import { dispatchKeyboardContextMenuV7 } from './ui/contextMenuKeyboard'
 import { shortcutFromEvent } from './domain/shortcuts'
 import { codexModelReasonLabel, resolveCodexNewThreadModel, resolveManualCodexModel } from './domain/codexNewThread'
-import { buildCommandCatalogV7, evaluateWhenExpression, LAYER_PRIORITY, type KeybindingContext, type KeybindingLayerId } from './runtime/keybinding/keybindingRuntime'
-import type { CommandExecutionOwner } from './runtime/command/types'
+import { projectFloatKeybindings } from './runtime/keybinding/companionKeybindings'
+import { DEFAULT_KEYBINDINGS, evaluateWhenExpression, LAYER_PRIORITY, resolveKeybindingContextV7, type KeybindingContext, type KeybindingLayerId } from './runtime/keybinding/keybindingRuntime'
 import type {
   CodexModelCatalogSnapshotV1,
   CodexTaskTab,
@@ -95,6 +95,8 @@ type RenderRow =
 
 type SectionRow = Extract<RenderRow, { kind: 'section' | 'status-section' | 'hidden-project-section' }>
 type FocusItem = Extract<RenderRow, { kind: 'project' | 'task' }>
+type QuickIndexRow = Extract<RenderRow, { kind: 'task' | 'status-section' | 'hidden-project-section' }>
+type QuickIndexEntry = { row: QuickIndexRow; slot: number; shortcutId: string }
 type PanelState = { mode: 'detail' | 'drawer'; item: FocusItem; returnActionId: string } | null
 type AliasEditor = { kind: 'task' | 'project'; key: string; value: string; originalName: string } | null
 type DrawerAction = { id: string; label: string; danger?: boolean; disabled?: boolean; disabledReason?: string; run: () => void }
@@ -136,9 +138,12 @@ const COMPOSER_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const COMPOSER_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 const FLOAT_COLLAPSE_DELAY_MS = 220
 
+const defaultFloatKeybindings = projectFloatKeybindings(DEFAULT_KEYBINDINGS)
 const snapshot = ref<CodexFloatSnapshotV1 | null>(null)
+const floatKeybindings = computed(() => snapshot.value?.keybindings ?? defaultFloatKeybindings)
 const floatRuntimeIdentity = ref<RuntimeIdentityHandshakeV1 | null>(null)
 const rootElement = ref<HTMLElement | null>(null)
+const keyboardFocus = ref<HTMLElement | null>(null)
 const quickJumpRegistry = createQuickJumpRegistryV7({ surfaceId: 'float', root: () => rootElement.value })
 const expanded = ref(false)
 const presentationPending = ref(true)
@@ -156,7 +161,6 @@ const focusedKey = ref('')
 const rangeAnchorKey = ref('')
 const COLLAPSIBLE_DYNAMIC_STATUS_GROUPS = new Set(['pinned', 'active', 'stopped', 'completed'])
 const collapsedStatusGroups = ref<Record<string, true>>({})
-/** 快速筛选模式：动态列表编号可见，`Ctrl+1…0` 直接打开对应任务。 */
 const quickMode = ref(false)
 const batchPlacement = ref<'top' | 'bottom'>('bottom')
 const panel = ref<PanelState>(null)
@@ -268,7 +272,7 @@ const quota = computed(() => snapshot.value?.quota)
 const emptyTaskSnapshot = emptyCompanionTaskPackage()
 const taskState = computed(() => {
   const taskSnapshot = snapshot.value?.taskSnapshot
-  return taskSnapshot?.complete
+  return taskSnapshot
     ? projectCompanionTaskSnapshot(taskSnapshot, snapshot.value?.taskInventory)
     : projectCompanionTaskSnapshot(emptyTaskSnapshot)
 })
@@ -419,7 +423,10 @@ watch(() => companionSlice.value?.quotaRefreshReceipt?.at ?? 0, (at) => {
   if (quotaFeedbackTimer) clearTimeout(quotaFeedbackTimer)
   quotaFeedbackTimer = setTimeout(() => { quotaFeedback.value = '' }, 8_000)
 })
-const searchPlaceholder = computed(() => companionSearchPlaceholder(quickMode.value))
+const searchPlaceholder = computed(() => {
+  if (!quickMode.value) return companionSearchPlaceholder(false)
+  return searchQuickIndex.value.length ? '筛选任务，按行内提示跳转' : '筛选任务'
+})
 const searchAlertText = computed(() => companionSearchAlertText({
   compatibility: taskState.value.compatibility,
   compatibilityMessage: taskState.value.compatibilityMessage,
@@ -706,7 +713,7 @@ function sectionHeadingProps(row: SectionRow) {
     ...(row.kind === 'status-section' ? { tone: row.tone, count: row.count } : { variant: 'hidden-project' as const }),
     collapsible: row.collapsible,
     collapsed: row.collapsed,
-    quickDigit: quickIndexDigit(row.key),
+    quickDigit: quickIndexLabel(row.key),
     quickHint: quickIndexHint(row.key, '展开')
   }
 }
@@ -742,31 +749,36 @@ function toggleAllProjectSections() {
 }
 
 const quickIndexRows = computed(() => renderRows.value
-  .filter((row): row is Extract<RenderRow, { kind: 'task' | 'status-section' | 'hidden-project-section' }> => (
-    row.kind === 'task'
-    || (row.kind === 'status-section' || row.kind === 'hidden-project-section') && row.collapsible === true && row.collapsed === true
+  .filter((row): row is QuickIndexRow => (
+    row.kind === 'task' && row.task.companionCapabilities?.open !== false
+    || (row.kind === 'status-section' || row.kind === 'hidden-project-section') && Boolean(row.groupKey) && row.collapsible === true && row.collapsed === true
   ))
   .slice(0, QUICK_INDEX_LIMIT))
-// 编号常驻：`Alt+数字` 在展开卡片里始终可用，所以徽标不能只在筛选模式出现，
-// 否则就成了隐藏快捷键。筛选模式额外让 `Ctrl+数字` 也走同一编号。
+const listQuickIndex = computed(() => buildQuickIndex(false))
+const searchQuickIndex = computed(() => buildQuickIndex(true))
 const quickIndexByRowKey = computed(() => {
-  const map = new Map<string, number>()
-  quickIndexRows.value.forEach((row, index) => map.set(row.key, index + 1))
-  return map
+  const byRow = new Map<string, QuickIndexEntry[]>()
+  for (const entry of quickIndexForTarget(keyboardFocus.value)) {
+    const previous = byRow.get(entry.row.key) || []
+    previous.push(entry)
+    byRow.set(entry.row.key, previous)
+  }
+  return byRow
 })
 
-/** 徽标显示的是实际要按的数字：第 10 项对应 `Alt+0` / `Ctrl+0`。 */
-function quickIndexDigit(rowKey: string) {
-  const index = quickIndexByRowKey.value.get(rowKey)
-  if (!index) return ''
-  return String(index === QUICK_INDEX_LIMIT ? 0 : index)
+function quickIndexLabel(rowKey: string) {
+  const entries = quickIndexByRowKey.value.get(rowKey)
+  if (!entries?.length) return ''
+  const digit = String(entries[0].slot % QUICK_INDEX_LIMIT)
+  const shortcuts = entries.map((entry) => entry.shortcutId)
+  const defaults = quickMode.value ? [`Ctrl+${digit}`, `Alt+${digit}`] : [`Alt+${digit}`]
+  return shortcuts.length === defaults.length && defaults.every((shortcut) => shortcuts.includes(shortcut))
+    ? digit : shortcuts.join(' / ')
 }
 
-/** 编号的可达路径必须对读屏可见，不能只靠徽标这一个视觉线索。 */
 function quickIndexHint(rowKey: string, action = '打开') {
-  const digit = quickIndexDigit(rowKey)
-  if (!digit) return ''
-  return quickMode.value ? `，快捷键 Ctrl+${digit} 或 Alt+${digit} ${action}` : `，快捷键 Alt+${digit} ${action}`
+  const entries = quickIndexByRowKey.value.get(rowKey)
+  return entries?.length ? `，快捷键 ${entries.map((entry) => entry.shortcutId).join(' 或 ')} ${action}` : ''
 }
 
 const visibleTaskKeys = computed(() => new Set(renderRows.value.filter((row): row is Extract<RenderRow, { kind: 'task' }> => row.kind === 'task').map((row) => row.task.key)))
@@ -1578,7 +1590,7 @@ function openCompactStatus(kind: 'input' | 'active' | 'unread') {
   action('codex.input.open')
 }
 
-function openTask(task: CodexTaskCard, source: 'card-click' | 'manual-quick-jump' | 'local-shortcut' = 'card-click') {
+function openTask(task: CodexTaskCard, source: 'card-click' | 'manual-quick-jump' | 'local-shortcut' = quickMode.value ? 'manual-quick-jump' : 'card-click') {
   action('codex.task.open', { key: task.key, source })
 }
 
@@ -2269,15 +2281,13 @@ function exitQuickMode() {
   quickMode.value = false
 }
 
-function openQuickIndex(index: number) {
-  const row = quickIndexRows.value[index - 1]
-  if (!row) return
+function openQuickIndex(row: QuickIndexRow) {
   if (row.kind === 'status-section' || row.kind === 'hidden-project-section') {
     if (row.groupKey) expandStatusGroup(row.groupKey)
     return
   }
   focusedKey.value = row.key
-  openTask(row.task, 'local-shortcut')
+  openTask(row.task, quickMode.value ? 'manual-quick-jump' : 'local-shortcut')
   exitQuickMode()
 }
 
@@ -2574,94 +2584,71 @@ function handleQuickJumpKey(event: KeyboardEvent) {
   return true
 }
 
-const fallbackCommands: Record<string, string> = {
-  ArrowUp: 'codex.list.up',
-  ArrowDown: 'codex.list.down',
-  ArrowLeft: 'codex.tab.prev',
-  ArrowRight: 'codex.tab.next',
-  Space: 'codex.selection.toggle',
-  Enter: 'codex.task.openFocused',
-  'Ctrl+ArrowLeft': 'codex.detail.open',
-  'Ctrl+ArrowRight': 'codex.drawer.open',
-  Delete: 'codex.task.archiveFocused',
-  F2: 'codex.alias.edit',
-  'Ctrl+P': 'codex.pin.toggleFocused',
-  'Alt+ArrowUp': 'codex.pin.moveUp',
-  'Alt+ArrowDown': 'codex.pin.moveDown',
-  'Ctrl+F': 'codex.search.focus',
-  'Ctrl+Shift+F': 'codex.search.focus',
-  'Alt+F': 'codex.quickJump.openTasks',
-  'Ctrl+T': 'codex.thread.createFocused',
-  'Ctrl+Shift+1': 'codex.action.run.1',
-  'Ctrl+Shift+2': 'codex.action.run.2',
-  'Ctrl+Shift+3': 'codex.action.run.3',
-  'Ctrl+Shift+4': 'codex.action.run.4',
-  'Ctrl+Shift+5': 'codex.action.run.5',
-  F: 'quickJump.openForward',
-  'Shift+F': 'quickJump.openBackward',
-  Escape: 'codex.layer.cancel'
-}
-
-const floatCommandCatalog = buildCommandCatalogV7()
-
-function floatExecutionOwner(commandId: string): CommandExecutionOwner {
-  const published = snapshot.value?.keybindings?.find((binding) => binding.actionId === commandId)?.executionOwner
-  if (published) return published
-  const descriptor = floatCommandCatalog.get(commandId)
-  return descriptor ? floatCommandCatalog.executionOwnerFor(commandId, 'float') : 'runtime-action'
-}
-
-function floatInputRole(target: HTMLElement, editing: boolean): KeybindingContext['activeInputRole'] {
+function floatInputRole(target: HTMLElement | null, editing: boolean): KeybindingContext['activeInputRole'] {
   if (!editing) return undefined
-  if (target.closest('[data-input-role="codex-composer"]')) return 'codex-composer'
-  if (target.closest('[data-input-role="codex-search"]')) return 'codex-search'
+  if (target?.closest('[data-input-role="codex-composer"]')) return 'codex-composer'
+  if (target?.closest('[data-input-role="codex-search"]')) return 'codex-search'
   return 'other'
 }
 
-function floatActiveLayers(target: HTMLElement): KeybindingLayerId[] {
-  const layers: KeybindingLayerId[] = ['codex']
-  if (pendingConfirm.value) layers.push('confirm')
+function floatKeybindingContext(target: HTMLElement | null, editing: boolean) {
+  const layers: KeybindingLayerId[] = []
   if (composer.value) layers.push('codex-composer')
-  if (composer.value && target.closest('.composer-model-field')) layers.push('codex-model')
+  if (composer.value && target?.closest('.composer-model-field')) layers.push('codex-model')
   if (quickJump.value.open) layers.push('codex-quick-jump')
   if (shiftPreview.value) layers.push('codex-preview')
   if (aliasEditor.value) layers.push('codex-inline-editor')
   if (panel.value?.mode === 'drawer') layers.push('codex-drawer')
   if (panel.value?.mode === 'detail') layers.push('codex-detail')
-  return layers
+  return resolveKeybindingContextV7({
+    tab: 'codex',
+    confirmOpen: Boolean(pendingConfirm.value),
+    textInputFocused: editing,
+    activeInputRole: floatInputRole(target, editing),
+    codexQuickMode: quickMode.value,
+    codexDrawerActive: panel.value?.mode === 'drawer',
+    activeLayers: layers
+  })
 }
 
-function commandFor(event: KeyboardEvent, target: HTMLElement, editing = false) {
-  const shortcut = shortcutFromEvent(event)
-  const resolved = snapshot.value?.keybindings
-  if (Array.isArray(resolved)) {
-    const activeLayers = [...floatActiveLayers(target), 'app', 'global'] as KeybindingLayerId[]
-    const context: KeybindingContext = {
-      tab: 'codex',
-      confirmOpen: Boolean(pendingConfirm.value),
-      textInputFocused: editing,
-      activeInputRole: floatInputRole(target, editing),
-      codexQuickMode: quickMode.value,
-      codexDrawerActive: panel.value?.mode === 'drawer',
-      activeLayers
-    }
-    return resolved
-      .filter((binding) => binding.shortcutId === shortcut)
-      .filter((binding) => activeLayers.includes(binding.layer as KeybindingLayerId))
-      .filter((binding) => {
-        try { return evaluateWhenExpression(binding.when || 'true', context) } catch { return false }
-      })
-      .sort((left, right) => LAYER_PRIORITY[right.layer as KeybindingLayerId] - LAYER_PRIORITY[left.layer as KeybindingLayerId]
-        || right.weight - left.weight)[0]?.actionId || ''
-  }
-  if (fallbackCommands[shortcut]) return fallbackCommands[shortcut]
-  const digit = /^(Ctrl|Alt)\+([0-9])$/.exec(shortcut)
-  if (!digit) return ''
-  const slot = Number(digit[2]) === 0 ? 10 : Number(digit[2])
-  const drawerOpen = panel.value?.mode === 'drawer'
-  if (digit[1] === 'Alt') return drawerOpen ? '' : `codex.task.openIndex.${slot}`
-  if (quickMode.value && !drawerOpen) return `codex.quick.open.${slot}`
-  return slot === 10 ? '' : `codex.drawer.select.${slot}`
+function quickIndexSlot(commandId: string) {
+  return Number(/^(?:codex\.quick\.open|codex\.task\.openIndex)\.(10|[1-9])$/.exec(commandId)?.[1] || 0)
+}
+
+function resolveFloatBinding(shortcutId: string, context: ReturnType<typeof floatKeybindingContext>, indexSize = 0) {
+  return floatKeybindings.value
+    .filter((binding) => binding.shortcutId === shortcutId)
+    .filter((binding) => context.activeLayers.includes(binding.layer as KeybindingLayerId))
+    .filter((binding) => quickIndexSlot(binding.actionId) <= indexSize)
+    .filter((binding) => {
+      try { return evaluateWhenExpression(binding.when || 'true', context) } catch { return false }
+    })
+    .sort((left, right) => LAYER_PRIORITY[right.layer as KeybindingLayerId] - LAYER_PRIORITY[left.layer as KeybindingLayerId]
+      || right.weight - left.weight)[0]
+}
+
+function buildQuickIndex(searching: boolean): QuickIndexEntry[] {
+  if (!expanded.value || !settings.value?.conversationInboxEnabled || panel.value || composer.value
+    || aliasEditor.value || pendingConfirm.value || quickJump.value.open) return []
+  const rows = quickIndexRows.value
+  const context = floatKeybindingContext(searching ? searchInput.value : null, searching)
+  const shortcutIds = new Set(floatKeybindings.value
+    .filter((binding) => quickIndexSlot(binding.actionId) > 0)
+    .map((binding) => binding.shortcutId))
+  return [...shortcutIds].flatMap((shortcutId) => {
+    if (shortcutId === 'Shift+Escape' || (shortcutId === 'Escape' && (quickMode.value || searchText.value || selectedKeys.value.size || shiftPreview.value))) return []
+    const command = resolveFloatBinding(shortcutId, context, rows.length)
+    const slot = command ? quickIndexSlot(command.actionId) : 0
+    const row = rows[slot - 1]
+    return row ? [{ row, slot, shortcutId }] : []
+  })
+}
+
+function quickIndexForTarget(target: HTMLElement | null) {
+  if (editableTarget(target)) return target === searchInput.value ? searchQuickIndex.value : []
+  return target?.closest('button')
+    ? listQuickIndex.value.filter((entry) => entry.shortcutId !== 'Enter' && entry.shortcutId !== 'Space')
+    : listQuickIndex.value
 }
 
 function cancelTopLayer() {
@@ -2743,8 +2730,6 @@ function searchNavigationAllowed(target: HTMLElement, command: string) {
   return command === 'codex.list.up'
     || command === 'codex.list.down'
     || command === 'codex.task.openFocused'
-    || command.startsWith('codex.quick.open.')
-    || command.startsWith('codex.task.openIndex.')
 }
 
 /**
@@ -2786,8 +2771,16 @@ function onRootKeydown(event: KeyboardEvent) {
     return
   }
   if ((shortcut === 'Space' || shortcut === 'Enter') && target.closest('button')) return
-  const editing = Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
-  const command = commandFor(event, target, editing)
+  const editing = Boolean(editableTarget(target))
+  const indexed = quickIndexForTarget(target).find((entry) => entry.shortcutId === shortcut)
+  if (indexed) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!event.repeat) openQuickIndex(indexed.row)
+    return
+  }
+  const binding = resolveFloatBinding(shortcut, floatKeybindingContext(target, editing))
+  const command = binding?.actionId || ''
   if (editing && !searchNavigationAllowed(target, command)) {
     if (command === 'codex.layer.cancel') {
       event.preventDefault()
@@ -2803,10 +2796,8 @@ function onRootKeydown(event: KeyboardEvent) {
   if (!command) return
   event.preventDefault()
   event.stopPropagation()
-  if (event.repeat && (command === 'codex.task.openFocused'
-    || command.startsWith('codex.quick.open.')
-    || command.startsWith('codex.task.openIndex.'))) return
-  const executionOwner = floatExecutionOwner(command)
+  if (event.repeat && command === 'codex.task.openFocused') return
+  const executionOwner = binding?.executionOwner
   if (executionOwner !== 'float-local') {
     if (executionOwner === 'runtime-action') {
       action(command, command === 'codex.float.toggle' ? { source: 'in-app-shortcut' } : { source: 'float-shortcut' })
@@ -2847,7 +2838,6 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.search.focus') searchInput.value?.focus()
   else if (command === 'codex.thread.createFocused') openComposer()
   else if (command === 'codex.quick.activate') enterQuickMode()
-  else if (command.startsWith('codex.quick.open.') || command.startsWith('codex.task.openIndex.')) openQuickIndex(Number(command.split('.').at(-1)))
   else if (command.startsWith('codex.drawer.select.')) executeDrawerAction(Number(command.split('.').at(-1)) - 1)
   else if (command === 'codex.layer.cancel') {
     cancelTopLayer()
@@ -2930,7 +2920,7 @@ function onPanelLayerKeydown(event: KeyboardEvent) {
     return
   }
   const target = event.target as HTMLElement
-  const command = commandFor(event, target)
+  const command = resolveFloatBinding(shortcutFromEvent(event), floatKeybindingContext(target, false))?.actionId
   if (!command) return
   if (command === 'codex.detail.open') openPanel('detail')
   else if (command === 'codex.drawer.open') openPanel('drawer', panel.value?.mode === 'detail')
@@ -2954,6 +2944,7 @@ function onWindowBlur() {
   window.eypcFloat?.cancelInteraction?.()
   hoverInside = false
   focusWithin = false
+  keyboardFocus.value = null
   shiftHeld.value = false
   shiftPreviewSuppressed.value = false
   clearConfirm()
@@ -3125,13 +3116,19 @@ function onMouseLeave() {
   if (!preparing) scheduleCollapse()
 }
 
-function onFocusIn() {
+function editableTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement ? target.closest<HTMLElement>('input, textarea, select, [contenteditable="true"]') : null
+}
+
+function onFocusIn(event: FocusEvent) {
+  keyboardFocus.value = event.target instanceof HTMLElement ? event.target : null
   focusWithin = true
   if (collapseTimer) clearTimeout(collapseTimer)
 }
 
 function onFocusOut(event: FocusEvent) {
   const root = event.currentTarget as HTMLElement
+  keyboardFocus.value = event.relatedTarget instanceof HTMLElement ? event.relatedTarget : null
   if (event.relatedTarget instanceof Node && root.contains(event.relatedTarget)) return
   focusWithin = false
   if (!hoverInside) scheduleCollapse()
@@ -3927,7 +3924,7 @@ onUnmounted(() => {
               >
                 <div class="task-copy">
                   <div class="task-title-line">
-                    <span v-if="quickIndexDigit(row.key)" class="task-quick-index" aria-hidden="true">{{ quickIndexDigit(row.key) }}</span>
+                    <span v-if="quickIndexLabel(row.key)" class="task-quick-index" aria-hidden="true">{{ quickIndexLabel(row.key) }}</span>
                     <button
                       type="button"
                       class="task-title-button"
@@ -4278,6 +4275,13 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.task-quick-index,
+:deep(.status-quick-index) {
+  width: auto;
+  padding-inline: 2px;
+  white-space: nowrap;
+}
+
 .float-runtime-reload {
   position: absolute;
   inset: 0;

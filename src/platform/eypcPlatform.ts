@@ -29,7 +29,8 @@ import type {
 } from '../domain/codexEnvironment'
 import type {
   CodexActionRunnerActionEvent,
-  CodexActionRunnerCatalogV1
+  CodexActionRunnerCatalogV1,
+  CodexActionRunnerQuickJumpBindingV1
 } from '../domain/codexActionRunner'
 import {
   COMPANION_TASK_KERNEL_REVISION,
@@ -766,7 +767,13 @@ export interface EypcPlatformApi {
   /** Unified process-owned authority used by current Main, Float and shortcuts. */
   companionKernel?: CompanionTaskKernelBridge
   float: {
-    sync(payload: { visible: boolean; snapshot?: unknown; position?: unknown; expandedSizes?: unknown }): boolean
+    sync(payload: {
+      visible: boolean
+      snapshot?: unknown
+      position?: unknown
+      expandedSizes?: unknown
+      quickJumpBindings?: readonly CodexActionRunnerQuickJumpBindingV1[]
+    }): boolean
     setCrossDesktopPin?(enabled: boolean): boolean
     activate?(payload?: { command?: 'new-thread' | 'quick' }): boolean
     diagnostics?(): CodexFloatWorkspaceDiagnostics

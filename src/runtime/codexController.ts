@@ -38,7 +38,7 @@ import {
   type CodexTaskCard,
   type ConversationSnapshotV1
 } from '../domain/codex'
-import { COMPANION_PROVIDER_IDS, companionPinAppLabel, companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
+import { companionPinAppLabel, companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
 import { buildCompanionPresentationSlice, type CompanionQuotaRefreshReceipt, type CompanionSnapshotSlice } from '../domain/companionPresentation'
 import { fetchMagpieQuotaProviders, redactMagpieQuotaProviders, resolveMagpieQuotaIdentities, type MagpieQuotaProvider } from '../domain/magpieQuota'
 import type { CompanionQuotaIdentityRef } from '../domain/companionQuota'
@@ -432,10 +432,6 @@ export function createCodexController(options: CodexControllerOptions) {
     dynamicTaskWindowHours: options.getAppState().codex.settings.dynamicTaskWindowHours
   })
   let taskSnapshot = emptyCompanionTaskPackage(options.getAppState().codex.settings.providers)
-  // Incomplete Kernel packages are transport/readiness signals, never an
-  // invitation to resurrect the legacy Renderer classifier. Metadata refreshes
-  // continue projecting the last complete semantic decision until a newer
-  // complete package replaces it.
   let latestKernelPackageRevision = 0
   // Claude provider lane. Kept entirely separate from the Codex lane so a
   // Claude failure degrades Claude alone; every field resets on disable.
@@ -733,7 +729,7 @@ export function createCodexController(options: CodexControllerOptions) {
       now,
       dynamicTaskWindowHours: codexState().settings.dynamicTaskWindowHours
     })
-    if (taskSnapshot.complete) taskPresentation = projectCompanionTaskSnapshot(taskSnapshot, sourceTaskState)
+    taskPresentation = projectCompanionTaskSnapshot(taskSnapshot, sourceTaskState)
     syncCompanionTaskAuthority()
     if (started && !disposed && !actionPreflightInFlight && shouldRun()) schedule()
   }
@@ -2547,27 +2543,21 @@ export function createCodexController(options: CodexControllerOptions) {
     if (value.packageRevision <= latestKernelPackageRevision) return false
     latestKernelPackageRevision = value.packageRevision
     const knownKeys = new Set(sourceTaskState.conversations.all.map((task) => task.key))
-    const missingCodexMetadata = value.complete
-      && value.tasks.some((task) => task.provider === 'codex' && !knownKeys.has(task.key))
-    const configurationBarrier = value.enabled !== taskSnapshot.enabled
-      || COMPANION_PROVIDER_IDS.some(provider => value.providers[provider] !== taskSnapshot.providers[provider])
-    // An incomplete evidence read must not erase the last complete semantic
-    // package. A Kernel configuration barrier is different: disabling the
-    // inbox or one Provider is itself authoritative and must clear its stale
-    // cards immediately while the remaining lanes preflight again.
-    if (value.complete || configurationBarrier) {
-      taskSnapshot = value
-      const pausedKeys = new Set(value.views.pausedKeys)
-      if (pausedKeys.size) {
-        const receipts = codexState().receipts.filter((receipt) => !pausedKeys.has(receipt.key))
-        if (receipts.length !== codexState().receipts.length) {
-          codexState().receipts = receipts
-          options.save()
-        }
+    const previousKeys = new Set(taskSnapshot.tasks.map((task) => task.key))
+    const missingCodexMetadata = value.tasks.some((task) => (
+      task.provider === 'codex' && !knownKeys.has(task.key) && !previousKeys.has(task.key)
+    ))
+    taskSnapshot = value
+    const pausedKeys = new Set(value.views.pausedKeys)
+    if (pausedKeys.size) {
+      const receipts = codexState().receipts.filter((receipt) => !pausedKeys.has(receipt.key))
+      if (receipts.length !== codexState().receipts.length) {
+        codexState().receipts = receipts
+        options.save()
       }
-      taskPresentation = projectCompanionTaskSnapshot(value, sourceTaskState)
-      companionKernel?.acknowledge({ consumer: 'main', revision: value.packageRevision })
     }
+    taskPresentation = projectCompanionTaskSnapshot(value, sourceTaskState)
+    companionKernel?.acknowledge({ consumer: 'main', revision: value.packageRevision })
     if (missingCodexMetadata && started && !disposed) scheduleStructuralRefresh('urgent')
     return true
   }

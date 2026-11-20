@@ -105,6 +105,7 @@ function createCompanionTaskActions(dependencies = {}) {
   const onProviderFailure = typeof dependencies.onProviderFailure === 'function' ? dependencies.onProviderFailure : () => {}
   let enabled = false
   let ready = false
+  let openReady = false
   let enabledProviders = new Set()
   let targets = new Map()
   let focusedKey = ''
@@ -174,16 +175,18 @@ function createCompanionTaskActions(dependencies = {}) {
     const previous = { enabled, ready, targetCount: targets.size, confirmationPending: Boolean(confirmation && confirmation.until >= startedAt) }
     const nextEnabled = input.enabled === true
     const nextReady = input.ready === true
+    const nextOpenReady = input.openReady ?? nextReady
     const nextProviders = providerSet(input.providers)
     // A mainHide Renderer remount starts with an intentionally empty cache.
     // Preserve the process-owned ready snapshot (and its confirmation) until
     // the same provider set publishes a complete replacement.
-    if (enabled && ready && nextEnabled && !nextReady && sameProviders(enabledProviders, nextProviders)) {
+    if (!input.authoritative && enabled && ready && nextEnabled && !nextReady && sameProviders(enabledProviders, nextProviders)) {
       trace('target-sync', 'retained', null, startedAt, { debug: true, source: 'kernel', details: { previous, nextReady, nextEnabled } })
       return false
     }
     enabled = nextEnabled
     ready = nextReady
+    openReady = nextOpenReady
     enabledProviders = nextProviders
     const next = new Map()
     for (const value of Array.isArray(input.targets) ? input.targets : []) {
@@ -197,6 +200,7 @@ function createCompanionTaskActions(dependencies = {}) {
     const fingerprint = JSON.stringify({
       enabled: nextEnabled,
       ready: nextReady,
+      openReady: nextOpenReady,
       providers: [...nextProviders].sort(),
       focusedKey: nextFocusedKey,
       attentionKeys: nextAttentionKeys,
@@ -294,7 +298,7 @@ function createCompanionTaskActions(dependencies = {}) {
   async function open(input = {}) {
     const startedAt = now()
     const currentOperationId = operationId(input, 'open')
-    if (disposed || !enabled || !ready) {
+    if (disposed || !enabled || !openReady) {
       const result = { outcome: 'unavailable', errorCode: 'inventory-not-ready', message: '任务缓存尚未就绪' }
       trace('open', result.outcome, null, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source, debug: true })
       return { ...result, operationId: currentOperationId }
@@ -315,10 +319,10 @@ function createCompanionTaskActions(dependencies = {}) {
       const request = {
         ...input,
         operationId: currentOperationId,
-        isOpenCurrent() {
-          if (disposed || !enabled || !ready || !enabledProviders.has(target.provider)
+        isCurrent() {
+          if (disposed || !enabled || !openReady || !enabledProviders.has(target.provider)
             || resolveOpenTarget(input)?.provider !== target.provider) return false
-          return typeof input.isOpenCurrent !== 'function' || input.isOpenCurrent() === true
+          return typeof input.isCurrent !== 'function' || input.isCurrent() === true
         }
       }
       const result = normalizeOpenResult(await adapter.open(target, request), target)

@@ -167,6 +167,29 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', { ...context, textInputFocused: true })).toBeNull()
   })
 
+  it('separates main tab numbers from Float Action slots in resolution and conflicts', () => {
+    const context = { tab: 'codex' as const }
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', context, 'main')?.actionId).toBe('tab.select.ports')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', context, 'float')?.actionId).toBe('codex.action.run.1')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', context, 'action')).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', { ...context, confirmOpen: true }, 'float')).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', { ...context, textInputFocused: true }, 'float')).toBeNull()
+
+    const bindings = buildEffectiveKeybindings([
+      { commandId: 'codex.action.run.2', shortcutIds: ['Ctrl+Shift+1'] },
+      { commandId: 'tab.select.mqtt', shortcutIds: ['Ctrl+Shift+1'] }
+    ])
+    const rows = buildShortcutCommandRows(bindings)
+    const tab = rows.find((row) => row.commandId === 'tab.select.mqtt')!
+    const slot = rows.find((row) => row.commandId === 'codex.action.run.2')!
+    expect(tab.conflicts.map((conflict) => conflict.commandId)).toEqual(['tab.select.ports'])
+    expect(tab.reservationConflicts).toEqual([])
+    expect(slot.conflicts.map((conflict) => conflict.commandId)).toEqual(['codex.action.run.1'])
+    expect(slot.reservationConflicts.map((conflict) => conflict.commandId)).toEqual(['codex.action.run.1'])
+    expect(resolveKeybinding(bindings, 'Ctrl+Shift+1', context, 'main')?.actionId).toBe('tab.select.mqtt')
+    expect(resolveKeybinding(bindings, 'Ctrl+Shift+1', context, 'float')?.actionId).toBe('codex.action.run.2')
+  })
+
   it('preserves native editing keys in settings edit inputs', () => {
     const context = { tab: 'settings' as const, confirmOpen: false, textInputFocused: true, activeInputRole: 'settings' as const }
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', context)).toBeNull()

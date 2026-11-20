@@ -1,6 +1,6 @@
 # EyPc MVP Usability Closure Spec
 
-Tool: codex
+> 历史基线。固定 `Ctrl+1/2/3` 全局切页已演进，现行按启用功能顺序分配。去向见[快捷键管理](../261120/eypc-shortcut-optimization/spec.md#L1)。
 
 ## Goal
 

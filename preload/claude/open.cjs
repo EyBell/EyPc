@@ -272,6 +272,9 @@ function createOpener(dependencies) {
     const running = await desktopRunningState()
     if (running === 'closed') return outcome('unavailable', 'Claude 桌面端未在运行')
     if (running !== 'running') return outcome('unavailable', '无法确认 Claude 桌面端正在运行')
+    if (settings.isCurrent?.() === false) {
+      return { ...outcome('unavailable', '任务已变化，请重试'), errorCode: 'stale-target' }
+    }
     return dispatchDeepLink(desktopEpitaxyUrl(localSessionId), settings.platform)
   }
 
