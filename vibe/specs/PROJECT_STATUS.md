@@ -1,5 +1,7 @@
 # EyPc Project Status Hub
 
+- 2026-11-20 悬浮卡片紧凑化在独立检出完成构建，`closeout` 回执和当前产物一致。`V7` / `host-23b4139e435cd9886f47` / `renderer-a65f9bb41f739bf30516`，builtAt `2026-11-20T06:52:29.476Z`。uTools 视觉和交互待手测。[任务卡](261120/eypc-float-card-compact/task-card.md#构建与待验)。
+
 - 2026-11-16 13:00 Codex两类状态误判修复已实现，自然Hook最新回执为hook/rebuilt/build-passed/exit0：稳定Turn身份、受限旧节点恢复及机器来源登记已接通，身份补查仅更新未读；当前inputDigest匹配成功状态，七个源码与public/dist镜像一致。当前生成包晚于回执且未获对应回执核验，未安装、加载及V01–V12未验，S02/S04/S06不关闭。用户已授权Root提交推送，Git结果另报；[实现、历史失败与最新构建证据](261114/codex-state-sync/status-read-investigation-261116.md#7-本轮实现与验收边界)。
 
 - 2026-11-16 Codex 未读冷启动续修已获用户反馈通过：自然 Stop Hook 回执为 hook/rebuilt/exit 0，V7、`host-94a52604d80652934760`、`renderer-b8e50f43a7ff42bc9146`、builtAt `2026-11-16T01:41:25.205Z`。当前 public 产物 Host/Renderer 相同，但 builtAt 为 `2026-11-16T01:48:56.412Z`。两次真实只读核验选中 128 条原生 ID，含机器线程；先前四条漏项在集合内。用户反馈不替代全部场景、Windows 或实际加载验收；[证据及待验](261114/codex-state-sync/raw-requirement.md#2026-11-16-未读冷启动续修)。

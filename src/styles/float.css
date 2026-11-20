@@ -240,13 +240,6 @@ button { font: inherit; }
 .float-section-title small { color: var(--codex-muted); font-size: 10px; text-align: right; }
 .float-section-title:focus-visible { border-radius: 6px; outline: 2px solid var(--codex-focus); outline-offset: 2px; }
 .float-section-title small:focus-visible { border-radius: 4px; outline: 2px solid var(--codex-focus); outline-offset: 2px; }
-.float-task-tabs { display: grid; flex: none; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0 0 8px; padding: 3px; border: 1px solid var(--codex-border); border-radius: 10px; background: var(--codex-surface-raised); position: relative; z-index: 2; }
-.float-task-tabs button { display: inline-flex; min-width: 0; min-height: 30px; align-items: center; justify-content: center; gap: 4px; padding: 0 5px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--codex-muted); font-size: 10px; font-weight: 800; cursor: pointer; }
-.float-task-tabs button span:first-child { display: grid; min-width: 16px; height: 16px; padding: 0 3px; place-items: center; border-radius: 8px; background: color-mix(in srgb, var(--codex-border) 34%, var(--codex-surface)); font-size: 8px; }
-.float-task-tabs button span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.float-task-tabs button:hover { border-color: var(--codex-border); color: var(--codex-fg); }
-.float-task-tabs button.active { border-color: var(--codex-focus); background: var(--codex-surface); color: var(--codex-fg); box-shadow: 0 3px 9px rgba(4, 18, 29, .16); }
-.float-task-tabs button:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 1px; }
 .float-task-scroll { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; padding-right: 2px; touch-action: pan-y; scrollbar-width: none; }
 .float-task-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .float-task-group + .float-task-group { margin-top: 9px; }
@@ -574,7 +567,6 @@ button { font: inherit; }
   .task-restore { opacity: 1; pointer-events: auto; }
 }
 
-/* Codex Companion V3: tabs-first, native project inventory and fixed dot rails. */
 .float-drag-handle {
   position: absolute;
   z-index: 12;
@@ -587,24 +579,83 @@ button { font: inherit; }
 }
 .float-drag-handle:active { cursor: grabbing; }
 
-.float-expanded-card > .float-task-tabs {
-  display: grid;
+.float-tab-bar {
+  display: flex;
+  min-height: 28px;
   flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 0 5px;
+  background: var(--codex-surface-raised);
+}
+.float-task-tabs {
+  display: grid;
+  min-width: 0;
+  flex: 1;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 2px;
-  margin: 7px 8px 6px;
-  padding: 3px;
 }
-.float-expanded-card > .float-task-tabs button { min-height: 31px; padding: 0 2px; font-size: 10px; }
-.float-expanded-card > .float-task-tabs button span { min-width: 14px; height: 14px; padding: 0 2px; font-size: 9px; }
+.float-task-tabs button {
+  display: flex;
+  min-width: 0;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--codex-muted);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.float-task-tabs button span:first-child {
+  display: grid;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--codex-border) 34%, var(--codex-surface));
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.float-task-tabs button span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.float-task-tabs button:hover { background: var(--codex-track); color: var(--codex-fg); }
+.float-task-tabs button.active {
+  background: color-mix(in srgb, var(--codex-accent) 12%, var(--codex-surface-raised));
+  color: var(--codex-fg);
+  font-weight: 850;
+  box-shadow: inset 0 -2px var(--codex-accent);
+}
+.float-task-tabs button.active:hover { background: color-mix(in srgb, var(--codex-accent) 20%, var(--codex-surface-raised)); }
+.float-task-tabs button:active, .float-task-tabs button.active:active { background: color-mix(in srgb, var(--codex-focus) 25%, var(--codex-surface-raised)); }
+.float-task-tabs button:focus-visible, .float-tab-pin:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: -3px; }
+.float-tab-bar .float-drag-handle { position: relative; inset: auto; display: grid; flex: 0 0 22px; height: 28px; place-items: center; }
+.float-tab-bar .float-drag-handle::before { width: 10px; height: 3px; border-block: 1px solid var(--codex-muted); content: ''; }
+.float-tab-pin {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--codex-muted);
+  cursor: pointer;
+}
+.float-tab-pin:hover, .float-tab-pin[aria-pressed="true"] { background: var(--codex-track); color: var(--codex-fg); }
 
 .float-search {
   display: flex;
-  min-height: 34px;
+  min-height: 30px;
   flex: none;
   align-items: center;
   gap: 6px;
-  margin: 0 9px 6px;
+  margin: 2px 8px 3px;
   padding: 0 8px;
   border: 1px solid color-mix(in srgb, var(--codex-border) 55%, transparent);
   border-radius: 9px;
@@ -661,23 +712,30 @@ button.float-search-glyph { cursor: pointer; }
 }
 .float-search-clear { display: grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--codex-muted); cursor: pointer; }
 
-/* Single-line quota row.
-   Every enabled provider renders inside this one row, so the surface below it
-   keeps a constant top edge whether or not a second provider is connected — the
-   old stacked sections made the task list jump when Claude was enabled. The full
-   window title and reset time are deliberately not in the row: they are in the
-   shared 200ms child hint and in each chip's screen-reader text. */
-.float-quota-text {
-  position: relative;
+.float-leading-row {
   display: flex;
-  min-height: 30px;
+  min-width: 0;
+  min-height: 24px;
   flex: none;
   align-items: center;
-  gap: 10px;
-  padding: 2px 12px 4px;
-  overflow: hidden;
-  background: transparent;
+  gap: 6px;
+  margin: 0 8px;
 }
+.float-leading-row > .float-status-section, .float-leading-row > .float-project-section {
+  display: flex;
+  min-width: 0;
+  min-height: 24px;
+  flex: 1 1 auto;
+  align-items: center;
+  margin: 0;
+}
+.float-leading-quota {
+  position: relative;
+  min-width: 0;
+  flex: 0 1 auto;
+  margin-inline-start: auto;
+}
+.float-leading-quota:has(.float-quota-feedback) { min-width: min(100%, 156px); }
 .float-quota-group { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
 /* Separator between provider groups: platform color is the second cue, this
    structural break and the caption are the first. */
@@ -712,17 +770,18 @@ button.float-search-glyph { cursor: pointer; }
 /* Refresh receipt: overlays the same row for a few seconds, so the area never grows a second line. */
 .float-quota-feedback {
   position: absolute;
-  inset: 2px 12px 4px;
-  display: flex;
-  align-items: center;
+  inset: 0;
   margin: 0;
   overflow: hidden;
   background: var(--codex-surface);
   color: var(--codex-muted);
   font-size: 10px;
+  line-height: 24px;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.float-quota-feedback:only-child { position: static; }
 .float-quota-chip { display: flex; min-width: 0; align-items: baseline; gap: 3px; white-space: nowrap; cursor: pointer; }
 /* A reading is also its own refresh trigger; the press feedback stays inside the chip. */
 .float-quota-chip:active strong { opacity: .55; }
@@ -744,6 +803,16 @@ button.float-search-glyph { cursor: pointer; }
 .companion-reset-button b, .companion-reset-button em { flex: none; color: var(--codex-fg); font-style: normal; font-weight: 750; }
 .companion-reset-button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .companion-reset-button:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 2px; }
+.companion-reset-short-name { display: none; }
+.companion-reset-row--compact { gap: 3px; }
+.companion-reset-row--compact .companion-reset-button { min-height: 24px; align-items: center; gap: 3px; padding: 0 2px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+.companion-reset-row--compact .companion-reset-button em { color: var(--codex-warning); }
+.companion-reset-row--compact .companion-reset-button:hover { background: var(--codex-track); }
+.companion-reset-row--compact .companion-reset-button:focus-visible { outline-offset: -2px; }
+@container (max-width: 380px) {
+  .companion-reset-row--compact .companion-reset-name { display: none; }
+  .companion-reset-row--compact .companion-reset-short-name { display: inline; }
+}
 .expanded-card-preview-quota.companion-reset-row, .appearance-card-quota.companion-reset-row { position: absolute; left: 12px; right: 12px; display: flex; align-items: center; justify-content: flex-end; min-width: 0; overflow: hidden; }
 .appearance-card-quota.companion-reset-row { top: 92px; border: 0; border-radius: 6px; background: var(--codex-surface-raised); padding: 8px; transition: transform .5s; }
 .appearance-card-quota.companion-reset-row.selected, .appearance-card-quota.companion-reset-row.pointed { outline: 3px solid #e4163d; outline-offset: 2px; }
@@ -797,7 +866,7 @@ button.float-search-glyph { cursor: pointer; }
 .float-inline-editor input { min-width: 0; border: 0; outline: 0; background: transparent; color: var(--codex-fg); font: inherit; font-size: 11px; user-select: text; }
 .float-inline-editor button { min-width: 42px; border: 1px solid var(--codex-border); border-radius: 7px; background: var(--codex-surface); color: var(--codex-fg); font-size: 9px; cursor: pointer; }
 
-.float-expanded-card > .float-task-inbox { padding: 6px 8px 8px; }
+.float-expanded-card > .float-task-inbox { padding: 1px 8px 8px; }
 .float-selection-mode-bar {
   position: absolute;
   z-index: 26;
@@ -1106,6 +1175,8 @@ button.float-search-glyph { cursor: pointer; }
 }
 .status-section-toggle:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
 .status-section-toggle:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 1px; }
+.float-section-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.float-leading-row .status-section-toggle :is(svg, .status-quick-index, em), .float-leading-row .float-status-section > em { flex: none; }
 
 .task-state-button {
   display: grid;
@@ -1551,11 +1622,6 @@ button.float-search-glyph { cursor: pointer; }
 .codex-float-root.edge .float-edge-anchor { position: absolute; z-index: 3; }
 .codex-float-root.edge .float-expanded-card { position: absolute; margin: 0; transform: none; }
 .codex-float-root.edge.dragging .companion-edge-line { cursor: grabbing; }
-.float-edge-preview-header.float-drag-handle { position: relative; inset: auto; display: flex; flex: 0 0 24px; width: auto; height: 24px; align-items: center; justify-content: space-between; margin: 0 0 4px; padding: 0 2px 0 5px; cursor: grab; background: transparent; border: 0; border-radius: 0; touch-action: none; }
-.float-edge-preview-header.float-drag-handle::after { content: none; }
-.float-edge-preview-header span { color: var(--codex-muted); font-size: 10px; letter-spacing: .02em; }
-.float-edge-preview-header button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--codex-muted); cursor: pointer; }
-.float-edge-preview-header button:hover, .float-edge-preview-header button.pinned { color: var(--codex-fg); background: var(--codex-track); }
 
 
 /* The entire lower half includes transparent corners and the outer padding.

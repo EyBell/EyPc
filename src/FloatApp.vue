@@ -29,6 +29,7 @@ import CodexWaterBall from './components/CodexWaterBall.vue'
 import CompanionEdgeRail from './components/CompanionEdgeRail.vue'
 import CompanionQuotaResetRow from './components/CompanionQuotaResetRow.vue'
 import FloatSurface from './components/FloatSurface.vue'
+import FloatTaskSectionHeading from './components/FloatTaskSectionHeading.vue'
 import OperationTooltipLayer from './components/OperationTooltipLayer.vue'
 import {
   buildCompanionTaskMetaLine,
@@ -91,6 +92,7 @@ type RenderRow =
   | { kind: 'task'; key: string; task: CodexTaskCard; marker: CompanionRowMarker; sectionId?: string; parentProjectKey?: string; nested?: boolean }
   | { kind: 'empty-project'; key: string; projectKey: string }
 
+type SectionRow = Extract<RenderRow, { kind: 'section' | 'status-section' | 'hidden-project-section' }>
 type FocusItem = Extract<RenderRow, { kind: 'project' | 'task' }>
 type PanelState = { mode: 'detail' | 'drawer'; item: FocusItem; returnActionId: string } | null
 type AliasEditor = { kind: 'task' | 'project'; key: string; value: string; originalName: string } | null
@@ -688,6 +690,32 @@ const renderRows = computed<RenderRow[]>(() => {
 
   return rows
 })
+function isSectionRow(row: RenderRow | undefined): row is SectionRow {
+  return row?.kind === 'section' || row?.kind === 'status-section' || row?.kind === 'hidden-project-section'
+}
+
+const leadingSectionRow = computed(() => {
+  const firstRow = renderRows.value[0]
+  return settings.value?.conversationInboxEnabled && isSectionRow(firstRow) ? firstRow : null
+})
+const listRenderRows = computed(() => leadingSectionRow.value ? renderRows.value.slice(1) : renderRows.value)
+
+function sectionHeadingProps(row: SectionRow) {
+  if (row.kind === 'section') return { title: row.section.title, variant: 'project' as const }
+  return {
+    title: row.title,
+    ...(row.kind === 'status-section' ? { tone: row.tone, count: row.count } : { variant: 'hidden-project' as const }),
+    collapsible: row.collapsible,
+    collapsed: row.collapsed,
+    quickDigit: quickIndexDigit(row.key),
+    quickHint: quickIndexHint(row.key, '展开')
+  }
+}
+
+function toggleSectionRow(row: SectionRow) {
+  if (row.kind !== 'section' && row.groupKey) toggleStatusGroup(row.groupKey)
+}
+
 const focusItems = computed<FocusItem[]>(() => renderRows.value.filter((row): row is FocusItem => row.kind === 'task' || row.kind === 'project'))
 const focusedItem = computed(() => focusItems.value.find((item) => item.key === focusedKey.value) || null)
 
@@ -3239,13 +3267,12 @@ function resolveHintAnchor(): HTMLElement | null {
   )
 }
 
-function showActionHint(target: HTMLElement | null, label: string, options?: { delay?: number; sticky?: boolean }) {
+function showActionHint(target: HTMLElement | null, label: string, options?: { delay?: number; sticky?: boolean; followDescription?: boolean }) {
   const anchor = target?.isConnected ? target : resolveHintAnchor()
   tooltipLayer.value?.showManual(anchor, label, {
     kind: 'float',
     boundary: rootElement.value?.querySelector('.float-expanded-card') || rootElement.value,
-    delay: options?.delay,
-    sticky: options?.sticky
+    ...options
   })
 }
 
@@ -3253,11 +3280,11 @@ function clearActionHint(force: boolean | Event = false) {
   tooltipLayer.value?.hideManual(force === true, 'float')
 }
 
-function queueActionHint(event: Event, label: string) {
+function queueActionHint(event: Event, label: string, followDescription = false) {
   const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   if (!target || !label) return
   if (tooltipLayer.value?.hasStickyHint()) return
-  showActionHint(target, label, { delay: 200 })
+  showActionHint(target, label, { delay: 200, followDescription })
 }
 
 watch(() => snapshot.value?.taskActionReceipts, (receipts) => {
@@ -3689,26 +3716,33 @@ onUnmounted(() => {
     </FloatSurface>
 
     <FloatSurface v-if="expanded || (floatState.parked && !edgeStyle)" v-show="expanded || floatState.parked" kind="expanded" :class="{ 'is-preloaded': floatState.parked && !expanded && !edgeStyle }" :inert="floatState.parked && !expanded && !edgeStyle ? true : undefined" :aria-hidden="floatState.parked && !expanded && !edgeStyle ? 'true' : undefined" :style="edgeStyle ? edgePanelStyle : floatState.parked ? rectStyle(floatState.panel) : undefined" aria-label="Codex Companion" @pointerenter="onMouseEnter" @pointerleave="onMouseLeave">
-      <header v-if="edgeStyle" class="float-edge-preview-header float-drag-handle">
-        <span>Companion</span>
-        <button type="button" :class="{ pinned: floatState.pinned }" :aria-pressed="floatState.pinned"
-          :aria-label="floatState.pinned ? '取消固定预览' : '固定预览'" @pointerdown.stop @click.stop="togglePreviewPin"><Pin :size="13" /></button>
-      </header>
-      <div class="float-task-tabs" role="tablist" aria-label="会话分组">
+      <header class="float-tab-bar">
+        <div class="float-task-tabs" role="tablist" aria-label="会话分组">
+          <button
+            v-for="tab in tabs"
+            :key="tab.id"
+            type="button"
+            role="tab"
+            :aria-selected="selectedUiTab === tab.id"
+            :class="{ active: selectedUiTab === tab.id }"
+            :data-quick-jump-target="tab.label"
+            @click="switchComposerTab(tab.id)"
+          >
+            <span>{{ tab.count }}</span>
+            <span>{{ tab.label }}</span>
+          </button>
+        </div>
+        <div class="float-drag-handle" aria-hidden="true" />
         <button
-          v-for="tab in tabs"
-          :key="tab.id"
+          v-if="edgeStyle"
           type="button"
-          role="tab"
-          :aria-selected="selectedUiTab === tab.id"
-          :class="{ active: selectedUiTab === tab.id }"
-          :data-quick-jump-target="tab.label"
-          @click="switchComposerTab(tab.id)"
-        >
-          <span>{{ tab.count }}</span>
-          <span>{{ tab.label }}</span>
-        </button>
-      </div>
+          class="float-tab-pin"
+          :aria-pressed="floatState.pinned"
+          :aria-label="floatState.pinned ? '取消固定预览' : '固定预览'"
+          @pointerdown.stop
+          @click.stop="togglePreviewPin"
+        ><Pin :size="13" aria-hidden="true" /></button>
+      </header>
 
       <div
         v-if="selectedUiTab === 'projects'"
@@ -3738,8 +3772,6 @@ onUnmounted(() => {
           @click="toggleAllProjectSections"
         >{{ projectSectionsAllCollapsed ? '全部展开' : '全部折叠' }}</button>
       </div>
-
-      <div v-if="!edgeStyle" class="float-drag-handle" aria-hidden="true" />
 
       <label class="float-search">
         <button
@@ -3777,15 +3809,24 @@ onUnmounted(() => {
         <span class="sr-only" role="status" aria-live="polite">{{ searchLiveText }}</span>
       </label>
 
-      <!-- One row for every enabled provider. The full title and the reset time
-           live in the shared 200ms child hint and in each chip's accessible name,
-           so the row itself stays a single line of readings. -->
-      <section class="float-quota-text" aria-label="额度重置">
-        <CompanionQuotaResetRow :items="companionResetItems" @hint="queueActionHint" @clear="clearActionHint" @refresh="refreshQuotaFromChip({ provider: 'codex' })" />
-        <!-- Refresh receipt overlays the row for a few seconds instead of adding a line. -->
-        <p v-if="quotaFeedback" class="float-quota-feedback" role="status">{{ quotaFeedback }}</p>
-      </section>
-
+      <div v-if="leadingSectionRow || companionResetItems.length || quotaFeedback" class="float-leading-row">
+        <FloatTaskSectionHeading
+          v-if="leadingSectionRow"
+          :key="leadingSectionRow.key"
+          v-bind="sectionHeadingProps(leadingSectionRow)"
+          @toggle="toggleSectionRow(leadingSectionRow)"
+        />
+        <section v-if="companionResetItems.length || quotaFeedback" class="float-leading-quota" aria-label="额度重置">
+          <CompanionQuotaResetRow
+            compact
+            :items="companionResetItems"
+            @hint="(event, text) => queueActionHint(event, text, true)"
+            @clear="clearActionHint"
+            @refresh="refreshQuotaFromChip({ provider: 'codex' })"
+          />
+          <p v-if="quotaFeedback" class="float-quota-feedback" role="status">{{ quotaFeedback }}</p>
+        </section>
+      </div>
 
       <form v-if="aliasEditor" class="float-inline-editor" @submit.prevent="saveAlias">
         <label><span>本地别名</span><input ref="aliasInput" v-model="aliasEditor.value" maxlength="120" :placeholder="aliasEditor.originalName" /></label>
@@ -3808,45 +3849,12 @@ onUnmounted(() => {
             aria-label="动态会话"
             @scroll.passive="updateBatchPlacement"
           >
-          <template v-for="row in renderRows" :key="row.key">
-            <h2 v-if="row.kind === 'section'" class="float-project-section">{{ row.section.title }}</h2>
-            <h2 v-else-if="row.kind === 'hidden-project-section'" class="float-project-section hidden-project-section" :class="{ collapsible: row.collapsible, collapsed: row.collapsed }">
-              <button
-                v-if="row.collapsible"
-                type="button"
-                class="status-section-toggle"
-                :aria-expanded="!row.collapsed"
-                :aria-label="`${row.collapsed ? '展开' : '折叠'}${row.title}${quickIndexHint(row.key, '展开')}`"
-                data-quick-jump-target
-                :data-quick-jump-label="`${row.collapsed ? '展开' : '折叠'}${row.title}`"
-                @click="row.groupKey && toggleStatusGroup(row.groupKey)"
-              >
-                <ChevronRight v-if="row.collapsed" :size="13" aria-hidden="true" />
-                <ChevronDown v-else :size="13" aria-hidden="true" />
-                <span v-if="quickIndexDigit(row.key)" class="status-quick-index" aria-hidden="true">{{ quickIndexDigit(row.key) }}</span>
-                <span>{{ row.title }}</span>
-              </button>
-              <template v-else>{{ row.title }}</template>
-            </h2>
-            <h2 v-else-if="row.kind === 'status-section'" class="float-status-section" :class="[row.tone, { collapsible: row.collapsible, collapsed: row.collapsed }]">
-              <button
-                v-if="row.collapsible"
-                type="button"
-                class="status-section-toggle"
-                :aria-expanded="!row.collapsed"
-                :aria-label="`${row.collapsed ? '展开' : '折叠'}${row.title}，${row.count} 项${quickIndexHint(row.key, '展开')}`"
-                data-quick-jump-target
-                :data-quick-jump-label="`${row.collapsed ? '展开' : '折叠'}${row.title}`"
-                @click="row.groupKey && toggleStatusGroup(row.groupKey)"
-              >
-                <ChevronRight v-if="row.collapsed" :size="13" aria-hidden="true" />
-                <ChevronDown v-else :size="13" aria-hidden="true" />
-                <span v-if="quickIndexDigit(row.key)" class="status-quick-index" aria-hidden="true">{{ quickIndexDigit(row.key) }}</span>
-                <span>{{ row.title }}</span>
-                <em>{{ row.count }}</em>
-              </button>
-              <template v-else><span>{{ row.title }}</span><em>{{ row.count }}</em></template>
-            </h2>
+          <template v-for="row in listRenderRows" :key="row.key">
+            <FloatTaskSectionHeading
+              v-if="isSectionRow(row)"
+              v-bind="sectionHeadingProps(row)"
+              @toggle="toggleSectionRow(row)"
+            />
 
             <div
               v-else-if="row.kind === 'project'"

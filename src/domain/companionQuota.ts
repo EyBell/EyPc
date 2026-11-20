@@ -133,6 +133,18 @@ export interface CompanionQuotaInput {
 
 const CURSOR_MODELS = 'Cursor Models'
 const CURSOR_OTHER = 'Other Models'
+const RESET_ACCOUNT_CODES = new Map([
+  ['2d15647c47ac1c2bd7dc809a722d7f0f0c89f4d525252e0251db2399e5e728a5', 'ms'],
+  ['464dd4749d89c59eadba045bf457c1e1399b90557d555ce81f17b64106d5d369', 'gg'],
+  ['cd306017ad45f4d85a38b2e39034363a5cb7c3265b0255b892ec27bb9f96675e', 'cq']
+])
+
+export const COMPANION_QUOTA_CATEGORY_CODES: Readonly<Record<CompanionQuotaCategory, string>> = {
+  codex: 'cx',
+  grok: 'gr',
+  cursor: 'cs',
+  claude: 'cc'
+}
 
 function finite(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
@@ -358,6 +370,31 @@ function nativeFacts(quota: CodexQuotaSnapshotV1 | Pick<CodexQuotaSnapshotV1, 'p
 function detail(fact: CompanionQuotaWindowFact, now: number): CompanionQuotaResetDetail {
   return { key: `${fact.category}:${fact.accountKey}:${fact.window}:${fact.windowLabel}`, label: fact.label, baseLabel: fact.baseLabel, displayIndex: fact.displayIndex, windowLabel: fact.windowLabel, resetAt: fact.resetAt, stale: fact.stale, text: companionResetText(fact.resetAt, now, fact.stale) }
 }
+
+function resetAccountCode(fact: CompanionQuotaWindowFact): string {
+  if (fact.category === 'cursor') return fact.windowLabel === 'Grok Bot' ? 'bo' : 'gk'
+  const known = RESET_ACCOUNT_CODES.get(fact.emailDigest)
+  if (known) return known
+  const localLabel = (fact.baseLabel ?? fact.label).split('@', 1)[0]
+  const shortCode = localLabel.toLowerCase().replace(/[^a-z]/g, '').slice(0, 2)
+  return shortCode.length === 2 && fact.category !== 'claude'
+    ? shortCode
+    : COMPANION_QUOTA_CATEGORY_CODES[fact.category]
+}
+
+function resetHintLine(fact: CompanionQuotaWindowFact, now: number): string {
+  const account = resetAccountCode(fact)
+  const resetAt = fact.resetAt
+  if (resetAt === null) return `${account}-—-—`
+  const remaining = resetAt - now
+  const countdown = remaining <= 0
+    ? '待刷新'
+    : remaining <= 30 * 60_000
+      ? `${Math.ceil(remaining / 60_000)}M`
+      : `${Math.max(1, Math.floor(remaining / 3_600_000))}H`
+  return `${account}-${countdown}-${clock(resetAt)}`
+}
+
 function group(category: CompanionQuotaCategory, label: string, facts: CompanionQuotaWindowFact[], now: number, ambiguous: ReadonlySet<string>, partial = false): CompanionQuotaResetGroup | null {
   const seen = new Set<string>()
   const rows = facts.filter((fact) => fact.window !== 'balance').filter((fact) => {
@@ -392,8 +429,8 @@ function group(category: CompanionQuotaCategory, label: string, facts: Companion
   const expired = known.some((fact) => (fact.resetAt as number) <= now)
   const future = known.map((fact) => fact.resetAt as number).filter((value) => value > now)
   const summary = !summaryRows.length && category === 'cursor' ? '—' : expired ? '待刷新' : future.length ? companionResetText(Math.min(...future), now) : '—'
-  const suffix = (item: CompanionQuotaResetDetail) => item.displayIndex ? ` ·${item.displayIndex}` : ''
-  return { category, label, summary, details, detailText: details.map((item) => category === 'cursor' ? `${item.windowLabel === 'Grok Bot' ? 'Bot' : '月'} ${item.text}${suffix(item)}` : `${item.baseLabel || item.label} ${item.text}${suffix(item)}`).join('\n'), stale, partial: groupPartial }
+  const detailText = compactRows.map((fact) => resetHintLine(fact, now)).join('\n')
+  return { category, label, summary, details, detailText, stale, partial: groupPartial }
 }
 function claudeFacts(quota: ClaudeQuotaSnapshot | null | undefined, ready: boolean, usageApiAllowed: boolean, now: number): CompanionQuotaWindowFact[] {
   if (!ready || !quota) return []

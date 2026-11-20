@@ -58,6 +58,7 @@ let hoveredTarget: Element | null = null
 let activeTarget: Element | null = null
 let pendingManualKind: 'float' | 'compact' | null = null
 let manualBoundary: Element | null = null
+let followManualDescription = false
 let pointerFocus = false
 let hoverTimer: ReturnType<typeof setTimeout> | null = null
 let mutationObserver: MutationObserver | null = null
@@ -183,6 +184,7 @@ function hideTooltip() {
   activeTarget = null
   manualKind.value = null
   manualBoundary = null
+  followManualDescription = false
   sticky.value = false
   maxWidth.value = ''
   visible.value = false
@@ -334,6 +336,7 @@ function showManual(target: Element | null, text: string, options: {
   boundary?: Element | null
   delay?: number
   sticky?: boolean
+  followDescription?: boolean
 }) {
   if (!target || !text || (sticky.value && !options.sticky)) return
   clearHoverTimer()
@@ -345,9 +348,10 @@ function showManual(target: Element | null, text: string, options: {
     activeTarget = target
     manualKind.value = options.kind
     manualBoundary = options.boundary || null
+    followManualDescription = Boolean(options.followDescription)
     sticky.value = Boolean(options.sticky)
     preserveLines.value = target.hasAttribute('data-operation-preserve-lines')
-    label.value = text
+    label.value = followManualDescription ? targetDetail(target) || text : text
     detail.value = ''
     shortcut.value = ''
     const boundaryWidth = manualBoundary?.getBoundingClientRect().width || 0
@@ -387,7 +391,12 @@ onMounted(() => {
     mutations.forEach((mutation) => {
       if (mutation.type === 'attributes' && mutation.target instanceof Element) {
         if (mutation.attributeName === 'title') suppressNativeTitle(mutation.target)
-        if (props.automatic && mutation.target === activeTarget) showTooltip(mutation.target)
+        if (mutation.target === activeTarget) {
+          if (manualKind.value && followManualDescription && mutation.attributeName === 'data-operation-description') {
+            label.value = targetDetail(mutation.target)
+            void positionTooltip(mutation.target)
+          } else if (props.automatic) showTooltip(mutation.target)
+        }
         return
       }
       mutation.addedNodes.forEach((node) => {

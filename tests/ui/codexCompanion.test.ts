@@ -2515,7 +2515,7 @@ describe('edge rail gestures', () => {
     window.dispatchEvent(new PointerEvent('pointerup', { screenX: 20, screenY: 25, pointerId: 1 }))
     expect(window.eypcFloat!.dragEnd).toHaveBeenCalledTimes(1)
   })
-  it('retains the rail through expansion, pins independently, and allows the header blank area to drag', async () => {
+  it('retains the rail through expansion, pins independently, and lets the tab bar handle drag', async () => {
     const source = floatSnapshot()
     source.style = 'edge'
     let receiveState!: (value: CodexFloatWindowState) => void
@@ -2530,7 +2530,7 @@ describe('edge rail gestures', () => {
     expect(window.eypcFloat!.dragStart).not.toHaveBeenCalled()
     await pin.trigger('click')
     expect(setExpansion).toHaveBeenLastCalledWith(true, true)
-    await wrapper.get('.float-edge-preview-header span').trigger('pointerdown', { button: 0, screenX: 10, screenY: 20, pointerId: 2 })
+    await wrapper.get('.float-tab-bar .float-drag-handle').trigger('pointerdown', { button: 0, screenX: 10, screenY: 20, pointerId: 2 })
     expect(window.eypcFloat!.dragStart).toHaveBeenCalledWith(10, 20)
   })
   it('collapses after 220ms outside the preview and holds when pinned', async () => {
