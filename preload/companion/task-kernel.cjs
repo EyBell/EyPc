@@ -3878,6 +3878,9 @@ function createCompanionTaskKernel(dependencies = {}) {
     const previous = finiteInteger(consumerAcknowledgements.get(consumer))
     if (revision < previous) return false
     consumerAcknowledgements.set(consumer, revision)
+    if (consumer === 'main-render' && revision > previous) {
+      record({ level: 'debug', scope: 'task-kernel', event: 'main-task-package-ack', outcome: 'applied', packageRevision: revision })
+    }
     return true
   }
 

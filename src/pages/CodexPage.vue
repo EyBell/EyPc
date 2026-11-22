@@ -53,6 +53,23 @@ import type { CodexRuntimeView } from '../runtime/codexController'
 
 const props = defineProps<{ snapshot: CodexRuntimeView }>()
 const emit = defineEmits<{ dispatch: [actionId: string, args?: Record<string, unknown>] }>()
+const codexPageRoot = ref<HTMLElement | null>(null)
+let renderedTaskRevision = 0
+
+function acknowledgeRenderedTaskPackage() {
+  const revision = props.snapshot.taskSnapshot.packageRevision
+  const element = codexPageRoot.value
+  if (revision <= renderedTaskRevision || props.snapshot.runtimeIdentity?.status !== 'host-loaded'
+    || document.visibilityState === 'hidden' || !element?.isConnected
+    || Number(element.dataset.companionPackageRevision) !== revision) return
+  if (window.eypcPlatform?.companionKernel?.acknowledge({ consumer: 'main-render', revision })) {
+    renderedTaskRevision = revision
+  }
+}
+
+watch([codexPageRoot, () => props.snapshot.taskSnapshot.packageRevision], acknowledgeRenderedTaskPackage, { flush: 'post' })
+onMounted(() => document.addEventListener('visibilitychange', acknowledgeRenderedTaskPackage))
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', acknowledgeRenderedTaskPackage))
 const themePresetError = ref('')
 const THEME_PRESET_BUILTIN_PREFIX = 'builtin:'
 const THEME_PRESET_SAVED_PREFIX = 'saved:'
@@ -782,6 +799,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
 
 <template>
   <section
+    ref="codexPageRoot"
     class="codex-config-page"
     aria-label="Codex Companion 配置"
     :data-companion-package-revision="snapshot.taskSnapshot.packageRevision || undefined"

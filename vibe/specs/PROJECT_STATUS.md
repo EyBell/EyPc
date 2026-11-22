@@ -1,5 +1,17 @@
 # EyPc Project Status Hub
 
+<a id="r21-read-latency-build-261122"></a>
+
+- 2026-11-22 11:19:25，冷启动读态回退和库存去重修复通过完整 `closeout`。产物为 `V7` / `host-5a8520b083257f87cb8e` / `renderer-e64957d336fdfc69d5d4`，builtAt `2026-11-22T03:19:25.633Z`。源码和随包各通过 213 个生命周期检查点。新版尚待宿主加载，主界面和浮窗同包、状态加载时延及快捷键实际落点待实机复验。[插件入口](../../dist/plugin.json#L1) · [实机证据](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-1107-261122) · [缓存规格](261120/eypc-shortcut-optimization/jump-cache-component.md#cache-refresh-review-261122)
+
+<a id="r21-reload-build-261122"></a>
+
+- 2026-11-22 10:18:53，Codex 冷库存项目归属修复通过完整 `closeout`。产物为 `V7` / `host-c74d74458aa2ae616c6c` / `renderer-320c3bcc53627d6462b0`，builtAt `2026-11-22T02:18:53.495Z`。源码与随包各通过 206 个生命周期检查点，106 组预加载镜像一致。11:07 实载已核，出现同轮状态回退。[现场核验](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-1107-261122)
+
+<a id="r21-cold-build-261122"></a>
+
+- 2026-11-22 10:00:44，Codex 主轮冷启动识别修复通过完整 `closeout`。当前产物为 `V7` / `host-d1979dad6b83a16d9588` / `renderer-f95ce0220eb3e085897f`，builtAt `2026-11-22T02:00:44.618Z`。输入摘要、成功回执、产物身份及 106 组预加载镜像已核对。源码与随包各通过 203 个生命周期检查点。新版 uTools 握手与重启前后同一运行轮尚待实机核验。[插件入口](../../dist/plugin.json#L1) · [R21 交付与验收](261114/codex-state-sync/delivery.md#r21-cold-ownerless-261122)
+
 - 2026-11-22 09:43:50，同一源码输入重新完成 closeout 构建。产物为 `V7` / `host-c8e1ff444b371844b634` / `renderer-ff3e097be3dffa3fa44d`，builtAt `2026-11-22T01:43:50.690Z`。
 
 <a id="shortcut-review-build-261120"></a>

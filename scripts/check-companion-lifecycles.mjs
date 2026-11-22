@@ -597,6 +597,213 @@ async function checkSpawnEdgeReaders(require) {
   return 4
 }
 
+async function checkColdRolloutAdmission(source, fixture) {
+  const probeStart = source.indexOf('function codexRefreshRolloutDecisionTracker(')
+  const probeEnd = source.indexOf('\nfunction codexScheduleRolloutProcessProbe(', probeStart)
+  const syncStart = source.indexOf('function codexSyncRolloutDecisionTrackers(')
+  const syncEnd = source.indexOf('\nfunction readCodexNativePrimaryState(', syncStart)
+  assert(probeStart >= 0 && probeEnd > probeStart && syncStart >= 0 && syncEnd > syncStart)
+  const entry = new Script(`${source.slice(probeStart, probeEnd)}\n${source.slice(syncStart, syncEnd)}
+    ({ probe: codexProbeColdRolloutActivity, sync: codexSyncRolloutDecisionTrackers })`)
+  const threadId = 'synthetic-cold'
+  const candidate = '/synthetic/cold.jsonl'
+  const stat = { isFile: () => true, dev: 2, ino: 3, size: 14, mtimeMs: 305 }
+  const match = { phase: 'active', turnId: 'current-turn', startedAt: 300 }
+  for (const [name, changes] of [
+    ['same Turn held by its writer', { expected: 'running' }],
+    ['read-only descriptor', { access: 'r' }],
+    ['different Turn', { runtime: { ...match, turnId: 'other-turn' } }],
+    ['rollout changed during read', { changedFile: true }],
+    ['activity changed during probe', { dirty: true }],
+    ['current Desktop owner', { shadow: { ownerClientId: 'desktop' } }],
+    ['real idle interruption', { status: 'idle', exact: true, expected: 'stopped' }]
+  ]) {
+    const thread = { id: threadId, status: { type: changes.status || 'notLoaded' } }
+    const turn = { id: match.turnId, status: 'interrupted', startedAt: match.startedAt,
+      ...(changes.exact ? { interruptedAt: 350 } : {}) }
+    const known = { lastTurnId: turn.id, status: thread.status.type, activeFlags: [],
+      lastTurnStatus: turn.status, lastTurnEvidence: changes.exact ? 'targeted-after-exit' : 'inventory',
+      terminalEvidenceSequence: changes.exact ? 350 : 0, idleConfirmed: changes.exact === true }
+    const trackers = new Map()
+    const dirty = new Map()
+    let statReads = 0
+    const { probe, sync } = entry.runInNewContext({
+      process: { platform: 'darwin' },
+      execFile(command, args, { timeout }, callback) {
+        assert.equal(command, '/usr/sbin/lsof')
+        assert.deepEqual(Array.from(args), ['-n', '-Fpcfan', '--', candidate])
+        assert.equal(timeout, 750)
+        callback(null, `p42\nccodex\nf10\na${changes.access || 'u'}\nn${candidate}\n`)
+      },
+      fs: { statSync: () => ({ ...stat, size: stat.size + (changes.changedFile && statReads++ > 0 ? 1 : 0) }) },
+      codexProcess: null, CODEX_COLD_ROLLOUT_PROBE_LIMIT: 16, CODEX_COLD_ROLLOUT_PROBE_TIMEOUT_MS: 750,
+      codexThreadRolloutCandidate: () => ({ candidate, stat }), codexRolloutDecisionTrackers: trackers,
+      codexThreadTurnStatusDirty: dirty, codexThreadPendingInputCache: new Map(),
+      codexActivityInventory: new Map([[threadId, known]]),
+      codexDesktopBridge: { shadows: new Map([[threadId, changes.shadow]]) },
+      validCodexThreadId: id => id === threadId, codexRecord: value => value ?? {},
+      codexTimestampMs: Number, codexInventoryTerminalEvidence: () => known.lastTurnEvidence,
+      codexIsConfirmedTurnEvidence: evidence => evidence === 'targeted-after-exit',
+      codexHasConfirmedTerminalEvidence: () => changes.exact === true,
+      codexRolloutDecisionState: () => ({ runtime: changes.runtime || match, input: { correlations: new Set() } }),
+      codexApplyRolloutDecisionState(tracker, _state, emit, { observeRuntime }) {
+        assert.equal(emit, false)
+        assert.equal(observeRuntime, true)
+        tracker.rolloutLiveSequence = 330
+        Object.assign(known, { status: 'active', lastTurnStatus: 'inProgress', lastTurnEvidence: 'turn-started',
+          activeEvidenceSequence: 330, statusAuthority: 'app-server-live', activityEvidence: 'activity-event' })
+      },
+      codexArmRolloutDecisionWatcher() {}, codexScheduleRolloutProcessProbe() {}, recordCodexTaskSync() {}
+    })
+    const latest = new Map([[threadId, turn]])
+    const opened = await probe([thread], { latest, readSucceededIds: new Set([threadId]) })
+    if (changes.dirty) dirty.set(threadId, 1)
+    sync([thread], latest, opened, new Map())
+    const snapshot = fixture()
+    try {
+      snapshot.publish([{ key: 'main', epoch: turn.startedAt, branch: known }], 1, { complete: true, hostEvidence: true })
+      const expected = changes.expected || 'unknown'
+      assert.equal(snapshot.expectRoot(expected, false, 1).capabilities.continueTask, changes.exact === true, name)
+    } finally { snapshot.kernel.close() }
+  }
+}
+
+async function checkColdUnreadRefresh(source) {
+  const refreshStart = source.indexOf('  refreshPersistedUnread(')
+  const refreshEnd = source.indexOf('\n  ensureUnreadStateWatcher()', refreshStart)
+  const latestStart = source.indexOf('  scheduleLatestTurnRefresh(')
+  const latestEnd = source.indexOf('\n  setState(', latestStart)
+  const terminalStart = source.indexOf('function codexInventoryTerminalEvidence(')
+  const terminalEnd = source.indexOf('\nfunction codexThreadHasPersistedPendingPlan(', terminalStart)
+  assert(refreshStart >= 0 && refreshEnd > refreshStart && latestStart >= 0 && latestEnd > latestStart
+    && terminalStart >= 0 && terminalEnd > terminalStart)
+  const entry = new Script(`${source.slice(terminalStart, terminalEnd)}
+    ({${source.slice(refreshStart, refreshEnd)}, ${source.slice(latestStart, latestEnd)}})`)
+  const threadId = 'cold-root'
+  const unreadIds = new Set([threadId])
+  for (const scenario of ['baseline', 'weak-interruption', 'exact-interruption', 'idle-interruption']) {
+    const idle = scenario === 'idle-interruption'
+    const thread = {
+      key: threadId, status: idle ? 'idle' : 'active', connectorStatus: idle ? 'idle' : 'notLoaded',
+      lastTurnStartedAt: 300, lastTurnStatus: 'inProgress', lastTurnId: 'same-turn',
+      unreadAuthority: 'desktop-persisted'
+    }
+    const turn = { id: 'same-turn', status: 'interrupted', startedAt: 300,
+      ...(scenario === 'exact-interruption' ? { interruptedAt: 350 } : {}) }
+    let turnReads = 0
+    let published = 0
+    const methods = entry.runInNewContext({
+      validCodexThreadId: id => id === threadId, codexTimestampMs: Number, codexRecord: value => value ?? {},
+      codexActivityInventory: new Map([[threadId, thread]]),
+      codexInventorySideRelations: new Map(), codexInventorySideBranchEvidence: new Map(),
+      codexThreadTurnStatusCache: new Map(), codexRolloutDecisionTrackers: new Map(),
+      codexSubagentDiscovery: null, codexDesktopActivityResolution: null,
+      readCodexDesktopUnreadIds: () => unreadIds,
+      codexDesktopShadow: { codexApplyNativeConnectorUnread: () => ({ applied: true, hasUnreadTurn: true }) },
+      codexDesktopAggregateUnread: () => ({ hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' }),
+      codexActivityPublicEntry: value => value, recordCodexTaskSync() {}, codexNoteActivityDecision() {},
+      CODEX_DESKTOP_TURN_REFRESH_DEADLINE_MS: 1000, CODEX_DESKTOP_TURN_REFRESH_DELAYS_MS: [0],
+      requestCodexRpc: async (method, input) => {
+        assert.equal(method, 'thread/turns/list')
+        assert.equal(input.threadId, threadId)
+        turnReads += 1
+        return { data: [turn] }
+      },
+      sanitizeCodexTurnStatusPage: value => value.data[0],
+      codexDesktopRequestCorrelation: () => '',
+      codexApplyCachedCompletedTurnEvidence: () => false,
+      codexThreadPersistedInputEvidence: () => null,
+      codexClearAppServerLiveActive() {}, codexPrivateBranchIdleConfirmed: () => idle,
+      codexMarkConfirmedTerminalEvidence: () => 350, codexRememberPrivateBranchTerminal() {},
+      emitCodexActivityDelta() { published += 1 }
+    })
+    const bridge = {
+      ...methods,
+      inventory: new Set([threadId]),
+      persistedUnread: scenario === 'baseline' ? new Map() : new Map([[threadId, false]]),
+      shadows: new Map(), sideShadows: new Map(), turnRefreshes: new Map(),
+      notePinMirror() {},
+      notePersistedUnread(id, unread) {
+        const changed = this.persistedUnread.get(id) !== unread
+        this.persistedUnread.set(id, unread)
+        return changed
+      },
+      parentLiveEvidenceSequence: () => idle ? 0 : 330,
+      streamWriteContext: () => null, streamWriteCurrent: () => true,
+      reconcileLateUnread(id, _unread, queryThreadId, { forceTerminalCheck }) {
+        this.scheduleLatestTurnRefresh(id, { queryThreadId, forceQuery: forceTerminalCheck, verifyStaleActive: !idle })
+      }
+    }
+    bridge.refreshPersistedUnread(false, { unreadIds, turnsRead: new Set([threadId]) })
+    await new Promise(setImmediate)
+    assert.equal(turnReads, scenario === 'baseline' ? 0 : 1, `${scenario}: use the accepted inventory history only for the initial read baseline`)
+    assert.equal(bridge.persistedUnread.get(threadId), true, `${scenario}: record native unread`)
+    const terminal = idle || scenario === 'exact-interruption'
+    assert.equal(thread.lastTurnStatus, terminal ? 'interrupted' : 'inProgress', `${scenario}: stay running until a verified terminal`)
+    assert.equal(published, terminal ? 1 : 0, `${scenario}: publish only a verified phase change`)
+  }
+  return 4
+}
+
+async function checkVerifiedInventorySharing(source) {
+  const readStart = source.indexOf('function readVerifiedCodexInventory(')
+  const readEnd = source.indexOf('\nasync function readCodexActivitySnapshot(', readStart)
+  const scopeStart = source.indexOf('function codexSnapshotScopeCurrent(')
+  const scopeEnd = source.indexOf('\nfunction scheduleCodexPendingRecovery(', scopeStart)
+  assert(readStart >= 0 && readEnd > readStart && scopeStart >= 0 && scopeEnd > scopeStart)
+  const pending = []
+  const inventory = new Script(`let codexVerifiedInventoryInFlight = null
+    ${source.slice(readStart, readEnd)}
+    ${source.slice(scopeStart, scopeEnd)}
+    ({ read: readVerifiedCodexInventory, reset: () => { codexInventoryMembershipGeneration += 1 } })`).runInNewContext({
+    codexDesktopBridge: { streamGeneration: 1 }, codexInventoryMembershipGeneration: 1, codexCausalDomain: 'source',
+    scanVerifiedCodexInventory: () => new Promise(resolve => pending.push(resolve))
+  })
+  const first = inventory.read()
+  assert.equal(inventory.read(), first, 'Main and Host share the same source read')
+  assert.equal(pending.length, 1)
+  inventory.reset()
+  const replacement = inventory.read()
+  assert.notEqual(replacement, first, 'a changed scope starts its own read')
+  assert.equal(pending.length, 2)
+  pending[0]()
+  await first
+  assert.equal(inventory.read(), replacement, 'old completion cannot clear the new in-flight read')
+  pending[1]()
+  await replacement
+  return 3
+}
+
+function checkInventoryProjectAssignments(source) {
+  const start = source.indexOf('function codexThreadNativeProject(')
+  const end = source.indexOf('\nfunction sanitizeCodexTurnStatus(', start)
+  assert(start >= 0 && end > start)
+  const { assign } = new Script(`${source.slice(start, end)}
+    ({ assign: codexInventoryProjectAssignments })`).runInNewContext({
+    codexNormalizeNativeRoot: value => value,
+    codexError: (code, message) => Object.assign(new Error(message), { code }),
+    process: { platform: 'darwin' },
+    path: { sep: '/' }
+  })
+  const primary = { key: 'primary', roots: ['/work/primary', '/work/shared'] }
+  const secondary = { key: 'secondary', roots: ['/work/secondary', '/work/shared'] }
+  const registry = { assignments: new Map([['root', 'primary']]), projectById: new Map([['primary', primary]]),
+    projectlessThreadIds: new Set(), projects: [primary, secondary] }
+  const child = { id: 'child', cwd: '/work/shared/child' }
+  const root = { id: 'root', cwd: '/work/shared' }
+  const other = { id: 'other', cwd: '/work/secondary' }
+  const linked = assign([child, root, other], registry, new Map([['child', 'root']]))
+  assert.equal(linked.assignments.get(child.id), linked.assignments.get(root.id))
+  assert.equal(linked.sideRelations.get(child.id), root.id)
+  assert.equal(linked.assignments.get(other.id).project, secondary)
+  const outside = { id: 'outside', cwd: '/elsewhere' }
+  const fallback = assign([other, outside], registry, new Map([[other.id, outside.id]]))
+  assert.equal(fallback.assignments.get(other.id).project, secondary)
+  assert.equal(fallback.sideRelations.size, 0)
+  assert.throws(() => assign([child], registry, new Map()), /native project roots are ambiguous/)
+  return 3
+}
+
 export async function checkCompanionLifecycles(assetRoot) {
   const require = createRequire(resolve(assetRoot, 'index.js'))
   const { createCompanionTaskKernel } = require('./companion/task-kernel.cjs')
@@ -1035,6 +1242,10 @@ export async function checkCompanionLifecycles(assetRoot) {
     assert.deepEqual(stoppedUnread.kernel.getPackage().views.cycleKeys, ['main'])
   } finally { stoppedUnread.kernel.close() }
   const source = readFileSync(resolve(assetRoot, assetRoot.endsWith('preload') ? 'index.js' : 'preload.js'), 'utf8')
+  await checkColdRolloutAdmission(source, fixture)
+  checked += await checkColdUnreadRefresh(source)
+  checked += await checkVerifiedInventorySharing(source)
+  checked += checkInventoryProjectAssignments(source)
   const cacheStart = source.indexOf('function companionOpenTargetUnavailable(')
   const cacheEnd = source.indexOf('\nasync function openCompanionClaudeTarget(', cacheStart)
   const indexStart = source.indexOf('function companionCodexInventoryMatchV7(')

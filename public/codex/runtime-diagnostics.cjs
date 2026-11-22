@@ -3,7 +3,7 @@
 const SYNC_STAGES = new Set([
   'stream-received', 'stream-rejected', 'stream-held', 'inventory-targeted-read', 'inventory-admitted', 'stream-replayed',
   'owner-queued', 'owner-requested', 'owner-resolved', 'turn-notification',
-  'native-unread', 'side-terminal-read', 'package-published'
+  'native-unread', 'side-terminal-read', 'cold-rollout', 'package-published'
 ])
 const SYNC_OUTCOMES = new Set([
   'snapshot', 'patches', 'held', 'admitted', 'replayed', 'queued', 'requested',
