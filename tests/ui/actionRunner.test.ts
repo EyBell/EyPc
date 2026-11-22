@@ -103,6 +103,77 @@ describe('Action Runner UI contract', () => {
     }
   })
 
+  it('cancels a marked run when selection rebinds its button, even if the old lane remains', async () => {
+    const lane = (laneId: string, name: string, state: 'idle' | 'running' | 'stopping' = 'idle') => ({
+      id: laneId, laneId, name, icon: 'play', risk: 'display-only' as const, state
+    })
+    const catalogFor = (left: 'idle' | 'running' | 'stopping', right: 'idle' | 'running' | 'stopping' = 'idle') => ({
+      version: 1 as const,
+      generatedAt: 0,
+      projects: [{
+        key: 'project',
+        name: '项目',
+        environments: [{ id: 'env', name: '环境', actions: [lane('lane-a', '构建', left), lane('lane-b', '检查', right)] }]
+      }]
+    })
+    const initial: CodexActionRunnerSnapshotV1 = {
+      version: 1,
+      catalog: catalogFor('idle'),
+      runs: [],
+      selectedLaneId: 'lane-a',
+      view: 'records',
+      pinned: false,
+      loading: false,
+      generatedAt: 0
+    }
+    const bridge = {
+      getSnapshot: () => initial,
+      onSnapshot: vi.fn((_listener: (snapshot: CodexActionRunnerSnapshotV1) => void) => () => undefined),
+      onLog: vi.fn(() => () => undefined),
+      requestSnapshot: vi.fn(() => true),
+      hide: vi.fn(() => true),
+      action: vi.fn((_actionId: string, _args?: Record<string, unknown>) => true)
+    }
+    vi.stubGlobal('eypcActionRunner', bridge)
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      top: 20, bottom: 52, left: 20, right: 100, width: 80, height: 32, x: 20, y: 20, toJSON: () => ({})
+    })
+    const wrapper = mount(ActionApp, { attachTo: document.body, global: { stubs: { QuickJumpLayer: true } } })
+    const root = wrapper.get('.action-runner')
+    const publish = bridge.onSnapshot.mock.calls[0][0]
+    const runs = () => bridge.action.mock.calls.filter(([id]) => id === 'codex.actionRunner.run')
+    const markerFor = (id: string) => wrapper.findComponent({ name: 'QuickJumpLayer' }).props('targets')
+      .find((target: { id: string; marker: string }) => target.id === id)?.marker as string
+    try {
+      publish(initial)
+      await wrapper.vm.$nextTick()
+      await root.trigger('keydown', { key: 'f', code: 'KeyF' })
+      const marked = markerFor('runner:lane-a:run')
+      expect(marked).toMatch(/^[a-z]$/)
+      await wrapper.findAll('.tree-action').find((button) => button.text().includes('检查'))!.trigger('click')
+      await root.trigger('keydown', { key: marked, code: `Key${marked.toUpperCase()}` })
+      expect(bridge.action).not.toHaveBeenCalledWith('codex.actionRunner.run', expect.anything())
+      expect(bridge.action).not.toHaveBeenCalledWith('codex.actionRunner.stop', expect.anything())
+      bridge.action.mockClear()
+      await wrapper.get('button.primary').trigger('click')
+      expect(runs()).toEqual([['codex.actionRunner.run', { laneId: 'lane-b', restartIfRunning: false }]])
+
+      bridge.action.mockClear()
+      await wrapper.findAll('.tree-action').find((button) => button.text().includes('构建'))!.trigger('click')
+      await root.trigger('keydown', { key: 'f', code: 'KeyF' })
+      const stale = markerFor('runner:lane-a:run')
+      publish({ ...initial, selectedLaneId: 'lane-a', catalog: catalogFor('stopping') })
+      await wrapper.vm.$nextTick()
+      await root.trigger('keydown', { key: stale, code: `Key${stale.toUpperCase()}` })
+      expect(bridge.action).not.toHaveBeenCalledWith('codex.actionRunner.run', expect.anything())
+      expect(bridge.action).not.toHaveBeenCalledWith('codex.actionRunner.stop', expect.anything())
+    } finally {
+      wrapper.unmount()
+      rect.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('keeps child IPC constrained to snapshots, sanitized deltas and Runtime Actions', () => {
     expect(preload).toContain("snapshot: 'eypc-action-runner:snapshot'")
     expect(preload).toContain("log: 'eypc-action-runner:log'")

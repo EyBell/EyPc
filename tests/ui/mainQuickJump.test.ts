@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from '../../src/App.vue'
+import { formatShortcutLabel } from '../../src/domain/shortcuts'
 import { createInitialState } from '../../src/domain/state'
 import { createAppRuntime } from '../../src/runtime/appRuntime'
 
@@ -168,6 +169,22 @@ describe('main window Quick Jump', () => {
 
     expect(runtime.focusPort).not.toHaveBeenCalled()
     expect(app.find('.quick-jump-top-layer').exists()).toBe(false)
+  })
+
+  it('selects the Settings tab by marker and lets the recorder capture tab shortcuts', async () => {
+    const { app, runtime } = await mountMain()
+    const settingsTab = app.get<HTMLElement>('.top-tabs .tab-button[title^="设置 ·"]')
+    visible(settingsTab.element)
+    await press(app.element, 'f')
+    await press(app.element, 'Enter')
+    expect(runtime.dispatch).toHaveBeenCalledWith('tab.select.settings', expect.objectContaining({ source: 'manual-quick-jump' }))
+    expect(runtime.snapshot().state.activeTab).toBe('settings')
+
+    await app.get('[data-command-id="app.hide"] button[aria-label="录制"]').trigger('click')
+    const recorder = app.get<HTMLElement>('.shortcut-recorder')
+    await press(recorder.element, '!', { code: 'Digit1', ctrlKey: true, shiftKey: true })
+    expect(recorder.get('kbd').text()).toBe(formatShortcutLabel('Ctrl+Shift+1'))
+    expect(runtime.snapshot().state.activeTab).toBe('settings')
   })
 
   it('dispatches the existing drawer selection with its port identity and command arguments', async () => {

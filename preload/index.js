@@ -7209,6 +7209,7 @@ class CodexDesktopCompanionBridge {
       details: { reason: decision?.reason || 'read-module-unavailable', version: Number.isSafeInteger(version) ? version : 0,
         bindingKnown: Boolean(decision?.binding), unread: decision?.accepted ? params.hasUnreadTurn : undefined } })
     if (!decision?.accepted) return
+    if (params.hasUnreadTurn === false && codexDesktopOpenObservation?.nativeRead(params.conversationId, decision.binding) === false) return
     const bindingChanged = decision.binding && this.unreadRecovery?.bindingChanged(this, decision.binding)
     this.unreadRecovery?.notificationAccepted(this, params.conversationId)
     const known = codexActivityInventory.get(params.conversationId)
@@ -7249,7 +7250,6 @@ class CodexDesktopCompanionBridge {
     known.unreadAuthority = 'desktop-live'
     if (bindingChanged) this.refreshPersistedUnread(true)
     emitCodexActivityDelta([{ ...known, readStateOnly: true }], false)
-    if (params.hasUnreadTurn === false) codexDesktopOpenObservation?.nativeRead(params.conversationId, decision.binding)
     this.reconcileLateUnread(params.conversationId, params.hasUnreadTurn, params.conversationId)
   }
 
@@ -7559,22 +7559,24 @@ class CodexDesktopCompanionBridge {
     const completion = codexDesktopCompletedInstance(threadId)
     const checkpoint = companionTaskKernel?.getActivityCheckpoint?.(known?.key)
     if (!known || !binding || !completion || checkpoint?.phase && checkpoint.phase !== 'completed'
+      || codexhostDiscovery?.isExternalThreadId?.(threadId) === true
       || !this.inventory.has(threadId)
       || codexDesktopUnreadObservation(this, known, threadId, this.shadows.get(threadId)).hasUnreadTurn !== true) return null
     const generation = this.streamGeneration
     const connected = this.state === 'connected'
     const stream = connected ? this.streamWriteContext(threadId) : null
+    const transportCurrent = () => codexDesktopBridge === this && !this.closed && this.streamGeneration === generation
+      && this.readStateBinding === binding && (this.state === 'connected') === connected
+      && (!stream || this.streamWriteCurrent(threadId, stream))
     const current = () => {
       const activity = companionTaskKernel?.getActivityCheckpoint?.(known.key)
-      return codexDesktopBridge === this && !this.closed && this.streamGeneration === generation
-        && this.readStateBinding === binding && (this.state === 'connected') === connected
-        && (!stream || this.streamWriteCurrent(threadId, stream))
+      return transportCurrent()
         && this.inventory.has(threadId) && codexActivityInventory.get(threadId)?.key === known.key
         && (!activity || activity.phase === 'completed') && (!checkpoint || activity?.causalKey === checkpoint.causalKey)
         && codexDesktopCompletedInstance(threadId) === completion
     }
-    const acceptsLive = (observed) => connected && observed?.identityKey === binding.identityKey
-      && observed.executionHostKey === binding.executionHostKey
+    const acceptsLive = (observed) => connected && transportCurrent()
+      && (!observed || observed.identityKey === binding.identityKey && observed.executionHostKey === binding.executionHostKey)
     const canReadPersisted = !connected && this.persistedUnread.get(threadId) === true
       && this.persistedUnreadCompletions.get(threadId) === completion
     const readPersisted = !canReadPersisted ? undefined : async (pending) => {
@@ -8019,6 +8021,7 @@ function resetCodexThreadSessionState(options = {}) {
   if (!preserveIdentityScope) {
     codexCausalDomain = crypto.randomBytes(16).toString('hex')
     codexDesktopOpenObservation?.clear()
+    companionCodexOpenEntries.clear()
   }
   codexDesktopRequestProjection?.codexDesktopResetFallbackInteractions()
   codexThreadActions.clear()
@@ -8563,7 +8566,7 @@ function registerCodexLiveThreadMembership(thread, registry, project, desktop = 
     sourceFingerprint: registry?.fingerprint || codexActivitySourceFingerprint || '',
     cwd: codexNormalizeNativeRoot(thread.cwd)
   })
-  companionCodexOpenEntries.set(action.key, { threadId })
+  cacheCompanionCodexOpenTarget(action.key, threadId)
   const connector = desktop ? sanitizeCodexActivityStatus(thread.status) : null
   const displayName = desktop && typeof thread.name === 'string' ? codexNativeString(thread.name.trim().slice(0, 120)) : ''
   const known = {
@@ -9495,10 +9498,10 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
           && stream?.available === true && stream.generation === bridge.streamGeneration
           && stream.ownerClientId === shadow.ownerClientId
       })
-    if (machineWithSpawn && !live && turnFields.lastTurnStatus === 'interrupted' && terminal?.turnRef && terminal.sideInterruptedAt
-      && terminal.turnRef === turnFields.turnRef && terminal.turnStartedAt === turnFields.turnStartedAt) {
-      turnFields.terminalAt = terminal.sideInterruptedAt
-    }
+    const machineRunInterruptedAt = machineWithSpawn && !live && turnFields.lastTurnStatus === 'interrupted'
+      && terminal?.turnRef && terminal.turnRef === turnFields.turnRef && terminal.turnStartedAt === turnFields.turnStartedAt
+      ? terminal.sideInterruptedAt : undefined
+    if (machineRunInterruptedAt) turnFields.terminalAt = machineRunInterruptedAt
     const planReady = plan?.planReady === true && (!turnFields.turnStartedAt
       || turnFields.turnStartedAt <= plan.planLifecycleRevision)
     const exactBranchLive = Boolean(row.appServerActivity) || appServerOwn && row.threadId === parentThreadId
@@ -9556,6 +9559,7 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       closedMachineRun: machineWithSpawn
         ? Number(row.inventoryEvidence.closedSpawnObservedAt) > activeSequence : undefined,
       machineRunCoverageCurrent: machineWithSpawn ? machineRunCoverageCurrent : undefined,
+      machineRunInterruptedAt,
       relationOnly,
       emptyTurnHistory,
       ordinarySideInterruptedAt: !live && terminal?.turnRef && terminal.turnRef === turnFields.turnRef
@@ -9632,7 +9636,7 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
 
 function codexThreadAlias(threadId, now, metadata = {}) {
   const key = codexThreadKey(threadId)
-  if (metadata.sourceFingerprint) companionCodexOpenEntries.set(key, { threadId })
+  if (metadata.sourceFingerprint) cacheCompanionCodexOpenTarget(key, threadId)
   for (const [alias, entry] of codexThreadActions) {
     if (entry.expiresAt <= now) codexThreadActions.delete(alias)
     else if (entry.key === key && entry.threadId === threadId) {
@@ -11594,24 +11598,26 @@ async function dispatchCodexThreadOpen(entry, request, identity = null) {
   const shell = electronShell()
   const electronOpen = typeof shell?.openExternal === 'function'
   const utoolsOpen = typeof globalThis.utools?.shellOpenExternal === 'function'
-  const diagnostics = request?.operationId && process.platform === 'darwin' ? runtimeDiagnostics.snapshot?.()?.settings : null
-  const trial = request?.source === 'global-shortcut' && diagnostics?.enabled === true && diagnostics.level === 'debug'
-    && codexDesktopOpenObservation?.prepareBenchmarkTrial
-    ? await codexDesktopOpenObservation.prepareBenchmarkTrial() : null
-  if (!dispatchCurrent()) return companionOpenTargetUnavailable()
-  if (trial?.ready === false) {
-    return { outcome: 'unavailable', errorCode: 'benchmark-application-unavailable', message: '同一 Codex 应用尚未确认运行，未发起本次对照' }
-  }
-  if (!trial?.open && !electronOpen && !utoolsOpen) {
+  if (!electronOpen && !utoolsOpen) {
     return { outcome: 'failed', confirmsRead: false, handoff: codexOpenHandoff(handoffId, 'failed'),
       errorCode: 'unsupported', message: '当前宿主不支持打开 Codex 线程' }
   }
+  const diagnostics = request?.operationId && process.platform === 'darwin' ? runtimeDiagnostics.snapshot?.()?.settings : null
+  const trial = request?.source === 'global-shortcut' && diagnostics?.enabled === true && diagnostics.level === 'debug'
+    && codexDesktopOpenObservation?.prepareBenchmarkTrial
+    ? await codexDesktopOpenObservation.prepareBenchmarkTrial(threadId) : null
+  if (!dispatchCurrent()) return companionOpenTargetUnavailable()
+  if (trial?.ready === false) {
+    return { outcome: 'unavailable', errorCode: trial.errorCode, message: trial.message }
+  }
+  const readScope = codexDesktopBridge?.captureOpenRead(threadId)
+  if (trial && !trial.start()) return companionOpenTargetUnavailable()
   const observed = codexDesktopOpenObservation?.begin({
     threadId, key, operationId: request?.operationId || handoffId,
     source: request?.source || 'codex-thread-open',
     route: trial?.open ? 'explicit-app' : electronOpen ? 'electron-deep-link' : 'utools-deep-link',
     pair: trial?.pair, arm: trial?.arm, app: trial?.app,
-    readScope: codexDesktopBridge?.captureOpenRead(threadId),
+    readScope,
     observeForeground: diagnostics?.enabled === true && diagnostics.level !== 'error'
   })
   try {
@@ -11915,8 +11921,28 @@ function companionOpenTargetUnavailable() {
   return { outcome: 'unavailable', errorCode: 'stale-target', message: '任务或打开位置已变化，请重试' }
 }
 
+function cacheCompanionCodexOpenTarget(key, threadId) {
+  if (companionCodexOpenEntries.get(key)?.threadId !== threadId) {
+    companionCodexOpenEntries.set(key, { threadId })
+  }
+}
+
+function queueCompanionCodexOpenTargetRecovery(key) {
+  const domain = codexCausalDomain
+  const fingerprint = codexActivitySourceFingerprint
+  const epoch = companionTaskKernel?.providerEpoch('codex')
+  if (!fingerprint || epoch === undefined) return
+  void Promise.resolve().then(() => {
+    if (domain !== codexCausalDomain || fingerprint !== codexActivitySourceFingerprint
+      || epoch !== companionTaskKernel?.providerEpoch('codex') || companionCodexOpenEntries.has(key)) return
+    const match = companionCodexInventoryMatchV7(key)
+    if (!match || match.known.inventoryMissingSince || !validCodexThreadId(match.threadId)
+      || codexThreadKey(match.threadId) !== key) return
+    cacheCompanionCodexOpenTarget(key, match.threadId)
+  })
+}
+
 function invalidateCompanionCodexSource() {
-  companionCodexOpenEntries.clear()
   companionCodexVerifiedSnapshotCacheV7 = null
   resetCodexThreadSessionState()
   companionTaskKernel?.invalidateProvider('codex')
@@ -11930,12 +11956,14 @@ async function openCompanionCodexTarget(target, request) {
   }
   if (request?.cacheOnly === true) {
     const entry = companionCodexOpenEntries.get(key)
-    return entry && validCodexThreadId(entry.threadId)
-      ? dispatchCodexThreadOpen(entry, request, {
-        key,
-        current: () => companionCodexOpenEntries.get(key) === entry
-      })
-      : companionOpenTargetUnavailable()
+    if (!entry || !validCodexThreadId(entry.threadId)) {
+      if (request.isCurrent?.() !== false) queueCompanionCodexOpenTargetRecovery(key)
+      return companionOpenTargetUnavailable()
+    }
+    return dispatchCodexThreadOpen(entry, request, {
+      key,
+      current: () => companionCodexOpenEntries.get(key) === entry
+    })
   }
   let resolved = companionCodexActionForHint(key, target.actionAlias)
   if (!resolved) {
@@ -12992,7 +13020,8 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
         companionTaskKernel?.getActivityCheckpoint?.(nodeKey), codexCausalDomain),
       observedAt: observation.sequence,
       metadata: isRoot ? metadata : { ...metadata, closedMachineRun: branch.closedMachineRun,
-        machineRunCoverageCurrent: branch.machineRunCoverageCurrent, relationOnly: branch.relationOnly === true },
+        machineRunCoverageCurrent: branch.machineRunCoverageCurrent, machineRunInterruptedAt: branch.machineRunInterruptedAt,
+        relationOnly: branch.relationOnly === true },
       capabilities,
       standaloneEligible: isRoot
     })
@@ -13979,10 +14008,14 @@ try {
   }
 } catch { companionOpenReadiness = null }
 
+const openCompanionCodexAfterReadiness = companionOpenReadiness?.wrapOpen('codex', openCompanionCodexTarget)
+  || openCompanionCodexTarget
 const companionHostRegistry = createCompanionHostRegistry?.({
   codex: {
     inspect: inspectCodexEnvironment,
-    open: companionOpenReadiness ? companionOpenReadiness.wrapOpen('codex', openCompanionCodexTarget) : openCompanionCodexTarget,
+    open: (target, request) => request?.cacheOnly === true && !companionCodexOpenEntries.has(target?.key)
+      ? openCompanionCodexTarget(target, request)
+      : openCompanionCodexAfterReadiness(target, request),
     executePlan: executeCompanionCodexPlan,
     continueTask: (target, request) => continueCompanionCodexTask
       ? continueCompanionCodexTask(target, request)

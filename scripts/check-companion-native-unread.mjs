@@ -51,22 +51,36 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(boundNativeUnreadIds({ ...protectedState, 'electron-renderer-content-owner': otherKey },
     { identityKey, executionHostKey: localHost }), null, 'a changed renderer account invalidates the target read')
   let currentCompletion = 'first'
+  let currentGeneration = 1
+  let clock = 1000
   const openEvents = []
   const observation = createCodexDesktopOpenObservation({
-    record: event => openEvents.push(event), setTimer: () => 1, clearTimer: () => {}
+    record: event => openEvents.push(event), now: () => clock, setTimer: () => 1, clearTimer: () => {}
   })
   const open = observation.begin({
     threadId: main, key: 'main', operationId: 'open-first', route: 'electron-deep-link',
-    readScope: { current: () => currentCompletion === 'first', acceptsLive: observed => observed === binding }
+    readScope: { current: () => currentCompletion === 'first', acceptsLive: observed => currentGeneration === 1 && observed === binding }
   })
   open(true)
   observation.nativeRead(side, binding)
   observation.nativeRead(main, { ...binding })
   assert(!openEvents.some(event => event.outcome === 'confirmed'), 'another target or binding cannot confirm the open')
   currentCompletion = 'second'
-  observation.nativeRead(main, binding)
+  assert.equal(observation.nativeRead(main, binding), false, 'a superseded open receipt must not be applied to the current completion')
+  observation.begin({
+    threadId: main, key: 'main', operationId: 'open-second', route: 'electron-deep-link',
+    readScope: { current: () => currentCompletion === 'second', acceptsLive: observed => observed === binding }
+  })(true)
+  assert.equal(observation.nativeRead(main, binding), false, 'reopening the same thread cannot attribute an old receipt to the new completion')
   assert(openEvents.some(event => event.operationId === 'open-first' && event.event === 'codex-open-native-read' && event.outcome === 'superseded'),
     'a delayed receipt settles only its original completion')
+  assert.equal(openEvents.filter(event => event.event === 'codex-open-native-read').length, 1, 'settle the old operation once')
+  currentGeneration = 2
+  assert.equal(observation.nativeRead(main, binding), true, 'an independent read on the new connection may apply')
+  currentGeneration = 1
+  clock += 4000
+  assert.equal(observation.nativeRead(main, binding), true, 'the old open cannot block native read events after its observation window')
+  assert(!openEvents.some(event => event.operationId === 'open-second' && event.outcome === 'confirmed'), 'the repeated open has no attributable receipt')
   assert(openEvents.some(event => event.event === 'codex-open-target-visible' && event.outcome === 'unconfirmed'),
     'dispatch does not establish target visibility')
   const { codexDesktopIpcVersionAccepted } = require('./codex/desktop-protocol.cjs')
@@ -227,6 +241,13 @@ export function checkCompanionNativeUnread(assetRoot) {
   const machine = projectionContext.codexPrivateBranchEvidence(main, known).branches.find(value => value.branchKind === 'side')
   assert.equal(machine.closedMachineRun, false, 'an exact open spawn edge is retained as its own fact')
   assert.equal(machine.terminalAt, 200, 'an exact machine interruption provides its actual end rather than a start-time fallback')
+  assert.equal(machine.machineRunInterruptedAt, 200, 'carry the exact interruption separately from a display timestamp')
+  terminals.get(side).sideInterruptedAt = 100
+  assert.equal(projectionContext.codexPrivateBranchEvidence(main, known).branches.find(value => value.branchKind === 'side').machineRunInterruptedAt,
+    100, 'a native interruption in the same time bucket as its start remains exact')
+  delete terminals.get(side).sideInterruptedAt
+  assert.equal(projectionContext.codexPrivateBranchEvidence(main, known).branches.find(value => value.branchKind === 'side').machineRunInterruptedAt,
+    undefined, 'a fallback to the start does not prove when a machine run ended')
   projectionContext.codexInventorySideBranchEvidence.delete(side)
   // Exercise the actual cold-idle scheduling method without an IPC payload,
   // messages, process launch or any inferred completion from runtime idle.
@@ -254,7 +275,7 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(queries[0].options.settleSnapshotTerminal, true)
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 0, '', false, true), true, 'exact inactive member terminal can settle at first successful read')
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 200, 'inProgress', true, true), false, 'idle cannot authorize an older member epoch')
-  return 31
+  return 40
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

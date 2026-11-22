@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 71 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-9ae616bb36a8140759b4 / renderer-1e6d771023b2e9b5aff7` · `artifact-ready` |
-| 当前构建时间 | `2026/11/20 20:20:45`（`2026-11-20T12:20:45.469Z`） |
+| 当前构建产物 | `host-c8e1ff444b371844b634 / renderer-ff3e097be3dffa3fa44d` · `artifact-ready` |
+| 当前构建时间 | `2026/11/22 09:43:50`（`2026-11-22T01:43:50.690Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-9ae616bb36a8140759b4",
-    "renderer_asset": "renderer-1e6d771023b2e9b5aff7",
+    "host_asset": "host-c8e1ff444b371844b634",
+    "renderer_asset": "renderer-ff3e097be3dffa3fa44d",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-11-20T12:20:45.469Z",
-    "built_at_local": "2026/11/20 20:20:45",
+    "built_at": "2026-11-22T01:43:50.690Z",
+    "built_at_local": "2026/11/22 09:43:50",
     "package_version": "0.1.0"
   },
   "content_digests": {
     "requirement_registry": "5f622ca3b8b9a1bdb3553a030d99222cb3a59dbac892184e2f80a51478563906",
     "raw_sources": "4ac56d8edc3c83a513345ce470c3b7e5825d2f95e5af28ec57f4d7a764f75e00",
     "source_anchor_catalog": "75c5993c90ec2d03f22beadfce4424c18d33f4f590ba75f33e4dffb6082a26cd",
-    "product_body": "b7b205f4b0f3fc5866bd12ed43bd989dc3ed4008cf573b6fce2ea8271c81acdd",
+    "product_body": "4ce0bf0c0ace270321df0d3234a56246e12c0eee3425f4f1de74bd7401b0b003",
     "architecture": "76fdcf33997f33f80022f41be57ae6a0db70637b2c2b7dcffbcf508b72e0cf35",
-    "runtime_contract": "f652d39c16ebce2107174acec36a20892054f9026a85685ff521e7a4cfb0e83c"
+    "runtime_contract": "1932bd83b2660826cc4a86a1a025680e0d7943950977d30e1749141c29351844"
   }
 }
 ```
@@ -309,6 +309,7 @@ Codex 原生分区给出置顶事实。有完整原生分区顺序时，用于�
 - Float liveness uses a two-second heartbeat, a six-second stall threshold, a sixty-second recreate cooldown and a ten-second recovery observation. Interactions use anonymous IDs and expire after ten seconds idle or on blur/lifecycle teardown, so a lost pointer/focus event cannot indefinitely hold drag/expanded state.
 - The companion uses a real uTools child window and retains water-ball/compact-card skins, host-owned resize, automatic collapse and macOS all-Spaces behavior. In the expanded surface the four task Tabs (`动态 / 已完成 / 已隐藏 / 项目`) sit flush with the top and share their row with drag and edge-pin controls; the first visible group title sits left below search and the shared category quota component sits right, including authorized local quota and right-aligning alone without a title; the old water/card, hidden, refresh, settings and close toolbar does not render there, and quota is followed directly by source/task content rather than an Actions/Environment block. Pointer/focus departure or clicking elsewhere and blurring the child schedules collapse after about 220ms; only an actual composer, panel, alias editor, Quick Jump, Shift preview or resize interaction may defer it. Card appearance stores an explicit surface/foreground pair rather than forcing paper-white.
 - 五个 Environment Action 槽和「打开 Action 执行工作台」在 uTools 各有独立功能绑定。工作台入口只展开／聚焦独立 Runner。槽位入口先展开／定位 Runner，再按原有项目、Environment 与执行校验运行相应 Action。Float 局部槽位键交给同一 Controller 执行链，主窗的切页键由主窗解释。Runner 标题栏「去绑定」打开 uTools 中工作台入口的配置，Codex「快捷方式」可分别配置五个槽。[窗口键位条款](requirements/shortcut-management-raw-005.md#L1)
+- Float 局部 Action 槽只接受单次按下，忽略长按产生的重复事件。Runner 的执行与停止标记绑定生成时的 Action 和操作。选中项或操作变化时，旧标记失效。[合并后复验](261120/eypc-shortcut-optimization/spec.md#合并后-f-项复验)
 - Runner is a frameless, explicitly draggable/resizable/optionally pinned child whose close control and Command/Ctrl+W only hide it. Its project-rooted tree omits a single Environment level; selected-Action history expands each new live run once, compresses older records to one line and supports reversible ended-record archive. Quick Jump uses the saved bindings, with `F` / `Shift+F` as defaults. Action entries keep the main window's current Tab and use `plugin.json.mainHide`.
 - Controller owns target priority, Runtime Actions, one-shot stale-alias recovery and the catalog's safe loading/error message. Five-slot Environment authority comes from the Host-persisted selected Lane: only a project with no selection defaults to its first Environment; a cross-project, stale or missing-slot selection blocks and asks the user to repair it. A dedicated Action Host runtime revision makes old/mixed preloads reload-required and execution-disabled. A tasks-only preflight may bypass Codex Tab/Float visibility when the feature is enabled, but does not read quota or start polling.
 - Host separately owns the unique Environment `configRoot`, exact task/worktree `executionCwd`, per-run TOML/runtime reread, target identity, shell:false absolute launch, SIGTERM-only lifecycle, cross-chunk sanitized cursor output and cleanup-before-load SQLite history. Project `targetId` remains `projectKey` for Lane/SQLite compatibility; a task `targetId` includes a Host digest of its canonical worktree cwd, and vault/session/confirmation/run/stop all verify that identity. TOML accepts only the raw integer token `version = 1`. Only complete argv arrays for `pnpm|npm|yarn|bun run build|serve`, `vite build|serve` and `git push` enter the catalog; flags, extra tokens and shell syntax never reach the launch planner. Commands, cwd, PID, Node paths, environment values and unsanitized output stay Host-only.
@@ -367,7 +368,7 @@ Codex 原生分区给出置顶事实。有完整原生分区顺序时，用于�
 - One item is highlighted per Tab. Arrow movement temporarily owns highlight until the pointer actually moves again. Right-clicking an unselected task first makes it the sole selection; right-clicking a selected task preserves multi-selection, while a project target clears task selection. Right-click and Ctrl+right then open the same full action drawer; its arrows move among actions and Enter/Ctrl+1…9 execute. Batch actions never expose operations that lack batch semantics.
 - The Codex shortcut domain exposes the rebindable `codex.thread.createFocused` on `Ctrl+T`. `Ctrl+F` and its `Ctrl+Shift+F` alias focus conversation search. `F` / `Shift+F` open Quick Jump. Conflicts are reported only when Tab, layer and `when` can be true together. The child resolves the effective bindings with the same `when`/layer precedence while locally owning DOM focus, `codex-composer` / `codex-search` input roles and transient layers. See [the current card bindings](../../src/help/guides/codex.md#卡片内快捷键) and [RAW-167](requirements/codex-quick-task-view-raw-167.md#L1).
 - 快速任务查看的全局入口为 `eypc-companion-quick`（`mainHide`，「快速任务查看」），插件内默认 `Ctrl+Alt+K`。有可信快照时可直接展开 Float 的动态筛选，主窗无需打开。完全无可用缓存时按 [RAW-002](requirements/shortcut-management-raw-002.md#L1) 结束本次。筛选模式清空查询并聚焦搜索框，为前十个当前可见的可执行行编号。`Ctrl+1…9/0` 打开对应任务并退出筛选模式。折叠组头独占一个编号，触发时只展开该组，随后按可见行重排。徽标不占布局或拦截指针。搜索框保留上下键、Shift 预览、Shift+方向键、Enter、数字快开、搜索和 Escape，编辑器沿用自己的输入层。[RAW-167](requirements/codex-quick-task-view-raw-167.md#L1)
-- 展开 Float 的编号徽标常驻。`Alt+1…9/0` 打开当前编号任务，命中折叠组头则展开该组并重排编号。`Alt+F` 只标记可见会话并直接打开目标，`F`／`Shift+F` 的普通任务标记只移动高亮。`Alt+↑`／`Alt+↓` 调整本地置顶顺序。`Ctrl+数字` 在筛选模式打开编号任务，在动作抽屉打开时执行对应动作，抽屉优先。[RAW-167](requirements/codex-quick-task-view-raw-167.md#L1)
+- 展开 Float 的编号徽标常驻。`Alt+1…9/0` 打开当前编号任务，命中折叠组头则展开该组并重排编号。`Alt+F` 按数字快开的资格标记可打开的可见会话，激活时再核对同一目标。`F`／`Shift+F` 的普通任务标记只移动高亮。`Alt+↑`／`Alt+↓` 调整本地置顶顺序。`Ctrl+数字` 在筛选模式打开编号任务，在动作抽屉打开时执行对应动作，抽屉优先。[RAW-167](requirements/codex-quick-task-view-raw-167.md#L1)
 - Every registered `*.hotkey.configure` action must have a dispatching control in the Codex「快捷方式」panel, every label passed to `configureHotkey` must be a real `plugin.json` command word, and each row must configure its own feature rather than a neighbouring one. uTools locates a global feature by its cmd text, so a label that exists only as `explain` makes the “去设置” button a silent no-op. RAW-167 adds the missing 快速任务查看, 归档当前任务 and Action 执行工作台 rows, repairs the completed-unread label, splits the 悬浮球开关 row off `codex.hotkey.configure` (which actually targets 直接展开 Codex 卡片) into its own `codex.float.toggle.hotkey.configure`, and guards all three invariants with a source-level coverage test.
 - Pure Shift opens a non-focus-stealing task preview: hovered task wins, otherwise the keyboard-highlighted task is used. Shift+up/down moves highlight and preview without changing selection; actual mouse movement restores hover ownership. Ctrl/Cmd/Alt+Shift, editable focus, composer, confirmation, drawer/detail, Quick Jump and model layers suppress it. The preview contains only name/original name, project, state/active flags, creation/first/latest/completion times, duration, source, hidden/pinned and archive capability; it never reads body, summary, raw ID, cwd or path.
 - Escape unwinds confirmation → composer/model → Quick Jump → Shift preview → inline edit → detail → more actions → multi-selection → search → collapse. A single-item detail always returns to the same target's more-actions drawer and focuses “查看详情”; the next Escape closes to the original row. Ctrl+left/right layer switches retain that original trigger. Batch drawers have no detail child and close in one step. Missing targets/triggers fall back to a visible task or the list container. Shift preview closes on key release, window blur, collapse, Tab switch or another layer; an Escape-closed preview stays suppressed until Shift is released.
@@ -399,6 +400,7 @@ Codex 原生分区给出置顶事实。有完整原生分区顺序时，用于�
 - Settings owns feature visibility/order, shortcut profiles, shortcut conflict/reservation visibility, storage status, and shared tool preview preferences.
 - Shortcut edits are Settings-local drafts until saved as runtime shortcut profile updates.
 - 「快捷键」及「维护 → Layer Commands」的非编辑命令行用 `Ctrl/Cmd+←` 打开详情、`Ctrl/Cmd+→` 或右键打开动作，关闭后归还当前行焦点。录制、When 编辑及其它输入控件优先接管自己的键位。[设置维护条款](requirements/shortcut-management-raw-005.md#L1)
+- 快捷键录制优先接收组合键。单独保存 `When` 沿用已有键位和启用状态。选择顶部「设置」标记走点击同一页签的选页命令。[合并后复验](261120/eypc-shortcut-optimization/spec.md#合并后-f-项复验)
 
 ## Documentation
 

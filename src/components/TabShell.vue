@@ -22,7 +22,7 @@ defineEmits<{ select: [tab: AppTabId] }>()
       <button
         v-for="feature in snapshot.visibleFeatures"
         :key="feature.id"
-        v-quick-jump-target="quickJumpCommandTargetV7({ featureId: feature.id, commandId: feature.shortcutCommandId, label: feature.title, searchText: feature.description, disposition: 'open' })"
+        v-quick-jump-target="quickJumpCommandTargetV7({ featureId: feature.id, commandId: `tab.select.${feature.id}`, label: feature.title, searchText: feature.description, disposition: 'open' })"
         type="button"
         class="tab-button"
         :class="{ active: feature.id === activeTab, 'shortcut-hinting': showShortcutHints }"

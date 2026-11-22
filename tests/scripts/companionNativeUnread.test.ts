@@ -95,7 +95,7 @@ describe('Codex unread recovery isolation', () => {
 
 describe('Native Codex identity-scoped unread gate', () => {
   it('executes native/legacy source selection, identity isolation and live protocol acceptance', () => {
-    expect(checkCompanionNativeUnread(resolve('preload'))).toBe(31)
+    expect(checkCompanionNativeUnread(resolve('preload'))).toBe(40)
   })
   it('rejects the obsolete live unread protocol policy', () => {
     const temporary = mkdtempSync(join(tmpdir(), 'eypc-native-unread-'))
@@ -162,22 +162,30 @@ describe('Native Codex open experiment', () => {
         callback(null)
       }
     })
-    const target = 'codex://threads/12345678-1234-4234-8234-123456789abc'
+    const threadId = '12345678-1234-4234-8234-123456789abc'
+    const target = `codex://threads/${threadId}`
+    const abandoned = await experiment.prepareBenchmarkTrial(threadId)
     const pairs: string[] = []
     for (let index = 0; index < 20; index += 1) {
-      const trial = await experiment.prepareBenchmarkTrial()
+      const trial = await experiment.prepareBenchmarkTrial(threadId)
       expect(trial).toMatchObject({ ready: true, app, pair: Math.floor(index / 2) + 1 })
+      expect(trial.start()).toBe(true)
       pairs.push(trial.arm)
       await trial.open?.(target)
       if (index === 0) {
-        app = { ...app, pid: 43 }
-        await expect(experiment.prepareBenchmarkTrial()).resolves.toEqual({ ready: false })
+        expect(abandoned.start()).toBe(false)
+        const otherThread = '22345678-1234-4234-8234-123456789abc'
+        await expect(experiment.prepareBenchmarkTrial(otherThread)).resolves.toMatchObject({ ready: false, errorCode: 'benchmark-pair-mismatch' })
+        app = { ...app, foreground: true }
+        await expect(experiment.prepareBenchmarkTrial(threadId)).resolves.toMatchObject({ ready: false, errorCode: 'benchmark-pair-mismatch' })
+        app = { ...app, foreground: false, pid: 43 }
+        await expect(experiment.prepareBenchmarkTrial(threadId)).resolves.toMatchObject({ ready: false, errorCode: 'benchmark-application-unavailable' })
         app = { ...app, pid: 42 }
       }
     }
     expect(pairs.join(',')).toBe(Array.from({ length: 5 }, () => 'default,explicit,explicit,default').join(','))
     expect(launches).toEqual(Array.from({ length: 10 }, () => ['/usr/bin/open', '-a', app.path, target]))
-    await expect(experiment.prepareBenchmarkTrial()).resolves.toBeNull()
+    await expect(experiment.prepareBenchmarkTrial(threadId)).resolves.toBeNull()
     expect(createCodexDesktopOpenObservation({ record: () => undefined, platform: 'darwin' }).prepareBenchmarkTrial).toBeNull()
   })
 })

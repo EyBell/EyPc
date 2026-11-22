@@ -229,8 +229,13 @@ function openQuickJump(backward: boolean) {
 function activateQuickJumpTarget() {
   const target = quickJump.value.sourceTargets.find((item) => item.id === quickJump.value.activeTargetId)
   closeQuickJump()
-  target?.element.focus({ preventScroll: true })
-  target?.element.click()
+  if (!target) return
+  const { id, element } = target
+  const markedLaneId = /^runner:(.+):(?:run|restart|stop)$/.exec(id)?.[1]
+  if (markedLaneId && (markedLaneId !== selectedLaneId.value || !element.isConnected
+    || !root.value?.contains(element) || element.dataset.quickJumpId !== id || element.matches(':disabled'))) return
+  element.focus({ preventScroll: true })
+  element.click()
 }
 
 function isEditableTarget(event: KeyboardEvent) {
@@ -388,9 +393,9 @@ onUnmounted(() => {
                 <option v-for="candidate in selectedRuntime.candidates" :key="candidate.id" :value="`manual:${candidate.id}`">{{ candidate.label }}</option>
               </select>
             </label>
-            <button v-if="selectedAction.action.state === 'running' || selectedAction.action.state === 'stopping'" type="button" :disabled="selectedAction.action.state === 'stopping'" data-quick-jump-target :aria-label="`停止 ${selectedAction.action.name}`" @click="stopSelected"><Square :size="14" aria-hidden="true" />{{ selectedAction.action.state === 'stopping' ? '停止中' : '停止' }}</button>
-            <button v-if="selectedAction.action.state === 'running' && selectedAction.action.risk === 'long-running'" type="button" class="primary" data-quick-jump-target :aria-label="`停止当前记录并重新执行 ${selectedAction.action.name}`" @click="runSelected(true)"><Play :size="14" aria-hidden="true" />重新执行</button>
-            <button v-if="selectedAction.action.state !== 'running' && selectedAction.action.state !== 'stopping'" type="button" class="primary" :disabled="selectedActionNeedsNode && selectedRuntime?.state !== 'ready'" data-quick-jump-target :aria-label="`${selectedAction.action.state === 'confirm-required' ? '确认' : '执行'} ${selectedAction.action.name}`" @click="runSelected()"><Play :size="14" aria-hidden="true" />{{ selectedAction.action.state === 'confirm-required' ? '确认执行' : '执行' }}</button>
+            <button v-if="selectedAction.action.state === 'running' || selectedAction.action.state === 'stopping'" type="button" :disabled="selectedAction.action.state === 'stopping'" :data-quick-jump-id="`runner:${selectedAction.action.laneId}:stop`" data-quick-jump-target :aria-label="`停止 ${selectedAction.action.name}`" @click="stopSelected"><Square :size="14" aria-hidden="true" />{{ selectedAction.action.state === 'stopping' ? '停止中' : '停止' }}</button>
+            <button v-if="selectedAction.action.state === 'running' && selectedAction.action.risk === 'long-running'" type="button" class="primary" :data-quick-jump-id="`runner:${selectedAction.action.laneId}:restart`" data-quick-jump-target :aria-label="`停止当前记录并重新执行 ${selectedAction.action.name}`" @click="runSelected(true)"><Play :size="14" aria-hidden="true" />重新执行</button>
+            <button v-if="selectedAction.action.state !== 'running' && selectedAction.action.state !== 'stopping'" type="button" class="primary" :disabled="selectedActionNeedsNode && selectedRuntime?.state !== 'ready'" :data-quick-jump-id="`runner:${selectedAction.action.laneId}:run`" data-quick-jump-target :aria-label="`${selectedAction.action.state === 'confirm-required' ? '确认' : '执行'} ${selectedAction.action.name}`" @click="runSelected()"><Play :size="14" aria-hidden="true" />{{ selectedAction.action.state === 'confirm-required' ? '确认执行' : '执行' }}</button>
           </div>
         </div>
 

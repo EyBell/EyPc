@@ -74,10 +74,11 @@ describe('companion open readiness', () => {
     })
     expect((result.launch as { waitedMs: number }).waitedMs).toBe(clock())
     expect(clock()).toBe(1500)
-    expect(records.map((entry) => entry.outcome)).toEqual(['launch-requested', 'launch-started', 'launched'])
+    expect(records.map((entry) => entry.outcome)).toEqual(['launch-requested', 'launch-started', 'launched', 'ready-for-dispatch'])
     expect(records.every((entry) => typeof entry.level === 'string' && entry.scope === 'task-action' && entry.event === 'open-readiness')).toBe(true)
-    expect(records[0]).toMatchObject({ level: 'debug', details: { probe: 'closed', source: 'shortcut', operationId: 'op-1' } })
-    expect(records[2]?.details).toMatchObject({ launcher: 'open-b', source: 'shortcut', operationId: 'op-1', waitedMs: 1500 })
+    expect(records.every((entry) => entry.source === 'shortcut' && entry.operationId === 'op-1')).toBe(true)
+    expect(records[0]).toMatchObject({ level: 'debug', details: { probe: 'closed' } })
+    expect(records[2]?.details).toMatchObject({ launcher: 'open-b', waitedMs: 1500 })
   })
 
   it('rechecks the selected target after launch and before native dispatch', async () => {

@@ -1,16 +1,28 @@
 # EyPc Project Status Hub
 
-- 2026-11-20 20:20:45，主检出的会话状态与快捷键合并版完成完整构建。产物为 `V7` / `host-9ae616bb36a8140759b4` / `renderer-1e6d771023b2e9b5aff7`，builtAt `2026-11-20T12:20:45.469Z`。冷态无补跳、逐来源缓存、Codex 绑定读态与迟到回执的定向回归通过。同版 uTools 加载与实际窗口到达待验。[主检出插件入口](../../dist/plugin.json) · [快捷键验收](261120/eypc-shortcut-optimization/spec.md#实施交付与验收状态)
+- 2026-11-22 09:43:50，同一源码输入重新完成 closeout 构建。产物为 `V7` / `host-c8e1ff444b371844b634` / `renderer-ff3e097be3dffa3fa44d`，builtAt `2026-11-22T01:43:50.690Z`。
+
+<a id="shortcut-review-build-261120"></a>
+
+- 2026-11-20 21:33:26，主检出的需求复核续修通过完整构建。产物为 `V7` / `host-c8e1ff444b371844b634` / `renderer-ff3e097be3dffa3fa44d`，builtAt `2026-11-20T13:33:26.506Z`。当前输入、构建收据、产物身份及 106 组预加载镜像已核对。源码和随包分别通过 196 个生命周期检查点与 40 个原生读态检查点。需求登记和产品真值已同步。最新可核 uTools 握手仍为 18:33，实际目标到达对照为 0/10 组。[当前插件入口](../../dist/plugin.json#L1) · [需求复核结果](261120/eypc-shortcut-optimization/spec.md#post-merge-requirement-review)
+
+<a id="shortcut-f-build-261120"></a>
+
+- 2026-11-20 21:07:36，主检出 F 项修复通过完整构建。产物为 `V7` / `host-8ce94fbe94524811928b` / `renderer-dbd828fae0e28b90e28b`，builtAt `2026-11-20T13:07:36.410Z`。构建输入、收据、产物身份一致，106 组预加载镜像逐字节相同。最近可核的 uTools 握手仍为 18:33 的旧包，本版键位、同任务读态和十组窗口落点待验。[F 项复验](261120/eypc-shortcut-optimization/spec.md#合并后-f-项复验)
+
+- 2026-11-20 20:20:45，主检出的会话状态与快捷键合并版完成完整构建。产物为 `V7` / `host-9ae616bb36a8140759b4` / `renderer-1e6d771023b2e9b5aff7`，builtAt `2026-11-20T12:20:45.469Z`。冷态无补跳、逐来源缓存、Codex 绑定读态与迟到回执的定向回归通过。同版 uTools 加载与实际窗口到达待验。[快捷键验收](261120/eypc-shortcut-optimization/spec.md#实施交付与验收状态)
+
+<a id="shortcut-worktree-build-261120"></a>
 
 - 2026-11-20 20:04:03，快捷键管理工作树的前置完整构建通过。工作树产物为 `V7` / `host-a3230dfd4394e3fae4ae` / `renderer-53b55ff805c289fdffa1`，builtAt `2026-11-20T12:04:03.006Z`。构建时同版 uTools 加载和实机验收待完成。[快捷键管理验收](261120/eypc-shortcut-optimization/spec.md#实施交付与验收状态)
 
-- 2026-11-20 19:51:31.622，旧机器中断归组、同完成实例的原生读态补核及热态快捷键已通过完整构建。当前产物为 `V7` / `host-d8352f0ac722a56c809a` / `renderer-9f307277830535f194ee`，builtAt `2026-11-20T11:51:31.622Z`。最近宿主握手仍为 18:33 的旧包。新版的 Main、Float、快捷入口和十组窗口到达对照待验。[主检出插件入口](../../dist/plugin.json) · [同版验收](261114/codex-state-sync/delivery.md#shortcut-read-reconciliation-261120)。
+- 2026-11-20 19:51:31.622，旧机器中断归组、同完成实例的原生读态补核及热态快捷键已通过完整构建。当前产物为 `V7` / `host-d8352f0ac722a56c809a` / `renderer-9f307277830535f194ee`，builtAt `2026-11-20T11:51:31.622Z`。最近宿主握手仍为 18:33 的旧包。新版的 Main、Float、快捷入口和十组窗口到达对照待验。[主检出插件入口](../../dist/plugin.json#L1) · [同版验收](261114/codex-state-sync/delivery.md#shortcut-read-reconciliation-261120)。
 
-- 2026-11-20 18:41:11.853，普通 Side 定向订阅后未收到新帧，按原期限唤醒补读。已有可信帧或连接换代时，旧补读失效。首次查询、重试查询以及两种失效条件已纳入源码和产物的构建校验。当前产物为 `V7` / `host-17f7a83078584838956d` / `renderer-58fd227e70b293410f23`，builtAt `2026-11-20T10:41:11.853Z`。uTools 新包待验。[主检出插件入口](../../dist/plugin.json) · [定向验证](../../scripts/check-companion-lifecycles.mjs#L387)。
+- 2026-11-20 18:41:11.853，普通 Side 定向订阅后未收到新帧，按原期限唤醒补读。已有可信帧或连接换代时，旧补读失效。首次查询、重试查询以及两种失效条件已纳入源码和产物的构建校验。当前产物为 `V7` / `host-17f7a83078584838956d` / `renderer-58fd227e70b293410f23`，builtAt `2026-11-20T10:41:11.853Z`。uTools 新包待验。[主检出插件入口](../../dist/plugin.json#L1) · [定向验证](../../scripts/check-companion-lifecycles.mjs#L387)。
 
-- 2026-11-20 15:54:20，提交前按同一源码重新完成 `closeout` 构建。当前产物为 `V7` / `host-76820ccd4e3888194fd9` / `renderer-badaca6d487bfad43880`，builtAt `2026-11-20T07:54:20.445Z`。回执和产物身份一致。uTools 实机待验。[主检出插件入口](../../dist/plugin.json)。
+- 2026-11-20 15:54:20，提交前按同一源码重新完成 `closeout` 构建。当前产物为 `V7` / `host-76820ccd4e3888194fd9` / `renderer-badaca6d487bfad43880`，builtAt `2026-11-20T07:54:20.445Z`。回执和产物身份一致。uTools 实机待验。[主检出插件入口](../../dist/plugin.json#L1)。
 
-- 2026-11-20 15:35:34，本地 `main` 快进至 `150f1c3`，合入悬浮卡片紧凑化并保留本地 Codex 状态同步改动。合入后的 `closeout` 完整构建通过，`V7` / `host-76820ccd4e3888194fd9` / `renderer-badaca6d487bfad43880`，builtAt `2026-11-20T07:35:34.442Z`。产物身份与回执一致。从[主检出插件入口](../../dist/plugin.json)接入 uTools 后，核验[悬浮卡片](261120/eypc-float-card-compact/task-card.md#影响与验收)和[原生状态同步](261114/codex-state-sync/delivery.md#handoff)。
+- 2026-11-20 15:35:34，本地 `main` 快进至 `150f1c3`，合入悬浮卡片紧凑化并保留本地 Codex 状态同步改动。合入后的 `closeout` 完整构建通过，`V7` / `host-76820ccd4e3888194fd9` / `renderer-badaca6d487bfad43880`，builtAt `2026-11-20T07:35:34.442Z`。产物身份与回执一致。从[主检出插件入口](../../dist/plugin.json#L1)接入 uTools 后，核验[悬浮卡片](261120/eypc-float-card-compact/task-card.md#影响与验收)和[原生状态同步](261114/codex-state-sync/delivery.md#handoff)。
 
 - 2026-11-20 悬浮卡片紧凑化在独立检出完成构建，`closeout` 回执和当前产物一致。`V7` / `host-23b4139e435cd9886f47` / `renderer-a65f9bb41f739bf30516`，builtAt `2026-11-20T06:52:29.476Z`。该产物的 uTools 视觉和交互待手测。[任务卡](261120/eypc-float-card-compact/task-card.md#构建与待验)。
 

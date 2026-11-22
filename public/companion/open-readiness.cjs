@@ -60,11 +60,9 @@ function createCompanionOpenReadiness(dependencies = {}) {
         event: 'open-readiness',
         outcome,
         provider,
-        details: {
-          ...(details || {}),
-          ...(request && typeof request.source === 'string' ? { source: request.source.slice(0, 80) } : {}),
-          ...(request && typeof request.operationId === 'string' ? { operationId: request.operationId.slice(0, 160) } : {})
-        }
+        ...(typeof request?.source === 'string' ? { source: request.source.slice(0, 80) } : {}),
+        ...(typeof request?.operationId === 'string' ? { operationId: request.operationId.slice(0, 160) } : {}),
+        details
       })
     } catch {}
   }
@@ -209,6 +207,9 @@ function createCompanionOpenReadiness(dependencies = {}) {
           confirmsRead: false,
           launch: launchField(readiness)
         }
+      }
+      if (typeof request?.operationId === 'string') {
+        note('debug', 'ready-for-dispatch', provider, request, { probe: readiness.probe, ...launchField(readiness) })
       }
       const result = await open(target, request)
       if (readiness.outcome !== 'launched') return result

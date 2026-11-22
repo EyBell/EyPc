@@ -2,6 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createInitialState } from '../../src/domain/state'
+import type { KeybindingOverride } from '../../src/domain/types'
 import SettingsPage from '../../src/pages/SettingsPage.vue'
 import type { RuntimeDiagnosticsSnapshotV3 } from '../../src/platform/eypcPlatform'
 
@@ -14,8 +15,9 @@ function runtimeDiagnostics(): RuntimeDiagnosticsSnapshotV3 {
   }
 }
 
-function mountSettings(maintenance = false) {
+function mountSettings(maintenance = false, overrides: KeybindingOverride[] = []) {
   const state = createInitialState(100)
+  state.settings.shortcutProfiles.global.keybindingOverrides = overrides
   return mount(SettingsPage, {
     attachTo: document.body,
     props: {
@@ -78,6 +80,27 @@ describe('settings command context panels', () => {
     await row.trigger('contextmenu')
 
     expect(wrapper.find('.settings-context-panel[aria-label="快捷键命令操作"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('updates When on a disabled binding without rewriting its stored keys or metadata', async () => {
+    const override: KeybindingOverride = {
+      commandId: 'app.hide', shortcutId: 'Ctrl+J', shortcutIds: ['Ctrl+J', 'Ctrl+K'],
+      when: "tab == 'ports'", weight: 213, source: 'removed', enabled: false, disabled: true
+    }
+    const wrapper = mountSettings(false, [override])
+    await wrapper.get('[data-command-id="app.hide"] button[aria-label="When"]').trigger('click')
+    const input = wrapper.get<HTMLTextAreaElement>('.shortcut-modal textarea')
+    expect(input.element.value).toBe(override.when)
+    const when = "tab == 'settings'"
+    await input.setValue(when)
+    await wrapper.get('.shortcut-modal footer button:last-child').trigger('click')
+    await wrapper.get('[data-role="settings-shortcut-search"]').trigger('keydown', { key: 's', metaKey: true })
+    expect(wrapper.emitted('dispatch')).toContainEqual(['settings.shortcutProfiles.save', {
+      profiles: expect.objectContaining({
+        global: expect.objectContaining({ keybindingOverrides: [{ ...override, when }] })
+      })
+    }])
     wrapper.unmount()
   })
 

@@ -26,7 +26,7 @@ async function withMutation(mutate: (source: string) => string, target = 'compan
 
 describe('Companion unread and Side lifecycle preservation gate', () => {
   it('covers complete/incomplete retirement, stale evidence, nested sides, unread and open races', async () => {
-    expect(await checkCompanionLifecycles(resolve('preload'))).toBe(190)
+    expect(await checkCompanionLifecycles(resolve('preload'))).toBe(196)
   })
   it('rejects stale relation deletion in a newer transport batch', async () => {
     await withMutation(source => {

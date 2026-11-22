@@ -576,6 +576,7 @@ function publicRootTask(task) {
     codexLaneGenerations: _codexLaneGenerations,
     closedMachineRun: _closedMachineRun,
     machineRunCoverageCurrent: _machineRunCoverageCurrent,
+    machineRunInterruptedAt: _machineRunInterruptedAt,
     relationOnly: _relationOnly,
     ordinarySideInterruptedAt: _ordinarySideInterruptedAt,
     turnKind: _turnKind,
@@ -1981,12 +1982,13 @@ function createCompanionTaskKernel(dependencies = {}) {
       && members.every(memberCoverageKnown)
     const historicalMachineMembers = rootTurnSettled ? phaseMembers.filter((member) => {
       const relation = relationsByChild.get(member.key)
-      const latestEnd = member.terminalAt % 1000 === 0 ? member.terminalAt + 999 : member.terminalAt
+      const interruptedAt = finiteInteger(member.machineRunInterruptedAt)
+      const latestEnd = interruptedAt % 1000 === 0 ? interruptedAt + 999 : interruptedAt
       return member.closedMachineRun === false && member.machineRunCoverageCurrent === true
         && member.phase === 'stopped' && member.turnKind === 'turn-interrupted'
         && member.causalAuthority === 'terminal' && member.causalReliable === true
-        && member.causalDomain === root.causalDomain && member.terminalAt > member.turnStartedAt
-        && latestEnd < root.turnStartedAt
+        && member.causalDomain === root.causalDomain && member.turnStartedAt > 0
+        && interruptedAt >= member.turnStartedAt && latestEnd < root.turnStartedAt
         && relation?.exact === true && relation.relation === 'side-thread' && relation.parentKey === root.key
     }) : []
     const machineFilteredMembers = historicalMachineMembers.length
@@ -2412,8 +2414,16 @@ function createCompanionTaskKernel(dependencies = {}) {
     recordActivityDecision(previous, incoming, acceptPhase, activityDecisionReason)
 
     let next = { ...previous }
-    if ((phaseAdvanced || acceptPhase) && typeof incoming.machineRunCoverageCurrent === 'boolean') {
+    const sameCodexTurn = incoming.codexState && incoming.causalKey && incoming.causalKey === previous.causalKey
+      && incoming.causalDomain && incoming.causalDomain === previous.causalDomain
+      && incoming.turnStartedAt === previous.turnStartedAt
+    const sameCodexVerdict = sameCodexTurn && incoming.turnKind === previous.turnKind
+      && incoming.causalSequence === previous.causalSequence
+    if (provider === 'codex' && incoming.role === 'child' && incoming.codexState && !activityUnobserved
+      && draftProducer(draft.producer) !== 'renderer'
+      && (acceptPhase || sameCodexVerdict && incomingLanes[provider].activity >= currentLanes[provider].activity)) {
       next.machineRunCoverageCurrent = incoming.machineRunCoverageCurrent
+      next.machineRunInterruptedAt = incoming.machineRunInterruptedAt
     }
     if (acceptMembership) {
       Object.assign(next, {
@@ -2517,16 +2527,11 @@ function createCompanionTaskKernel(dependencies = {}) {
       && draftProducer(draft.producer) !== 'renderer') {
       // A repeated verdict for the current Turn may change Thread status or
       // submission state. A rejected observation from a different Turn cannot.
-      const sameTurn = incoming.causalKey && incoming.causalKey === previous.causalKey
-        && incoming.causalDomain && incoming.causalDomain === previous.causalDomain
-        && incoming.turnStartedAt === previous.turnStartedAt
-      const sameVerdict = sameTurn && incoming.turnKind === previous.turnKind
-        && incoming.causalSequence === previous.causalSequence
       // The proof can arrive or be withdrawn while the member still has no Turn identity.
       const emptyHistoryChanged = phaseAdvanced && incoming.role === 'child' && previous.turnKind === 'unknown'
         && !previous.causalKey && !previous.turnStartedAt
         && incoming.codexState.emptyTurnHistory !== previous.codexState?.emptyTurnHistory
-      const acceptState = acceptPhase || sameVerdict || emptyHistoryChanged
+      const acceptState = acceptPhase || sameCodexVerdict || emptyHistoryChanged
       const state = acceptState ? incoming.codexState : previous.codexState
       const previousGoal = previous.codexState?.goal
       const incomingGoal = incoming.codexState.goal
@@ -2604,6 +2609,8 @@ function createCompanionTaskKernel(dependencies = {}) {
           if (typeof value.metadata?.machineRunCoverageCurrent === 'boolean') {
             incoming.machineRunCoverageCurrent = value.metadata.machineRunCoverageCurrent
           }
+          const machineRunInterruptedAt = finiteInteger(value.metadata?.machineRunInterruptedAt)
+          if (machineRunInterruptedAt > 0) incoming.machineRunInterruptedAt = machineRunInterruptedAt
           if (typeof value.metadata?.relationOnly === 'boolean') incoming.relationOnly = value.metadata.relationOnly
         }
         incomingKeys.add(incoming.key)

@@ -4,6 +4,7 @@ const OBSERVATION_DELAYS_MS = [120, 300, 800, 1600]
 const READ_WINDOW_MS = 4_000
 const MAX_PENDING_READS = 16
 const MAX_NATIVE_UNREAD_IDS = 100_000
+const BENCHMARK_TRIAL_LIMIT = 20
 
 const { codexDesktopStartupReadBinding, parseCodexDesktopUnreadState } = require('./desktop-unread-evidence.cjs')
 
@@ -62,6 +63,7 @@ function createCodexDesktopOpenObservation({
   let foreground = null
   let benchmarkAttempt = 0
   let benchmarkApp = null
+  let benchmarkPairStart = null
 
   function note(open, stage, outcome, evidence) {
     try {
@@ -78,10 +80,18 @@ function createCodexDesktopOpenObservation({
     if (reads.get(open.threadId) !== open) return
     if (open.readTimer) clearTimer(open.readTimer)
     reads.delete(open.threadId)
-    note(open, 'native-read', open.ambiguous && outcome === 'confirmed' ? 'ambiguous' : outcome, evidence)
+    if (!open.readSuperseded) {
+      note(open, 'native-read', open.ambiguous && outcome === 'confirmed' ? 'ambiguous' : outcome, evidence)
+    }
   }
 
   function scheduleRead(open, attempt = 0) {
+    if (!open.readScope.readPersisted) {
+      open.readTimer = setTimer(() => finishRead(open, open.readScope.current() ? 'unconfirmed' : 'superseded'),
+        Math.max(0, open.startedAt + READ_WINDOW_MS - now()))
+      open.readTimer?.unref?.()
+      return
+    }
     const delay = OBSERVATION_DELAYS_MS[attempt]
     if (delay === undefined || now() + delay > open.startedAt + READ_WINDOW_MS) {
       return finishRead(open, 'unconfirmed', open.lastReadResult)
@@ -92,7 +102,7 @@ function createCodexDesktopOpenObservation({
       const inTime = () => now() <= open.startedAt + READ_WINDOW_MS
       if (!inTime()) return finishRead(open, 'unconfirmed', 'window-expired')
       let result
-      try { result = await open.readScope.readPersisted?.(() => reads.get(open.threadId) === open && inTime()) } catch { result = 'state-unavailable' }
+      try { result = await open.readScope.readPersisted(() => reads.get(open.threadId) === open && inTime()) } catch { result = 'state-unavailable' }
       if (reads.get(open.threadId) !== open) return
       if (!open.readScope.current()) return finishRead(open, 'superseded')
       if (result === 'read') return finishRead(open, 'confirmed', 'desktop-persisted')
@@ -124,6 +134,7 @@ function createCodexDesktopOpenObservation({
 
   function begin(context) {
     const open = { ...context, startedAt: now(), dispatched: false, earlyRead: false, foregroundTimer: null }
+    if (open.app) note(open, 'application', 'verified')
     note(open, 'dispatch', 'requested')
     const pending = reads.get(open.threadId)
     if (pending) pending.ambiguous = true
@@ -144,8 +155,9 @@ function createCodexDesktopOpenObservation({
       note(open, 'dispatch', 'dispatched')
       note(open, 'target-visible', 'unconfirmed')
       if (reads.get(open.threadId) === open) {
-        if (!open.readScope.current()) finishRead(open, 'superseded')
-        else if (open.earlyRead) finishRead(open, 'confirmed', 'desktop-live')
+        if (open.earlyRead && !open.readSuperseded && open.readScope.current()) {
+          finishRead(open, 'confirmed', 'desktop-live')
+        } else if (open.readScope.readPersisted && !open.readScope.current()) finishRead(open, 'superseded')
         else scheduleRead(open)
       }
       if (foreground === open) scheduleForeground(open)
@@ -154,11 +166,20 @@ function createCodexDesktopOpenObservation({
 
   function nativeRead(threadId, binding) {
     const open = reads.get(threadId)
-    if (!open || !open.readScope.acceptsLive(binding)) return
-    if (now() > open.startedAt + READ_WINDOW_MS) return finishRead(open, 'unconfirmed', 'window-expired')
-    if (!open.readScope.current()) finishRead(open, 'superseded')
-    else if (open.dispatched) finishRead(open, 'confirmed', 'desktop-live')
+    if (!open || !open.readScope.acceptsLive(binding)) return true
+    if (now() >= open.startedAt + READ_WINDOW_MS) {
+      finishRead(open, 'unconfirmed', 'window-expired')
+      return true
+    }
+    if (open.readSuperseded || !open.readScope.current()) {
+      if (!open.readSuperseded) note(open, 'native-read', 'superseded')
+      open.readSuperseded = true
+      return false
+    }
+    if (!binding) return true
+    if (open.dispatched) finishRead(open, 'confirmed', 'desktop-live')
     else open.earlyRead = true
+    return true
   }
 
   function clear() {
@@ -188,16 +209,28 @@ function createCodexDesktopOpenObservation({
     }
   }
 
-  const prepareBenchmarkTrial = pairedBenchmark === true && platform === 'darwin' && execFile ? async () => {
-    if (benchmarkAttempt >= 20) return null
+  const prepareBenchmarkTrial = pairedBenchmark === true && platform === 'darwin' && execFile ? async (threadId) => {
+    if (benchmarkAttempt >= BENCHMARK_TRIAL_LIMIT) return null
     const app = await readMacApp()
-    if (!app || app.pid <= 0 || benchmarkApp && (benchmarkApp.path !== app.path || benchmarkApp.pid !== app.pid)) return { ready: false }
-    benchmarkApp = app
-    const index = benchmarkAttempt++
+    if (benchmarkAttempt >= BENCHMARK_TRIAL_LIMIT) return null
+    if (!app || app.pid <= 0 || benchmarkApp && (benchmarkApp.path !== app.path || benchmarkApp.pid !== app.pid)) {
+      return { ready: false, errorCode: 'benchmark-application-unavailable', message: '同一 Codex 应用尚未确认运行，未发起本次对照' }
+    }
+    if (benchmarkPairStart && (benchmarkPairStart.threadId !== threadId || benchmarkPairStart.foreground !== app.foreground)) {
+      return { ready: false, errorCode: 'benchmark-pair-mismatch', message: '本对照组需要同一目标和相同的 Codex 前台状态' }
+    }
+    const index = benchmarkAttempt
     const pair = Math.floor(index / 2) + 1
     const arm = index % 2 === (pair % 2) ? 'explicit' : 'default'
     return {
       ready: true, pair, arm, app,
+      start() {
+        if (benchmarkAttempt !== index) return false
+        benchmarkApp = app
+        benchmarkPairStart = benchmarkPairStart ? null : { threadId, foreground: app.foreground }
+        benchmarkAttempt += 1
+        return true
+      },
       ...(arm === 'explicit' ? {
         open: (url) => new Promise((resolve, reject) => {
           execFile('/usr/bin/open', ['-a', app.path, url], { timeout: 2000, maxBuffer: 1024 },

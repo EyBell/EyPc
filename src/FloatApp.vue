@@ -133,6 +133,7 @@ type ComposerState = {
 }
 type ShiftPreview = { task: CodexTaskCard; left: number; top: number } | null
 type QuickJumpDomTarget = QuickJumpDomTargetV7
+type FloatQuickTarget = QuickJumpDomTarget & { markedTaskKey?: string }
 
 const COMPOSER_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const COMPOSER_IMAGE_MAX_BYTES = 20 * 1024 * 1024
@@ -223,7 +224,7 @@ const runtimeReloadMessage = computed(() => (
 ))
 // `mode: 'tasks'` 是专项跳转：标记只落在展示出来的会话行上，激活等同于点击标题（直接打开），
 // 而不是普通模式的「把高亮移过去」。两种模式共用同一套标记/筛选/Escape 逻辑。
-const quickJump = ref<{ open: boolean; mode: 'all' | 'tasks'; query: string; sourceTargets: QuickJumpDomTarget[]; targets: QuickJumpDomTarget[]; activeTargetId: string | null }>({
+const quickJump = ref<{ open: boolean; mode: 'all' | 'tasks'; query: string; sourceTargets: FloatQuickTarget[]; targets: FloatQuickTarget[]; activeTargetId: string | null }>({
   open: false,
   mode: 'all',
   query: '',
@@ -748,9 +749,13 @@ function toggleAllProjectSections() {
   collapsedStatusGroups.value = next
 }
 
+function taskQuickOpenEligible(task: CodexTaskCard) {
+  return task.companionCapabilities?.open !== false
+}
+
 const quickIndexRows = computed(() => renderRows.value
   .filter((row): row is QuickIndexRow => (
-    row.kind === 'task' && row.task.companionCapabilities?.open !== false
+    row.kind === 'task' && taskQuickOpenEligible(row.task)
     || (row.kind === 'status-section' || row.kind === 'hidden-project-section') && Boolean(row.groupKey) && row.collapsible === true && row.collapsed === true
   ))
   .slice(0, QUICK_INDEX_LIMIT))
@@ -2484,11 +2489,15 @@ function quickJumpTaskKeyFor(element: HTMLElement) {
   return focusKey.startsWith('task:') ? focusKey : ''
 }
 
-function collectQuickJumpTargets(backward = false, mode: 'all' | 'tasks' = 'all'): QuickJumpDomTarget[] {
-  return quickJumpRegistry.collect({
+function collectQuickJumpTargets(backward = false, mode: 'all' | 'tasks' = 'all'): FloatQuickTarget[] {
+  const openableTaskKeys = mode === 'tasks' ? new Set(focusItems.value.flatMap((item) =>
+    item.kind === 'task' && taskQuickOpenEligible(item.task) ? [item.key] : []
+  )) : null
+  const targets = quickJumpRegistry.collect({
     backward,
-    accept: (element) => (mode === 'tasks' ? Boolean(quickJumpTaskKeyFor(element)) : true) && quickJumpTargetVisible(element)
+    accept: (element) => (!openableTaskKeys || openableTaskKeys.has(quickJumpTaskKeyFor(element))) && quickJumpTargetVisible(element)
   })
+  return openableTaskKeys ? targets.map((target) => ({ ...target, markedTaskKey: quickJumpTaskKeyFor(target.element) })) : targets
 }
 
 function syncQuickJumpActive(scroll = false) {
@@ -2521,17 +2530,20 @@ function openQuickJump(backward = false, mode: 'all' | 'tasks' = 'all') {
 function activateQuickJumpTarget() {
   const target = quickJump.value.sourceTargets.find((item) => item.id === quickJump.value.activeTargetId)
   if (!target) return
-  window.eypcFloat?.action('codex.quickJump.activate', { source: 'manual-quick-jump' })
   // 专项模式：一个按键直接跳到那条会话，等同于点击它的标题。普通模式仍然只转移高亮。
   if (quickJump.value.mode === 'tasks') {
-    const taskKey = quickJumpTaskKeyFor(target.element)
-    const matched = focusItems.value.find((item) => item.key === taskKey)
+    const { element, markedTaskKey } = target
     closeQuickJump()
-    if (matched?.kind !== 'task') return
+    if (!markedTaskKey || !element.isConnected || !rootElement.value?.contains(element)
+      || quickJumpTaskKeyFor(element) !== markedTaskKey || !quickJumpTargetVisible(element)) return
+    const matched = focusItems.value.find((item) => item.key === markedTaskKey)
+    if (matched?.kind !== 'task' || !taskQuickOpenEligible(matched.task)) return
+    window.eypcFloat?.action('codex.quickJump.activate', { source: 'manual-quick-jump' })
     focusedKey.value = matched.key
     openTask(matched.task, 'manual-quick-jump')
     return
   }
+  window.eypcFloat?.action('codex.quickJump.activate', { source: 'manual-quick-jump' })
   closeQuickJump()
   target.element.focus({ preventScroll: true })
   const focusKey = target.element.dataset.focusKey
@@ -2796,7 +2808,7 @@ function onRootKeydown(event: KeyboardEvent) {
   if (!command) return
   event.preventDefault()
   event.stopPropagation()
-  if (event.repeat && command === 'codex.task.openFocused') return
+  if (event.repeat && (command === 'codex.task.openFocused' || /^codex\.action\.run\.[1-5]$/.test(command))) return
   const executionOwner = binding?.executionOwner
   if (executionOwner !== 'float-local') {
     if (executionOwner === 'runtime-action') {

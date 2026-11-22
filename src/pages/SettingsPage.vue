@@ -648,14 +648,14 @@ function validateCandidate(row: ShortcutCommandRow | null, shortcutIds: string[]
 
 function validateWhenDraft(row: ShortcutCommandRow | null, when: string) {
   if (!row) return { errors: ['未选中命令'], conflicts: [], reservations: [] }
+  if (row.enabled) return validateCandidate(row, row.shortcutIds, when)
   const errors: string[] = []
   try {
     if (when.trim()) parseWhenExpression(when)
   } catch (error) {
     errors.push(error instanceof Error ? error.message : 'when 表达式无效')
   }
-  if (errors.length) return { errors, conflicts: [], reservations: [] }
-  return validateCandidate(row, row.shortcutIds.length ? row.shortcutIds : row.defaultShortcutIds, when)
+  return { errors, conflicts: [], reservations: [] }
 }
 
 function openRecord(row: ShortcutCommandRow) {
@@ -779,7 +779,8 @@ function cancelEditingShortcut() {
 
 function openWhenEditor(row: ShortcutCommandRow) {
   whenCommandId.value = row.commandId
-  whenDraft.value = row.when
+  const override = draftShortcutProfiles.value[row.profileId].keybindingOverrides.find((item) => item.commandId === row.commandId)
+  whenDraft.value = override?.when ?? row.when
 }
 
 function closeWhenEditor() {
@@ -794,12 +795,25 @@ function applyWhenPreset(value: string) {
 function saveWhen() {
   const row = whenRow.value
   if (!row || whenValidation.value.errors.length) return
-  applyDraftKeybinding({
+  const next = cloneShortcutProfiles(draftShortcutProfiles.value)
+  const when = whenDraft.value
+  const updatedAt = Date.now()
+  let updatedExisting = false
+  for (const profile of Object.values(next)) {
+    for (const override of profile.keybindingOverrides) {
+      if (override.commandId !== row.commandId) continue
+      override.when = when
+      profile.updatedAt = updatedAt
+      updatedExisting = true
+    }
+  }
+  if (updatedExisting) draftShortcutProfiles.value = next
+  else applyDraftKeybinding({
     commandId: row.commandId,
-    shortcutIds: row.shortcutIds.length ? row.shortcutIds : row.defaultShortcutIds,
-    when: whenDraft.value,
+    shortcutIds: row.shortcutIds,
+    when,
     profileId: row.profileId,
-    enabled: true
+    enabled: row.enabled
   })
   closeWhenEditor()
 }
@@ -1445,7 +1459,7 @@ function isRecordableShortcutId(shortcutId: string) {
       </aside>
     </div>
 
-    <div v-if="recordingRow" class="modal-backdrop" @keydown.esc.stop.prevent="requestCloseRecord">
+    <div v-if="recordingRow" class="modal-backdrop" data-role="settings-shortcut-record" @keydown.esc.stop.prevent="requestCloseRecord">
       <section class="shortcut-modal shortcut-record-modal" role="dialog" aria-modal="true" @keydown.stop>
         <header>
           <span>

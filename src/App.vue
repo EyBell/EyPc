@@ -155,10 +155,11 @@ const QUICK_JUMP_TARGET_SELECTOR = [
   '[role="textbox"]',
   '[role="searchbox"]'
 ].join(',')
+const SETTINGS_SHORTCUT_RECORD_SELECTOR = '[data-role="settings-shortcut-record"]'
 const QUICK_JUMP_EDITING_SELECTOR = [
   '[data-role$="-editor"]',
   '[data-role="favorite-pick-review"]',
-  '[data-role="settings-shortcut-record"]'
+  SETTINGS_SHORTCUT_RECORD_SELECTOR
 ].join(',')
 const quickJumpRegistry = createQuickJumpRegistryV7({ surfaceId: 'main', root: () => appRoot.value, fallbackSelector: QUICK_JUMP_TARGET_SELECTOR })
 provide(quickJumpRegistryKeyV7, quickJumpRegistry)
@@ -315,6 +316,7 @@ function handleQuickJumpShortcut(shortcutId: string) {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (event.target instanceof Element && event.target.closest(SETTINGS_SHORTCUT_RECORD_SELECTOR)) return
   operationTooltipLayer.value?.handleSurfaceKeydown(event)
   const shortcutId = shortcutFromEvent(event)
   const shortcutInput = {

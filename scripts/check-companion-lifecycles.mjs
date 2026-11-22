@@ -612,10 +612,11 @@ export async function checkCompanionLifecycles(assetRoot) {
       adapters: { codex: { open } } })
     const lease = kernel.attach({ enabled: true, providers }).lease
     let transport = 0
-    function publish(rows, generation, { complete = false, remove = [], unreadGeneration = generation, hostEvidence = false } = {}) {
+    function publish(rows, generation, { complete = false, remove = [], unreadGeneration = generation,
+      activityGeneration = generation, hostEvidence = false } = {}) {
       const family = 'codex:lifecycle'
       const nodes = rows.map(({ key, phase = 'completed', epoch = 100, unread = false, known = true, branch,
-        closedMachineRun, machineRunCoverageCurrent, relationOnly, goalVerifying,
+        closedMachineRun, machineRunCoverageCurrent, machineRunInterruptedAt, relationOnly, goalVerifying,
         turnStartedAt = phase === 'unknown' ? 0 : epoch }) => createEvidenceNodeV7({
         key, provider: 'codex', family, role: key === 'main' ? 'root' : 'child', standaloneEligible: key === 'main',
         observedAt: epoch + (phase === 'completed' ? 10 : 0), causalKey: `${key}:${epoch}`,
@@ -623,7 +624,7 @@ export async function checkCompanionLifecycles(assetRoot) {
         metadata: { kind: key === 'main' ? 'codex-thread' : 'topology-child',
           actionAlias: key === 'main' ? 'ct_lifecycle_main_1234567890' : '',
           revisionAt: epoch, membershipRevision: generation, visibilityRevision: generation, metadataRevision: generation,
-          lastQuestionAt: 100, createdAt: 50, closedMachineRun, machineRunCoverageCurrent, relationOnly,
+          lastQuestionAt: 100, createdAt: 50, closedMachineRun, machineRunCoverageCurrent, machineRunInterruptedAt, relationOnly,
           idleConfirmed: branch?.idleConfirmed === true },
         observation: branch ? codexBranchObservationV7({ branchKind: key === 'main' ? 'main' : 'side',
           status: 'idle', lastTurnStatus: phase === 'unknown' ? undefined : phase === 'stopped' ? 'interrupted' : 'completed',
@@ -652,14 +653,17 @@ export async function checkCompanionLifecycles(assetRoot) {
         revision: 'companion-interaction-evidence-v1', provider: 'codex', taskKey: row.key,
         requestSetRevision: generation, complete: true
       }))
+      const laneGenerations = Object.fromEntries(lanes.map(lane => [lane,
+        lane === 'unread' ? unreadGeneration : lane === 'activity' ? activityGeneration : generation]))
       const batch = createEvidenceBatchV7({ provider: 'codex', nodes, interactions, interactionSets, relations, relationsComplete: complete,
         snapshotLanes: complete ? lanes : [], completeLanes: complete ? lanes : [],
-        laneGenerations: Object.fromEntries(lanes.map(lane => [lane, lane === 'unread' ? unreadGeneration : generation])),
+        laneGenerations,
         removedKeys: { membership: remove }, health: 'ready' })
       batch.removedRelationChildKeys = remove
       const draft = { schema: 'companion-task-evidence-draft-v7', producer: 'host-evidence',
         sourceTaskStateRevision: 'task-state-v12', draftRevision: ++transport, acceptedAt: 1000,
-        enabled: true, complete: true, providers, sourceGenerations: { codex: generation }, sourceLaneGenerations: { codex: Object.fromEntries(lanes.map(lane => [lane, lane === 'unread' ? unreadGeneration : generation])) }, evidenceBatches: { codex: batch } }
+        enabled: true, complete: true, providers, sourceGenerations: { codex: generation },
+        sourceLaneGenerations: { codex: laneGenerations }, evidenceBatches: { codex: batch } }
       return hostEvidence ? kernel.publishEvidence(draft) : kernel.syncPackage({ lease, draft })
     }
     function expectRoot(phase, unread, count, unreadEntry = phase === 'completed' && unread) {
@@ -735,13 +739,17 @@ export async function checkCompanionLifecycles(assetRoot) {
   const clearedPlan = { idleConfirmed: true, planLifecycleState: 'cleared', planClearReason: 'cancel' }
   const settledRoot = { ...completedMain, epoch: 30_000, requestCoverage: true, unread: true, branch: clearedPlan }
   const oldMachine = { ...endedSide, epoch: 10_000, requestCoverage: true, closedMachineRun: false,
-    machineRunCoverageCurrent: true, branch: { ...clearedPlan, terminalAt: 20_000 } }
+    machineRunCoverageCurrent: true, machineRunInterruptedAt: 20_000, branch: { ...clearedPlan, terminalAt: 20_000 } }
   for (const [label, machine, phase] of [
     ['exact interruption earlier than this main Turn', oldMachine, 'completed'],
+    ['exact interruption in its start second', { ...oldMachine, machineRunInterruptedAt: 10_000,
+      branch: { ...clearedPlan, terminalAt: 10_000 } }, 'completed'],
     ['request coverage lost', { ...oldMachine, machineRunCoverageCurrent: false }, 'stopped'],
     ['incomplete request set', { ...oldMachine, requestCoverage: false }, 'stopped'],
-    ['start without an actual end', { ...oldMachine, branch: { ...oldMachine.branch, terminalAt: 10_000 } }, 'stopped'],
-    ['potential overlap within second precision', { ...oldMachine, branch: { ...oldMachine.branch, terminalAt: 30_000 } }, 'stopped'],
+    ['start without an actual end', { ...oldMachine, machineRunInterruptedAt: undefined,
+      branch: { ...clearedPlan, terminalAt: 10_000 } }, 'stopped'],
+    ['potential overlap within second precision', { ...oldMachine, machineRunInterruptedAt: 30_000,
+      branch: { ...clearedPlan, terminalAt: 30_000 } }, 'stopped'],
     ['active Goal', { ...oldMachine, branch: { ...oldMachine.branch, goalStatus: 'active' } }, 'running']
   ]) {
     const scenario = fixture()
@@ -751,8 +759,10 @@ export async function checkCompanionLifecycles(assetRoot) {
       assert.equal(root.capabilities.continueTask, false, label)
       if (phase === 'completed') {
         assert.equal(scenario.kernel.getActivityCheckpoint('side').phase, 'stopped', 'old machine activity stays in member history')
-        scenario.publish([settledRoot, { ...machine, machineRunCoverageCurrent: false }], 2, { hostEvidence: true })
+        scenario.publish([settledRoot, { ...machine, machineRunCoverageCurrent: false }], 2, { hostEvidence: true, activityGeneration: 1 })
         scenario.expectRoot('stopped', true, 2, true)
+        scenario.publish([settledRoot, machine], 3, { hostEvidence: true, activityGeneration: 1 })
+        scenario.expectRoot('completed', true, 2, true)
       }
     } finally { scenario.kernel.close() }
   }
@@ -1024,9 +1034,45 @@ export async function checkCompanionLifecycles(assetRoot) {
     assert.deepEqual(stoppedUnread.kernel.getPackage().views.attentionKeys.completedUnread, [])
     assert.deepEqual(stoppedUnread.kernel.getPackage().views.cycleKeys, ['main'])
   } finally { stoppedUnread.kernel.close() }
+  const source = readFileSync(resolve(assetRoot, assetRoot.endsWith('preload') ? 'index.js' : 'preload.js'), 'utf8')
+  const cacheStart = source.indexOf('function companionOpenTargetUnavailable(')
+  const cacheEnd = source.indexOf('\nasync function openCompanionClaudeTarget(', cacheStart)
+  const indexStart = source.indexOf('function companionCodexInventoryMatchV7(')
+  const indexEnd = source.indexOf('\n}', indexStart) + 2
+  assert(cacheStart >= 0 && cacheEnd > cacheStart && indexStart >= 0 && indexEnd > indexStart)
+  const key = 'a'.repeat(32)
+  const threadId = '12345678-1234-4234-8234-123456789abc'
+  const openEntries = new Map()
+  const inventory = new Map([[threadId, { key }]])
+  const opened = []
+  let providerEpoch = 1
+  const cache = new Script(`${source.slice(indexStart, indexEnd)}\n${source.slice(cacheStart, cacheEnd)}\nopenCompanionCodexTarget`)
+    .runInNewContext({
+      companionCodexOpenEntries: openEntries, codexActivityInventory: inventory, codexActivityThreadIds: new Map([[key, threadId]]),
+      codexCausalDomain: 'source-identity', codexActivitySourceFingerprint: 'source-fingerprint',
+      companionTaskKernel: { providerEpoch: () => providerEpoch },
+      validCodexThreadId: id => id === threadId, codexThreadKey: () => key,
+      dispatchCodexThreadOpen: (entry, _request, identity) => {
+        assert.equal(identity.current(), true)
+        opened.push(entry.threadId)
+        return { outcome: 'dispatched' }
+      }
+    })
+  const request = { cacheOnly: true }
+  const stale = cache({ key }, request)
+  providerEpoch += 1
+  assert.equal((await stale).errorCode, 'stale-target')
+  assert.equal(openEntries.size, 0, 'a recovery queued in a previous source generation cannot restore a mapping')
+  assert.equal((await cache({ key }, request)).errorCode, 'stale-target')
+  assert.deepEqual(opened, [], 'the missed press does not dispatch or replay after recovery')
+  assert.equal((await cache({ key }, request)).outcome, 'dispatched')
+  assert.deepEqual(opened, [threadId], 'the next press opens only the exact inventory match without a listing')
+  checked++
   let finishProbe
   let readinessDispatches = 0
+  const readinessEvents = []
   const readiness = createCompanionOpenReadiness({
+    record: entry => readinessEvents.push(entry),
     strategies: { codex: { probe: () => new Promise(resolve => { finishProbe = resolve }), launch: async () => ({ ok: false }) } }
   })
   const staleAttention = fixture(readiness.wrapOpen('codex', async () => {
@@ -1044,6 +1090,13 @@ export async function checkCompanionLifecycles(assetRoot) {
     assert.equal(readinessDispatches, 0)
     checked++
   } finally { staleAttention.kernel.close() }
+  const ready = createCompanionOpenReadiness({ record: entry => readinessEvents.push(entry),
+    strategies: { codex: { probe: () => 'running', launch: async () => ({ ok: false }) } } })
+  await ready.wrapOpen('codex', async () => ({ outcome: 'dispatched' }))({ key }, { operationId: 'open-ready', source: 'global-shortcut' })
+  assert(readinessEvents.some(event => event.event === 'open-readiness' && event.outcome === 'ready-for-dispatch'
+    && event.operationId === 'open-ready' && event.source === 'global-shortcut' && event.details.probe === 'running'),
+    'the readiness event can be joined to shortcut selection and dispatch by operation id')
+  checked++
   const remaining = fixture()
   try {
     remaining.publish([main, { ...side, unread: true }, { key: 'sibling', phase: 'running' }], 1)
