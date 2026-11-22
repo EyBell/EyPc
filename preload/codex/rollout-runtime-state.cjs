@@ -32,7 +32,7 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
     throw new TypeError('codex rollout runtime state requires record and rolloutTimestampMs')
   }
 
-  function codexRolloutRuntimeStateText(text) {
+  function codexRolloutRuntimeStateText(text, appendedBytes = 0) {
     const state = {
       known: false,
       phase: 'unknown',
@@ -59,7 +59,11 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
       'reasoning'
     ])
     let interruptedAt = 0
-    for (const line of text.split(/\r?\n/)) {
+    let lineEnd = -1
+    let edgeEnd = 0
+    let startEnd = -1
+    for (const line of text.split('\n')) {
+      lineEnd += line.length + 1
       if (!line || line.length > MAX_ROLLOUT_RUNTIME_LINE_BYTES) continue
       let parsed
       try { parsed = JSON.parse(line) } catch { continue }
@@ -74,6 +78,8 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         payload.completed_at
       )
       if (source.type === 'event_msg' && payload.type === 'task_started') {
+        edgeEnd = lineEnd
+        startEnd = lineEnd
         state.known = true
         state.phase = 'active'
         state.edge = 'task-started'
@@ -83,6 +89,7 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         continue
       }
       if (source.type === 'event_msg' && payload.type === 'task_complete') {
+        edgeEnd = lineEnd
         state.known = true
         state.phase = 'completed'
         state.edge = 'task-complete'
@@ -94,6 +101,7 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         continue
       }
       if (source.type === 'event_msg' && payload.type === 'turn_aborted') {
+        edgeEnd = lineEnd
         state.known = true
         state.phase = 'interrupted'
         state.edge = 'turn-aborted'
@@ -110,22 +118,50 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
       const liveAppend = (source.type === 'event_msg' && liveEventTypes.has(payload.type))
         || (source.type === 'response_item' && liveResponseTypes.has(payload.type))
       if (!liveAppend) continue
+      edgeEnd = lineEnd
       if (state.phase === 'completed' || state.phase === 'interrupted') {
         state.startedAt = 0
         state.turnId = ''
+        startEnd = -1
       }
       state.known = true
       state.phase = 'active'
       state.edge = 'live-append'
       state.edgeAt = observedAt
     }
-    return state.edge === 'turn-aborted' && interruptedAt > 0 ? { ...state, interruptedAt } : state
+    if (state.edge === 'turn-aborted' && interruptedAt > 0) state.interruptedAt = interruptedAt
+    if (state.known && appendedBytes > 0 && Buffer.byteLength(text.slice(edgeEnd)) < appendedBytes) {
+      state.appended = true
+      if (startEnd >= 0 && Buffer.byteLength(text.slice(startEnd)) < appendedBytes) state.startAppended = true
+    }
+    return state
   }
 
   function codexRolloutRuntimeForTurn(runtime, input = {}) {
+    if (!runtime?.known) return null
+    const appended = input.appended === true && runtime.appended === true
     const owner = input.owner
-    const ownerTurn = owner?.ownerClientId && !owner.ownerDisconnectedAt && owner.canonicalLatestComplete === true
+    const currentOwner = owner?.ownerClientId && !owner.ownerDisconnectedAt
+    const ownerTurn = currentOwner && owner.canonicalLatestComplete === true
       ? owner.currentCanonicalTurn : null
+    const known = input.known
+    const sameTurn = Boolean(runtime.turnId) && known?.lastTurnId === runtime.turnId
+    if (runtime.phase === 'active') {
+      if (!appended) {
+        if (!input.writable || !sameTurn || !runtime.startedAt || input.confirmedTerminal
+          || !['interrupted', 'inProgress'].includes(known.lastTurnStatus)
+          || known.idleConfirmed || known.appServerLiveActive || known.activeFlags?.length || currentOwner) return null
+      } else if (input.confirmedTerminal || known?.lastTurnStatus === 'completed') {
+        const terminalAt = Math.max(Number(known?.lastTurnCompletedAt) || 0, Number(known?.lastTurnStartedAt) || 0,
+          input.cachedTurn?.id === known?.lastTurnId ? Number(input.cachedTurn?.interruptedAt) || 0 : 0)
+        if (!runtime.startAppended || runtime.startedAt <= terminalAt) return null
+      } else if (!sameTurn && (!runtime.startedAt || runtime.startedAt < (Number(known?.lastTurnStartedAt) || 0))) {
+        return null
+      }
+    } else if (!appended && (!input.writable || !sameTurn || !runtime.edgeAt || currentOwner
+      || known.appServerLiveActive || input.confirmedTerminal)) {
+      return null
+    }
     if (!runtime?.turnId) return ownerTurn?.turnRef ? null : runtime
     const sameOwnerTurn = Boolean(ownerTurn?.turnRef) && ownerTurn.turnRef === input.turnRef
     if (sameOwnerTurn && runtime.phase === 'active'

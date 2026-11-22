@@ -1,4 +1,5 @@
 "use strict"
+const { isDeepStrictEqual } = require('node:util')
 const { trace: freezeTrace } = require('../freeze-trace.cjs')
 const { createShortcutReadReceipts, hasCompletedUnread, isShortcutSource } = require('./shortcut-read.cjs')
 
@@ -565,6 +566,16 @@ function relationStoreKey(relation) {
   return `${relation.provider}\0${relation.childKey}\0${relation.authority}\0${relation.relation}`
 }
 
+function evidenceMapChanged(previous, next) {
+  if (previous.size !== next.size) return true
+  const previousEntries = previous.entries()
+  for (const [key, value] of next) {
+    const [priorKey, priorValue] = previousEntries.next().value
+    if (priorKey !== key || !isDeepStrictEqual(priorValue, value)) return true
+  }
+  return false
+}
+
 function publicRootTask(task) {
   const {
     family: _family,
@@ -980,6 +991,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   let currentPackage = emptyPackage(providers)
   const providerEpochs = Object.fromEntries(PROVIDERS.map((provider) => [provider, 0]))
   const providerCacheStates = new Map()
+  let lastReducedEvidence = null
   const taskIncarnations = new Map()
   let tasksByKey = new Map()
   const lastDraftRevisionByProducer = new Map()
@@ -1093,8 +1105,9 @@ function createCompanionTaskKernel(dependencies = {}) {
       })
       if (disposed || !sameOpenTarget(request)) return result
       if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
-        markAttentionOpened(taskForKey(target.key), request.context.attention,
-          ['card-click', 'manual-row-open', 'manual-quick-jump', 'global-shortcut', 'local-shortcut', 'task-cycle'].includes(source))
+        request.attentionSettled = markAttentionOpened(taskForKey(target.key), request.context.attention,
+          ['card-click', 'manual-row-open', 'manual-quick-jump', 'global-shortcut', 'local-shortcut', 'task-cycle'].includes(source),
+          request.attention)
       }
       const current = shortcutReadInputs.get(target.key)
       if (shortcutReads.accept(token, current?.task, current?.members, result?.outcome, result?.confirmsRead === true)) {
@@ -1185,6 +1198,7 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   /** 按 activity sequence 关旧提问并写入墓碑，避免已清掉的 waiting 复活。 */
   function reconcileInteractions(batches, incomingLanes, currentLanes, enabledProviders, activities) {
+    let changed = false
     for (const [provider, batch] of Object.entries(batches)) {
       if (!enabledProviders.has(provider)) continue
       const channel = batch.channels.interaction
@@ -1195,6 +1209,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         if (provider === 'codex') {
           const latest = completeCodexRequestSets.get(requestSet.taskKey) || 0
           if (requestSet.requestSetRevision < latest) continue
+          if (!latest && nodeStore.has(requestSet.taskKey)) changed = true
           completeCodexRequestSets.set(requestSet.taskKey, requestSet.requestSetRevision)
         }
         const present = new Set(batch.interactions
@@ -1206,7 +1221,7 @@ function createCompanionTaskKernel(dependencies = {}) {
             || interaction.taskKey !== requestSet.taskKey
             || finiteInteger(interaction.requestSetRevision) > requestSet.requestSetRevision
             || present.has(key)) continue
-          interactionStore.delete(key)
+          changed = interactionStore.delete(key) || changed
           recordInteractionTombstone(key, {
             ...interaction,
             state: 'resolved',
@@ -1221,7 +1236,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         const present = new Set(batch.interactions.map(interactionStoreKey))
         for (const [key, interaction] of interactionStore) {
           if (interaction.provider !== provider || present.has(key) || interaction.sequence > generation) continue
-          interactionStore.delete(key)
+          changed = interactionStore.delete(key) || changed
           recordInteractionTombstone(key, {
             ...interaction,
             state: 'resolved',
@@ -1236,7 +1251,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         for (const [key, interaction] of interactionStore) {
           if (interaction.provider !== provider
             || !removed.has(interaction.interactionRef) && !removed.has(interaction.taskKey)) continue
-          interactionStore.delete(key)
+          changed = interactionStore.delete(key) || changed
           recordInteractionTombstone(key, {
             ...interaction,
             state: 'resolved',
@@ -1250,7 +1265,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         const key = interactionStoreKey(interaction)
         if (terminalInteractionState(interaction.state)) {
           if (provider === 'codex' && !interactionSupersedes(interactionStore.get(key), interaction)) continue
-          interactionStore.delete(key)
+          changed = interactionStore.delete(key) || changed
           recordInteractionTombstone(key, interaction)
           continue
         }
@@ -1259,7 +1274,10 @@ function createCompanionTaskKernel(dependencies = {}) {
         if (interactionTombstones.has(key) || provider === 'codex'
           && interaction.requestSetRevision < (completeCodexRequestSets.get(interaction.taskKey) || 0)) continue
         const previous = interactionStore.get(key)
-        if (interactionSupersedes(previous, interaction)) interactionStore.set(key, interaction)
+        if (interactionSupersedes(previous, interaction)) {
+          interactionStore.set(key, interaction)
+          changed = true
+        }
       }
       const opened = batch.interactions.filter(request => request.state === 'opened')
       const openedKeys = new Set(opened.map(interactionStoreKey))
@@ -1272,7 +1290,7 @@ function createCompanionTaskKernel(dependencies = {}) {
           if (interaction.provider !== provider || interaction.taskKey !== taskKey || interaction.sequence > sequence || openedKeys.has(key)) continue
           if (provider === 'codex' && interaction.exact && !(activity.phase === 'running'
             && activity.freshness === 'fresh' && interaction.turnEpoch > 0 && activity.turnStartedAt > interaction.turnEpoch)) continue
-          interactionStore.delete(key)
+          changed = interactionStore.delete(key) || changed
           recordInteractionTombstone(key, {
             ...interaction,
             state: 'resolved',
@@ -1283,6 +1301,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         }
       }
     }
+    return changed
   }
 
   function taskOpenInteractions(task) {
@@ -1536,11 +1555,13 @@ function createCompanionTaskKernel(dependencies = {}) {
       && attentionInstance(receipt.kind, task) === receipt.instance
   }
 
-  function markAttentionOpened(task, receipts, rotate) {
-    if (!task) return
+  function markAttentionOpened(task, receipts, rotate, requested) {
+    let settled = false
     for (const kind of ['input', 'completedUnread']) {
-      const receipt = receipts[kind]
+      const selected = requested?.kind === kind
+      const receipt = selected ? requested : receipts[kind]
       if (!currentAttention(receipt, task)) continue
+      if (selected) settled = true
       const instance = receipt.instance
       attentionSeen[kind].add(instance)
       if (!rotate) continue
@@ -1549,6 +1570,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       if (index < 0) continue
       attentionWalks[kind] = [...walk.slice(index + 1), ...walk.slice(0, index), walk[index]]
     }
+    return settled
   }
 
   function taskTerminalEpoch(task) {
@@ -1772,6 +1794,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     pendingAttention.clear()
     for (const provider of PROVIDERS) providerEpochs[provider] += 1
     providerCacheStates.clear()
+    lastReducedEvidence = null
     taskIncarnations.clear()
     tasksByKey.clear()
     readAcknowledgements.clear()
@@ -2170,6 +2193,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function publishPrivateTopology(reason, patch = {}) {
+    lastReducedEvidence = null
     const materialized = materializePrivateTopology()
     const next = {
       ...currentPackage,
@@ -2227,20 +2251,24 @@ function createCompanionTaskKernel(dependencies = {}) {
     }) })
   }
 
-  function publishTaskPackage(next, { evidenceDraft, rescheduleNoop = false, reorder = false, onChanged } = {}) {
-    const semantic = semanticPackage(next)
+  function publishTaskPackage(next, { evidenceDraft, reusedProjection = false, rescheduleNoop = false, reorder = false, onChanged } = {}) {
     const previous = currentPackage
+    const unchanged = reusedProjection && next.complete === previous.complete && next.focusedKey === previous.focusedKey
+      && PROVIDERS.every(provider => next.providerHealth[provider].status === previous.providerHealth[provider].status
+        && next.providerHealth[provider].errorCode === previous.providerHealth[provider].errorCode)
+    const semantic = unchanged ? lastSemantic : semanticPackage(next)
     if (semantic === lastSemantic) {
       // Evidence watermarks advance even when there is no visible change.
       if (evidenceDraft) {
         currentPackage = { ...next, packageRevision: previous.packageRevision, publishedAt: previous.publishedAt }
         record({
           level: 'debug', scope: 'task-kernel', event: 'same-state-no-op', outcome: 'ignored',
+          ...(reusedProjection ? { cache: 'projection-reused' } : {}),
           packageRevision: previous.packageRevision, count: next.tasks.length
         })
       }
       if (reorder) syncConsumers(currentPackage, true)
-      if (evidenceDraft || rescheduleNoop) scheduleVisibilityTransition()
+      if ((evidenceDraft && !reusedProjection) || rescheduleNoop) scheduleVisibilityTransition()
       return currentPackage
     }
     next.packageRevision = ++packageSequence
@@ -2739,16 +2767,23 @@ function createCompanionTaskKernel(dependencies = {}) {
         nextRelationStore.delete(key)
       }
     }
-    nodeStore.clear()
-    for (const [key, task] of nextNodeStore) nodeStore.set(key, task)
-    relationStore.clear()
-    for (const [key, relation] of nextRelationStore) relationStore.set(key, relation)
-    reconcileInteractions(batches, incomingLaneGenerations, currentLaneGenerations, enabledProviders, activities)
+    const nodesChanged = evidenceMapChanged(nodeStore, nextNodeStore)
+    if (nodesChanged) {
+      nodeStore.clear()
+      for (const [key, task] of nextNodeStore) nodeStore.set(key, task)
+    }
+    const relationsChanged = evidenceMapChanged(relationStore, nextRelationStore)
+    if (relationsChanged) {
+      relationStore.clear()
+      for (const [key, relation] of nextRelationStore) relationStore.set(key, relation)
+    }
+    const interactionsChanged = reconcileInteractions(batches, incomingLaneGenerations, currentLaneGenerations, enabledProviders, activities)
     for (const provider of observedProviders) {
       for (const lane of SOURCE_LANES) {
         currentLaneGenerations[provider][lane] = Math.max(currentLaneGenerations[provider][lane], incomingLaneGenerations[provider][lane])
       }
     }
+    return nodesChanged || relationsChanged || interactionsChanged
   }
 
   /** 吃证据的唯一入口：schema/revision 失败则整批丢掉，且不消耗 producer revision。 */
@@ -2790,25 +2825,35 @@ function createCompanionTaskKernel(dependencies = {}) {
     const before = (pending?.before || []).map(normalizePending)
     const after = (pending?.after || []).map(normalizePending)
     if ([...before, ...after].some(batch => !batch.valid)) return null
-    if (hostEvidence && producer === 'host-preflight') refreshPauseProtection()
+    const refreshPauses = hostEvidence && producer === 'host-preflight' && pauseRecoveryPending
+    if (refreshPauses) refreshPauseProtection()
     configure({ enabled: draft.enabled, providers: draftProviders })
     if (!enabled) return currentPackage
     if (!sameProviders(providers, draftProviders)) return null
     if (currentPackage.complete && draft.complete !== true && !cacheProvider) return currentPackage
 
     const lanes = normalizeSourceLaneGenerations(currentPackage.sourceLaneGenerations)
+    const incomingLanes = normalizeSourceLaneGenerations(draft.sourceLaneGenerations)
+    const replayKey = `${producer}:${cacheProvider}`
+    const equivalentEvidence = hostEvidence && !refreshPauses && !before.length && !after.length
+      && lastReducedEvidence?.key === replayKey && lastReducedEvidence.package === currentPackage
+      && isDeepStrictEqual(lastReducedEvidence.lanes, incomingLanes)
+      && isDeepStrictEqual(lastReducedEvidence.batches, batches)
     const observedKeys = new Set()
     const previousPauseKeys = new Set([...pauseReceipts.keys()].filter(key => nodeStore.has(key)))
     const admission = before.length ? new Map(batches.codex.nodes.map(node => [node.key, node])) : null
     const reducePending = (batch, seed) => {
       const generations = Object.fromEntries(SOURCE_LANES.map(lane => [lane, batch.channels[lane].generation]))
-      reduceEvidenceBatches({ producer: 'host-evidence' }, { codex: batch }, { codex: generations }, lanes,
+      return reduceEvidenceBatches({ producer: 'host-evidence' }, { codex: batch }, { codex: generations }, lanes,
         true, enabledProviders, observedKeys, seed)
     }
-    for (const batch of before) reducePending(batch, admission)
-    reduceEvidenceBatches(draft, batches, normalizeSourceLaneGenerations(draft.sourceLaneGenerations),
-      lanes, hostEvidence, enabledProviders, observedKeys)
-    for (const batch of after) reducePending(batch)
+    let graphChanged = false
+    for (const batch of before) graphChanged = reducePending(batch, admission) || graphChanged
+    if (!equivalentEvidence) {
+      graphChanged = reduceEvidenceBatches(draft, batches, normalizeSourceLaneGenerations(incomingLanes),
+        lanes, hostEvidence, enabledProviders, observedKeys) || graphChanged
+    }
+    for (const batch of after) graphChanged = reducePending(batch) || graphChanged
 
     for (const [key, receipt] of pauseReceipts) {
       const task = nodeStore.get(key)
@@ -2816,21 +2861,31 @@ function createCompanionTaskKernel(dependencies = {}) {
         retirePauseReceipt(key, receipt.planLifecycleRevision)
       }
     }
+    let retryMigration = false
     for (const key of observedKeys) {
       const task = nodeStore.get(key)
-      if (task?.hidden && hasCurrentPlanArtifact(task)) nodeStore.set(key, migrateLegacyHiddenPlan(task))
+      if (task?.hidden && hasCurrentPlanArtifact(task)) {
+        const migrated = migrateLegacyHiddenPlan(task)
+        nodeStore.set(key, migrated)
+        retryMigration = migrated === task || retryMigration
+        graphChanged = migrated !== task || graphChanged
+      }
     }
     for (const key of diagnosticActivitySignatures.keys()) if (!nodeStore.has(key)) diagnosticActivitySignatures.delete(key)
     for (const key of completeCodexRequestSets.keys()) if (!nodeStore.has(key)) completeCodexRequestSets.delete(key)
     for (const [key, request] of interactionStore) {
-      if (request.provider === 'codex' && !nodeStore.has(request.taskKey)) interactionStore.delete(key)
+      if (request.provider === 'codex' && !nodeStore.has(request.taskKey)) {
+        graphChanged = interactionStore.delete(key) || graphChanged
+      }
     }
     if (interactionTombstonesChanged) {
       try { persistInteractionTombstones([...interactionTombstones.values()].slice(-2_000)) } catch {}
       interactionTombstonesChanged = false
     }
-    refreshInteractionProjections()
-    const materialized = materializePrivateTopology()
+    const reusedProjection = hostEvidence && Boolean(topologyFingerprint) && !refreshPauses && !graphChanged
+      && (!nextVisibilityTransitionAt || nextVisibilityTransitionAt > now())
+    if (!reusedProjection) refreshInteractionProjections()
+    const materialized = reusedProjection ? currentPackage : materializePrivateTopology()
     let reorder = false
     if (cacheProvider) {
       const wasCached = providerCacheStates.get(cacheProvider) === 'cached'
@@ -2885,11 +2940,16 @@ function createCompanionTaskKernel(dependencies = {}) {
         }]
       })),
       tasks: nextTasks,
-      views: buildViews(nextTasks)
+      views: reusedProjection ? currentPackage.views : buildViews(nextTasks)
     }
     lastDraftRevisionByProducer.set(producer, draftRevision)
     pending?.acknowledge()
-    return publishTaskPackage(next, { evidenceDraft: draft, reorder })
+    const result = publishTaskPackage(next, { evidenceDraft: draft, reorder, reusedProjection })
+    if (result === currentPackage) {
+      lastReducedEvidence = hostEvidence && !retryMigration && !before.length && !after.length
+        ? { key: replayKey, package: result, lanes: incomingLanes, batches } : null
+    }
+    return result
 
     } finally {
       freezeTrace.end(freezeSpan)

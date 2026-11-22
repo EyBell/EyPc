@@ -417,7 +417,7 @@ function createRuntimeDiagnostics(dependencies = {}) {
     }, 5000)
     freezeStatusTimer?.unref?.()
   }
-  return { revision: DIAGNOSTICS_REVISION, record, configure, snapshot, cleanup, clear, ensureDirectory, flush }
+  return { revision: DIAGNOSTICS_REVISION, record, configure, getSettings: () => ({ ...settings }), snapshot, cleanup, clear, ensureDirectory, flush }
 }
 
 module.exports = {

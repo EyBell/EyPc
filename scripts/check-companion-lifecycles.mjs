@@ -597,9 +597,11 @@ async function checkSpawnEdgeReaders(require) {
   return 4
 }
 
-async function checkColdRolloutAdmission(source, fixture) {
+async function checkColdRolloutAdmission(require, source, fixture) {
+  const { createCodexRolloutRuntimeState } = require('./codex/rollout-runtime-state.cjs')
+  const rollout = createCodexRolloutRuntimeState({ record: value => value ?? {}, rolloutTimestampMs: value => Number(value) || 0 })
   const probeStart = source.indexOf('function codexRefreshRolloutDecisionTracker(')
-  const probeEnd = source.indexOf('\nfunction codexScheduleRolloutProcessProbe(', probeStart)
+  const probeEnd = source.indexOf('\nfunction codexArmRolloutDecisionWatcher(', probeStart)
   const syncStart = source.indexOf('function codexSyncRolloutDecisionTrackers(')
   const syncEnd = source.indexOf('\nfunction readCodexNativePrimaryState(', syncStart)
   assert(probeStart >= 0 && probeEnd > probeStart && syncStart >= 0 && syncEnd > syncStart)
@@ -608,16 +610,20 @@ async function checkColdRolloutAdmission(source, fixture) {
   const threadId = 'synthetic-cold'
   const candidate = '/synthetic/cold.jsonl'
   const stat = { isFile: () => true, dev: 2, ino: 3, size: 14, mtimeMs: 305 }
-  const match = { phase: 'active', turnId: 'current-turn', startedAt: 300 }
-  for (const [name, changes] of [
+  const match = { known: true, phase: 'active', turnId: 'current-turn', startedAt: 300 }
+  const cases = [
     ['same Turn held by its writer', { expected: 'running' }],
-    ['read-only descriptor', { access: 'r' }],
+    ['read-only descriptor before and after publication', { access: 'r', background: true }],
+    ['writer first observed after publication', { access: 'r', backgroundAccess: 'u', background: true, expected: 'running' }],
+    ['writer from an old bridge stream', { access: 'r', backgroundAccess: 'u', background: true, replaceStream: true }],
+    ['writer for a former Side parent', { access: 'r', backgroundAccess: 'u', background: true, replaceParent: true }],
     ['different Turn', { runtime: { ...match, turnId: 'other-turn' } }],
     ['rollout changed during read', { changedFile: true }],
     ['activity changed during probe', { dirty: true }],
     ['current Desktop owner', { shadow: { ownerClientId: 'desktop' } }],
     ['real idle interruption', { status: 'idle', exact: true, expected: 'stopped' }]
-  ]) {
+  ]
+  for (const [name, changes] of cases) {
     const thread = { id: threadId, status: { type: changes.status || 'notLoaded' } }
     const turn = { id: match.turnId, status: 'interrupted', startedAt: match.startedAt,
       ...(changes.exact ? { interruptedAt: 350 } : {}) }
@@ -626,39 +632,55 @@ async function checkColdRolloutAdmission(source, fixture) {
       terminalEvidenceSequence: changes.exact ? 350 : 0, idleConfirmed: changes.exact === true }
     const trackers = new Map()
     const dirty = new Map()
+    const scheduled = []
+    const desktop = { streamGeneration: 1, shadows: new Map([[threadId, changes.shadow]]),
+      refreshSubscribedOwner() {}, parentThreadIdFor: () => parent }
+    let parent = 'original-parent'
     let statReads = 0
     const { probe, sync } = entry.runInNewContext({
       process: { platform: 'darwin' },
       execFile(command, args, { timeout }, callback) {
         assert.equal(command, '/usr/sbin/lsof')
         assert.deepEqual(Array.from(args), ['-n', '-Fpcfan', '--', candidate])
-        assert.equal(timeout, 750)
-        callback(null, `p42\nccodex\nf10\na${changes.access || 'u'}\nn${candidate}\n`)
+        const cold = timeout === 750
+        const access = (!cold && changes.backgroundAccess) || changes.access || 'u'
+        callback(null, `p42\nccodex\nf10\na${access}\nn${candidate}\n`)
+        if (!cold && changes.replaceStream) desktop.streamGeneration += 1
+        if (!cold && changes.replaceParent) parent = 'new-parent'
       },
       fs: { statSync: () => ({ ...stat, size: stat.size + (changes.changedFile && statReads++ > 0 ? 1 : 0) }) },
       codexProcess: null, CODEX_COLD_ROLLOUT_PROBE_LIMIT: 16, CODEX_COLD_ROLLOUT_PROBE_TIMEOUT_MS: 750,
       codexThreadRolloutCandidate: () => ({ candidate, stat }), codexRolloutDecisionTrackers: trackers,
       codexThreadTurnStatusDirty: dirty, codexThreadPendingInputCache: new Map(),
       codexActivityInventory: new Map([[threadId, known]]),
-      codexDesktopBridge: { shadows: new Map([[threadId, changes.shadow]]) },
+      codexDesktopBridge: desktop,
+      codexInventoryMembershipGeneration: 1, codexCausalDomain: 'source',
+      codexSnapshotScopeCurrent: scope => scope.bridge === desktop && scope.stream === desktop.streamGeneration,
+      codexSideParentThreadId: () => parent, codexRolloutProcessProbeGeneration: 1,
+      codexRolloutProcessProbeTimer: null, codexRolloutProcessProbeInFlight: false,
+      codexRolloutProcessProbePending: false, CODEX_ROLLOUT_PROCESS_PROBE_MS: 100,
+      setTimeout(callback) { scheduled.push(callback); return 1 }, clearTimeout() {},
       validCodexThreadId: id => id === threadId, codexRecord: value => value ?? {},
       codexTimestampMs: Number, codexInventoryTerminalEvidence: () => known.lastTurnEvidence,
       codexIsConfirmedTurnEvidence: evidence => evidence === 'targeted-after-exit',
       codexHasConfirmedTerminalEvidence: () => changes.exact === true,
       codexRolloutDecisionState: () => ({ runtime: changes.runtime || match, input: { correlations: new Set() } }),
-      codexApplyRolloutDecisionState(tracker, _state, emit, { observeRuntime }) {
-        assert.equal(emit, false)
-        assert.equal(observeRuntime, true)
+      codexApplyRolloutDecisionState(tracker, state, _emit, { observeRuntime, writable, appended }) {
+        if (!observeRuntime || !rollout.codexRolloutRuntimeForTurn(state.runtime, {
+          known, owner: changes.shadow, confirmedTerminal: changes.exact, writable, appended
+        })) return false
         tracker.rolloutLiveSequence = 330
         Object.assign(known, { status: 'active', lastTurnStatus: 'inProgress', lastTurnEvidence: 'turn-started',
-          activeEvidenceSequence: 330, statusAuthority: 'app-server-live', activityEvidence: 'activity-event' })
+          appServerLiveActive: true, activeEvidenceSequence: 330, statusAuthority: 'app-server-live', activityEvidence: 'activity-event' })
+        return true
       },
-      codexArmRolloutDecisionWatcher() {}, codexScheduleRolloutProcessProbe() {}, recordCodexTaskSync() {}
+      codexArmRolloutDecisionWatcher() {}, codexRestoreRolloutFallback() {}, recordCodexTaskSync() {}
     })
     const latest = new Map([[threadId, turn]])
     const opened = await probe([thread], { latest, readSucceededIds: new Set([threadId]) })
     if (changes.dirty) dirty.set(threadId, 1)
     sync([thread], latest, opened, new Map())
+    if (changes.background) await scheduled[0]()
     const snapshot = fixture()
     try {
       snapshot.publish([{ key: 'main', epoch: turn.startedAt, branch: known }], 1, { complete: true, hostEvidence: true })
@@ -666,6 +688,23 @@ async function checkColdRolloutAdmission(source, fixture) {
       assert.equal(snapshot.expectRoot(expected, false, 1).capabilities.continueTask, changes.exact === true, name)
     } finally { snapshot.kernel.close() }
   }
+  const record = (type, timestamp) => JSON.stringify({ type: 'event_msg', timestamp, payload: { type, turn_id: match.turnId } })
+  const historical = `${record('task_started', 300)}\n${record('turn_aborted', 350)}\n`
+  const append = (baseline, added) => rollout.codexRolloutRuntimeStateText(`${baseline}${added}`, Buffer.byteLength(added))
+  const known = { lastTurnId: match.turnId, lastTurnStatus: 'interrupted', lastTurnStartedAt: 300 }
+  const input = { known, cachedTurn: { id: match.turnId, interruptedAt: 350 }, confirmedTerminal: true, appended: true }
+  const stale = append(historical, record('agent_reasoning', 375))
+  assert.equal(rollout.codexRolloutRuntimeForTurn(stale, input), null, 'a reasoning line cannot reopen a confirmed interruption on its own')
+  const restart = append(historical, `${record('task_started', 400)}\n${record('agent_reasoning', 401)}\n`)
+  assert.equal(rollout.codexRolloutRuntimeForTurn(restart, input)?.phase, 'active', 'a new native start can resume the same Turn')
+  const metadataOnly = append(`${record('task_started', 300)}\n`, '{"type":"session_meta"}\n')
+  assert.equal(metadataOnly.appended, undefined, 'metadata bytes cannot restamp an unchanged runtime edge')
+  const terminal = rollout.codexRolloutRuntimeStateText(historical)
+  assert.equal(rollout.codexRolloutRuntimeForTurn(terminal, { known, writable: true })?.phase, 'interrupted')
+  assert.equal(rollout.codexRolloutRuntimeForTurn(terminal, {
+    known: { ...known, appServerLiveActive: true }, writable: true
+  }), null, 'an unchanged terminal cannot retire a resumed native Turn')
+  return cases.length + 4
 }
 
 async function checkColdUnreadRefresh(source) {
@@ -771,7 +810,66 @@ async function checkVerifiedInventorySharing(source) {
   assert.equal(inventory.read(), replacement, 'old completion cannot clear the new in-flight read')
   pending[1]()
   await replacement
-  return 3
+  const membershipStart = source.indexOf('async function reconcileCodexInventoryMembership(')
+  const membershipEnd = source.indexOf('\nfunction ensureCodexInventoryMembershipWatchers(', membershipStart)
+  const scanStart = source.indexOf('async function scanVerifiedCodexInventory(')
+  assert(membershipStart >= 0 && membershipEnd > membershipStart && scanStart >= 0 && readStart > scanStart)
+  const listReads = []
+  const recovered = []
+  const emitted = []
+  let queued = 0
+  const endOfRoster = new Error('roster verified')
+  const { reconcile, scan, rotate, knownNewerMembership } = new Script(`${source.slice(scopeStart, scopeEnd)}
+    ${source.slice(membershipStart, membershipEnd)}
+    ${source.slice(scanStart, readStart)}
+    ({
+      reconcile: () => reconcileCodexInventoryMembership('watcher-event', false, {
+        bridge: codexDesktopBridge, stream: codexDesktopBridge.streamGeneration, session: 1, domain: 'source'
+      }),
+      scan: scanVerifiedCodexInventory,
+      rotate: () => { codexDesktopBridge.streamGeneration += 1 },
+      knownNewerMembership: () => { codexInventoryMembershipReconcilePending = true }
+    })`).runInNewContext({
+    codexDesktopBridge: { streamGeneration: 1 }, codexInventoryMembershipGeneration: 1, codexCausalDomain: 'source',
+    codexInventoryMembershipEnabled: () => true,
+    codexActivityInventory: new Map(), codexLocalArchiveRecoverySuppressions: new Set(),
+    codexVerifiedOfficialThreadIds: new Set(), codexRosterForPreflight: null, codexDesktopSideRelations: new Map(),
+    codexInventoryRefreshPending: false, codexInventoryMembershipReconcilePending: false, codexInventoryMembershipForcePending: false,
+    companionTaskKernel: null, codexThreadTurnStatusDirty: new Map(),
+    codexRestoreDesktopSideRelationHints() {},
+    async listAllCodexThreads(archived) {
+      listReads.push(archived)
+      return [{ id: archived ? 'archived' : `root-${listReads.length}` }]
+    },
+    emitCodexActivityDelta(...args) { emitted.push(args) },
+    queueCompanionHostReconciliation() { queued += 1 },
+    runtimeDiagnostics: { record() {} }, readCodexNativeRegistry: () => ({}),
+    recoverCodexThreadsMissingFromInventory(rows, _targets, archived) {
+      recovered.push([rows[0].id, [...archived]])
+      throw endOfRoster
+    },
+    validCodexThreadId: id => Boolean(id), codexRecord: value => value ?? {},
+    codexThreadKey: id => id, CODEX_MISSING_ACTIVITY_MAPPING_RETENTION_MS: 100
+  })
+  assert.equal(await reconcile(), true)
+  assert.equal(queued, 1, 'the membership observation owns one reconciliation')
+  assert.equal(emitted[0][4].scheduleInventory, false, 'the membership delta does not queue the same work again')
+  await assert.rejects(scan(), error => error === endOfRoster)
+  assert.deepEqual(listReads, [false, true], 'the downstream preflight shares the verified lists')
+  assert.equal(recovered[0][0], 'root-1')
+  assert.deepEqual(Array.from(recovered[0][1]), ['archived'])
+  await assert.rejects(scan(), error => error === endOfRoster)
+  assert.deepEqual(listReads, [false, true, false], 'a later unrelated read does not reuse the one-shot roster')
+  await reconcile()
+  rotate()
+  await assert.rejects(scan(), error => error === endOfRoster)
+  assert.deepEqual(listReads, [false, true, false, false, true, false], 'a new stream reads its own list')
+  const queuesBefore = queued
+  const superseded = reconcile()
+  knownNewerMembership()
+  assert.equal(await superseded, false, 'a newer membership signal prevents publishing the older sample')
+  assert.equal(queued, queuesBefore)
+  return 8
 }
 
 function checkInventoryProjectAssignments(source) {
@@ -804,6 +902,141 @@ function checkInventoryProjectAssignments(source) {
   return 3
 }
 
+function checkMemberRequestWatermarks(source, fixture) {
+  const deltaStart = source.indexOf('function codexActivityDelta(')
+  const deltaEnd = source.indexOf('\nfunction sampleCodexActivityEvidence(', deltaStart)
+  const emitStart = source.indexOf('function emitCodexActivityDelta(')
+  const emitEnd = source.indexOf('\nfunction registerCodexLiveThreadMembership(', emitStart)
+  assert(deltaStart >= 0 && deltaEnd > deltaStart && emitStart >= 0 && emitEnd > emitStart)
+  const host = new Script(`${source.slice(deltaStart, deltaEnd)}
+    ${source.slice(emitStart, emitEnd)}
+    emitCodexActivityDelta`)
+  const provider = 'codex'
+  const set = (taskKey, requestSetRevision) => ({
+    revision: 'companion-interaction-evidence-v1', provider, taskKey, requestSetRevision, complete: true
+  })
+  const request = requestSetRevision => ({
+    revision: 'companion-interaction-evidence-v1', provider, taskKey: 'side-b', branchRef: 'side-b',
+    interactionRef: 'b'.repeat(32), kind: 'user-input', state: 'opened', sequence: requestSetRevision,
+    requestSetRevision, turnEpoch: 100, authority: 'provider-live', exact: true
+  })
+  for (const coverSideB of [true, false]) {
+    const snapshot = fixture()
+    const delivered = []
+    const apply = delta => {
+      delivered.push(delta)
+      return Boolean(snapshot.publishRequests(delta.interactions || [], delta.interactionSets || [], delta.generation))
+    }
+    const emit = host.runInNewContext({
+      codexRecord: value => value ?? {}, codexActivityPublicEntry: value => value,
+      codexActivitySourceFingerprint: 'source', codexActivityGeneration: 100,
+      codexActivityBridgeFingerprint: 'source\0connected\0clear',
+      codexDesktopBridge: { state: 'connected', hasDegradedStreams: () => false },
+      codexCompleteRequestSetRevisions: new Map(), codexInteractionSemanticFingerprints: new Map(), codexRequestSetProviderEpoch: undefined,
+      codexInventoryRefreshPending: false, codexActivityListeners: new Set([apply]),
+      applyCodexActivityToCompanionKernel: apply, companionTaskKernel: snapshot.kernel,
+      companionDiagnosticTaskRef: (_provider, key) => key, codexActivityDecisionDiagnostics: () => ({}),
+      companionV7Revisions: { interaction: 'companion-interaction-evidence-v1' },
+      runtimeDiagnostics: { record() {} }
+    })
+    const send = (interactionSets, interactions = []) => emit([], false, 'normal', [], {
+      interactionEvidence: { taskKey: 'main', interactionSets, interactions }
+    })
+    try {
+      const rows = [{ key: 'main' }, { key: 'side-a' }, { key: 'side-b' }]
+      const first = snapshot.publish(rows, 1, { complete: true, hostEvidence: true })
+      const replay = snapshot.publish(rows, 1, { complete: true, hostEvidence: true })
+      assert.equal(replay.tasks, first.tasks, 'the same inventory version reuses its task projection')
+      assert.equal(replay.views, first.views)
+      assert.equal(replay.packageRevision, first.packageRevision)
+      assert.equal(send([set('side-a', 20)]), true)
+      const revision = snapshot.kernel.getPackage().packageRevision
+      if (coverSideB) {
+        assert.equal(send([set('side-a', 20), set('side-b', 30)]), true, 'Side B coverage reaches Kernel independently')
+        assert.equal(delivered.at(-1).interactionSets.at(-1).requestSetRevision, 30)
+        assert.equal(snapshot.kernel.getPackage().packageRevision, revision, 'new coverage alone need not publish a package')
+        assert.equal(send([set('side-a', 20), set('side-b', 30)]), false, 'identical full coverage does not enter V7 again')
+        const prior = snapshot.kernel.getPackage()
+        snapshot.publishRequests([], [set('side-b', 40)], 200)
+        assert.equal(snapshot.kernel.getPackage().sourceLaneGenerations.codex.interaction, 200)
+        assert.equal(snapshot.kernel.getPackage().tasks, prior.tasks, 'advancing existing coverage reuses the task projection')
+        assert.equal(snapshot.kernel.getPackage().views, prior.views)
+      }
+      assert.equal(send([], [request(25)]), true)
+      snapshot.expectRoot(coverSideB ? 'completed' : 'waiting-input', false, 3)
+      if (coverSideB) {
+        assert.equal(send([], [request(41)]), true)
+        snapshot.expectRoot('waiting-input', false, 3)
+      }
+    } finally {
+      snapshot.kernel.close()
+    }
+  }
+  return 6
+}
+
+async function checkAttentionSettlement(fixture) {
+  const rows = [
+    { key: 'task-b', lastQuestionAt: 300, phase: 'waiting-input' },
+    { key: 'task-a', lastQuestionAt: 200, phase: 'waiting-input' },
+    { key: 'task-c', lastQuestionAt: 100, phase: 'waiting-input' }
+  ]
+  const publishOptions = { independent: true, complete: true, hostEvidence: true }
+  for (const replaceRequest of [false, true]) {
+    let inFlight
+    const calls = []
+    const snapshot = fixture(async (target) => {
+      calls.push(target.key)
+      if (calls.length !== 2) return { outcome: 'dispatched' }
+      return new Promise(resolve => { inFlight = resolve })
+    })
+    try {
+      snapshot.publish(rows, 1, publishOptions)
+      assert.deepEqual(snapshot.kernel.getPackage().views.cycleKeys, ['task-b', 'task-a', 'task-c'])
+      await snapshot.kernel.dispatch({ action: 'cycle', direction: 1 })
+      assert.equal(snapshot.kernel.diagnostics().navigation.cursorKey, 'task-b')
+      const first = snapshot.kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut' })
+      for (let index = 0; !inFlight && index < 20; index += 1) await Promise.resolve()
+      assert.equal(typeof inFlight, 'function')
+      assert.deepEqual(calls, ['task-b', 'task-a'])
+      snapshot.publish(rows.map(row => row.key !== 'task-a' ? row : {
+        ...row, lastQuestionAt: 400, ...(replaceRequest ? { requestRef: 'a'.repeat(32) } : {})
+      }), 2, publishOptions)
+      assert.deepEqual(snapshot.kernel.getPackage().views.cycleKeys, ['task-a', 'task-b', 'task-c'])
+      inFlight({ outcome: 'dispatched' })
+      assert.equal((await first).outcome, 'dispatched')
+      assert.equal(snapshot.kernel.diagnostics().navigation.cursorKey, replaceRequest ? 'task-b' : 'task-a')
+      await snapshot.kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut' })
+      assert.equal(calls.at(-1), replaceRequest ? 'task-a' : 'task-c')
+    } finally {
+      snapshot.kernel.close()
+    }
+  }
+  for (const firstOutcome of ['dispatched', 'failed']) {
+    let inFlight
+    let attempts = 0
+    const snapshot = fixture(async () => {
+      attempts += 1
+      if (attempts !== 1) return { outcome: 'dispatched' }
+      return new Promise(resolve => { inFlight = resolve })
+    })
+    try {
+      snapshot.publish([{ key: 'main', phase: 'running' }], 1, { complete: true, hostEvidence: true })
+      const first = snapshot.kernel.dispatch({ action: 'cycle', direction: 1, operationId: 'first-open' })
+      for (let index = 0; !inFlight && index < 20; index += 1) await Promise.resolve()
+      assert.equal(typeof inFlight, 'function')
+      const tail = snapshot.kernel.dispatch({ action: 'cycle', direction: 1, operationId: 'tail-open' })
+      inFlight({ outcome: firstOutcome })
+      assert.equal((await first).outcome, firstOutcome)
+      assert.equal((await tail).operationId, 'tail-open')
+      assert.equal(attempts, firstOutcome === 'dispatched' ? 1 : 2)
+    } finally {
+      snapshot.kernel.close()
+    }
+  }
+  return 4
+}
+
 export async function checkCompanionLifecycles(assetRoot) {
   const require = createRequire(resolve(assetRoot, 'index.js'))
   const { createCompanionTaskKernel } = require('./companion/task-kernel.cjs')
@@ -819,21 +1052,32 @@ export async function checkCompanionLifecycles(assetRoot) {
       adapters: { codex: { open } } })
     const lease = kernel.attach({ enabled: true, providers }).lease
     let transport = 0
+    function publishRequests(interactions, interactionSets, generation) {
+      const current = kernel.getPackage()
+      const laneGenerations = { ...current.sourceLaneGenerations.codex, interaction: generation }
+      const batch = createEvidenceBatchV7({ provider: 'codex', interactions, interactionSets, laneGenerations, health: 'ready' })
+      return kernel.publishEvidence({ schema: 'companion-task-evidence-draft-v7', producer: 'host-evidence',
+        draftRevision: ++transport, acceptedAt: 1000, enabled: true, complete: true, providers,
+        sourceGenerations: { codex: generation }, sourceLaneGenerations: { codex: laneGenerations },
+        evidenceBatches: { codex: batch } })
+    }
     function publish(rows, generation, { complete = false, remove = [], unreadGeneration = generation,
-      activityGeneration = generation, hostEvidence = false } = {}) {
+      activityGeneration = generation, hostEvidence = false, independent = false } = {}) {
       const family = 'codex:lifecycle'
-      const nodes = rows.map(({ key, phase = 'completed', epoch = 100, unread = false, known = true, branch,
+      const nodes = rows.map(({ key, phase = 'completed', epoch = 100, unread = false, known = true, branch, lastQuestionAt = 100,
         closedMachineRun, machineRunCoverageCurrent, machineRunInterruptedAt, relationOnly, goalVerifying,
-        turnStartedAt = phase === 'unknown' ? 0 : epoch }) => createEvidenceNodeV7({
-        key, provider: 'codex', family, role: key === 'main' ? 'root' : 'child', standaloneEligible: key === 'main',
+        turnStartedAt = phase === 'unknown' ? 0 : epoch }) => {
+        const root = independent || key === 'main'
+        return createEvidenceNodeV7({
+        key, provider: 'codex', family: independent ? `codex:${key}` : family, role: root ? 'root' : 'child', standaloneEligible: root,
         observedAt: epoch + (phase === 'completed' ? 10 : 0), causalKey: `${key}:${epoch}`,
-        capabilities: key === 'main' ? branch ? ['open', 'archive', 'continue-task'] : ['open', 'archive'] : [],
-        metadata: { kind: key === 'main' ? 'codex-thread' : 'topology-child',
-          actionAlias: key === 'main' ? 'ct_lifecycle_main_1234567890' : '',
+        capabilities: root ? branch ? ['open', 'archive', 'continue-task'] : ['open', 'archive'] : [],
+        metadata: { kind: root ? 'codex-thread' : 'topology-child',
+          actionAlias: root ? `ct_lifecycle_${key}_1234567890` : '',
           revisionAt: epoch, membershipRevision: generation, visibilityRevision: generation, metadataRevision: generation,
-          lastQuestionAt: 100, createdAt: 50, closedMachineRun, machineRunCoverageCurrent, machineRunInterruptedAt, relationOnly,
+          lastQuestionAt, createdAt: 50, closedMachineRun, machineRunCoverageCurrent, machineRunInterruptedAt, relationOnly,
           idleConfirmed: branch?.idleConfirmed === true },
-        observation: branch ? codexBranchObservationV7({ branchKind: key === 'main' ? 'main' : 'side',
+        observation: branch ? codexBranchObservationV7({ branchKind: root ? 'main' : 'side',
           status: 'idle', lastTurnStatus: phase === 'unknown' ? undefined : phase === 'stopped' ? 'interrupted' : 'completed',
           goalStatus: 'none', goalFreshness: 'fresh',
           lastTurnEvidence: 'targeted-after-exit', terminalEvidenceSequence: epoch + 1, causalKey: `${key}:${epoch}`,
@@ -847,13 +1091,14 @@ export async function checkCompanionLifecycles(assetRoot) {
           sequence: epoch + (phase === 'completed' ? 10 : 0), turnStartedAt,
           statusEnteredAt: epoch + (phase === 'completed' ? 10 : 0), terminalAt: phase === 'completed' ? epoch + 10 : 0,
           unreadKnown: known, unread, unreadSequence: unreadGeneration }
-      }))
-      const relations = rows.filter(row => row.key !== 'main').map(row => ({ childKey: row.key,
+        })
+      })
+      const relations = rows.filter(row => !independent && row.key !== 'main').map(row => ({ childKey: row.key,
         parentKey: row.parent || 'main', provider: 'codex', family, relation: row.relation || 'side-thread',
         authority: 'lifecycle-exact', exact: true, generation }))
       const interactions = rows.filter(row => row.phase === 'waiting-input' || row.interactionState === 'resolved').map(row => ({
         revision: 'companion-interaction-evidence-v1', provider: 'codex', taskKey: row.key, branchRef: row.key,
-        interactionRef: 'f'.repeat(32), kind: 'user-input', state: row.interactionState || 'opened', sequence: row.epoch || 100,
+        interactionRef: row.requestRef || 'f'.repeat(32), kind: 'user-input', state: row.interactionState || 'opened', sequence: row.epoch || 100,
         turnEpoch: row.epoch || 100, requestSetRevision: generation, authority: 'provider-live', exact: true
       }))
       const interactionSets = rows.filter(row => row.requestCoverage === true).map(row => ({
@@ -891,7 +1136,7 @@ export async function checkCompanionLifecycles(assetRoot) {
       checked++
       return snapshot.tasks[0]
     }
-    return { kernel, publish, expectRoot, events }
+    return { kernel, publish, publishRequests, expectRoot, events }
   }
   const main = { key: 'main' }
   const side = { key: 'side' }
@@ -1242,10 +1487,12 @@ export async function checkCompanionLifecycles(assetRoot) {
     assert.deepEqual(stoppedUnread.kernel.getPackage().views.cycleKeys, ['main'])
   } finally { stoppedUnread.kernel.close() }
   const source = readFileSync(resolve(assetRoot, assetRoot.endsWith('preload') ? 'index.js' : 'preload.js'), 'utf8')
-  await checkColdRolloutAdmission(source, fixture)
+  checked += await checkColdRolloutAdmission(require, source, fixture)
   checked += await checkColdUnreadRefresh(source)
   checked += await checkVerifiedInventorySharing(source)
   checked += checkInventoryProjectAssignments(source)
+  checked += checkMemberRequestWatermarks(source, fixture)
+  checked += await checkAttentionSettlement(fixture)
   const cacheStart = source.indexOf('function companionOpenTargetUnavailable(')
   const cacheEnd = source.indexOf('\nasync function openCompanionClaudeTarget(', cacheStart)
   const indexStart = source.indexOf('function companionCodexInventoryMatchV7(')

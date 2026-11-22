@@ -858,7 +858,7 @@ function loadCodexBridge(
     const output = [...child.externalOpenRolloutIds]
       .map((threadId) => `/tmp/.codex/sessions/${threadId}.jsonl`)
       .filter((candidate) => args.includes(candidate))
-      .map((candidate, index) => `p${900 + index}\nccodex\nn${candidate}`)
+      .map((candidate, index) => `p${900 + index}\nccodex\nf10\nau\nn${candidate}`)
       .join('\n')
     if (output) queueMicrotask(() => callback(null, `${output}\n`, ''))
     else {
@@ -3408,7 +3408,8 @@ draft: v7EvidenceDraft({
     child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
     child.externalOpenRolloutIds.add(FIXED_THREAD_IDS[3])
     child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
-      JSON.stringify({ timestamp: '2030-03-17T17:48:20.000Z', type: 'event_msg', payload: { type: 'task_started' } }),
+      JSON.stringify({ timestamp: '2030-03-17T17:48:20.000Z', type: 'event_msg',
+        payload: { type: 'task_started', turn_id: `turn-${FIXED_THREAD_IDS[3]}` } }),
       JSON.stringify({ timestamp: '2030-03-17T17:48:21.000Z', type: 'response_item', payload: { type: 'reasoning' } })
     ].join('\n'))
     const { bridge } = loadCodexBridge(child)
@@ -3596,7 +3597,8 @@ draft: v7EvidenceDraft({
     child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
     child.externalOpenRolloutIds.add(FIXED_THREAD_IDS[3])
     child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
-      JSON.stringify({ timestamp: '2030-03-17T17:48:20.000Z', type: 'event_msg', payload: { type: 'task_started' } }),
+      JSON.stringify({ timestamp: '2030-03-17T17:48:20.000Z', type: 'event_msg',
+        payload: { type: 'task_started', turn_id: `turn-${FIXED_THREAD_IDS[3]}` } }),
       JSON.stringify({ timestamp: '2030-03-17T17:48:21.000Z', type: 'response_item', payload: { type: 'reasoning' } })
     ].join('\n'))
     const { bridge } = loadCodexBridge(child)

@@ -1,5 +1,9 @@
 # EyPc Project Status Hub
 
+<a id="unified-status-shortcut-build-261122"></a>
+
+- 2026-11-22 16:36:59，Codex 状态、库存与快捷键统一修复通过完整 `closeout`。产物为 `V7` / `host-7ddb644fdb6faa08d36c` / `renderer-df9a47127fd151767ff5`，builtAt `2026-11-22T08:36:59.474Z`。源码和随包各通过 242 个生命周期检查点，106 组预加载镜像一致。16:37 的日志仍只有 11:07 的 10:18 版握手。新版双端首包、分段时延和十对实际目标可见待验。[插件入口](../../dist/plugin.json#L1) · [状态修复](261114/codex-state-sync/delivery.md#unified-causality-261122) · [缓存与快捷键](261120/eypc-shortcut-optimization/jump-cache-component.md#unified-cache-audit-261122)
+
 <a id="r21-read-latency-build-261122"></a>
 
 - 2026-11-22 11:19:25，冷启动读态回退和库存去重修复通过完整 `closeout`。产物为 `V7` / `host-5a8520b083257f87cb8e` / `renderer-e64957d336fdfc69d5d4`，builtAt `2026-11-22T03:19:25.633Z`。源码和随包各通过 213 个生命周期检查点。新版尚待宿主加载，主界面和浮窗同包、状态加载时延及快捷键实际落点待实机复验。[插件入口](../../dist/plugin.json#L1) · [实机证据](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-1107-261122) · [缓存规格](261120/eypc-shortcut-optimization/jump-cache-component.md#cache-refresh-review-261122)

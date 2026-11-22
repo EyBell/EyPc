@@ -425,6 +425,7 @@ function createCompanionNavigation(dependencies = {}) {
       }
       request.isCurrent = () => currentRequest(request)
       const result = normalizeOpenResult(await openTarget(request.target, request), request.target)
+      const settled = request.attention ? request.attentionSettled === true : null
       const currentOperationId = result.operationId || request.operationId
       const opened = result.outcome === 'opened' || result.outcome === 'dispatched'
       const sameTarget = isSameTarget(request)
@@ -432,7 +433,8 @@ function createCompanionNavigation(dependencies = {}) {
         // Opening a row always publishes a result for Kernel focusedKey, but
         // only a currently eligible target owns the cycle cursor. An already
         // dispatched open cannot be recalled when its tier or visibility changes.
-        if (snapshot.cycleKeys.includes(request.target.key) && (!request.cycle || canOpenTarget(request))) {
+        if (snapshot.cycleKeys.includes(request.target.key)
+          && (settled ?? (!request.cycle || canOpenTarget(request)))) {
           cursorKey = request.target.key
           cursorDisplacedSide = ''
         }
@@ -477,7 +479,7 @@ function createCompanionNavigation(dependencies = {}) {
       // twice merely because intermediate presses advanced the logical cursor.
       if (opened && sameTarget && !directQueue.length && queuedCycle?.target.key === request.target.key
         && queuedCycle.target.actionAlias === request.target.actionAlias
-        && currentRequest(queuedCycle) && canOpenTarget(request)) {
+        && currentRequest(queuedCycle) && (settled ?? canOpenTarget(request))) {
         const satisfied = queuedCycle
         queuedCycle = null
         record({ level: 'debug', scope: 'navigation', event: 'cycle', outcome: 'reused',

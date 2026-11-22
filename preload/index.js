@@ -1588,6 +1588,8 @@ let codexActivityGeneration = 0
 let codexDedupInventoryGeneration = -1
 const codexActivitySemanticFingerprints = new Map()
 const codexInteractionSemanticFingerprints = new Map()
+const codexCompleteRequestSetRevisions = new Map()
+let codexRequestSetProviderEpoch
 let codexActivityBridgeFingerprint = ''
 let codexInventoryRefreshPending = false
 let codexInventoryMembershipGeneration = 0
@@ -1647,6 +1649,7 @@ let codexSpawnEdgeRead = null
 let codexCompleteInventoryThreadIds = null
 let codexVerifiedOfficialThreadIds = null
 let codexVerifiedInventoryInFlight = null
+let codexRosterForPreflight = null
 // Raw branch IDs and exact terminal evidence remain Host-only. The V7 evidence
 // adapter hashes branch refs before the single Provider batch reaches Kernel.
 const codexPrivateBranchTerminals = new Map()
@@ -4507,7 +4510,11 @@ function codexForgetInventorySideRelation(threadId, options = {}) {
   codexDesktopBridge?.forgetWaitingState(threadId)
   codexAppServerSideActivities.delete(threadId)
   codexDesktopOpenedReadAcknowledgements.delete(threadId)
-  if (parentThreadId) codexDesktopRequestProjection?.codexDesktopClearFallbackInteractions(`codex-child:${codexPrivateBranchRef(parentThreadId, threadId)}`)
+  if (parentThreadId) {
+    const memberKey = `codex-child:${codexPrivateBranchRef(parentThreadId, threadId)}`
+    codexDesktopRequestProjection?.codexDesktopClearFallbackInteractions(memberKey)
+    codexCompleteRequestSetRevisions.delete(memberKey)
+  }
   if (codexDesktopSideRelations.has(threadId)) codexForgetDesktopSideRelation(threadId)
   codexDesktopBridge?.sideShadows?.delete(threadId)
   codexDesktopBridge?.sideRecoveryPending?.delete(threadId)
@@ -4601,7 +4608,11 @@ function codexForgetDesktopSideRelation(threadId) {
   const parentThreadId = codexDesktopSideRelations.get(threadId)
   if (parentThreadId) codexDesktopRequestProjection?.codexDesktopReconcileOwnerTarget?.(codexDesktopBridge, threadId, true)
   if (validCodexThreadId(parentThreadId)) codexForgetPrivateBranchTerminal(parentThreadId, threadId)
-  if (parentThreadId) codexDesktopRequestProjection?.codexDesktopClearFallbackInteractions(`codex-child:${codexPrivateBranchRef(parentThreadId, threadId)}`)
+  if (parentThreadId) {
+    const memberKey = `codex-child:${codexPrivateBranchRef(parentThreadId, threadId)}`
+    codexDesktopRequestProjection?.codexDesktopClearFallbackInteractions(memberKey)
+    codexCompleteRequestSetRevisions.delete(memberKey)
+  }
   const removed = codexDesktopSideRelations.delete(threadId)
   if (!codexInventorySideRelations.has(threadId)) {
     codexForgetEmptySideHistory(threadId, parentThreadId)
@@ -4616,7 +4627,9 @@ function codexForgetDesktopSideRelationsForParent(parentThreadId) {
   let removed = false
   for (const [threadId, parent] of codexDesktopSideRelations) {
     if (parent !== parentThreadId) continue
-    codexDesktopRequestProjection?.codexDesktopClearFallbackInteractions(`codex-child:${codexPrivateBranchRef(parentThreadId, threadId)}`)
+    const memberKey = `codex-child:${codexPrivateBranchRef(parentThreadId, threadId)}`
+    codexDesktopRequestProjection?.codexDesktopClearFallbackInteractions(memberKey)
+    codexCompleteRequestSetRevisions.delete(memberKey)
     codexDesktopSideRelations.delete(threadId)
     if (!codexInventorySideRelations.has(threadId)) {
       codexForgetEmptySideHistory(threadId, parentThreadId)
@@ -8062,6 +8075,7 @@ function resetCodexThreadSessionState(options = {}) {
   codexActivityGeneration += 1
   codexActivitySemanticFingerprints.clear()
   codexInteractionSemanticFingerprints.clear()
+  codexCompleteRequestSetRevisions.clear()
   codexActivityBridgeFingerprint = ''
   codexInventoryRefreshPending = false
   codexInventoryMembershipGeneration += 1
@@ -8083,6 +8097,7 @@ function resetCodexThreadSessionState(options = {}) {
   codexhostDiscovery?.codexhostResetDiscovery?.()
   codexCompleteInventoryThreadIds = null
   codexVerifiedOfficialThreadIds = null
+  codexRosterForPreflight = null
   codexInventoryThreadTopologyModule?.codexResetSideTopologyDiagnostics()
   codexPrivateBranchTerminals.clear()
   codexActivityDecisionCounters = {
@@ -8146,6 +8161,7 @@ function codexArchivedActivityKey(threadId) {
   codexThreadGoalRefreshes.delete(threadId)
   codexThreadFirstPromptCache.delete(threadId)
   codexInteractionSemanticFingerprints.delete(known.key)
+  codexCompleteRequestSetRevisions.delete(known.key)
   codexActivityInventory.delete(threadId)
   codexActivityThreadIds.delete(known.key)
   companionCodexOpenEntries.delete(known.key)
@@ -8171,6 +8187,7 @@ function codexInventoryMembershipEnabled() {
 
 function requestCodexPinReconciliation() {
   if (!codexInventoryMembershipEnabled()) return false
+  codexRosterForPreflight = null
   codexInventoryRefreshPending = true
   queueCompanionHostReconciliation('codex')
   return true
@@ -8214,13 +8231,18 @@ function codexForgetExternallyArchivedThread(threadId, expectedKey = '') {
   return removedKey || (/^[a-f0-9]{32}$/.test(expectedKey) ? expectedKey : '')
 }
 
-async function reconcileCodexInventoryMembership(reason, forceTasksOnly, generation) {
+async function reconcileCodexInventoryMembership(reason, forceTasksOnly, scope) {
   const startedAt = Date.now()
   const [unarchivedRows, archivedRows] = await Promise.all([
     listAllCodexThreads(false),
     listAllCodexThreads(true)
   ])
-  if (generation !== codexInventoryMembershipGeneration || !codexInventoryMembershipEnabled()) return false
+  if (!codexSnapshotScopeCurrent(scope) || !codexInventoryMembershipEnabled()
+    || scope.providerEpoch !== companionTaskKernel?.providerEpoch?.('codex')) return false
+  if (codexInventoryMembershipReconcilePending) {
+    codexInventoryMembershipForcePending ||= forceTasksOnly
+    return false
+  }
 
   const unarchivedIds = new Set(unarchivedRows.map((row) => codexRecord(row).id).filter(validCodexThreadId))
   const archivedIds = new Set(archivedRows.map((row) => codexRecord(row).id).filter(validCodexThreadId))
@@ -8252,10 +8274,14 @@ async function reconcileCodexInventoryMembership(reason, forceTasksOnly, generat
     && activity.inventoryMissingSince < missingCutoff)
   const contradictory = [...unarchivedIds].some((threadId) => archivedIds.has(threadId))
   const inventoryChanged = confirmedArchived.length > 0 || membershipChanged || expiredMissing || contradictory
+  if (inventoryChanged || forceTasksOnly) codexRosterForPreflight = { scope, unarchivedRows, archivedRows }
   if (inventoryChanged) {
-    emitCodexActivityDelta([], true, 'urgent', confirmedArchived, { allowWithoutFingerprint: true })
+    emitCodexActivityDelta([], true, 'urgent', confirmedArchived, { allowWithoutFingerprint: true, scheduleInventory: false })
   }
-  if (inventoryChanged || forceTasksOnly) queueCompanionHostReconciliation('codex')
+  if (inventoryChanged || forceTasksOnly) {
+    codexInventoryRefreshPending = true
+    queueCompanionHostReconciliation('codex')
+  }
   runtimeDiagnostics.record({
     level: inventoryChanged || forceTasksOnly ? 'info' : 'debug',
     scope: 'task-recovery',
@@ -8278,6 +8304,7 @@ async function reconcileCodexInventoryMembership(reason, forceTasksOnly, generat
 
 function requestCodexInventoryMembershipReconciliation(reasonValue, options = {}) {
   if (!codexInventoryMembershipEnabled()) return false
+  codexRosterForPreflight = null
   const reason = codexInventoryMembershipReason(reasonValue)
   const forceTasksOnly = options.forceTasksOnly === true
   if (codexInventoryMembershipReconcileInFlight) {
@@ -8285,11 +8312,11 @@ function requestCodexInventoryMembershipReconciliation(reasonValue, options = {}
     if (forceTasksOnly) codexInventoryMembershipForcePending = true
     return true
   }
-  const generation = codexInventoryMembershipGeneration
-  let operation = null
-  operation = reconcileCodexInventoryMembership(reason, forceTasksOnly, generation)
+  const scope = { bridge: codexDesktopBridge, stream: codexDesktopBridge?.streamGeneration,
+    session: codexInventoryMembershipGeneration, domain: codexCausalDomain, providerEpoch: companionTaskKernel?.providerEpoch?.('codex') }
+  const operation = reconcileCodexInventoryMembership(reason, forceTasksOnly, scope)
     .catch((error) => {
-      if (generation === codexInventoryMembershipGeneration) {
+      if (codexSnapshotScopeCurrent(scope)) {
         if (codexRuntimeDiagnostics) codexRuntimeDiagnostics.inventoryFailure(error, reason, forceTasksOnly)
         else runtimeDiagnostics.record({ level: 'error', scope: 'task-recovery', event: 'codex-inventory-membership', outcome: 'failed', code: 'provider-read-failed',
           details: { reason, forceTasksOnly, failure: 'diagnostics-unavailable', modules: codexCliModules.summary() } })
@@ -8449,6 +8476,13 @@ function codexPrimeActivitySemanticFingerprints() {
 
 function emitCodexActivityDelta(entries, inventoryChanged, inventoryRefreshPriority = 'normal', archivedKeys = [], options = {}) {
   if (!codexActivitySourceFingerprint && options.allowWithoutFingerprint !== true) return
+  if (inventoryChanged === true && options.scheduleInventory !== false) codexRosterForPreflight = null
+  const providerEpoch = companionTaskKernel?.providerEpoch?.('codex')
+  if (codexRequestSetProviderEpoch !== providerEpoch) {
+    codexRequestSetProviderEpoch = providerEpoch
+    codexCompleteRequestSetRevisions.clear()
+    codexInteractionSemanticFingerprints.clear()
+  }
   const removedMemberKeys = [...new Set((Array.isArray(options.removedMemberKeys) ? options.removedMemberKeys : [])
     .filter((key) => typeof key === 'string' && /^codex-child:[a-f0-9]{32}$/.test(key)))]
   const changedEntries = []
@@ -8483,6 +8517,11 @@ function emitCodexActivityDelta(entries, inventoryChanged, inventoryRefreshPrior
   const onlyReadState = options.unreadOnly === true || inputEntries.length > 0 && inputEntries.every(value => value.readStateOnly === true)
   const interactionEvidence = onlyReadState ? {} : codexRecord(options.interactionEvidence)
   const interactionTaskKey = typeof interactionEvidence.taskKey === 'string' ? interactionEvidence.taskKey : ''
+  const completeSets = Array.isArray(interactionEvidence.interactionSets)
+    ? interactionEvidence.interactionSets.filter((set) => set?.complete === true && typeof set.taskKey === 'string'
+      && Number.isSafeInteger(set.requestSetRevision)
+      && set.requestSetRevision > (codexCompleteRequestSetRevisions.get(set.taskKey) || 0))
+    : []
   const semanticInteractions = Array.isArray(interactionEvidence.interactions)
     ? interactionEvidence.interactions.map((value) => {
         const interaction = codexRecord(value)
@@ -8511,9 +8550,9 @@ function emitCodexActivityDelta(entries, inventoryChanged, inventoryRefreshPrior
       task.key === interactionTaskKey && (task.phase === 'waiting-input' || task.phase === 'waiting-approval')
     ))
   const interactionChanged = Boolean(interactionTaskKey && interactionFingerprint
-    && (previousInteractionFingerprint === undefined
+    && (completeSets.length > 0 || (previousInteractionFingerprint === undefined
       ? semanticInteractions.length > 0 || canonicalNeedsInteractionClear
-      : previousInteractionFingerprint !== interactionFingerprint))
+      : previousInteractionFingerprint !== interactionFingerprint)))
   if (interactionChanged && !changedEntries.some((value) => codexActivityPublicEntry(value).key === interactionTaskKey)) {
     const matchingEntry = inputEntries.find((value) => codexActivityPublicEntry(value).key === interactionTaskKey)
     if (matchingEntry) changedEntries.push(matchingEntry)
@@ -8563,7 +8602,7 @@ function emitCodexActivityDelta(entries, inventoryChanged, inventoryRefreshPrior
       // Exact Side retirement belongs to the same private Kernel transaction;
       // keep member deletion metadata off the public Activity Delta contract.
       if (listener === applyCodexActivityToCompanionKernel) processed = listener(delta, removedMemberKeys, {
-        unreadOnly: options.unreadOnly === true, samples
+        unreadOnly: options.unreadOnly === true, scheduleInventory: options.scheduleInventory, samples
       })
       else listener(delta)
     } catch {}
@@ -8572,7 +8611,13 @@ function emitCodexActivityDelta(entries, inventoryChanged, inventoryRefreshPrior
   // preserves A -> B -> A while B is pending. Only V7 settles the queue.
   if ((processed === true || processed === 'buffered') && codexActivityGeneration === delta.generation) {
     for (const fingerprint of nextFingerprints) codexActivitySemanticFingerprints.set(fingerprint.lane, fingerprint.value)
-    if (interactionChanged) codexInteractionSemanticFingerprints.set(interactionTaskKey, interactionFingerprint)
+    if (interactionChanged) {
+      codexInteractionSemanticFingerprints.set(interactionTaskKey, interactionFingerprint)
+      for (const { taskKey, requestSetRevision } of completeSets) {
+        codexCompleteRequestSetRevisions.set(taskKey, Math.max(requestSetRevision, codexCompleteRequestSetRevisions.get(taskKey) || 0))
+      }
+    }
+    for (const key of [...normalizedArchivedKeys, ...removedMemberKeys]) codexCompleteRequestSetRevisions.delete(key)
     codexActivityBridgeFingerprint = bridgeFingerprint
   }
   return true
@@ -9798,9 +9843,9 @@ function readCodexDesktopUnreadIdsInner() {
 
 // A failed load leaves the runtime phase unknown rather than misread: the
 // caller already widens its evidence search on an unknown result.
-function codexRolloutRuntimeStateText(text) {
+function codexRolloutRuntimeStateText(text, appendedBytes) {
   return codexRolloutRuntimeState
-    ? codexRolloutRuntimeState.codexRolloutRuntimeStateText(text)
+    ? codexRolloutRuntimeState.codexRolloutRuntimeStateText(text, appendedBytes)
     : { known: false, phase: 'unknown', edge: 'none', startedAt: 0, edgeAt: 0 }
 }
 
@@ -9922,10 +9967,10 @@ function codexClearRolloutDecisionTrackers() {
   codexRolloutDecisionTrackers.clear()
 }
 
-function codexRolloutDecisionState(candidate, stat, initialCorrelations) {
+function codexRolloutDecisionState(candidate, stat, initialCorrelations, appendedBytes) {
   const inputText = codexReadRolloutTail(candidate, stat, CODEX_ROLLOUT_PENDING_INPUT_TAIL_BYTES)
   const input = codexRolloutPendingUserInputStateText(inputText, initialCorrelations)
-  const runtime = codexRolloutRuntimeStateText(inputText)
+  const runtime = codexRolloutRuntimeStateText(inputText, appendedBytes)
   let plan = { known: false, pending: false, planReady: false, planLifecycleState: 'unknown', planLifecycleRevision: 0, planClearReason: '', turnMode: 'unknown' }
   for (const maximumBytes of CODEX_ROLLOUT_PENDING_PLAN_TAIL_BYTES) {
     plan = codexRolloutPendingPlanStateText(codexReadRolloutTail(candidate, stat, maximumBytes))
@@ -10001,6 +10046,7 @@ function codexApplyRolloutTerminal(tracker, known, runtime) {
     || codexTimestampMs(known.lastTurnStartedAt)
     || codexTimestampMs(tracker.lastTurnStartedAt)
   if (!status || !startedAt) return false
+  const endedAt = codexTimestampMs(status === 'completed' ? runtime.edgeAt : runtime.interruptedAt)
   tracker.rolloutLiveSequence = 0
   return codexApplyCompletedTurnNotification(
     codexEnsureDesktopBridge(),
@@ -10010,9 +10056,7 @@ function codexApplyRolloutTerminal(tracker, known, runtime) {
       status,
       startedAt,
       ...(runtime.turnId ? { id: runtime.turnId } : {}),
-      ...(status === 'completed' && codexTimestampMs(runtime.edgeAt)
-        ? { completedAt: codexTimestampMs(runtime.edgeAt) }
-        : {})
+      ...(endedAt > 0 ? { completedAt: endedAt } : {})
     },
     { deferPublish: true }
   )
@@ -10060,7 +10104,9 @@ function codexApplyRolloutDecisionState(tracker, state, emit = true, options = {
   const bridge = codexEnsureDesktopBridge()
   const before = JSON.stringify(codexActivityPublicEntry(known))
   const runtime = options.observeRuntime === true ? codexRolloutRuntimeState?.codexRolloutRuntimeForTurn(state.runtime, {
-    known, owner: bridge.shadows.get(tracker.threadId), cachedTurn: codexThreadTurnStatusCache.get(tracker.threadId)?.turn,
+    known, owner: bridge.shadows.get(tracker.threadId) || bridge.sideShadows?.get(tracker.threadId),
+    appended: options.appended, writable: options.writable, confirmedTerminal: codexHasConfirmedTerminalEvidence(known),
+    cachedTurn: codexThreadTurnStatusCache.get(tracker.threadId)?.turn,
     turnRef: codexDesktopRequestCorrelation({ id: state.runtime?.turnId })
   }) : null
   let completedRuntime = false
@@ -10179,32 +10225,36 @@ function codexRefreshRolloutDecisionTracker(threadId, options = {}) {
   const tracker = codexRolloutDecisionTrackers.get(threadId)
   if (!tracker) return false
   let rollout // Cached parsing never suppresses live evidence application.
-  let appended = false
+  let appendedBytes = 0
+  let writable = false
   try {
     const stat = fs.statSync(tracker.candidate)
     if (!stat?.isFile?.() || !Number.isFinite(stat.size) || stat.size <= 0) return false
     const signature = `${stat.size}:${codexTimestampMs(stat.mtimeMs)}`
-    if (signature === tracker.signature && options.force !== true) return false
-    appended = Number.isFinite(tracker.size) && stat.size > tracker.size
-    rollout = { stat, state: signature === tracker.signature && tracker.decisionState && !options.coldTurn
-      ? tracker.decisionState : codexRolloutDecisionState(tracker.candidate, stat, tracker.inputCorrelations) }
-    if (options.coldTurn) {
-      const runtime = rollout.state.runtime
+    const sameFile = tracker.dev === stat.dev && tracker.ino === stat.ino
+    const sameSample = sameFile && signature === tracker.signature
+    if (sameSample && options.force !== true) return false
+    appendedBytes = sameFile && Number.isFinite(tracker.size) ? Math.max(0, stat.size - tracker.size) : 0
+    writable = Boolean(options.writableFile && options.writableFile.dev === stat.dev && options.writableFile.ino === stat.ino)
+    rollout = sameSample && tracker.decisionState
+      ? tracker.decisionState : codexRolloutDecisionState(tracker.candidate, stat, tracker.inputCorrelations, appendedBytes)
+    if (writable || appendedBytes) {
       const current = fs.statSync(tracker.candidate)
-      if (runtime.phase !== 'active' || runtime.turnId !== options.coldTurn.id || !runtime.startedAt
-        || current.ino !== stat.ino || current.dev !== stat.dev
+      if (current.ino !== stat.ino || current.dev !== stat.dev
         || current.size !== stat.size || current.mtimeMs !== stat.mtimeMs) return false
     }
     tracker.signature = signature
     tracker.size = stat.size
-    tracker.decisionState = rollout.state
+    tracker.dev = stat.dev
+    tracker.ino = stat.ino
+    tracker.decisionState = rollout
   } catch {
     return false
   }
-  tracker.inputCorrelations = rollout.state.input.correlations
+  tracker.inputCorrelations = rollout.input.correlations
   return codexApplyRolloutDecisionState(
-    tracker, rollout.state, options.emit !== false,
-    { observeRuntime: options.observeRuntime === true || appended }
+    tracker, rollout, options.emit !== false,
+    { observeRuntime: options.observeRuntime === true || writable || appendedBytes > 0, writable, appended: appendedBytes > 0 }
   )
 }
 
@@ -10220,9 +10270,9 @@ function codexProbeExternalRolloutProcesses(candidates, options = {}) {
   if (process.platform !== 'darwin' || typeof execFile !== 'function') return Promise.resolve(null)
   const paths = [...new Set((Array.isArray(candidates) ? candidates : [])
     .filter((candidate) => typeof candidate === 'string' && candidate && !/[\r\n]/.test(candidate)))]
-  if (!paths.length) return Promise.resolve(new Set())
+  if (!paths.length) return Promise.resolve(new Map())
   return new Promise((resolve) => {
-    execFile('/usr/sbin/lsof', ['-n', options.writableOnly ? '-Fpcfan' : '-Fpcn', '--', ...paths], {
+    execFile('/usr/sbin/lsof', ['-n', '-Fpcfan', '--', ...paths], {
       windowsHide: true,
       timeout: options.timeoutMs ?? 3_000,
       maxBuffer: 256 * 1024
@@ -10233,7 +10283,7 @@ function codexProbeExternalRolloutProcesses(candidates, options = {}) {
         return
       }
       const exact = new Set(paths)
-      const opened = new Set()
+      const opened = new Map()
       const ownPid = Number(codexProcess?.pid) || 0
       let pid = 0
       let command = ''
@@ -10249,9 +10299,8 @@ function codexProbeExternalRolloutProcesses(candidates, options = {}) {
         else if (line[0] === 'a') access = line.slice(1)
         else if (line[0] === 'n') {
           const candidate = line.slice(1)
-          if (pid > 0 && pid !== ownPid && command.startsWith('codex') && exact.has(candidate)
-            && (!options.writableOnly || access === 'w' || access === 'u')) {
-            opened.add(candidate)
+          if (pid > 0 && pid !== ownPid && command.startsWith('codex') && exact.has(candidate)) {
+            opened.set(candidate, access === 'w' || access === 'u' || opened.get(candidate) === true)
           }
         }
       }
@@ -10276,9 +10325,9 @@ async function codexProbeColdRolloutActivity(rows, turns) {
   }
   if (!candidates.size) return null
   const opened = await codexProbeExternalRolloutProcesses([...candidates.values()].map(({ candidate }) => candidate), {
-    writableOnly: true, timeoutMs: CODEX_COLD_ROLLOUT_PROBE_TIMEOUT_MS
+    timeoutMs: CODEX_COLD_ROLLOUT_PROBE_TIMEOUT_MS
   }).catch(() => null)
-  return opened ? new Map([...candidates].filter(([, rollout]) => opened.has(rollout.candidate))) : null
+  return opened ? new Map([...candidates].filter(([, rollout]) => opened.get(rollout.candidate) === true)) : null
 }
 
 function codexScheduleRolloutProcessProbe(delay = 0) {
@@ -10300,29 +10349,39 @@ function codexScheduleRolloutProcessProbe(delay = 0) {
       .filter((tracker) => fullProbe || tracker.externalOpen === true || Number(tracker.rolloutLiveSequence) > 0)
     if (!trackers.length) return
     codexRolloutProcessProbeInFlight = true
-    const signatures = new Map(trackers.map((tracker) => [tracker.threadId, tracker.signature]))
+    const scope = { bridge: codexDesktopBridge, stream: codexDesktopBridge?.streamGeneration,
+      session: codexInventoryMembershipGeneration, domain: codexCausalDomain }
+    const samples = new Map(trackers.map((tracker) => [tracker.threadId, {
+      parent: codexSideParentThreadId(tracker.threadId), signature: tracker.signature, dev: tracker.dev, ino: tracker.ino,
+      turnRevision: codexThreadTurnStatusDirty.get(tracker.threadId)
+    }]))
     let opened = null
     try {
       opened = await codexProbeExternalRolloutProcesses(trackers.map((tracker) => tracker.candidate))
     } catch {}
-    const probeAvailable = opened instanceof Set
+    const probeAvailable = opened instanceof Map && codexSnapshotScopeCurrent(scope)
     if (generation === codexRolloutProcessProbeGeneration && probeAvailable) {
       for (const tracker of trackers) {
-        if (codexRolloutDecisionTrackers.get(tracker.threadId) !== tracker) continue
-        const externalOpen = opened.has(tracker.candidate)
+        const sample = samples.get(tracker.threadId)
+        if (codexRolloutDecisionTrackers.get(tracker.threadId) !== tracker
+          || sample.parent !== codexSideParentThreadId(tracker.threadId)
+          || sample.turnRevision !== codexThreadTurnStatusDirty.get(tracker.threadId)
+          || sample.dev !== tracker.dev || sample.ino !== tracker.ino) continue
+        const externalOpen = opened.get(tracker.candidate) === true
         const newlyOpen = externalOpen && !tracker.externalOpen
         tracker.externalOpen = externalOpen
         if (externalOpen) {
           codexRefreshRolloutDecisionTracker(tracker.threadId, {
             force: true,
-            observeRuntime: true
+            writableFile: sample
           })
           if (newlyOpen && codexDesktopBridge) {
             codexDesktopBridge.refreshSubscribedOwner(tracker.threadId, codexDesktopBridge.parentThreadIdFor(tracker.threadId))
           }
-        } else if (tracker.signature === signatures.get(tracker.threadId)) {
-          codexRestoreRolloutFallback(tracker)
-        } else codexRolloutProcessProbePending = true
+        } else if (!opened.has(tracker.candidate)) {
+          if (tracker.signature === sample.signature) codexRestoreRolloutFallback(tracker)
+          else codexRolloutProcessProbePending = true
+        }
       }
     }
     if (generation !== codexRolloutProcessProbeGeneration) return
@@ -10416,6 +10475,8 @@ function codexSyncRolloutDecisionTrackers(rows, turnStatuses, coldRollouts, dirt
         candidate: rollout.candidate,
         signature,
         size: rollout.stat.size,
+        dev: rollout.stat.dev,
+        ino: rollout.stat.ino,
         lastTurnStatus: lastTurn.status,
         lastTurnStartedAt: lastTurn.startedAt,
         lastTurnCompletedAt: lastTurn.completedAt,
@@ -10446,17 +10507,10 @@ function codexSyncRolloutDecisionTrackers(rows, turnStatuses, coldRollouts, dirt
     if (coldRollout?.candidate === rollout.candidate && coldRollout.stat.ino === rollout.stat.ino
       && coldRollout.stat.dev === rollout.stat.dev
       && dirtySnapshot.get(thread.id) === codexThreadTurnStatusDirty.get(thread.id)) {
-      const known = codexActivityInventory.get(thread.id)
-      const shadow = codexDesktopBridge?.shadows.get(thread.id)
-      if (known && known.lastTurnId === lastTurn.id && !known.appServerLiveActive && !known.activeFlags.length
-        && !codexHasConfirmedTerminalEvidence(known) && (!shadow?.ownerClientId || shadow.ownerDisconnectedAt)) {
-        codexRefreshRolloutDecisionTracker(thread.id, {
-          force: true, emit: false, observeRuntime: true, coldTurn: lastTurn
-        })
-        if (tracker.rolloutLiveSequence > 0) {
-          tracker.externalOpen = true
-          recordCodexTaskSync(thread.id, 'cold-rollout', { outcome: 'admitted', phase: 'inProgress', turnStartedAt: lastTurn.startedAt })
-        }
+      codexRefreshRolloutDecisionTracker(thread.id, { force: true, emit: false, writableFile: coldRollout.stat })
+      if (tracker.rolloutLiveSequence > 0) {
+        tracker.externalOpen = true
+        recordCodexTaskSync(thread.id, 'cold-rollout', { outcome: 'admitted', phase: 'inProgress', turnStartedAt: lastTurn.startedAt })
       }
     }
     codexArmRolloutDecisionWatcher(tracker)
@@ -11033,6 +11087,8 @@ async function scanVerifiedCodexInventory() {
   // The queued inventory signal has now been consumed. A new signal arriving
   // during this scan may schedule one more scan; identical repeats do not.
   codexInventoryRefreshPending = false
+  const roster = codexRosterForPreflight
+  codexRosterForPreflight = null
   codexRestoreDesktopSideRelationHints()
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const startedAt = Date.now()
@@ -11050,7 +11106,9 @@ async function scanVerifiedCodexInventory() {
     }
     const dirtySnapshot = new Map(codexThreadTurnStatusDirty)
     const registry = readCodexNativeRegistry()
-    const listedRows = await listAllCodexThreads(false)
+    const reusedRoster = attempt === 0 && codexSnapshotScopeCurrent(roster?.scope)
+      && roster.scope.providerEpoch === companionTaskKernel?.providerEpoch?.('codex') && roster
+    const listedRows = reusedRoster ? reusedRoster.unarchivedRows : await listAllCodexThreads(false)
     checkScope()
     const listedAt = Date.now()
     const listedThreadIds = new Set(listedRows.map((row) => codexRecord(row).id).filter(validCodexThreadId))
@@ -11060,7 +11118,7 @@ async function scanVerifiedCodexInventory() {
     const recoveryIds = new Set([...dirtySnapshot.keys(), ...missingSides.keys()])
     const hasMissingDirtyThread = [...dirtySnapshot.keys()]
       .some((threadId) => validCodexThreadId(threadId) && !listedThreadIds.has(threadId))
-    const archivedRows = hasMissingDirtyThread ? await listAllCodexThreads(true) : []
+    const archivedRows = reusedRoster ? reusedRoster.archivedRows : hasMissingDirtyThread ? await listAllCodexThreads(true) : []
     const archivedThreadIds = new Set(archivedRows.map((row) => codexRecord(row).id).filter(validCodexThreadId))
     const recoveredRows = await recoverCodexThreadsMissingFromInventory(listedRows, recoveryIds, archivedThreadIds, missingSides)
     // `thread/list` omits subagent runs; rollout-file discovery hands back
@@ -11355,6 +11413,7 @@ async function scanVerifiedCodexInventory() {
     const finishedAt = Date.now()
     runtimeDiagnostics.record({ level: 'info', scope: 'task-recovery', event: 'codex-inventory-read',
       outcome: 'verified', provider: 'codex', count: threads.length, durationMs: finishedAt - startedAt,
+      cache: reusedRoster ? 'membership-roster' : 'native-list',
       details: { listMs: listedAt - startedAt, discoveryMs: discoveredAt - listedAt,
         evidenceMs: evidenceAt - discoveredAt, projectionMs: finishedAt - evidenceAt } })
     return inventory
@@ -11697,7 +11756,7 @@ async function dispatchCodexThreadOpen(entry, request, identity = null) {
     return { outcome: 'failed', confirmsRead: false, handoff: codexOpenHandoff(handoffId, 'failed'),
       errorCode: 'unsupported', message: '当前宿主不支持打开 Codex 线程' }
   }
-  const diagnostics = request?.operationId && process.platform === 'darwin' ? runtimeDiagnostics.snapshot?.()?.settings : null
+  const diagnostics = request?.operationId && process.platform === 'darwin' ? runtimeDiagnostics.getSettings?.() : null
   let trial = null
   if (request?.source === 'global-shortcut' && diagnostics?.enabled === true && diagnostics.level === 'debug'
     && codexDesktopOpenObservation?.prepareBenchmarkTrial) {
@@ -14632,7 +14691,8 @@ function applyCodexActivityToCompanionKernel(delta, removedMemberKeys = [], opti
     })
     return false
   }
-  if (source.inventoryChanged === true && (current.complete || companionTaskKernel.isProviderCached('codex'))) {
+  if (source.inventoryChanged === true && options.scheduleInventory !== false
+    && (current.complete || companionTaskKernel.isProviderCached('codex'))) {
     queueCompanionHostReconciliation('codex')
   }
   const persisted = companionPersistedTaskState()
