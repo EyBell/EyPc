@@ -377,6 +377,8 @@ export interface CodexHostSnapshotV2 {
   /** Hash of the allowlisted native project registry projection. */
   sourceFingerprint?: string
   completeness?: 'verified'
+  /** Host sample identity reused by a verified metadata fill; absent on a fresh scan. */
+  inventoryRevision?: string
   rawSourceCount?: number
   eligibleSourceCount?: number
   excludedSourceCount?: number
@@ -880,6 +882,8 @@ export interface CodexTaskCard {
   archiveCapability: CodexArchiveCapability
   /** Latest task revision used by hide/restore. Completed tasks use completionRevision. */
   revisionAt: number
+  /** Display phase version from the public root projection, not the private phase watermark. */
+  semanticRevision?: number
   /** Privacy-safe persisted completion watermark, never turn content. */
   completionRevision?: number
   /** Appearance time of the current attention state, not general task recency. */

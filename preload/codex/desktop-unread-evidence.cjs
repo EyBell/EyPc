@@ -202,6 +202,7 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
   const isMachineThreadId = dependencies.isMachineThreadId
   const sideRelations = dependencies.sideRelations
   const knownThread = dependencies.knownThread
+  const completedInstance = dependencies.completedInstance
   const now = dependencies.now
 
   function clock() {
@@ -282,6 +283,7 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
     const owner = ownerOf(shadow)
     state.pending.set(threadId, {
       liveUnread: bridge.liveUnread instanceof Map ? bridge.liveUnread.get(threadId) : undefined,
+      completion: completedInstance?.(threadId),
       owner,
       revision: Number.isInteger(shadow?.revision) ? shadow.revision : undefined,
       side,
@@ -575,10 +577,7 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
       return false
     }
     if (!pending) return true
-    if (clock() - pending.time > CODEX_DESKTOP_UNREAD_RECOVERY_MS) {
-      settlePending(bridge, state, threadId, pending)
-      return true
-    }
+    if (clock() - pending.time > CODEX_DESKTOP_UNREAD_RECOVERY_MS) return true
     if (pending.owner && pending.owner !== ownerClientId) return true
     const revision = change?.revision
     const previousRevision = previousShadow?.revision
@@ -603,18 +602,27 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
     if (!state || typeof threadId !== 'string') return false
     const pending = state.pending.get(threadId)
     if (!pending) return false
-    const at = clock()
-    if (!Number.isFinite(pending.time) || at - pending.time > CODEX_DESKTOP_UNREAD_RECOVERY_MS) {
-      settlePending(bridge, state, threadId, pending)
-      return false
-    }
     const owner = typeof ownerClientId === 'string' && ownerClientId ? ownerClientId : undefined
     const nextRevision = shadow?.revision
     const previousRevision = previousShadow?.revision
     if ((pending.owner && pending.owner !== owner) || !Number.isInteger(nextRevision)
       || (previousShadow?.ownerClientId === owner && Number.isInteger(previousRevision) && nextRevision < previousRevision)
       || (pending.owner && Number.isInteger(pending.revision) && nextRevision < pending.revision)) return false
-    if (pending.invalidated || pending.refreshAgain) {
+    const live = bridge.liveUnread instanceof Map ? bridge.liveUnread.get(threadId) : undefined
+    if (shadow?.hasUnreadTurn === false && pending.completion !== completedInstance?.(threadId)) {
+      shadow.hasUnreadTurn = undefined
+      shadow.unreadEvidence = ''
+      settlePending(bridge, state, threadId, pending)
+      safeRecord({ level: 'info', scope: 'codex-read-recovery', provider: 'codex',
+        event: 'desktop-read-recovery-snapshot', outcome: 'superseded', taskRef: threadId,
+        details: { reason: 'completed-instance-changed' } })
+      return false
+    }
+    if (!Number.isFinite(pending.time) || clock() - pending.time > CODEX_DESKTOP_UNREAD_RECOVERY_MS) {
+      settlePending(bridge, state, threadId, pending)
+      return false
+    }
+    if (pending.invalidated || pending.refreshAgain || live !== pending.liveUnread && live?.hasUnreadTurn === true) {
       // Do not borrow read state from a request issued before the latest read
       // event/source edge. Other snapshot fields keep their existing path.
       shadow.hasUnreadTurn = previousShadow?.hasUnreadTurn
@@ -627,7 +635,6 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
     }
     settlePending(bridge, state, threadId, pending)
     if (shadow?.hasUnreadTurn !== false) return false
-    const live = bridge.liveUnread instanceof Map ? bridge.liveUnread.get(threadId) : undefined
     if (live && live === pending.liveUnread && live.hasUnreadTurn === true) bridge.liveUnread.delete(threadId)
     safeRecord({ level: 'info', scope: 'codex-read-recovery', provider: 'codex',
       event: 'desktop-read-recovery-snapshot', outcome: live === pending.liveUnread ? 'observed' : 'superseded',

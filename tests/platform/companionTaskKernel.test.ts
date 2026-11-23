@@ -897,6 +897,49 @@ describe('CompanionTaskKernel', () => {
     expect(current.tasks[0]).toMatchObject({ phase, unread: true, planReady: true })
   })
 
+  it('keeps a continued Plan Turn running through replayed earlier Plan requests', () => {
+    const previousStart = Date.parse('2026-11-23T05:00:00Z')
+    const currentStart = previousStart + 2400
+    const providers = { codex: true, claude: false }
+    const kernel = createCompanionTaskKernel({ now: () => currentStart + 1000, initialConfiguration: { enabled: true, providers } })
+    const planRevision = previousStart + 900
+    const oldPlan = task({ phase: 'completed', causalKey: 'plan-turn', phaseRevision: 200,
+      turnStartedAt: previousStart, terminalAt: planRevision, lastQuestionAt: previousStart,
+      planReady: true, planLifecycleRevision: planRevision })
+    const continuedPlan = task({ phase: 'running', causalKey: 'continued-plan-turn', phaseRevision: 300,
+      turnStartedAt: currentStart, lastQuestionAt: currentStart, turnMode: 'plan' })
+    const earlierRequest = interaction({ kind: 'plan-implementation', turnEpoch: previousStart, sequence: 200 })
+    const laterSet = { ...earlierRequest, requestSetRevision: 300 }
+    try {
+      const waiting = kernel.publishEvidence(draft([oldPlan], 1, { providers, interactions: [earlierRequest] }))
+      expect(waiting.tasks[0].phase).toBe('waiting-input')
+
+      const continued = kernel.publishEvidence(draft([continuedPlan], 2, { providers, interactions: [laterSet] }))
+      expect(continued.tasks[0]).toMatchObject({ phase: 'running', planArtifactState: 'available', planLifecycleRevision: planRevision })
+      expect(continued.views.counts).toMatchObject({ active: 1, input: 0 })
+
+      const lateReplay = kernel.publishEvidence(draft([], 3, {
+        providers, interactions: [{ ...laterSet, requestSetRevision: 301 },
+          { ...laterSet, requestSetRevision: 301, interactionRef: 'c'.repeat(32) }]
+      }))
+      expect(lateReplay.tasks[0].phase).toBe('running')
+      expect(kernel.diagnostics().openInteractionCount).toBe(0)
+
+      const currentRequest = interaction({ kind: 'plan-choice', sequence: 302,
+        interactionRef: 'b'.repeat(32), turnEpoch: previousStart + 2000 })
+      const waitingAgain = kernel.publishEvidence(draft([], 4, { providers, interactions: [currentRequest] }))
+      expect(waitingAgain.tasks[0].phase).toBe('waiting-input')
+      expect(waitingAgain.views.counts).toMatchObject({ active: 0, input: 1 })
+
+      const activityOnly = draft([{ ...continuedPlan, phaseRevision: 310 }], 5, { providers })
+      activityOnly.evidenceBatches.codex.interactionSets = []
+      const stillWaiting = kernel.publishEvidence(activityOnly)
+      expect(stillWaiting.tasks[0].phase).toBe('waiting-input')
+    } finally {
+      kernel.close()
+    }
+  })
+
   it.each([false, true])('preserves a genuinely interrupted member ahead of Plan while retaining completed unread=%s', (unread) => {
     const kernel = createCompanionTaskKernel()
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
@@ -2104,6 +2147,22 @@ describe('CompanionTaskKernel', () => {
       navigation: { targetCount: 2_005 },
       actions: { targetCount: 2_005 }
     })
+    kernel.close()
+  })
+
+  it('keeps an explicit completed-unread false out of the unread group', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const current = kernel.syncPackage({ lease: receipt.lease, draft: draft([task({
+      phase: 'completed', unread: true, unreadKnown: true, completedUnread: false
+    })], 1, { providers: { codex: true, claude: false } }) })
+    expect(current.tasks[0]).toMatchObject({
+      phase: 'completed', dynamicGroup: 'completed', unread: true, completedUnread: false, cycleTier: 'none'
+    })
+    expect(current.views.groups.unread).toEqual([])
+    expect(current.views.counts.unread).toBe(0)
     kernel.close()
   })
 
@@ -5486,6 +5545,196 @@ describe('exclusive cycle priority', () => {
     } finally { kernel.close() }
   })
 })
+
+describe('attention tail and paired cycle contracts', () => {
+  const waiting = (key: string, lastQuestionAt: number) => task({
+    key,
+    actionAlias: `ct_${key.replace(/[^a-z0-9]/g, '')}_1234567890`,
+    phase: 'waiting-input',
+    lastQuestionAt,
+    statusEnteredAt: lastQuestionAt
+  })
+
+  it('settles one attention instance without a second native call after timeout or rejection', async () => {
+    let releaseFirst!: (result: Record<string, unknown>) => void
+    const opened: string[] = []
+    const kernel = createCompanionTaskKernel({
+      adapters: { codex: { open: async (target: { key: string }) => {
+        opened.push(target.key)
+        if (opened.length === 1) return new Promise((resolve) => { releaseFirst = resolve })
+        return nativeOpened()
+      } } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([
+      waiting('codex-a', 300)
+    ], 1, { providers: { codex: true, claude: false } }) })
+    const first = kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut', operationId: 'attention-first' })
+    await vi.waitFor(() => expect(opened).toEqual(['codex-a']))
+    const tail = kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut', operationId: 'attention-tail' })
+    releaseFirst({ outcome: 'unavailable', errorCode: 'dispatch-unconfirmed', confirmsRead: false })
+    await expect(first).resolves.toMatchObject({ outcome: 'unavailable', errorCode: 'dispatch-unconfirmed', operationId: 'attention-first' })
+    await expect(tail).resolves.toMatchObject({
+      outcome: 'unavailable', errorCode: 'dispatch-unconfirmed', operationId: 'attention-tail', dispatchOperationId: 'attention-first'
+    })
+    expect(opened).toEqual(['codex-a'])
+    const retry = kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut', operationId: 'attention-explicit' })
+    await expect(retry).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a', operationId: 'attention-explicit' })
+    expect(opened).toEqual(['codex-a', 'codex-a'])
+    kernel.close()
+  })
+
+  it('retries only the last eligible attention tail after an explicit rejection', async () => {
+    let releaseFirst!: (result: Record<string, unknown>) => void
+    const opened: string[] = []
+    const kernel = createCompanionTaskKernel({
+      adapters: { codex: { open: async (target: { key: string }) => {
+        opened.push(target.key)
+        if (opened.length === 1) return new Promise((resolve) => { releaseFirst = resolve })
+        return nativeOpened()
+      } } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([
+      waiting('codex-a', 300)
+    ], 1, { providers: { codex: true, claude: false } }) })
+    const first = kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut', operationId: 'reject-first' })
+    await vi.waitFor(() => expect(opened).toEqual(['codex-a']))
+    const olderTail = kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut', operationId: 'reject-older' })
+    const lastTail = kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut', operationId: 'reject-last' })
+    releaseFirst({ outcome: 'failed', errorCode: 'open-failed' })
+    await expect(first).resolves.toMatchObject({ outcome: 'failed', operationId: 'reject-first' })
+    await expect(olderTail).resolves.toMatchObject({ outcome: 'unavailable', errorCode: 'superseded', operationId: 'reject-older' })
+    await expect(lastTail).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a', operationId: 'reject-last' })
+    expect(opened).toEqual(['codex-a', 'codex-a'])
+    kernel.close()
+  })
+
+  it('keeps a repeated attention target behind the different target already queued', async () => {
+    let releaseFirst!: (result: Record<string, unknown>) => void
+    const opened: string[] = []
+    const kernel = createCompanionTaskKernel({
+      adapters: { codex: { open: async (target: { key: string }) => {
+        opened.push(target.key)
+        if (opened.length === 1) return new Promise((resolve) => { releaseFirst = resolve })
+        return nativeOpened()
+      } } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([
+      waiting('codex-a', 300), waiting('codex-b', 200)
+    ], 1, { providers: { codex: true, claude: false } }) })
+    const first = kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut', operationId: 'queue-a' })
+    await vi.waitFor(() => expect(opened).toEqual(['codex-a']))
+    const middle = kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut', operationId: 'queue-b' })
+    const repeated = kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut', operationId: 'queue-a2' })
+    releaseFirst({ outcome: 'failed', errorCode: 'open-failed' })
+    await expect(first).resolves.toMatchObject({ outcome: 'failed', operationId: 'queue-a' })
+    await expect(middle).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b', operationId: 'queue-b' })
+    await expect(repeated).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a', operationId: 'queue-a2' })
+    expect(opened).toEqual(['codex-a', 'codex-b', 'codex-a'])
+    kernel.close()
+  })
+
+  it('passes the generated cycle operation id and keeps an empty paired key from selecting another task', async () => {
+    const calls: Array<[string, string]> = []
+    const opened: string[] = []
+    let armed = false
+    const kernel = createCompanionTaskKernel({
+      getPairedCycleTarget: (source: string, operationId: string) => {
+        calls.push([source, operationId])
+        return armed ? '' : undefined
+      },
+      adapters: { codex: { open: async (target: { key: string }) => { opened.push(target.key); return nativeOpened() } } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([
+      waiting('codex-a', 300), waiting('codex-b', 200)
+    ], 1, { providers: { codex: true, claude: false } }) })
+    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut', operationId: 'paired-normal' }))
+      .resolves.toMatchObject({ outcome: 'opened', key: 'codex-a', operationId: 'paired-normal' })
+    armed = true
+    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut', operationId: 'paired-empty' }))
+      .resolves.toMatchObject({ outcome: 'unavailable', operationId: 'paired-empty' })
+    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'local-shortcut', operationId: 'paired-other' }))
+      .resolves.toMatchObject({ outcome: 'opened', key: 'codex-b', operationId: 'paired-other' })
+    expect(calls.map(([, operationId]) => operationId)).toEqual(['paired-normal', 'paired-empty'])
+    expect(opened).toEqual(['codex-a', 'codex-b'])
+    kernel.close()
+  })
+
+  it('records main receipt, render and visible states for the current and previous package', () => {
+    const records: Array<Record<string, any>> = []
+    const kernel = createCompanionTaskKernel({
+      record: (entry: Record<string, any>) => records.push(entry),
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const publish = (phase: string, generation: number) => kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task({ key: 'codex-a', phase, lastQuestionAt: 300 }),
+        waiting('codex-b', 200)
+      ], generation, { providers: { codex: true, claude: false } })
+    })
+    const previous = publish('running', 1)
+    const current = publish('completed', 2)
+    expect(previous.views.counts.active).toBe(1)
+    expect(current.views.counts.active).toBe(0)
+    expect(kernel.acknowledge({ consumer: 'main-received', revision: current.packageRevision })).toBe(true)
+    expect(kernel.acknowledge({ consumer: 'main-render', revision: current.packageRevision })).toBe(true)
+    expect(kernel.acknowledge({
+      consumer: 'main-visible', presentation: 'visible', revision: previous.packageRevision, activeCount: 1
+    })).toBe(true)
+    expect(kernel.acknowledge({
+      consumer: 'main-visible', presentation: 'visible', revision: current.packageRevision, activeCount: 0
+    })).toBe(true)
+    expect(kernel.acknowledge({
+      consumer: 'main-visible', presentation: 'visible', revision: current.packageRevision, activeCount: 2
+    })).toBe(true)
+    expect(kernel.acknowledge({
+      consumer: 'main-visible', presentation: 'visible', revision: current.packageRevision,
+      countStatus: 'mismatch', activeCount: 'bad'
+    })).toBe(true)
+    expect(kernel.acknowledge({
+      consumer: 'main-visible', presentation: 'visible', revision: current.packageRevision
+    })).toBe(true)
+    expect(kernel.acknowledge({
+      consumer: 'main-visible', presentation: 'not-displayed', revision: current.packageRevision, activeCount: 0
+    })).toBe(true)
+    expect(kernel.acknowledge({ consumer: 'float', revision: current.packageRevision })).toBe(true)
+    expect(kernel.diagnostics().consumerAcknowledgements).toEqual({
+      'main-received': current.packageRevision,
+      'main-render': current.packageRevision,
+      float: current.packageRevision
+    })
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'main-task-package-ack', outcome: 'received', packageRevision: current.packageRevision }),
+      expect.objectContaining({ event: 'main-task-package-ack', outcome: 'applied', packageRevision: current.packageRevision }),
+      expect.objectContaining({ event: 'main-task-presented', outcome: 'visible', packageRevision: previous.packageRevision, count: 1 }),
+      expect.objectContaining({
+        event: 'main-task-presented', outcome: 'mismatch', packageRevision: current.packageRevision,
+        details: expect.objectContaining({ countStatus: 'mismatch', activeCount: 2, expected: 0 })
+      }),
+      expect.objectContaining({
+        event: 'main-task-presented', outcome: 'mismatch',
+        details: expect.objectContaining({ countStatus: 'mismatch', expected: 0 })
+      }),
+      expect.objectContaining({
+        event: 'main-task-presented', outcome: 'unconfirmed',
+        details: expect.objectContaining({ countStatus: 'unconfirmed', expected: 0 })
+      }),
+      expect.objectContaining({ event: 'main-task-presented', outcome: 'not-displayed', packageRevision: current.packageRevision })
+    ]))
+    kernel.close()
+  })
+
+})
+
 
 describe('continue-task backend command', () => {
   function setup(rows: any[], relations: any[] = []) {

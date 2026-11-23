@@ -164,7 +164,7 @@ function acceptTaskWindowGeneration(generation) {
   return true
 }
 
-function sendTaskPackageAck(stage, sentRevision, reason) {
+function sendTaskPackageAck(stage, sentRevision, reason, keys, rows) {
   const revision = Number.isInteger(sentRevision) && sentRevision > 0 ? sentRevision : lastTaskPackageRevision
   if (!revision) return false
   return sendToParent(CHANNELS.taskPackageAck, {
@@ -173,7 +173,14 @@ function sendTaskPackageAck(stage, sentRevision, reason) {
     currentRevision: lastTaskPackageRevision,
     windowGeneration: taskWindowGeneration,
     stage,
-    ...(reason ? { reason } : {})
+    ...(reason ? { reason } : {}),
+    ...(stage === 'visible' ? {
+      keys,
+      rows,
+      hostAssetId: runtimeIdentityArtifact?.hostAssetId,
+      rendererAssetId: runtimeIdentityArtifact?.rendererAssetId,
+      builtAt: runtimeIdentityArtifact?.builtAt
+    } : {})
   })
 }
 
@@ -278,7 +285,9 @@ ipcRenderer.on(CHANNELS.state, (_event, state) => {
   const viewportSize = state.viewportSize && Number.isFinite(state.viewportSize.width) && state.viewportSize.width > 0
     && Number.isFinite(state.viewportSize.height) && state.viewportSize.height > 0
     ? { width: state.viewportSize.width, height: state.viewportSize.height } : undefined
-  lastState = { ...extra, ...(viewportSize ? { viewportSize } : {}), expanded: state.expanded === true, pinned: state.pinned === true, resizing: state.resizing === true, resizeCorner, expandedSize }
+  lastState = { ...extra, ...(viewportSize ? { viewportSize } : {}),
+    ...(typeof state.nativeVisible === 'boolean' ? { nativeVisible: state.nativeVisible } : {}),
+    expanded: state.expanded === true, pinned: state.pinned === true, resizing: state.resizing === true, resizeCorner, expandedSize }
   for (const listener of stateListeners) {
     try { listener(lastState) } catch {}
   }
@@ -355,10 +364,24 @@ window.eypcFloat = {
   getSnapshot: () => lastSnapshot,
   getState: () => lastState,
   getHealth: () => ({ heartbeatSequence, lastHeartbeatAckAt }),
-  ackTaskSnapshot: (stage, revision, reason) => {
-    if (!['applied', 'rejected'].includes(stage) || stage === 'applied' && !runtimeIdentityCompatible) return false
+  ackTaskSnapshot: (stage, revision, details) => {
+    if (!['applied', 'rejected', 'visible'].includes(stage) || stage !== 'rejected' && !runtimeIdentityCompatible) return false
     if (!Number.isInteger(revision) || revision <= 0 || revision > lastTaskPackageRevision) return false
-    return sendTaskPackageAck(stage, revision, stage === 'rejected' ? reason : undefined)
+    if (stage === 'visible') {
+      if (revision !== lastTaskPackageRevision || !taskWindowGeneration || !Array.isArray(details?.keys)) return false
+      const keys = details.keys.slice(0, 40).filter(key => typeof key === 'string' && /^[a-f0-9]{32}$/.test(key))
+      const rows = (Array.isArray(details.rows) ? details.rows : []).flatMap((row) => {
+        const key = typeof row?.key === 'string' && /^[a-f0-9]{32}$/.test(row.key) ? row.key : ''
+        if (!key) return []
+        return [{
+          key,
+          phase: typeof row.phase === 'string' ? row.phase.slice(0, 40) : '',
+          semanticRevision: Number.isInteger(row.semanticRevision) ? row.semanticRevision : null
+        }]
+      }).slice(0, 40)
+      return keys.length > 0 && sendTaskPackageAck(stage, revision, undefined, keys, rows)
+    }
+    return sendTaskPackageAck(stage, revision, stage === 'rejected' ? details : undefined)
   },
   onSnapshot(listener) {
     if (typeof listener !== 'function') return () => {}

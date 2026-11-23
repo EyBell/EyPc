@@ -17,7 +17,7 @@ const {
   buildCompanionTaskTopology,
   normalizeRelation
 } = require('./task-topology.cjs')
-const { finiteInteger, phaseEvidenceSupersedes, sameTurnEvidenceDecision } = require('./branch-causality.cjs')
+const { finiteInteger, phaseEvidenceSupersedes, sameTurnEvidenceDecision, compareCodexTurnOrder } = require('./branch-causality.cjs')
 const {
   TASK_PHASES,
   isKnownTaskPhase,
@@ -152,6 +152,7 @@ function taskPhaseObservation(task) {
   const sequence = finiteInteger(task.phaseRevision, finiteInteger(task.statusEnteredAt))
   return {
     causalKey: task.causalKey,
+    turnPredecessorKey: task.turnPredecessorKey,
     causalDomain: task.causalDomain,
     causalSequence: task.causalSequence,
     authority: task.causalAuthority,
@@ -270,6 +271,7 @@ function normalizeTask(value, enabledProviders) {
     hidden: value.hidden === true,
     unreadKnown: value.unreadKnown !== false,
     unread: value.unread === true,
+    ...(value.completedUnread === true || value.completedUnread === false ? { completedUnread: value.completedUnread } : {}),
     planImplementation: value.planImplementation === true,
     planReady: value.planReady === true || value.planImplementation === true,
     planLifecycleRevision: finiteInteger(value.planLifecycleRevision),
@@ -321,6 +323,7 @@ function normalizeTask(value, enabledProviders) {
     metadataPartial: value.metadataPartial === true,
     activityObserved: value.activityObserved !== false,
     causalKey: typeof value.causalKey === 'string' ? value.causalKey.slice(0, 256) : '',
+    turnPredecessorKey: typeof value.turnPredecessorKey === 'string' ? value.turnPredecessorKey.slice(0, 160) : '',
     causalDomain: typeof value.causalDomain === 'string' && value.causalDomain.length <= 256 ? value.causalDomain : '',
     causalSequence: Number.isSafeInteger(value.causalSequence) && value.causalSequence > 0 ? value.causalSequence : 0,
     causalAuthority: COMPANION_ACTIVITY_AUTHORITIES_V7.includes(value.causalAuthority) ? value.causalAuthority : 'unknown',
@@ -355,6 +358,7 @@ function normalizeActivityCandidateV7(value = {}) {
     kind,
     authority: COMPANION_ACTIVITY_AUTHORITIES_V7.includes(value.authority) ? value.authority : 'unknown',
     causalKey: typeof value.causalKey === 'string' ? value.causalKey : '',
+    turnPredecessorKey: typeof value.turnPredecessorKey === 'string' ? value.turnPredecessorKey : '',
     causalDomain: typeof value.causalDomain === 'string' && value.causalDomain.length <= 256 ? value.causalDomain : '',
     causalSequence: Number.isSafeInteger(causalSequence) && causalSequence > 0 ? causalSequence : 0,
     sequence: finiteInteger(value.sequence),
@@ -374,6 +378,7 @@ function activityCandidateCausalObservationV7(candidate) {
   const exactTerminal = candidate.exact === true && isTerminalTaskPhase(phase)
   return {
     causalKey: candidate.causalKey,
+    turnPredecessorKey: candidate.turnPredecessorKey,
     causalDomain: candidate.causalDomain,
     causalSequence: candidate.causalSequence,
     authority: candidate.authority,
@@ -452,7 +457,7 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
         }
       : { state: 'unknown', sequence: 0, actionable: false, reason: '' })
   const metadata = value.metadata && typeof value.metadata === 'object' ? value.metadata : {}
-  const activityCandidate = reduceActivityCandidatesV7(activity, hostEvidence && provider === 'codex' && value.role !== 'child')
+  const activityCandidate = reduceActivityCandidatesV7(activity, hostEvidence && provider === 'codex')
   const activityKind = activityCandidate.kind
   const phase = ACTIVITY_EVIDENCE_PHASE[activityKind]
   const capabilityNames = new Set((Array.isArray(value.capabilities) ? value.capabilities : [])
@@ -483,6 +488,7 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
     turnStartedAt: finiteInteger(activityCandidate.turnStartedAt),
     terminalAt: finiteInteger(activityCandidate.terminalAt),
     causalKey: typeof activityCandidate.causalKey === 'string' ? activityCandidate.causalKey : '',
+    turnPredecessorKey: typeof activityCandidate.turnPredecessorKey === 'string' ? activityCandidate.turnPredecessorKey : '',
     causalDomain: activityCandidate.causalDomain,
     causalSequence: activityCandidate.causalSequence,
     causalAuthority: activityCandidate.authority,
@@ -598,6 +604,7 @@ function publicRootTask(task) {
     rootCompletionForSideOrder: _rootCompletionForSideOrder,
     providerCapabilities: _providerCapabilities,
     causalKey: _causalKey,
+    turnPredecessorKey: _turnPredecessorKey,
     causalDomain: _causalDomain,
     causalSequence: _causalSequence,
     causalAuthority: _causalAuthority,
@@ -726,7 +733,7 @@ function visibilityAnchor(task) {
 function derivedAttentionState(task) {
   if (task.hidden || task.paused) return 'none'
   if (isAttentionTaskPhase(task.phase)) return 'input'
-  if (task.phase === 'completed' && task.unread) return 'unread'
+  if (task.phase === 'completed' && hasCompletedUnread(task)) return 'unread'
   if (task.phase === 'running') return 'active'
   return 'none'
 }
@@ -752,7 +759,7 @@ function derivedDynamicGroup(task) {
   // when pinned. The pin is a row marker; the parking-lot group is only for
   // completed-read and unknown pins that have no status group of their own.
   if (isAttentionTaskPhase(task.phase)) return 'input'
-  if (task.phase === 'completed' && task.unread) return 'unread'
+  if (task.phase === 'completed' && hasCompletedUnread(task)) return 'unread'
   if (task.phase === 'running' && (pinned || task.dynamicEligible)) return 'active'
   if (task.phase === 'stopped') return 'stopped'
   if (pinned) return 'pinned'
@@ -1043,6 +1050,9 @@ function createCompanionTaskKernel(dependencies = {}) {
   const shortcutReads = createShortcutReadReceipts()
   let shortcutReadInputs = new Map()
   const consumerAcknowledgements = new Map()
+  const visiblePackageHistory = []
+  const visiblePresentations = new Set(['visible', 'hidden', 'not-in-viewport', 'not-displayed', 'empty'])
+  const commandInFlight = new Map()
   const commandResults = new Map()
   const commandQueues = new Map()
   const pendingAttention = new Set()
@@ -1068,6 +1078,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     clearTimeout: clearTimer,
     queueMicrotask: dependencies.queueMicrotask,
     record,
+    getPairedCycleTarget: dependencies.getPairedCycleTarget,
     captureTarget: (target) => {
       const task = taskForKey(target.key)
       return {
@@ -1142,6 +1153,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     currentPackage.packageRevision = ++packageSequence
     currentPackage.publishedAt = now()
     lastSemantic = semantic
+    retainVisiblePackage(currentPackage)
     emitPackage(currentPackage)
   })
 
@@ -1160,6 +1172,18 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   function terminalInteractionState(state) {
     return state === 'resolved' || state === 'cancelled' || state === 'execution-started'
+  }
+
+  function isPlanInteraction(interaction) {
+    return interaction.kind === 'plan-choice' || interaction.kind === 'plan-implementation'
+  }
+
+  function planRequestPredatesRunningTurn(interaction, task) {
+    return interaction.provider === 'codex' && interaction.exact === true && isPlanInteraction(interaction)
+      && task?.provider === 'codex' && task.turnKind === 'turn-running' && task.activityPhase === 'running'
+      && task.causalReliable && task.freshness === 'fresh'
+      && interaction.turnEpoch > 0 && interaction.sequence < task.causalSequence
+      && Math.floor(interaction.turnEpoch / 1000) < Math.floor(task.turnStartedAt / 1000)
   }
 
   function interactionSupersedes(previous, incoming) {
@@ -1184,6 +1208,18 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     interactionTombstonesChanged = true
     return true
+  }
+
+  function retireInteractionForActivity(key, interaction, activity) {
+    const removed = interactionStore.delete(key)
+    recordInteractionTombstone(key, {
+      ...interaction,
+      state: 'resolved',
+      sequence: Math.max(interaction.sequence, activity.phaseRevision),
+      authority: 'provider-live',
+      exact: activity.freshness === 'fresh'
+    })
+    return removed
   }
 
   for (const value of Array.isArray(dependencies.initialInteractionTombstones)
@@ -1273,6 +1309,11 @@ function createCompanionTaskKernel(dependencies = {}) {
         // anonymous interactionRef for a genuinely new request instance.
         if (interactionTombstones.has(key) || provider === 'codex'
           && interaction.requestSetRevision < (completeCodexRequestSets.get(interaction.taskKey) || 0)) continue
+        const current = provider === 'codex' ? nodeStore.get(interaction.taskKey) : null
+        if (planRequestPredatesRunningTurn(interaction, current)) {
+          changed = retireInteractionForActivity(key, interaction, current) || changed
+          continue
+        }
         const previous = interactionStore.get(key)
         if (interactionSupersedes(previous, interaction)) {
           interactionStore.set(key, interaction)
@@ -1287,17 +1328,16 @@ function createCompanionTaskKernel(dependencies = {}) {
         if (activity.provider !== provider || !sequence || activity.phase === 'unknown'
           || provider !== 'codex' && openedTaskKeys.has(taskKey)) continue
         for (const [key, interaction] of interactionStore) {
-          if (interaction.provider !== provider || interaction.taskKey !== taskKey || interaction.sequence > sequence || openedKeys.has(key)) continue
-          if (provider === 'codex' && interaction.exact && !(activity.phase === 'running'
-            && activity.freshness === 'fresh' && interaction.turnEpoch > 0 && activity.turnStartedAt > interaction.turnEpoch)) continue
-          changed = interactionStore.delete(key) || changed
-          recordInteractionTombstone(key, {
-            ...interaction,
-            state: 'resolved',
-            sequence,
-            authority: 'provider-live',
-            exact: activity.freshness === 'fresh'
-          })
+          if (interaction.provider !== provider || interaction.taskKey !== taskKey) continue
+          const exactCodexRequest = provider === 'codex' && interaction.exact
+          if (exactCodexRequest && isPlanInteraction(interaction)) {
+            if (!planRequestPredatesRunningTurn(interaction, activity)) continue
+          } else {
+            if (interaction.sequence > sequence || openedKeys.has(key)) continue
+            if (exactCodexRequest && !(activity.phase === 'running'
+              && activity.freshness === 'fresh' && interaction.turnEpoch > 0 && activity.turnStartedAt > interaction.turnEpoch)) continue
+          }
+          changed = retireInteractionForActivity(key, interaction, activity) || changed
         }
       }
     }
@@ -1347,7 +1387,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     const approval = interactions.some((interaction) => interaction.kind === 'approval')
     const phase = approval ? 'waiting-approval' : interactions.length ? 'waiting-input' : basePhase
     const planImplementation = interactions.length > 0 && !approval
-      && interactions.every((interaction) => interaction.kind === 'plan-choice' || interaction.kind === 'plan-implementation')
+      && interactions.every(isPlanInteraction)
     // Before its first Turn, a Side can be known without having an activity phase.
     const noTurn = task.role === 'child' && phase === 'unknown' && task.turnKind === 'unknown'
       && !task.causalKey && !task.turnStartedAt && !task.terminalAt
@@ -1809,6 +1849,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     topologyFingerprint = ''
     currentPackage = next
     lastSemantic = semanticPackage(next)
+    retainVisiblePackage(currentPackage)
     actions.sync({ enabled, ready: false, providers, targets: [], authoritative: true })
     navigation.sync({ lease: navigationLease, enabled, providers, ready: false, targets: [], cycleKeys: [] })
     emitPackage(currentPackage)
@@ -1974,10 +2015,11 @@ function createCompanionTaskKernel(dependencies = {}) {
       const relation = relationsByChild.get(member.key)
       if (member.memberStatus?.turn === 'not-started' && relation?.exact === true
         && relation.relation === 'side-thread' && relation.parentKey === root.key) return false
-      if (!completedCodexRoot || planReady) return true
+      if (!completedCodexRoot) return true
       if (member.phase !== 'stopped' || member.causalAuthority === 'goal' || taskOpenInteractions(member).length) return true
       if (CODEX_STOPPED_GOALS.has(member.memberStatus?.goal) || member.memberStatus?.submissionPending) return true
       if (member.closedMachineRun === true) return false
+      if (planReady) return true
       const interruptedAt = member.ordinarySideInterruptedAt
       const latestEnd = interruptedAt % 1000 === 0 ? interruptedAt + 999 : interruptedAt
       const earlierOrdinaryInterruption = interruptedAt > 0 && latestEnd < root.turnStartedAt
@@ -2044,10 +2086,15 @@ function createCompanionTaskKernel(dependencies = {}) {
       : confirmedMainStop ? root.statusEnteredAt
       : Math.max(0, ...machineFilteredMembers.filter((node) => node.phase === activityPhase)
         .map((node) => finiteInteger(node.statusEnteredAt)))
-    const blocked = phaseMembers.some((member) => member.memberStatus?.submissionPending
+    const writeMembers = codexRoot ? members : phaseMembers
+    const blocked = writeMembers.some((member) => member.memberStatus?.submissionPending
       || member.memberStatus?.threadStatus === 'systemError')
     const stateWriteBlocked = blocked || activityPhase === 'unknown'
-      || phaseMembers.some((member) => member.codexState?.goal?.observed && member.codexState.goal.freshness === 'verifying')
+      || writeMembers.some((member) => member.codexState?.goal?.observed && member.codexState.goal.freshness === 'verifying'
+        || codexRoot && member.phase === 'unknown' && member.memberStatus?.turn !== 'not-started')
+    const sideWorkBlocksPlan = codexRoot && writeMembers.some((member) => member.key !== root.key
+      && (isLiveTaskPhase(member.phase) || taskOpenInteractions(member).length > 0
+        || CODEX_STOPPED_GOALS.has(member.memberStatus?.goal) || hasCurrentPlanArtifact(member)))
     const goalLimited = ['usageLimited', 'budgetLimited'].includes(main?.goal)
     const capabilities = { ...(root.capabilities || {}) }
     if (liveCount > 0 || isLiveTaskPhase(phase) || stateWriteBlocked) capabilities.archive = false
@@ -2059,6 +2106,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     // finalizeTask must not restore the provider declaration after aggregation.
     const providerCapabilities = { ...(root.providerCapabilities || root.capabilities) }
     if (stateWriteBlocked) providerCapabilities.archive = false
+    if (sideWorkBlocksPlan) providerCapabilities.executePlan = false
     if (typeof providerCapabilities.continueTask === 'boolean') providerCapabilities.continueTask &&= canContinue
     return {
       ...root,
@@ -2066,8 +2114,9 @@ function createCompanionTaskKernel(dependencies = {}) {
       planReady,
       ...(activityPhase === 'unknown' || blocked || main?.verifying ? { freshness: 'verifying' } : {}),
       ...(main ? {
-        completedUnread: !isLiveTaskPhase(phase)
-          && members.some((member) => member.activityPhase === 'completed' && member.unreadKnown && member.unread),
+        completedUnread: root.completedUnread === false ? false : !isLiveTaskPhase(phase)
+          && members.some((member) => member.activityPhase === 'completed'
+            && hasCompletedUnread({ ...member, phase: member.activityPhase })),
         codexStatus: {
           main,
           groupActivity,
@@ -2275,6 +2324,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (!evidenceDraft) next.publishedAt = now()
     currentPackage = next
     lastSemantic = semantic
+    retainVisiblePackage(currentPackage)
     if (evidenceDraft) {
       recordPhaseTransitionsOnChange(previous.tasks, next.tasks, evidenceDraft)
       recordGroupCountsOnChange(next)
@@ -2395,11 +2445,16 @@ function createCompanionTaskKernel(dependencies = {}) {
     const previousObservation = taskPhaseObservation(previous)
     const incomingObservation = taskPhaseObservation(incoming)
     const causalDecision = sameTurnEvidenceDecision(previousObservation, incomingObservation)
-    const authoritativeStart = incoming.codexState?.orderedTurnStart === true && incoming.phase === 'running'
-      && incoming.turnStartedAt > 0 && (incoming.turnStartedAt > previous.turnStartedAt
-        || incoming.turnStartedAt === previous.turnStartedAt && incoming.causalKey && previous.causalKey
-          && incoming.causalKey !== previous.causalKey && incoming.causalDomain
-          && incoming.causalDomain === previous.causalDomain && incoming.causalSequence > previous.causalSequence)
+    const turnOrder = compareCodexTurnOrder(previousObservation, incomingObservation)
+    const authoritativeStart = turnOrder !== 'older'
+      && incoming.codexState?.orderedTurnStart === true && incoming.phase === 'running'
+      && incoming.turnStartedAt > 0
+      && (incoming.turnStartedAt > previous.turnStartedAt || turnOrder === 'newer')
+    const unresolvedTurnOrder = turnOrder === 'unknown' && previous.causalKey && incoming.causalKey
+      && previous.causalKey !== incoming.causalKey && previous.causalDomain
+      && previous.causalDomain === incoming.causalDomain
+      && previous.turnStartedAt > 0 && previous.turnStartedAt === incoming.turnStartedAt
+    let verifying = false
     if (acceptPhase && (causalDecision || causalComparable || laneTie)
       && !authoritativeStart && !phaseEvidenceSupersedes(previousObservation, incomingObservation)) {
       if (provider === 'codex' && causalDecision?.reason === 'sequence-incomparable'
@@ -2418,8 +2473,13 @@ function createCompanionTaskKernel(dependencies = {}) {
         activityDecisionReason = 'activity-rebase'
       } else {
         acceptPhase = false
-        activityDecisionReason = causalDecision?.reason
-          || (incoming.turnStartedAt > 0 && previous.turnStartedAt > incoming.turnStartedAt ? 'older-turn' : 'stale-evidence')
+        if (unresolvedTurnOrder) {
+          verifying = true
+          activityDecisionReason = 'turn-order-unproven'
+        } else {
+          activityDecisionReason = causalDecision?.reason
+            || (incoming.turnStartedAt > 0 && previous.turnStartedAt > incoming.turnStartedAt ? 'older-turn' : 'stale-evidence')
+        }
       }
     }
 
@@ -2431,7 +2491,6 @@ function createCompanionTaskKernel(dependencies = {}) {
       activityDecisionReason = 'renderer'
     }
 
-    let verifying = false
     if (acceptPhase && incoming.phase === 'unknown' && (previous.canonicalPhase || previous.phase) !== 'unknown') {
       // Only a later observation can settle an unknown phase.
       acceptPhase = false
@@ -2511,6 +2570,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         turnKind: incoming.turnKind,
         rootCompletionForSideOrder: incoming.rootCompletionForSideOrder,
         causalKey: incoming.causalObserved ? incoming.causalKey : previous.causalKey,
+        turnPredecessorKey: incoming.causalObserved ? incoming.turnPredecessorKey : previous.turnPredecessorKey,
         causalDomain: incoming.causalObserved ? incoming.causalDomain : previous.causalDomain,
         causalSequence: incoming.causalObserved ? incoming.causalSequence : previous.causalSequence,
         causalAuthority: incoming.causalObserved ? incoming.causalAuthority : previous.causalAuthority,
@@ -2559,7 +2619,9 @@ function createCompanionTaskKernel(dependencies = {}) {
       const emptyHistoryChanged = phaseAdvanced && incoming.role === 'child' && previous.turnKind === 'unknown'
         && !previous.causalKey && !previous.turnStartedAt
         && incoming.codexState.emptyTurnHistory !== previous.codexState?.emptyTurnHistory
-      const acceptState = acceptPhase || sameCodexVerdict || emptyHistoryChanged
+      const acceptSubmission = sameCodexTurn
+        && incoming.codexState.submissionPending !== previous.codexState?.submissionPending
+      const acceptState = acceptPhase || sameCodexVerdict || emptyHistoryChanged || acceptSubmission
       const state = acceptState ? incoming.codexState : previous.codexState
       const previousGoal = previous.codexState?.goal
       const incomingGoal = incoming.codexState.goal
@@ -2895,7 +2957,12 @@ function createCompanionTaskKernel(dependencies = {}) {
       providerCacheStates.set(cacheProvider, wasCached || cached ? 'cached' : 'unavailable')
       reorder = cached && (!wasCached || recovering) || !currentPackage.complete && cacheComplete()
     }
-    const nextTasks = materialized.tasks
+    const reuseTaskViews = reusedProjection || materialized.tasks.length === currentPackage.tasks.length
+      && materialized.tasks.every((task, index) => {
+        const previous = currentPackage.tasks[index]
+        return task.key === previous.key && task.semanticRevision === previous.semanticRevision
+      })
+    const nextTasks = reuseTaskViews ? currentPackage.tasks : materialized.tasks
     const freshness = materialized.freshness
     const nextTopologyRevision = materialized.topologyRevision
     const focusedKey = typeof draft.focusedKey === 'string' && nextTasks.some((task) => task.key === draft.focusedKey)
@@ -2940,7 +3007,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         }]
       })),
       tasks: nextTasks,
-      views: reusedProjection ? currentPackage.views : buildViews(nextTasks)
+      views: reuseTaskViews ? currentPackage.views : buildViews(nextTasks)
     }
     lastDraftRevisionByProducer.set(producer, draftRevision)
     pending?.acknowledge()
@@ -3175,7 +3242,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       durationMs: now() - startedAt,
       slowMs: 50,
       count: result?.tasks?.length || 0,
-      packageRevision: result?.packageRevision || currentPackage.packageRevision
+      packageRevision: result?.packageRevision || currentPackage.packageRevision,
+      details: { complete: result?.complete === true }
     })
     return result
   }
@@ -3593,7 +3661,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     const payload = command.payload && typeof command.payload === 'object' ? command.payload : {}
     if (command.command === 'cycle') return {
       action: 'cycle',
-      direction: selector.direction === -1 ? -1 : 1,
+      direction: payload.direction === -1 || selector.direction === -1 ? -1 : 1,
       source: command.source,
       operationId: command.operationId
     }
@@ -3807,7 +3875,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     const operationId = commandOperationId(input.operationId)
     if (!operationId) return Promise.resolve({ outcome: 'failed', errorCode: 'invalid-operation-id', message: '任务操作身份无效' })
-    if (commandResults.has(operationId)) return commandResults.get(operationId)
+    const existing = commandInFlight.get(operationId) || commandResults.get(operationId)
+    if (existing) return existing
     const command = {
       revision: COMPANION_TASK_COMMAND_REVISION,
       operationId,
@@ -3826,14 +3895,21 @@ function createCompanionTaskKernel(dependencies = {}) {
     const serialize = command.command !== 'cycle' && command.command !== 'open-attention'
       && !(command.command === 'open' && isShortcutSource(command.source))
     const previous = (serialize && commandQueues.get(key)) || Promise.resolve()
+    let resolveOperation
+    const reservation = new Promise(resolve => { resolveOperation = resolve })
+    commandInFlight.set(operationId, reservation)
     const operation = serialize ? previous.catch(() => undefined).then(() => executeCommand(command)) : executeCommand(command)
+    resolveOperation(operation)
     if (serialize) commandQueues.set(key, operation)
-    commandResults.set(operationId, operation)
-    if (commandResults.size > 500) commandResults.delete(commandResults.keys().next().value)
-    void operation.finally(() => {
+    const settle = () => {
       if (commandQueues.get(key) === operation) commandQueues.delete(key)
-    }).catch(() => undefined)
-    return operation
+      if (commandInFlight.get(operationId) !== reservation) return
+      commandInFlight.delete(operationId)
+      commandResults.set(operationId, operation)
+      if (commandResults.size > 500) commandResults.delete(commandResults.keys().next().value)
+    }
+    void operation.then(settle, settle)
+    return reservation
   }
 
   function dispatch(input = {}) {
@@ -3929,7 +4005,54 @@ function createCompanionTaskKernel(dependencies = {}) {
     return () => packageListeners.delete(wrapped)
   }
 
+  function visiblePackageFacts(packageValue) {
+    const codex = packageValue.providerHealth?.codex
+    return {
+      revision: finiteInteger(packageValue.packageRevision),
+      expected: finiteInteger(packageValue.views?.counts?.active),
+      complete: packageValue.complete === true,
+      freshness: packageValue.freshness,
+      codex: codex?.status || 'unavailable'
+    }
+  }
+
+  function retainVisiblePackage(packageValue) {
+    const facts = visiblePackageFacts(packageValue)
+    if (!facts.revision) return
+    const index = visiblePackageHistory.findIndex((item) => item.revision === facts.revision)
+    if (index >= 0) visiblePackageHistory.splice(index, 1)
+    visiblePackageHistory.push(facts)
+    while (visiblePackageHistory.length > 2) visiblePackageHistory.shift()
+  }
+
+  function acknowledgeMainVisible(input) {
+    const revision = finiteInteger(input.revision)
+    const presentation = visiblePresentations.has(input.presentation) ? input.presentation : ''
+    const target = visiblePackageHistory.find((item) => item.revision === revision)
+    if (!presentation || !target) return false
+    const expected = target.expected
+    const value = input.activeCount
+    const numeric = Number.isSafeInteger(value) && value >= 0
+    const countStatus = presentation === 'visible'
+      ? input.countStatus === 'mismatch' || numeric && value !== expected ? 'mismatch' : !numeric ? 'unconfirmed' : ''
+      : ''
+    record({
+      level: 'info', scope: 'task-kernel', event: 'main-task-presented',
+      outcome: countStatus || presentation,
+      packageRevision: revision,
+      ...(numeric ? { count: value } : {}),
+      details: {
+        consumer: 'main-visible', presentation, revision, expected,
+        ...(countStatus ? { countStatus } : {}),
+        ...(numeric ? { activeCount: value } : {}),
+        complete: target.complete, freshness: target.freshness, codex: target.codex
+      }
+    })
+    return true
+  }
+
   function acknowledge(input = {}) {
+    if (input?.consumer === 'main-visible') return acknowledgeMainVisible(input)
     const consumer = typeof input.consumer === 'string' && /^[a-z0-9:_-]{2,80}$/i.test(input.consumer)
       ? input.consumer
       : ''
@@ -3938,8 +4061,11 @@ function createCompanionTaskKernel(dependencies = {}) {
     const previous = finiteInteger(consumerAcknowledgements.get(consumer))
     if (revision < previous) return false
     consumerAcknowledgements.set(consumer, revision)
-    if (consumer === 'main-render' && revision > previous) {
-      record({ level: 'debug', scope: 'task-kernel', event: 'main-task-package-ack', outcome: 'applied', packageRevision: revision })
+    if ((consumer === 'main-received' || consumer === 'main-render') && revision > previous) {
+      record({
+        level: 'debug', scope: 'task-kernel', event: 'main-task-package-ack',
+        outcome: consumer === 'main-received' ? 'received' : 'applied', packageRevision: revision
+      })
     }
     return true
   }
@@ -3989,8 +4115,10 @@ function createCompanionTaskKernel(dependencies = {}) {
     clearVisibilityTimer()
     packageListeners.clear()
     diagnosticActivitySignatures.clear()
+    commandInFlight.clear()
     commandResults.clear()
     commandQueues.clear()
+    visiblePackageHistory.splice(0)
     consumerAcknowledgements.clear()
     try { persistInteractionTombstones([...interactionTombstones.values()].slice(-2_000), { flush: true }) } catch {}
     actions.close()

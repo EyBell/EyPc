@@ -365,6 +365,7 @@ function projectCanonicalCard(
   const completed = task.phase === 'completed'
   const stopped = task.phase === 'stopped'
   const unknown = task.phase === 'unknown'
+  const completedUnread = task.completedUnread ?? (completed && task.unread)
   // `unknown` is itself the Kernel's semantic decision. The presentation
   // adapter maps it to a neutral, non-actionable legacy card; it must never
   // revive a Provider inventory's former running/stopped/unread state.
@@ -373,7 +374,7 @@ function projectCanonicalCard(
     : live
       ? 'ongoing'
       : completed
-        ? task.unread ? 'completed-unread' : 'completed'
+        ? completedUnread ? 'completed-unread' : 'completed'
         : 'stopped'
   const activityState: CodexTaskCard['activityState'] = unknown
     ? 'ongoing'
@@ -417,15 +418,17 @@ function projectCanonicalCard(
     activityState,
     archiveCapability,
     revisionAt: task.revisionAt,
+    semanticRevision: task.semanticRevision,
     statusEnteredAt: task.statusEnteredAt || task.revisionAt,
-    unreadState: task.completedUnread ? 'unread'
-      : task.unreadKnown && (completed || task.codexStatus) ? (task.unread ? 'unread' : 'read') : 'unknown',
+    unreadState: completedUnread ? 'unread'
+      : task.completedUnread === false || (completed && task.unreadKnown) ? 'read'
+      : task.unreadKnown && task.codexStatus ? (task.unread ? 'unread' : 'read') : 'unknown',
     canonicalFreshness: task.freshness,
     companionPhase: task.phase,
     // Carried so the row can offer to clear it; the phase itself already
     // reads as the stand-in, which is what every other projection uses.
     manualPhase: (task.manualPhase || '') as CodexTaskCard['manualPhase'],
-    state: projectedLegacyState(task.phase, task.unread),
+    state: projectedLegacyState(task.phase, completedUnread),
     updatedAt: sourceUpdatedAt,
     lastQuestionAt: task.lastQuestionAt || card.lastQuestionAt || lastTurnStartedAt || completionRevision || sourceUpdatedAt,
     lastTurnStartedAt,
@@ -459,7 +462,7 @@ function projectCanonicalCard(
   if (completionRevision) {
     next.completionRevision = completionRevision
     next.lastTurnCompletedAt = completionRevision
-    if (task.unread) next.pendingSince = completionRevision
+    if (completedUnread) next.pendingSince = completionRevision
     else delete next.pendingSince
   } else {
     delete next.completionRevision

@@ -87,6 +87,7 @@ export function registerCodexActions(host: FeatureActionHostV7): void {
     register({ id: 'codex.task.open', title: '打开 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
       const source = args?.source === 'manual-quick-jump' || args?.source === 'card-click' || args?.source === 'manual-row-open'
+        || args?.source === 'local-shortcut'
         ? args.source
         : 'manual-row-open'
       void host.codexController.openThread(key, source, typeof args?.operationId === 'string' ? args.operationId : undefined)

@@ -292,6 +292,21 @@ type InventoryDisappearanceCandidate = {
   confirmations: number
 }
 
+type InventoryDisappearanceDecision = {
+  accept: boolean
+  firstObservation: boolean
+  missingCount: number
+  retryAfterMs: number
+}
+
+type PreparedThreadInventory = {
+  host: CodexHostSnapshot
+  threads: CodexHostThread[]
+  exitTransitions: Map<string, ActivityExitTransition>
+  receivedAt: number
+  disappearance: InventoryDisappearanceDecision
+}
+
 type StructuralRefreshPriority = 'normal' | 'urgent'
 
 function isLiveActiveThread(thread: CodexHostThread): boolean {
@@ -588,9 +603,19 @@ export function createCodexController(options: CodexControllerOptions) {
   let structuralRefreshPending = false
   let structuralRefreshPriority: StructuralRefreshPriority = 'normal'
   const activityExitBaselines = new Map<string, ActivityExitBaseline>()
-  let inFlight: Promise<void> | null = null
-  let inFlightIncludesThreads = false
   let actionPreflightInFlight = false
+  let taskApplication: Promise<void> = Promise.resolve()
+  let taskApplicationGeneration = 0
+  let taskInFlight: Promise<void> | null = null
+  let taskInFlightIsReuse = false
+  let quotaInFlight: Promise<void> | null = null
+  let metadataReusePending = false
+  let suppressMetadataReuse = false
+  const metadataReuseKeys = new Set<string>()
+  let metadataReuseSample = ''
+  let metadataReuseFailed = false
+  let metadataReuseAttempts = 0
+  let metadataReuseTimer: ReturnType<typeof setTimeout> | null = null
   const archivingKeys = new Set<string>()
   const taskArchiveInFlight = new Map<string, Promise<boolean>>()
   let focusedCompanionTaskKey = ''
@@ -600,7 +625,8 @@ export function createCodexController(options: CodexControllerOptions) {
   let activityDecisionDiagnostics = normalizeCodexActivityDecisionDiagnostics(null)
   let environmentInFlight: Promise<void> | null = null
   let environmentGeneration = 0
-  let refreshGeneration = 0
+  let quotaReadGeneration = 0
+  let taskReadGeneration = 0
   let runtimeGeneration = 0
   let runtimeActive = false
   let codexInventorySettled = false
@@ -621,10 +647,28 @@ export function createCodexController(options: CodexControllerOptions) {
     inventoryDisappearanceCandidate = null
   }
 
+  function enqueueTaskApplication(work: () => void | Promise<void>): Promise<void> {
+    const generation = ++taskApplicationGeneration
+    const current = () => !disposed && generation === taskApplicationGeneration
+    const operation = taskApplication.then(() => {
+      if (current()) return work()
+    })
+    taskApplication = operation.then(() => undefined, () => undefined)
+    return operation
+  }
+
+  function resetTaskApplication() {
+    taskApplicationGeneration += 1
+    taskApplication = Promise.resolve()
+  }
+
   // Host completeness validates one scan's structure, not temporal deletion.
   // Keep the published inventory until the same absence survives a real
   // reconciliation interval; explicit verified mutations remove keys earlier.
-  function inventoryDisappearanceDecision(threads: CodexHostThread[], now = Date.now()): { accept: boolean; firstObservation: boolean; missingCount: number; retryAfterMs: number } {
+  function inventoryDisappearanceDecision(
+    threads: CodexHostThread[],
+    now = Date.now()
+  ): { accept: boolean; firstObservation: boolean; missingCount: number; retryAfterMs: number } {
     if (!lastThreads.length) {
       resetInventoryDisappearanceCandidate()
       return { accept: true, firstObservation: false, missingCount: 0, retryAfterMs: 0 }
@@ -1769,7 +1813,8 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function updateConversationStatus(patch: Partial<Pick<ConversationSnapshotV1, 'status' | 'errorCode' | 'errorMessage'>>) {
     rawConversations = { ...rawConversations, ...patch }
-    refreshTaskPresentation({ ...sourceTaskState.conversations, ...patch })
+    sourceTaskState = { ...sourceTaskState, conversations: { ...sourceTaskState.conversations, ...patch } }
+    taskPresentation = { ...taskPresentation, conversations: { ...taskPresentation.conversations, ...patch } }
   }
 
   function resetConversationProjection(next = rawConversations) {
@@ -1796,6 +1841,12 @@ export function createCodexController(options: CodexControllerOptions) {
     activityDecisionDiagnostics = normalizeCodexActivityDecisionDiagnostics(null)
     lastTaskReadAt = 0
     resetInventoryDisappearanceCandidate()
+    metadataReuseKeys.clear()
+    metadataReuseSample = ''
+    metadataReuseFailed = false
+    metadataReuseAttempts = 0
+    if (metadataReuseTimer) clearTimeout(metadataReuseTimer)
+    metadataReuseTimer = null
     resetConversationProjection(emptyConversationSnapshot())
   }
 
@@ -1812,18 +1863,44 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function armStructuralRefresh() {
-    if (disposed || !shouldRun() || !structuralRefreshPending || inFlight || structuralRefreshTimer) return
+    if (disposed || !shouldRun() || !structuralRefreshPending || taskInFlight || structuralRefreshTimer) return
     const delay = structuralRefreshPriority === 'urgent'
       ? URGENT_STRUCTURAL_REFRESH_DELAY_MS
       : NORMAL_STRUCTURAL_REFRESH_DELAY_MS
     structuralRefreshTimer = setTimeout(() => {
       structuralRefreshTimer = null
-      if (inFlight) return
+      if (taskInFlight) return
       structuralRefreshPending = false
       structuralRefreshPriority = 'normal'
       lastTaskReadAt = 0
       void refresh({ forceTasks: true })
     }, delay)
+  }
+
+  function scheduleMetadataReuseRefresh() {
+    if (disposed || suppressMetadataReuse || actionPreflightInFlight || !shouldRun()) return
+    void refresh({ metadataReuse: true })
+  }
+
+  function scheduleMetadataReuseRetry() {
+    if (metadataReuseTimer || metadataReuseAttempts > 0 || disposed || suppressMetadataReuse || !shouldRun() || !metadataReuseFailed) return
+    metadataReuseAttempts += 1
+    metadataReusePending = true
+    metadataReuseTimer = setTimeout(() => {
+      metadataReuseTimer = null
+      metadataReusePending = false
+      if (!disposed && shouldRun() && metadataReuseFailed) void refresh({ metadataReuse: true })
+    }, NORMAL_STRUCTURAL_REFRESH_DELAY_MS)
+  }
+
+  function inventorySampleStamp(host: CodexHostSnapshot) {
+    if (host.version !== 2 || host.completeness !== 'verified') return ''
+    return host.inventoryRevision?.trim() || `${host.sourceFingerprint}:${host.receivedAt}`
+  }
+
+  function metadataReuseKeysToRead() {
+    const known = new Set(sourceTaskState.conversations.all.map((task) => task.key))
+    return taskSnapshot.tasks.flatMap((task) => task.provider === 'codex' && !known.has(task.key) ? [task.key] : [])
   }
 
   function scheduleStructuralRefresh(priority: StructuralRefreshPriority = 'normal') {
@@ -1844,7 +1921,7 @@ export function createCodexController(options: CodexControllerOptions) {
       inventoryDisappearanceTimer = null
       if (disposed || !shouldRun() || !inventoryDisappearanceCandidate) return
       lastTaskReadAt = 0
-      if (inFlight) {
+      if (taskInFlight) {
         structuralRefreshPending = true
         structuralRefreshPriority = 'urgent'
         return
@@ -1858,7 +1935,9 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!started || disposed || !shouldRun()) return
     const settings = codexState().settings
     const now = Date.now()
-    const quotaWait = shouldRefreshSurfaceData() && Number.isFinite(quotaDelay(settings)) ? Math.max(1000, lastQuotaReadAt + quotaDelay(settings) - now) : Number.POSITIVE_INFINITY
+    const quotaWait = !quotaInFlight && shouldRefreshSurfaceData() && Number.isFinite(quotaDelay(settings))
+      ? Math.max(1000, lastQuotaReadAt + quotaDelay(settings) - now)
+      : Number.POSITIVE_INFINITY
     const nextTaskTransitionAt = taskPresentation.dynamic.nextTransitionAt
     const taskTransitionWait = nextTaskTransitionAt === null
       ? Number.POSITIVE_INFINITY
@@ -1898,6 +1977,7 @@ export function createCodexController(options: CodexControllerOptions) {
       advanceScan: boolean
       retainMissing: boolean
       status?: ConversationSnapshotV1['status']
+      recordRead?: boolean
     }
   ) {
     const refreshedKeys = new Set(threads.map((thread) => thread.key))
@@ -1957,7 +2037,7 @@ export function createCodexController(options: CodexControllerOptions) {
       ...threads.flatMap((thread) => thread.firstPromptAt ? [{ key: thread.key, firstPromptAt: thread.firstPromptAt, updatedAt: receivedAt }] : []),
       ...codexState().firstPromptTimes
     ])
-    lastTaskReadAt = receivedAt
+    if (input.recordRead !== false) lastTaskReadAt = receivedAt
   }
 
   function publishConversationProjection(input: { receivedAt: number; advanceScan: boolean; status?: ConversationSnapshotV1['status'] }) {
@@ -2034,33 +2114,41 @@ export function createCodexController(options: CodexControllerOptions) {
     return environmentInFlight
   }
 
-  async function refresh(input: { force?: boolean; forceQuota?: boolean; forceTasks?: boolean; actionPreflight?: boolean; manualQuota?: boolean } = {}) {
+  async function refresh(input: { force?: boolean; forceQuota?: boolean; forceTasks?: boolean; actionPreflight?: boolean; manualQuota?: boolean; metadataReuse?: boolean } = {}) {
     const actionPreflight = input.actionPreflight === true
     const refreshAllowed = () => actionPreflight ? isFeatureEnabled() : shouldRun()
     if (disposed || !refreshAllowed()) return
-    if (inFlight) {
-      const existingIncludesThreads = inFlightIncludesThreads
-      const inventorySequenceBeforeWait = taskInventoryPublishSequence
-      await inFlight
-      if (actionPreflight
-        && (!existingIncludesThreads || taskInventoryPublishSequence === inventorySequenceBeforeWait)
-        && !disposed
-        && refreshAllowed()) return refresh(input)
-      return
+    const metadataReuse = input.metadataReuse === true && !actionPreflight && input.force !== true && input.forceTasks !== true
+    let requestedMetadataKeys = new Set<string>()
+    if (metadataReuse) {
+      if (suppressMetadataReuse || actionPreflightInFlight) return
+      const missing = metadataReuseKeysToRead()
+      const freshMember = missing.some((key) => !metadataReuseKeys.has(key))
+      if (freshMember) metadataReuseAttempts = 0
+      if (!missing.length) return
+      if (taskInFlight) {
+        metadataReusePending ||= freshMember || metadataReuseFailed
+        return
+      }
+      metadataReusePending = false
+      requestedMetadataKeys = new Set(missing)
+      if (metadataReuseTimer) clearTimeout(metadataReuseTimer)
+      metadataReuseTimer = null
+      metadataReuseFailed = false
+      for (const key of missing) metadataReuseKeys.add(key)
     }
     const runtimeToken = runtimeGeneration
     const now = Date.now()
     const settings = codexState().settings
-    const includeQuota = !actionPreflight && shouldRefreshSurfaceData() && (input.force === true || input.forceQuota === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings)))
-    const includeThreads = actionPreflight || settings.conversationInboxEnabled
-      && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0)
-    const includeConfig = includeQuota && !actionPreflight
-    // Claude membership/state/unread are push-owned after cold admission. A full
-    // read is reserved for cold start, reconnect and an explicit gap recovery.
+    const needsQuota = !actionPreflight && !metadataReuse && shouldRefreshSurfaceData() && (input.force === true || input.forceQuota === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings)))
+    const includeQuota = needsQuota && !quotaInFlight
+    let includeThreads = actionPreflight || metadataReuse || (settings.conversationInboxEnabled
+      && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0))
+    const inventoryPolicy = metadataReuse ? 'reuse-verified' as const : undefined
     const claudeResetDue = claudeQuota.windows.some((window) => window.resetAt !== null
       && now >= window.resetAt + 1000
       && lastClaudeQuotaReadAt < window.resetAt + 1000)
-    const includeClaudeQuota = !actionPreflight && claudeEnabled()
+    const includeClaudeQuota = !actionPreflight && !metadataReuse && claudeEnabled()
       && (input.force === true || input.forceQuota === true || lastClaudeQuotaReadAt <= 0
         || (Number.isFinite(quotaDelay(settings)) && now - lastClaudeQuotaReadAt >= quotaDelay(settings))
         || claudeResetDue)
@@ -2073,220 +2161,342 @@ export function createCodexController(options: CodexControllerOptions) {
             ? { reason: 'force' }
             : claudeResetDue ? { reason: 'reset' } : { reason: 'timer' })
     }
+    let joinedTask: Promise<void> | null = null
+    if (includeThreads && taskInFlight && taskInFlightIsReuse) {
+      taskReadGeneration += 1
+      taskInFlight = null
+      taskInFlightIsReuse = false
+    } else if (includeThreads && taskInFlight) {
+      if (actionPreflight) {
+        const inventorySequenceBeforeWait = taskInventoryPublishSequence
+        await taskInFlight
+        if (taskInventoryPublishSequence === inventorySequenceBeforeWait && !disposed && refreshAllowed()) return refresh(input)
+        return
+      }
+      joinedTask = taskInFlight
+      includeThreads = false
+    }
     if (!includeQuota && !includeThreads) {
+      if (input.manualQuota && quotaInFlight) return quotaInFlight
+      if (joinedTask) return joinedTask
+      if (needsQuota && quotaInFlight) return quotaInFlight
       schedule()
       return
     }
-    if (includeThreads) {
+
+    if (includeThreads && !metadataReuse) {
       clearStructuralRefreshTimer()
       structuralRefreshPending = false
       structuralRefreshPriority = 'normal'
     }
-    refreshing = true
+    if (includeThreads) refreshing = true
     if (actionPreflight) actionPreflightInFlight = true
     if (includeQuota && quota.updatedAt <= 0) quota = { ...quota, status: 'loading' }
-    if (includeThreads && rawConversations.updatedAt <= 0) updateConversationStatus({ status: 'loading' })
+    if (includeThreads && !metadataReuse && rawConversations.updatedAt <= 0) updateConversationStatus({ status: 'loading' })
     options.notify()
-    const generation = ++refreshGeneration
-    const operation = (async () => {
-      if (!actionPreflight) await inspectEnvironment(input.force === true)
-      if (disposed || !refreshAllowed() || runtimeToken !== runtimeGeneration || generation !== refreshGeneration) return
-      const [quotaResult, threadResult] = await Promise.all([
-        includeQuota
-          ? options.platform.codex.readSnapshot({ includeQuota: true, includeConfig: true, includeThreads: false })
-          : Promise.resolve(null),
-        includeThreads
-          ? options.platform.codex.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
-          : Promise.resolve(null)
-      ])
-      if (disposed || !refreshAllowed() || runtimeToken !== runtimeGeneration || generation !== refreshGeneration) return
-      const receivedAt = Math.max(quotaResult?.receivedAt || 0, threadResult?.receivedAt || 0, Date.now())
-      const successful = [quotaResult, threadResult].filter((result) => result?.ok === true)
-      const failures = [quotaResult, threadResult].filter((result) => result?.ok === false)
-      if (successful.length) {
-        const connectedEnvironment = {
-          ...environment,
-          checking: false,
-          connectionState: 'connected',
-          configState: quotaResult?.ok && quotaResult.value.config ? 'loaded' : environment.configState,
-          checkedAt: receivedAt,
-        }
-        delete connectedEnvironment.errorCode
-        // A successful App Server round-trip proves only the connector. Keep the
-        // preload's runtime/process/Desktop bridge classification authoritative.
-        environment = normalizeCodexEnvironment(connectedEnvironment)
-      }
-      if (quotaResult) {
-        const quotaReceivedAt = quotaResult.receivedAt || receivedAt
-        if (quotaResult.ok) {
-          if (quotaResult.value.quota) {
-            quota = normalizeCodexQuota({ version: 1, status: 'ok', ...quotaResult.value.quota, updatedAt: quotaReceivedAt })
-            quotaAccount = normalizeCodexQuotaAccount(quotaResult.value.quotaAccount)
-          }
-          if (quotaResult.value.config) config = normalizeCodexConfig({ version: 1, ...quotaResult.value.config, updatedAt: quotaReceivedAt })
-          if (Array.isArray(quotaResult.value.models)) {
-            modelCatalog = normalizeCodexModelCatalog({
-              version: 1,
-              status: 'ok',
-              models: quotaResult.value.models,
-              fingerprint: quotaResult.value.modelCatalogFingerprint,
-              updatedAt: quotaReceivedAt
-            })
-          } else if (quotaResult.value.modelCatalogErrorCode) {
-            modelCatalog = { ...modelCatalog, status: modelCatalog.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.value.modelCatalogErrorCode }
-          }
-          newThreadContextFingerprint = typeof quotaResult.value.newThreadContextFingerprint === 'string' && /^[a-f0-9]{64}$/.test(quotaResult.value.newThreadContextFingerprint)
-            ? quotaResult.value.newThreadContextFingerprint
-            : ''
-        } else {
-          quota = { ...quota, status: quota.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.error.code, errorMessage: quotaResult.error.message }
-          if (quota.updatedAt <= 0) quotaAccount = null
-          modelCatalog = { ...modelCatalog, status: modelCatalog.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.error.code }
-        }
-        lastQuotaReadAt = quotaReceivedAt
-      }
-      if (includeQuota) {
-        await refreshMagpieQuota(receivedAt)
-      }
-      if (threadResult) {
-        const taskReceivedAt = threadResult.receivedAt || receivedAt
-        if (threadResult.ok && threadResult.value.threads) {
-          const host = threadResult.value
-          const verifiedV2 = host.version === 2
-            && host.completeness === 'verified'
-            && typeof host.sourceFingerprint === 'string'
-            && /^[a-f0-9]{64}$/.test(host.sourceFingerprint)
-            && Array.isArray(host.projects)
-          const hostActivityGeneration = host.version === 2
-            && Number.isInteger(host.activityGeneration)
-            && host.activityGeneration! > 0
-            ? host.activityGeneration!
-            : 0
-          if (host.version === 2 && !verifiedV2) {
-            resetInventoryDisappearanceCandidate()
-            updateConversationStatus({
-              status: rawConversations.updatedAt > 0 ? 'stale' : 'error',
-              errorCode: 'protocol-error',
-              errorMessage: 'Codex 会话预检不完整，已拒绝发布快照'
-            })
-            lastTaskReadAt = taskReceivedAt
-            options.setMessage('Codex 会话预检不完整，已保留上一份已验证快照')
-          } else if (host.version === 2
-            && lastActivityGeneration > 0
-            && (hostActivityGeneration === 0 || hostActivityGeneration < lastActivityGeneration)) {
-            scheduleStructuralRefresh('urgent')
-            options.setMessage('Codex 会话快照缺少当前实时代次或早于实时状态，已保留较新的任务状态并自动复核')
-          } else {
-            const firstPromptByKey = new Map(codexState().firstPromptTimes.map((entry) => [entry.key, entry.firstPromptAt]))
-            const previousByKey = new Map(lastThreads.map((thread) => [thread.key, thread] as const))
-            const exitTransitions = new Map<string, ActivityExitTransition>()
-            const threads = (host.threads as CodexHostThread[]).map((thread) => ({
-              ...thread,
-              ...(thread.firstPromptAt ? {} : firstPromptByKey.has(thread.key) ? { firstPromptAt: firstPromptByKey.get(thread.key) } : {})
-            })).map((thread) => {
-              const previous = previousByKey.get(thread.key)
-              let sequenced = thread
-              if (hostActivityGeneration > 0) {
-                const exactTerminal = isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
-                  && thread.lastTurnStatus !== 'inProgress'
-                const exactLiveStart = !exactTerminal
-                  && hasCodexLiveActivityEvidence(thread)
-                  && (thread.lastTurnStatus !== 'completed' || thread.lastTurnEvidence === 'turn-started')
-                if (exactLiveStart && !thread.activeEvidenceSequence) {
-                  sequenced = { ...sequenced, activeEvidenceSequence: hostActivityGeneration }
-                }
-                if (exactTerminal && !thread.terminalEvidenceSequence) {
-                  sequenced = {
-                    ...sequenced,
-                    activeEvidenceSequence: thread.activeEvidenceSequence
-                      || previous?.activeEvidenceSequence
-                      || Math.max(1, hostActivityGeneration - 1),
-                    terminalEvidenceSequence: hostActivityGeneration
-                  }
-                }
-              }
-              const preserved = preserveLatestTurnEvidence(sequenced, previous)
-              if (!previous) return preserved
-              const transition = reduceActivityExitTransition(
-                previous,
-                preserved,
-                activityExitBaselines.get(thread.key)
-              )
-              exitTransitions.set(thread.key, transition)
-              return transition.thread
-            })
-            const disappearance = inventoryDisappearanceDecision(threads)
-            if (!disappearance.accept) {
-              const status = rawConversations.updatedAt > 0 ? 'stale' : 'error'
-              rawConversations = { ...rawConversations,
-                status,
-                errorCode: 'protocol-error',
-                errorMessage: 'Codex 任务清单数量暂时不稳定，已保留上一份稳定状态'
-              }
-              const incomingKeys = new Set(threads.map((thread) => thread.key))
-              const stabilizedThreads = [
-                ...threads,
-                ...lastThreads.filter((thread) => !incomingKeys.has(thread.key))
-              ]
-              publishVerifiedThreadInventory(host, stabilizedThreads, exitTransitions, taskReceivedAt, {
-                advanceScan: false,
-                retainMissing: true,
-                status
-              })
-              if (disappearance.firstObservation) {
-                options.setMessage(`检测到 ${disappearance.missingCount} 项任务暂时缺失，已保留上一份稳定清单并自动复核`)
-                scheduleStructuralRefresh()
-              } else if (disappearance.retryAfterMs > 0) {
-                scheduleInventoryDisappearanceRecheck(disappearance.retryAfterMs)
-              }
-            } else {
-              publishVerifiedThreadInventory(host, threads, exitTransitions, taskReceivedAt, {
-                advanceScan: true,
-                retainMissing: false
-              })
+    const quotaToken = includeQuota ? ++quotaReadGeneration : 0
+    const taskToken = includeThreads ? ++taskReadGeneration : 0
+    const commandSequence = companionCommandSequence
+    const reportFailure = (message: string) => {
+      if (commandSequence === companionCommandSequence) options.setMessage(message)
+    }
+    const currentQuota = () => !disposed && refreshAllowed() && runtimeToken === runtimeGeneration && quotaToken === quotaReadGeneration
+    const currentTask = () => !disposed && refreshAllowed() && runtimeToken === runtimeGeneration && taskToken === taskReadGeneration
+    const readiness = !actionPreflight && !metadataReuse ? inspectEnvironment(input.force === true) : null
+    const quotaOperation = includeQuota
+      ? (async () => {
+          await readiness
+          if (!currentQuota()) return
+          const quotaResult = await options.platform.codex.readSnapshot({ includeQuota: true, includeConfig: true, includeThreads: false })
+          if (!currentQuota()) return
+          const receivedAt = quotaResult.receivedAt || Date.now()
+          if (quotaResult.ok) {
+            const connectedEnvironment = {
+              ...environment,
+              checking: false,
+              connectionState: 'connected' as const,
+              configState: quotaResult.value.config ? 'loaded' as const : environment.configState,
+              checkedAt: receivedAt,
             }
+            delete connectedEnvironment.errorCode
+            environment = normalizeCodexEnvironment(connectedEnvironment)
+            if (quotaResult.value.quota) {
+              quota = normalizeCodexQuota({ version: 1, status: 'ok', ...quotaResult.value.quota, updatedAt: receivedAt })
+              quotaAccount = normalizeCodexQuotaAccount(quotaResult.value.quotaAccount)
+            }
+            if (quotaResult.value.config) config = normalizeCodexConfig({ version: 1, ...quotaResult.value.config, updatedAt: receivedAt })
+            if (Array.isArray(quotaResult.value.models)) {
+              modelCatalog = normalizeCodexModelCatalog({
+                version: 1,
+                status: 'ok',
+                models: quotaResult.value.models,
+                fingerprint: quotaResult.value.modelCatalogFingerprint,
+                updatedAt: receivedAt
+              })
+            } else if (quotaResult.value.modelCatalogErrorCode) {
+              modelCatalog = { ...modelCatalog, status: modelCatalog.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.value.modelCatalogErrorCode }
+            }
+            newThreadContextFingerprint = typeof quotaResult.value.newThreadContextFingerprint === 'string' && /^[a-f0-9]{64}$/.test(quotaResult.value.newThreadContextFingerprint)
+              ? quotaResult.value.newThreadContextFingerprint
+              : ''
+            persistSnapshots()
+          } else if (currentQuota()) {
+            quota = { ...quota, status: quota.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.error.code, errorMessage: quotaResult.error.message }
+            if (quota.updatedAt <= 0) quotaAccount = null
+            modelCatalog = { ...modelCatalog, status: modelCatalog.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.error.code }
+            reportFailure(quotaResult.error.message)
           }
-        } else if (!threadResult.ok) {
-          resetInventoryDisappearanceCandidate()
-          updateConversationStatus({
-            status: rawConversations.updatedAt > 0 ? 'stale' : 'error',
-            errorCode: threadResult.error.code,
-            errorMessage: threadResult.error.message
+          lastQuotaReadAt = receivedAt
+          if (currentQuota()) void refreshMagpieQuota(receivedAt)
+        })()
+      : null
+    const taskOperation = includeThreads
+      ? (async () => {
+          if (readiness) await readiness
+          if (!currentTask()) return
+          const threadResult = await options.platform.codex.readSnapshot({
+            includeQuota: false,
+            includeConfig: false,
+            includeThreads: true,
+            ...(inventoryPolicy ? { inventoryPolicy } : {})
           })
-          lastTaskReadAt = taskReceivedAt
+          if (!currentTask()) return
+          const receivedAt = threadResult.receivedAt || Date.now()
+          if (threadResult.ok && !metadataReuse) {
+            const connectedEnvironment = {
+              ...environment,
+              checking: false,
+              connectionState: 'connected' as const,
+              checkedAt: receivedAt,
+            }
+            delete connectedEnvironment.errorCode
+            environment = normalizeCodexEnvironment(connectedEnvironment)
+          }
+          await enqueueTaskApplication(() => {
+            if (!currentTask()) return
+            if (threadResult.ok && threadResult.value.threads) {
+              if (metadataReuse) {
+                const sample = inventorySampleStamp(threadResult.value)
+                if (!sample) {
+                  metadataReuseFailed = true
+                  return
+                }
+                if (sample !== metadataReuseSample) {
+                  metadataReuseSample = sample
+                  metadataReuseAttempts = 0
+                }
+                mergeReusedThreadMetadata(threadResult.value, receivedAt)
+                const missing = new Set(metadataReuseKeysToRead())
+                metadataReuseFailed = [...requestedMetadataKeys].some((key) => missing.has(key))
+                return
+              }
+              const prepared = prepareVerifiedThreadInventory(threadResult.value, receivedAt)
+              if (!prepared) return
+              publishPreparedThreadInventory(prepared)
+            } else if (metadataReuse) {
+              metadataReuseFailed = true
+            } else if (!threadResult.ok) {
+              resetInventoryDisappearanceCandidate()
+              updateConversationStatus({
+                status: rawConversations.updatedAt > 0 ? 'stale' : 'error',
+                errorCode: threadResult.error.code,
+                errorMessage: threadResult.error.message
+              })
+              lastTaskReadAt = receivedAt
+              reportFailure(threadResult.error.message)
+            }
+          })
+          if (threadResult.ok && !metadataReuse) persistSnapshots()
+        })()
+      : null
+    if (quotaOperation) {
+      const trackedQuota = quotaOperation.finally(() => {
+        if (quotaInFlight === trackedQuota) quotaInFlight = null
+        if (currentQuota()) {
+          options.notify()
+          schedule()
+        }
+      })
+      quotaInFlight = trackedQuota
+    }
+    if (taskOperation) {
+      const trackedTask = taskOperation.finally(() => {
+        if (includeThreads && currentTask()) {
+          codexInventorySettled = true
+          syncCompanionTaskKernel()
+        }
+        if (actionPreflight && currentTask()) actionPreflightInFlight = false
+        if (taskInFlight !== trackedTask) return
+        refreshing = false
+        taskInFlight = null
+        taskInFlightIsReuse = false
+        if (!disposed) options.notify()
+        if (disposed || actionPreflight || !shouldRun() || runtimeToken !== runtimeGeneration) return
+        if (metadataReuse) {
+          const missing = metadataReuseKeysToRead()
+          const fresh = missing.some((key) => !metadataReuseKeys.has(key))
+          if (fresh) metadataReusePending = true
+          else if (!metadataReusePending && metadataReuseFailed) scheduleMetadataReuseRetry()
+          metadataReuseKeys.clear()
+          for (const key of missing) if (!fresh || requestedMetadataKeys.has(key)) metadataReuseKeys.add(key)
+        }
+        if (structuralRefreshPending) armStructuralRefresh()
+        else if (metadataReusePending && !metadataReuseTimer) {
+          metadataReusePending = false
+          scheduleMetadataReuseRefresh()
+        }
+        else if (!metadataReuse) schedule()
+      })
+      taskInFlight = trackedTask
+      taskInFlightIsReuse = metadataReuse
+    }
+    if (input.manualQuota && quotaInFlight) return quotaInFlight
+    return joinedTask || (includeThreads ? taskInFlight : quotaInFlight) || undefined
+  }
+
+  function prepareVerifiedThreadInventory(host: CodexHostSnapshot, receivedAt: number): PreparedThreadInventory | null {
+    const verifiedV2 = host.version === 2
+      && host.completeness === 'verified'
+      && typeof host.sourceFingerprint === 'string'
+      && /^[a-f0-9]{64}$/.test(host.sourceFingerprint)
+      && Array.isArray(host.projects)
+    const hostActivityGeneration = host.version === 2
+      && Number.isInteger(host.activityGeneration)
+      && host.activityGeneration! > 0
+      ? host.activityGeneration!
+      : 0
+    if (host.version === 2 && !verifiedV2) {
+      resetInventoryDisappearanceCandidate()
+      updateConversationStatus({
+        status: rawConversations.updatedAt > 0 ? 'stale' : 'error',
+        errorCode: 'protocol-error',
+        errorMessage: 'Codex 会话预检不完整，已拒绝发布快照'
+      })
+      lastTaskReadAt = receivedAt
+      options.setMessage('Codex 会话预检不完整，已保留上一份已验证快照')
+      return null
+    }
+    if (host.version === 2
+      && lastActivityGeneration > 0
+      && (hostActivityGeneration === 0 || hostActivityGeneration < lastActivityGeneration)) {
+      scheduleStructuralRefresh('urgent')
+      options.setMessage('Codex 会话快照缺少当前实时代次或早于实时状态，已保留较新的任务状态并自动复核')
+      return null
+    }
+    const firstPromptByKey = new Map(codexState().firstPromptTimes.map((entry) => [entry.key, entry.firstPromptAt]))
+    const previousByKey = new Map(lastThreads.map((thread) => [thread.key, thread] as const))
+    const exitTransitions = new Map<string, ActivityExitTransition>()
+    const threads = (host.threads as CodexHostThread[]).map((thread) => ({
+      ...thread,
+      ...(thread.firstPromptAt ? {} : firstPromptByKey.has(thread.key) ? { firstPromptAt: firstPromptByKey.get(thread.key) } : {})
+    })).map((thread) => {
+      const previous = previousByKey.get(thread.key)
+      let sequenced = thread
+      if (hostActivityGeneration > 0) {
+        const exactTerminal = isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
+          && thread.lastTurnStatus !== 'inProgress'
+        const exactLiveStart = !exactTerminal
+          && hasCodexLiveActivityEvidence(thread)
+          && (thread.lastTurnStatus !== 'completed' || thread.lastTurnEvidence === 'turn-started')
+        if (exactLiveStart && !thread.activeEvidenceSequence) {
+          sequenced = { ...sequenced, activeEvidenceSequence: hostActivityGeneration }
+        }
+        if (exactTerminal && !thread.terminalEvidenceSequence) {
+          sequenced = {
+            ...sequenced,
+            activeEvidenceSequence: thread.activeEvidenceSequence
+              || previous?.activeEvidenceSequence
+              || Math.max(1, hostActivityGeneration - 1),
+            terminalEvidenceSequence: hostActivityGeneration
+          }
         }
       }
-      if (!successful.length) {
-        const failure = failures[0]
-        environment = normalizeCodexEnvironment({
-          ...environment,
-          checking: false,
-          connectionState: 'failed',
-          checkedAt: receivedAt,
-          errorCode: failure && !failure.ok ? failure.error.code : 'unavailable'
-        })
-      }
-      const firstFailure = failures[0]
-      if (firstFailure && !firstFailure.ok) options.setMessage(firstFailure.error.message)
-      if (successful.length) persistSnapshots()
-    })().finally(() => {
-      if (includeThreads && !disposed && runtimeToken === runtimeGeneration && generation === refreshGeneration) {
-        codexInventorySettled = true
-        syncCompanionTaskKernel()
-      }
-      if (actionPreflight) actionPreflightInFlight = false
-      if (inFlight !== operation) return
-      refreshing = false
-      inFlight = null
-      inFlightIncludesThreads = false
-      if (!disposed) options.notify()
-      if (disposed || actionPreflight || !shouldRun() || runtimeToken !== runtimeGeneration) return
-      if (structuralRefreshPending) armStructuralRefresh()
-      else schedule()
+      const preserved = preserveLatestTurnEvidence(sequenced, previous)
+      if (!previous) return preserved
+      const transition = reduceActivityExitTransition(
+        previous,
+        preserved,
+        activityExitBaselines.get(thread.key)
+      )
+      exitTransitions.set(thread.key, transition)
+      return transition.thread
     })
-    inFlightIncludesThreads = includeThreads
-    inFlight = operation
-    return inFlight
+    return {
+      host,
+      threads,
+      exitTransitions,
+      receivedAt,
+      disappearance: inventoryDisappearanceDecision(threads, receivedAt)
+    }
+  }
+
+  function publishPreparedThreadInventory(prepared: PreparedThreadInventory) {
+    const { host, threads, exitTransitions, receivedAt, disappearance } = prepared
+    if (!disappearance.accept) {
+      const status = rawConversations.updatedAt > 0 ? 'stale' : 'error'
+      rawConversations = {
+        ...rawConversations,
+        status,
+        errorCode: 'protocol-error',
+        errorMessage: 'Codex 任务清单数量暂时不稳定，已保留上一份稳定状态'
+      }
+      const incomingKeys = new Set(threads.map((thread) => thread.key))
+      const stabilizedThreads = [
+        ...threads,
+        ...lastThreads.filter((thread) => !incomingKeys.has(thread.key))
+      ]
+      publishVerifiedThreadInventory(host, stabilizedThreads, exitTransitions, receivedAt, {
+        advanceScan: false,
+        retainMissing: true,
+        status
+      })
+      if (disappearance.firstObservation) {
+        options.setMessage(`检测到 ${disappearance.missingCount} 项任务暂时缺失，已保留上一份稳定清单并自动复核`)
+        scheduleStructuralRefresh()
+      } else if (disappearance.retryAfterMs > 0) {
+        scheduleInventoryDisappearanceRecheck(disappearance.retryAfterMs)
+      }
+      return
+    }
+    publishVerifiedThreadInventory(host, threads, exitTransitions, receivedAt, {
+      advanceScan: true,
+      retainMissing: false
+    })
+  }
+
+  function mergeReusedThreadMetadata(host: CodexHostSnapshot, receivedAt: number) {
+    if (!Array.isArray(host.threads) || host.version === 2 && host.completeness !== 'verified') return
+    const incoming = new Map(host.threads.map((thread) => [thread.key, thread]))
+    const known = new Set(lastThreads.map((thread) => thread.key))
+    const admitted = new Set(taskSnapshot.tasks.filter((task) => task.provider === 'codex').map((task) => task.key))
+    const additions = host.threads.filter((thread) => admitted.has(thread.key) && !known.has(thread.key))
+    if (!additions.length) return
+    const threads = [
+      ...lastThreads.map((thread) => {
+        const next = incoming.get(thread.key)
+        if (!next) return thread
+        return {
+          ...thread,
+          actionAlias: next.actionAlias || thread.actionAlias,
+          name: next.name || thread.name,
+          projectKey: next.projectKey || thread.projectKey,
+          projectName: next.projectName || thread.projectName,
+          projectKind: next.projectKind || thread.projectKind,
+          ...(next.firstPromptAt && !thread.firstPromptAt ? { firstPromptAt: next.firstPromptAt } : {})
+        }
+      }),
+      ...additions
+    ]
+    const projects = host.version === 2 && Array.isArray(host.projects) ? host.projects : []
+    const projectKeys = new Set(projects.map((project) => project.key))
+    const mergedProjects = [...projects, ...lastProjects.filter((project) => !projectKeys.has(project.key))]
+    const mergedHost = host.version === 2 ? { ...host, projects: mergedProjects } : host
+    publishVerifiedThreadInventory(mergedHost, threads, new Map(), receivedAt, {
+      advanceScan: false,
+      retainMissing: true,
+      recordRead: false,
+      status: rawConversations.status
+    })
   }
 
   function syncActivation(force = false) {
@@ -2296,6 +2506,8 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!featureEnabled) {
       environmentGeneration += 1
       environmentInFlight = null
+      metadataReusePending = false
+      suppressMetadataReuse = false
       if (environment.checking) {
         environment = { ...environment, checking: false }
         options.notify()
@@ -2305,9 +2517,12 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!running) {
       runtimeActive = false
       runtimeGeneration += 1
-      refreshGeneration += 1
-      inFlight = null
-      inFlightIncludesThreads = false
+      quotaReadGeneration += 1
+      taskReadGeneration += 1
+      taskInFlight = null
+      taskInFlightIsReuse = false
+      quotaInFlight = null
+      metadataReusePending = false
       refreshing = false
       clearTimer()
       resetStructuralRefresh()
@@ -2323,9 +2538,12 @@ export function createCodexController(options: CodexControllerOptions) {
     if (resuming) {
       runtimeActive = true
       runtimeGeneration += 1
-      refreshGeneration += 1
-      inFlight = null
-      inFlightIncludesThreads = false
+      quotaReadGeneration += 1
+      taskReadGeneration += 1
+      taskInFlight = null
+      taskInFlightIsReuse = false
+      quotaInFlight = null
+      metadataReusePending = false
       resetStructuralRefresh()
       resetCodexDerivedRuntimeState()
     }
@@ -2333,7 +2551,12 @@ export function createCodexController(options: CodexControllerOptions) {
     if (taskPresentation.compatibility === 'degraded') {
       options.setMessage(CODEX_TASK_STATE_DEGRADED_MESSAGE)
     }
-    if (resuming || force || (quota.updatedAt <= 0 && rawConversations.updatedAt <= 0)) void refresh({ force: true })
+    if (resuming || force || (quota.updatedAt <= 0 && rawConversations.updatedAt <= 0)) {
+      suppressMetadataReuse = true
+      const pending = refresh({ force: true })
+      suppressMetadataReuse = false
+      void pending
+    }
     else {
       schedule()
     }
@@ -2371,9 +2594,12 @@ export function createCodexController(options: CodexControllerOptions) {
     const inboxChanged = current.conversationInboxEnabled !== next.conversationInboxEnabled
     if (inboxChanged) {
       runtimeGeneration += 1
-      refreshGeneration += 1
-      inFlight = null
-      inFlightIncludesThreads = false
+      quotaReadGeneration += 1
+      taskReadGeneration += 1
+      taskInFlight = null
+      taskInFlightIsReuse = false
+      quotaInFlight = null
+      metadataReusePending = false
       refreshing = false
       clearTimer()
       resetStructuralRefresh()
@@ -2541,6 +2767,7 @@ export function createCodexController(options: CodexControllerOptions) {
       || value.topologySchemaRevision !== COMPANION_TASK_TOPOLOGY_REVISION
       || value.commandRevision !== COMPANION_TASK_COMMAND_REVISION) return false
     if (value.packageRevision <= latestKernelPackageRevision) return false
+    companionKernel?.acknowledge({ consumer: 'main-received', revision: value.packageRevision })
     latestKernelPackageRevision = value.packageRevision
     const knownKeys = new Set(sourceTaskState.conversations.all.map((task) => task.key))
     const previousKeys = new Set(taskSnapshot.tasks.map((task) => task.key))
@@ -2558,7 +2785,7 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     taskPresentation = projectCompanionTaskSnapshot(value, sourceTaskState)
     companionKernel?.acknowledge({ consumer: 'main', revision: value.packageRevision })
-    if (missingCodexMetadata && started && !disposed) scheduleStructuralRefresh('urgent')
+    if (missingCodexMetadata && started && !disposed) scheduleMetadataReuseRefresh()
     return true
   }
 
@@ -3839,8 +4066,13 @@ export function createCodexController(options: CodexControllerOptions) {
     },
     dispose() {
       disposed = true
+      metadataReusePending = false
+      if (metadataReuseTimer) clearTimeout(metadataReuseTimer)
+      metadataReuseTimer = null
+      resetTaskApplication()
       environmentGeneration += 1
-      refreshGeneration += 1
+      quotaReadGeneration += 1
+      taskReadGeneration += 1
       if (environment.checking) environment = { ...environment, checking: false }
       clearTimer()
       resetStructuralRefresh()

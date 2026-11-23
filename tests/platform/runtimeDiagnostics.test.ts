@@ -166,6 +166,33 @@ describe('runtime diagnostics v3', () => {
 
     await diagnostics.flush()
     expect(appendCalls).toBe(2)
+    expect(diagnostics.snapshot().storage.writeTiming)
+      .toMatchObject({ drainCount: 1, syncWrites: 2, drainMs: expect.any(Number), maxDrainMs: expect.any(Number) })
+  })
+
+  it('keeps first-package evidence when a burst fills the write queue', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-runtime-diagnostics-'))
+    roots.push(root)
+    const diagnostics = diagnosticsModule.createRuntimeDiagnostics({
+      fs: require_('node:fs'),
+      path: require_('node:path'),
+      directory: root,
+      maxQueueEvents: 4,
+      schedule: () => {}
+    })
+    for (let index = 0; index < 10; index += 1) {
+      diagnostics.record({ level: 'info', scope: 'task-evidence', event: 'state-decision', outcome: 'retained' })
+    }
+    diagnostics.record({ level: 'info', scope: 'task-evidence', event: 'codex-task-sync',
+      outcome: 'published', details: { stage: 'package-published' } })
+    diagnostics.record({ level: 'debug', scope: 'task-kernel', event: 'main-task-package-ack', outcome: 'applied' })
+    diagnostics.record({ level: 'debug', scope: 'float-bridge', event: 'task-package-ack', outcome: 'applied' })
+
+    await diagnostics.flush()
+    const rows = readFileSync(diagnostics.snapshot().activeFile, 'utf8').trim().split('\n')
+      .map(line => JSON.parse(line).event)
+    expect(rows).toEqual(['process-start', 'codex-task-sync', 'main-task-package-ack', 'task-package-ack'])
+    expect(diagnostics.snapshot().totals.writeFailures).toBe(10)
   })
 
   it('rotates bounded JSONL files, removes expired files, and reports exact storage limits', async () => {

@@ -1,5 +1,7 @@
 'use strict'
 
+const { compareCodexTurnOrder } = require('../companion/branch-causality.cjs')
+
 /**
  * Merges a freshly read inventory turn projection with the previously known
  * activity for the same thread, so a lower-fidelity inventory snapshot never
@@ -33,6 +35,37 @@ function createCodexInventoryTurnFields(dependencies = {}) {
   if (typeof timestampMs !== 'function') {
     throw new TypeError('codex inventory turn fields requires timestampMs')
   }
+  function turnOrderShape(value) {
+    const id = typeof value?.lastTurnId === 'string' ? value.lastTurnId
+      : typeof value?.id === 'string' ? value.id : ''
+    return {
+      causalDomain: id ? 'codex-turn' : '',
+      causalKey: id,
+      turnPredecessorKey: value?.turnPredecessorId || value?.predecessorId,
+      turnStartedAt: timestampMs(value?.lastTurnStartedAt || value?.startedAt)
+    }
+  }
+
+  function compareInventoryTurns(previous, incoming) {
+    return compareCodexTurnOrder(turnOrderShape(previous), turnOrderShape(incoming))
+  }
+
+  function codexOrderedTurnPair(previous, incoming, page) {
+    const previousId = turnOrderShape(previous).causalKey
+    const incomingId = turnOrderShape(incoming).causalKey
+    const rows = record(page).data
+    if (!previousId || !incomingId || previousId === incomingId || !Array.isArray(rows) || rows.length !== 2) return null
+    const latest = sanitizeCodexTurnStatus(rows[0])
+    const predecessor = sanitizeCodexTurnStatus(rows[1])
+    if (latest?.id === previousId && predecessor?.id === incomingId) return { order: 'older' }
+    if (latest?.id !== incomingId || predecessor?.id !== previousId) return null
+    return { order: 'newer', turn: { ...latest, predecessorId: previousId } }
+  }
+
+  function codexExactEmptyTurnPage(value) {
+    const page = record(value)
+    return Array.isArray(page.data) && page.data.length === 0 && page.nextCursor == null && page.backwardsCursor == null
+  }
 
   function codexMergedInventoryTurnFields(projection, previousActivity) {
     if (!projection?.lastTurnStatus) return {}
@@ -43,6 +76,8 @@ function createCodexInventoryTurnFields(dependencies = {}) {
       ...(projection.lastTurnStatus === 'completed' && timestampMs(projection.lastTurnCompletedAt)
         ? { lastTurnCompletedAt: timestampMs(projection.lastTurnCompletedAt) }
         : {}),
+      ...(projection.lastTurnId ? { lastTurnId: projection.lastTurnId } : {}),
+      ...(projection.turnPredecessorId ? { turnPredecessorId: projection.turnPredecessorId } : {}),
       lastTurnEvidence: projection.lastTurnEvidence || 'inventory'
     }
     const previousStartedAt = timestampMs(previousActivity?.lastTurnStartedAt)
@@ -54,6 +89,8 @@ function createCodexInventoryTurnFields(dependencies = {}) {
       ...(previousActivity.lastTurnStatus === 'completed' && timestampMs(previousActivity.lastTurnCompletedAt)
         ? { lastTurnCompletedAt: timestampMs(previousActivity.lastTurnCompletedAt) }
         : {}),
+      ...(previousActivity.lastTurnId ? { lastTurnId: previousActivity.lastTurnId } : {}),
+      ...(previousActivity.turnPredecessorId ? { turnPredecessorId: previousActivity.turnPredecessorId } : {}),
       ...(previousActivity.lastTurnEvidence ? { lastTurnEvidence: previousActivity.lastTurnEvidence } : {})
     }
     const previousDirectLive = previousActivity.status === 'active'
@@ -70,9 +107,15 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     const regressedCompletedOutcome = previousStartedAt === next.lastTurnStartedAt
       && previousActivity.lastTurnStatus === 'completed'
       && next.lastTurnStatus !== 'completed'
-    if ((previousDirectLive && !nextExactTerminal) || regressedRevision || regressedCompletedOutcome) return previous
+    const order = compareInventoryTurns(previousActivity, projection)
+    if (order === 'older') return previous
+    if (order === 'unknown' && previous.lastTurnId && next.lastTurnId && previous.lastTurnId !== next.lastTurnId) return previous
+    if (order !== 'newer' && ((previousDirectLive && !nextExactTerminal) || regressedRevision || regressedCompletedOutcome)) return previous
 
-    const sameOutcome = previousStartedAt === next.lastTurnStartedAt
+    if (order === 'same' && !next.turnPredecessorId && previous.turnPredecessorId) {
+      next.turnPredecessorId = previous.turnPredecessorId
+    }
+    const sameOutcome = order !== 'newer' && previousStartedAt === next.lastTurnStartedAt
       && previousActivity.lastTurnStatus === next.lastTurnStatus
     if (sameOutcome && previousActivity.lastTurnEvidence && previousActivity.lastTurnEvidence !== 'inventory') {
       next.lastTurnEvidence = previousActivity.lastTurnEvidence
@@ -90,7 +133,9 @@ function createCodexInventoryTurnFields(dependencies = {}) {
   function codexCompletedTurnUpdate(known, turn, requireFresh = false) {
     if (turn?.status !== 'completed' || !timestampMs(turn.startedAt)) return null
     const baselineStartedAt = timestampMs(known.lastTurnStartedAt)
-    const fresh = turn.startedAt > baselineStartedAt
+    const order = compareInventoryTurns(known, turn)
+    if (order === 'older' || order === 'unknown' && known.lastTurnId && turn.id && known.lastTurnId !== turn.id) return null
+    const fresh = order === 'newer' || turn.startedAt > baselineStartedAt
       || turn.startedAt === baselineStartedAt && known.lastTurnStatus !== 'completed'
       || turn.startedAt === baselineStartedAt && known.lastTurnStatus === 'completed'
         && turn.completedAt > timestampMs(known.lastTurnCompletedAt)
@@ -99,6 +144,8 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     const remove = []
     if (turn.id) fields.lastTurnId = turn.id
     else if (turn.startedAt !== baselineStartedAt) remove.push('lastTurnId')
+    if (turn.predecessorId) fields.turnPredecessorId = turn.predecessorId
+    else if (order === 'newer') remove.push('turnPredecessorId')
     if (turn.completedAt) fields.lastTurnCompletedAt = turn.completedAt
     else remove.push('lastTurnCompletedAt')
     return { fields, remove, turn: { ...turn } }
@@ -136,6 +183,9 @@ function createCodexInventoryTurnFields(dependencies = {}) {
 
   return {
     revision: CODEX_INVENTORY_TURN_FIELDS_REVISION,
+    compareInventoryTurns,
+    codexOrderedTurnPair,
+    codexExactEmptyTurnPage,
     codexMergedInventoryTurnFields,
     codexCompletedTurnUpdate,
     sanitizeCodexTurnStatus,

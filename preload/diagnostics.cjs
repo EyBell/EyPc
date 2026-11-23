@@ -18,6 +18,28 @@ const DETAILS_STRING_LIMIT = 4096
 const DEFAULT_MAX_QUEUE_EVENTS = 512
 const DEFAULT_MAX_QUEUE_BYTES = 2 * 1024 * 1024
 
+const PACKAGE_EVIDENCE_EVENTS = new Set([
+  'process-start',
+  'runtime-identity-handshake',
+  'cold-preflight-v7',
+  'codex-inventory-scope',
+  'codex-inventory-read',
+  'provider-cache-publication',
+  'host-commit',
+  'group-counts-changed',
+  'main-task-package-ack',
+  'main-task-presented',
+  'task-package-send',
+  'task-package-ack'
+])
+
+function diagnosticWritePriority(event) {
+  if (event.level === 'error' || PACKAGE_EVIDENCE_EVENTS.has(event.event) && event.outcome !== 'no-op'
+    || event.event.startsWith('codex-open-') && Number.isInteger(event.details?.pair)) return 2
+  return event.event === 'float-task-presented'
+    || event.event === 'codex-task-sync' && ['cold-rollout', 'package-published'].includes(event.details?.stage) ? 1 : 0
+}
+
 const LEVEL_WEIGHT = Object.freeze({ error: 0, info: 1, debug: 2 })
 const FORBIDDEN_KEY_PARTS = Object.freeze([
   'prompt', 'command', 'argv', 'argument', 'transcript', 'conversation',
@@ -101,6 +123,7 @@ function createRuntimeDiagnostics(dependencies = {}) {
   const sessionId = `${startedAt.toString(36)}-${processId.toString(36)}-${Math.floor(random() * 0xffffff).toString(36)}`
   const recent = []
   const totals = { events: 0, filtered: 0, debug: 0, info: 0, error: 0, slow: 0, writeFailures: 0 }
+  const writeTiming = { drainCount: 0, syncWrites: 0, drainMs: 0, maxDrainMs: 0 }
   let settings = normalizeSettings(dependencies.settings)
   let activePath = ''
   let activeBytes = 0
@@ -202,6 +225,7 @@ function createRuntimeDiagnostics(dependencies = {}) {
     totals.error = 0
     totals.slow = 0
     totals.writeFailures = failedFiles
+    Object.assign(writeTiming, { drainCount: 0, syncWrites: 0, drainMs: 0, maxDrainMs: 0 })
     lastEventAt = 0
     return {
       outcome: failedFiles === 0 ? (removedFiles ? 'cleared' : 'empty') : removedFiles ? 'partial' : 'failed',
@@ -238,19 +262,28 @@ function createRuntimeDiagnostics(dependencies = {}) {
   }
 
   function drainWrites() {
-    const freezeSpan = freezeTrace.begin('main.drain-writes')
-    try {
     drainScheduled = false
+    if (!pendingWrites.length) return true
     const queue = pendingWrites
+    const bytes = pendingBytes
     pendingWrites = []
     pendingBytes = 0
-    let ok = true
-    for (const item of queue) {
-      if (!writeNow(item.event, item.line, item.bytes)) ok = false
+    const started = performance.now()
+    const freezeSpan = freezeTrace.begin('main.drain-writes', { count: queue.length, bytes })
+    try {
+      let ok = true
+      for (const item of queue) {
+        if (!writeNow(item.event, item.line, item.bytes)) ok = false
+      }
+      return ok
+    } finally {
+      const elapsed = performance.now() - started
+      writeTiming.drainCount += 1
+      writeTiming.syncWrites += queue.length
+      writeTiming.drainMs += elapsed
+      writeTiming.maxDrainMs = Math.max(writeTiming.maxDrainMs, elapsed)
+      freezeTrace.end(freezeSpan)
     }
-    return ok
-
-    } finally { freezeTrace.end(freezeSpan) }
   }
 
   function scheduleDrain() {
@@ -265,11 +298,19 @@ function createRuntimeDiagnostics(dependencies = {}) {
   function enqueueWrite(event) {
     const line = `${JSON.stringify(event)}\n`
     const bytes = Buffer.byteLength(line)
-    if (pendingWrites.length >= maxQueueEvents || pendingBytes + bytes > maxQueueBytes) {
+    const priority = diagnosticWritePriority(event)
+    while (pendingWrites.length >= maxQueueEvents || pendingBytes + bytes > maxQueueBytes) {
+      let replace = -1
+      if (priority && bytes <= maxQueueBytes) {
+        replace = pendingWrites.findIndex(item => item.priority === 0)
+        if (replace < 0 && priority === 2) replace = pendingWrites.findLastIndex(item => item.priority === 1)
+      }
       totals.writeFailures += 1
-      return false
+      if (replace < 0) return false
+      pendingBytes -= pendingWrites[replace].bytes
+      pendingWrites.splice(replace, 1)
     }
-    pendingWrites.push({ event, line, bytes })
+    pendingWrites.push({ event, line, bytes, priority })
     pendingBytes += bytes
     scheduleDrain()
     return true
@@ -398,7 +439,8 @@ function createRuntimeDiagnostics(dependencies = {}) {
         totalBytes: storage.totalBytes,
         maxFileBytes,
         maxTotalBytes,
-        retentionDays: Math.round(retentionMs / (24 * 60 * 60 * 1000))
+        retentionDays: Math.round(retentionMs / (24 * 60 * 60 * 1000)),
+        writeTiming: { ...writeTiming }
       },
       recent: recent.slice(-30).map((event) => ({ ...event, ...(event.details ? { details: sanitizeDetails(event.details) } : {}) }))
     }
@@ -417,7 +459,7 @@ function createRuntimeDiagnostics(dependencies = {}) {
     }, 5000)
     freezeStatusTimer?.unref?.()
   }
-  return { revision: DIAGNOSTICS_REVISION, record, configure, getSettings: () => ({ ...settings }), snapshot, cleanup, clear, ensureDirectory, flush }
+  return { revision: DIAGNOSTICS_REVISION, record, configure, getSettings: () => ({ ...settings }), getWriteTiming: () => ({ ...writeTiming }), snapshot, cleanup, clear, ensureDirectory, flush }
 }
 
 module.exports = {

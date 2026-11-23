@@ -1,5 +1,39 @@
 # EyPc Project Status Hub
 
+<a id="live-task-state-script-build-261123"></a>
+
+- 2026-11-23 13:50:58.981，V7 实时任务脚本和全局快捷键配对首臂修复通过本地 `closeout`。产物为 `V7` / `host-a6021cc8f152f708af66` / `renderer-c0e6e715707df624d58f`，builtAt `2026-11-23T05:50:58.981Z`。当前输入与成功收据匹配，107 组源码、`public` 和 `dist` 镜像一致。新版脚本实机读取、同轮双端首显及十组精确快捷键配对待验。[开发插件入口](../../dist/plugin.json#L1) · [脚本与验收](261114/codex-state-sync/delivery.md#live-task-state-script-261123)
+
+<a id="continued-plan-turn-build-261123"></a>
+
+- 2026-11-23 13:34:25.589，继续讨论 Plan 后的旧请求归约修复通过 8 项定向回放与本地 `closeout`。产物为 `V7` / `host-77e3e48e0ec9e098b007` / `renderer-539d235888c529e006da`，builtAt `2026-11-23T05:34:25.589Z`。`public`、`dist` 与成功收据一致。修复版实载及旧 Plan 继续设计的实机回放待验。[开发插件入口](../../dist/plugin.json#L1) · [裁决与验证](261114/codex-state-sync/delivery.md#continued-plan-request-order-261123)
+
+<a id="main-presentation-receipt-build-261123"></a>
+
+- 2026-11-23 12:46:14.123，Main 后台及未展示回执修复通过本地 `closeout` 和 UI 聚焦回放。产物为 `V7` / `host-5231f2e7902005a58f03` / `renderer-6fad1b855e48610dc9b3`，builtAt `2026-11-23T04:46:14.123Z`。13:25:03.099 确认实载，完整首包在 10.120 秒发出。Main 确认后台，Float 折叠态应用。双端首显和精确落点配对待验。[实机时间线](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-1325-261123)
+
+<a id="scoped-turn-presentation-build-261123"></a>
+
+- 2026-11-23 12:00:31.832，Codex 首包取证、热态补读隔离、全组动作门禁和双端显示回执通过本地 `closeout`。产物为 `V7` / `host-5231f2e7902005a58f03` / `renderer-37d067f406cd29e2648a`，builtAt `2026-11-23T04:00:31.832Z`。源码和随包各通过 283 个生命周期检查点和 44 个原生未读检查点，106 组镜像一致。12:34:19.482 确认实载，完整首包在 8.398 秒发出。Main 和 Float 同轮首显、同机耗时基线和精确落点配对待验。[实机时间线](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-1234-261123)
+
+<a id="long-turn-reload-build-261123"></a>
+
+- 2026-11-23 10:39:34.647，Codex 长轮次首包与已关闭机器分支归组修复通过本地 `closeout`。产物为 `V7` / `host-7dc42774feddd106c5d2` / `renderer-a096d3a92de9195b2e64`，builtAt `2026-11-23T02:39:34.647Z`。253 个生命周期检查点及 106 组镜像通过，当前输入与成功收据一致。10:12:57 版已实载并对账，10:39:34 版的实载、双端首显与十对可见仍待复验。[开发插件入口](../../dist/plugin.json#L1) · [修复与验收](261114/codex-state-sync/delivery.md#long-turn-reload-repair-261123)
+
+<a id="first-presentation-shortcut-build-261123"></a>
+
+- 2026-11-23 10:12:57.222，Codex Goal 取证、Main 补读、双端展示回执和快捷键配对入口通过本地 `closeout`。产物为 `V7` / `host-a05a1e374f65c6b95303` / `renderer-2b7e8f60729e0c020d53`，builtAt `2026-11-23T02:12:57.222Z`。输入和产物摘要、成功收据及 106 组镜像已对账。10:23:27.988 已确认实载。首个非空包 7.915 秒发送，Float 首次可见时一条跨重载长轮被误报为待核验。Main 有效包首绘及十对精确目标可见待验。[实载与首包](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-1023-261123) · [修复与验收](261114/codex-state-sync/delivery.md#long-turn-reload-repair-261123)
+
+<a id="first-package-followup-build-261123"></a>
+
+- 2026-11-23 09:21:07.271，Codex 冷库存换代接续和首包回执修复通过本地 `closeout`。产物为 `V7` / `host-3f3790049f54bd195e53` / `renderer-4963806fe7af75d0af0b`，builtAt `2026-11-23T01:21:07.271Z`。5 项定向用例通过，构建回执与当前输入一致，106 组源码、public 和 dist 镜像一致。最近实载仍是 09:07:08.834 加载的 20:53 版。修复包的双端首显、同机首包耗时和十对目标可见待验。[开发插件入口](../../dist/plugin.json#L1) · [修复与现场核验](261114/codex-state-sync/delivery.md#first-package-followup-261123)
+
+- 2026-11-23 09:11:39，Codex 悬浮卡额度提示把剩余时间放在行尾，按等宽字体对齐。当前检出完整 `closeout` 构建通过，产物为 `V7` / `host-6cac75d95f15408b3cd2` / `renderer-87a15f73fc9c0b4b7102`，builtAt `2026-11-23T01:11:39.020Z`。uTools 加载和悬停视觉待手测。[开发插件入口](../../dist/plugin.json#L1)
+
+<a id="verified-first-package-build-261122"></a>
+
+- 2026-11-22 20:53:26.563，Codex 完整首包、库存复用与快捷键优化通过本地 `closeout`。产物为 `V7` / `host-6cac75d95f15408b3cd2` / `renderer-4983c5157ac510935285`，builtAt `2026-11-22T12:53:26.563Z`。输入摘要和回执一致，106 组源码、public 与 dist 镜像一致。2026-11-23 09:07:08.834 已核实实载。Float 确认应用的 #3 可对账两条跨重载的进行中轮次，首次完整包和 Main 有效包首显缺证。`82b22dd` 基线实载及十对精确会话可见待验。[现场分段](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-0907-261123) · [实施与验收](261114/codex-state-sync/delivery.md#verified-first-package-261122)
+
 <a id="unified-status-shortcut-build-261122"></a>
 
 - 2026-11-22 16:36:59，Codex 状态、库存与快捷键统一修复通过完整 `closeout`。产物为 `V7` / `host-7ddb644fdb6faa08d36c` / `renderer-df9a47127fd151767ff5`，builtAt `2026-11-22T08:36:59.474Z`。源码和随包各通过 242 个生命周期检查点，106 组预加载镜像一致。16:37 的日志仍只有 11:07 的 10:18 版握手。新版双端首包、分段时延和十对实际目标可见待验。[插件入口](../../dist/plugin.json#L1) · [状态修复](261114/codex-state-sync/delivery.md#unified-causality-261122) · [缓存与快捷键](261120/eypc-shortcut-optimization/jump-cache-component.md#unified-cache-audit-261122)

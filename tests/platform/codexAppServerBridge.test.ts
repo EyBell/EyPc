@@ -72,6 +72,7 @@ class FakeCodexProcess extends EventEmitter {
   projectBatchMode = false
   archiveNoopIds = new Set<string>()
   emptyTurnIds = new Set<string>()
+  unavailableLatestTurnIds = new Set<string>()
   missingTurnStartedAtIds = new Set<string>()
   missingTurnCompletedAtIds = new Set<string>()
   inProgressTurnIds = new Set<string>()
@@ -164,6 +165,10 @@ class FakeCodexProcess extends EventEmitter {
       }
       if (this.holdFirstPromptPages && frame.method === 'thread/turns/list' && frame.params?.limit === 50) return true
       if (frame.method === 'thread/turns/list' && frame.params?.limit === 1) {
+        if (this.unavailableLatestTurnIds.has(String(frame.params.threadId))) {
+          queueMicrotask(() => this.stdout.emit('data', `${JSON.stringify({ id: frame.id, error: { code: -32_000, message: 'latest turn unavailable' } })}\n`))
+          return true
+        }
         if (this.holdNextLatestTurnRead) {
           this.holdNextLatestTurnRead = false
           this.heldLatestTurnReads.push(frame)
@@ -2619,6 +2624,45 @@ draft: v7EvidenceDraft({
     context.triggerPluginOut(true)
   })
 
+  it('requires a new Goal read after the Turn ends while a pre-terminal read is verifying', async () => {
+    const child = new FakeCodexProcess()
+    const threadId = FIXED_THREAD_IDS[1]
+    child.inProgressTurnIds.add(threadId)
+    child.transientGoalFailures = 20
+    const context = loadCodexBridge(child)
+    try {
+      context.platform.companionKernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+      const goal = () => context.native.privateBranchEvidence(threadId)?.branches?.[0]
+      await vi.waitFor(() => expect(goal()).toMatchObject({ goalFreshness: 'verifying' }))
+      child.transientGoalFailures = 0
+      child.holdNextGoalRead = true
+      const turn = { id: 'goal-read-boundary', startedAt: 2_000_000_010 }
+      const notify = (method: string, payload: Record<string, unknown>) => child.stdout.emit('data', `${JSON.stringify({
+        method, params: { threadId, turn: { ...turn, ...payload } }
+      })}\n`)
+      notify('turn/started', { status: 'inProgress' })
+      await vi.waitFor(() => expect(child.heldGoalReads).toHaveLength(1))
+      const [beforeTerminal] = child.heldGoalReads
+      const goalReads = () => child.writes.filter(frame => frame.method === 'thread/goal/get' && frame.params?.threadId === threadId)
+      const readsBeforeTerminal = goalReads().length
+
+      child.inProgressTurnIds.delete(threadId)
+      child.goalStates.set(threadId, { status: 'complete', updatedAt: 2_000_000_030 })
+      notify('turn/completed', { status: 'completed', completedAt: 2_000_000_020 })
+      notify('turn/completed', { status: 'completed', completedAt: 2_000_000_020 })
+      await vi.waitFor(() => expect(goal()).toMatchObject({ goalStatus: 'complete', goalFreshness: 'fresh' }))
+      expect(goalReads()).toHaveLength(readsBeforeTerminal + 1)
+
+      child.stdout.emit('data', `${JSON.stringify({ id: beforeTerminal.id, result: { goal: {
+        threadId, status: 'active', objective: 'older read', updatedAt: 2_000_000_100, createdAt: 1_800_000_000
+      } } })}\n`)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      expect(goal()).toMatchObject({ goalStatus: 'complete', goalFreshness: 'fresh' })
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
   it('falls back to the existing Turn lifecycle only when Goal RPC is explicitly unsupported', async () => {
     const child = new FakeCodexProcess()
     const threadId = FIXED_THREAD_IDS[3]
@@ -3173,92 +3217,150 @@ draft: v7EvidenceDraft({
 
   it('promotes a cold refollow active snapshot from the same fresh inProgress Turn without repeat publications', async () => {
     const child = new FakeCodexProcess()
-    child.inProgressTurnIds.add(FIXED_THREAD_IDS[3])
+    const threadId = FIXED_THREAD_IDS[3]
+    const key = crypto.createHash('sha256').update(threadId).digest('hex').slice(0, 32)
+    child.inProgressTurnIds.add(threadId)
     const desktopSocket = new FakeCodexDesktopSocket()
-    desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+    desktopSocket.activeSnapshotThreadIds.add(threadId)
     const context = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
-    const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
-    const sourceTask = snapshot.value.threads.find((thread: Record<string, unknown>) => thread.name === '跨端未知')
-    const generation = Number(snapshot.value.activityGeneration) || 1
     const kernel = context.platform.companionKernel
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-
-    kernel.syncPackage({
-      lease: receipt.lease,
-draft: v7EvidenceDraft({
-        producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v12',
-        draftRevision: 1,
-        acceptedAt: 1,
-        enabled: true,
-        providers: { codex: true, claude: false },
-        complete: true,
-        focusedKey: '',
-        sourceGenerations: { codex: generation, claude: 0 },
-        sourceLaneGenerations: {
-          codex: { membership: generation, activity: generation, unread: generation },
-          claude: { membership: 0, activity: 0, unread: 0 }
-        },
-        tasks: [{
-          key: sourceTask.key,
-          provider: 'codex',
-          kind: 'codex-thread',
-          phase: 'stopped',
-          cycleTier: 'none',
-          dynamicGroup: 'stopped',
-          actionAlias: sourceTask.actionAlias,
-          revisionAt: Number(sourceTask.updatedAt) || 1,
-          statusEnteredAt: Number(sourceTask.lastTurnStartedAt) || 1,
-          turnStartedAt: Number(sourceTask.lastTurnStartedAt) || 1,
-          idleConfirmed: true,
-          displayOrder: 0,
-          cycleOrder: 0,
-          attentionOrder: 0,
-          hidden: false,
-          unread: false,
-          planImplementation: false,
-          localPin: false,
-          dynamicEligible: true,
-          capabilities: { open: true, archive: true }
-        }]
+    const publications: Array<Record<string, any>> = []
+    const stopPackage = kernel.onPackage((value: Record<string, any>) => {
+      if (value.complete && value.tasks.length) publications.push(value)
+    })
+    try {
+      kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+      await vi.waitFor(() => expect(publications[0]).toBeDefined())
+      expect(publications[0].tasks.find((task: Record<string, unknown>) => task.key === key)).toMatchObject({
+        phase: 'running',
+        idleConfirmed: false,
+        dynamicGroup: 'active',
+        capabilities: { open: true, archive: false }
       })
-    })
-
-    await vi.waitFor(() => expect(kernel.getPackage().tasks
-      .find((task: Record<string, unknown>) => task.key === sourceTask.key)).toMatchObject({
-      phase: 'running',
-      idleConfirmed: false,
-      dynamicGroup: 'active',
-      capabilities: { open: true, archive: false }
-    }))
-    expect((await context.bridge.readActivitySnapshot()).value.entries
-      .find((entry: Record<string, any>) => entry.key === sourceTask.key)).toMatchObject({
-      status: 'active',
-      statusAuthority: 'desktop-live',
-      activityEvidence: 'initial-snapshot',
-      lastTurnStatus: 'inProgress',
-      activeEvidenceSequence: expect.any(Number)
-    })
-    expect(child.writes.filter((frame) => frame.method === 'thread/turns/list'
-      && frame.params?.threadId === FIXED_THREAD_IDS[3]
-      && frame.params?.limit === 1).length).toBe(1)
-
-    // Let the first complete inventory replace the single-task stale fixture. That
-    // membership expansion is a real semantic change; subsequent identical scans
-    // must keep the same task package revision and publish nothing.
-    await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
-    await vi.waitFor(() => expect(kernel.getPackage().tasks.length).toBe(snapshot.value.threads.length))
-    const stablePackageRevision = kernel.getPackage().packageRevision
-    const publications: number[] = []
-    const stopPackage = kernel.onPackage((value: Record<string, any>) => publications.push(value.packageRevision))
-    const baselinePublicationCount = publications.length
-    for (let index = 0; index < 20; index += 1) {
-      await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      expect((await context.bridge.readActivitySnapshot()).value.entries
+        .find((entry: Record<string, unknown>) => entry.key === key)).toMatchObject({
+        status: 'active',
+        statusAuthority: 'desktop-live',
+        activityEvidence: 'initial-snapshot',
+        lastTurnStatus: 'inProgress',
+        activeEvidenceSequence: expect.any(Number)
+      })
+      await vi.waitFor(() => expect(context.native.companionHostReconciliationPending()).toBe(false))
+      const turnReads = child.writes.filter((frame) => frame.method === 'thread/turns/list'
+        && frame.params?.threadId === threadId && frame.params?.limit === 1)
+      expect(turnReads).toHaveLength(1)
+      const stablePackage = kernel.getPackage()
+      const baselinePublicationCount = publications.length
+      const listReads = child.unarchivedListReadCount
+      const options = { includeQuota: false, includeConfig: false, includeThreads: true }
+      const verified = await context.bridge.readSnapshot({ ...options, inventoryPolicy: 'reuse-verified' })
+      expect(verified.ok).toBe(true)
+      expect(verified.value.inventoryRevision).toEqual(expect.stringMatching(/^[a-f0-9]{64}:[a-f0-9]{32}:\d+:\d+:\d+$/))
+      for (let index = 0; index < 20; index += 1) {
+        const result = await context.bridge.readSnapshot({ ...options, inventoryPolicy: 'reuse-verified' })
+        expect(result).toMatchObject({ ok: true, receivedAt: verified.receivedAt,
+          value: { inventoryRevision: verified.value.inventoryRevision } })
+      }
+      expect(child.unarchivedListReadCount).toBe(listReads)
+      expect((await context.bridge.readSnapshot(options)).ok).toBe(true)
+      expect(child.unarchivedListReadCount).toBe(listReads + 1)
+      expect(kernel.getPackage().tasks).toEqual(stablePackage.tasks)
+      expect(kernel.getPackage().packageRevision).toBe(stablePackage.packageRevision)
+      expect(publications).toHaveLength(baselinePublicationCount)
+    } finally {
+      stopPackage()
+      context.triggerPluginOut(true)
     }
-    expect(kernel.getPackage().packageRevision).toBe(stablePackageRevision)
-    expect(publications).toHaveLength(baselinePublicationCount)
-    stopPackage()
-    context.triggerPluginOut(true)
+  })
+
+  it('reconciles the current account inventory while the superseded list is still in flight', async () => {
+    const child = new FakeCodexProcess()
+    child.heldMethods.add('thread/list')
+    const context = loadCodexBridge(child)
+    const kernel = context.platform.companionKernel
+    const listCalls = () => child.writes.filter(frame => frame.method === 'thread/list' && frame.params?.archived === false)
+    try {
+      kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+      const mainRead = context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.waitFor(() => expect(listCalls()).toHaveLength(1))
+      const [oldList] = listCalls()
+      child.heldMethods.delete('thread/list')
+      child.stdout.emit('data', `${JSON.stringify({ method: 'account/updated', params: {} })}\n`)
+      await vi.waitFor(() => expect(kernel.getPackage().tasks.length).toBe(FIXED_THREAD_IDS.length))
+      child.stdout.emit('data', `${JSON.stringify({ id: oldList.id, result: { data: [] } })}\n`)
+      const current = await mainRead
+      expect(current).toMatchObject({ ok: true, value: { completeness: 'verified' } })
+      expect(current.value.threads).toHaveLength(FIXED_THREAD_IDS.length)
+      expect(listCalls()).toHaveLength(2)
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it('fetches a current Goal without joining a superseded inventory Goal read', async () => {
+    const child = new FakeCodexProcess()
+    child.holdNextGoalRead = true
+    const context = loadCodexBridge(child)
+    const kernel = context.platform.companionKernel
+    const options = { includeQuota: false, includeConfig: false, includeThreads: true }
+    try {
+      kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+      const firstRead = context.bridge.readSnapshot(options)
+      await vi.waitFor(() => expect(child.heldGoalReads).toHaveLength(1))
+      const [held] = child.heldGoalReads
+      const threadId = String(held.params?.threadId)
+      const removed = FIXED_THREAD_IDS.find(candidate => candidate !== threadId)
+      child.goalStates.set(threadId, { status: 'active', updatedAt: 2_000_000_200 })
+      child.stdout.emit('data', `${JSON.stringify({ method: 'thread/deleted', params: { threadId: removed } })}\n`)
+
+      const secondRead = context.bridge.readSnapshot(options)
+      const goalRequests = () => child.writes.filter(frame => frame.method === 'thread/goal/get' && frame.params?.threadId === threadId)
+      await vi.waitFor(() => expect(goalRequests()).toHaveLength(2))
+      expect(await secondRead).toMatchObject({ ok: true, value: { inventoryRevision: expect.any(String) } })
+      expect(context.native.privateBranchEvidence(threadId)?.branches?.[0])
+        .toMatchObject({ goalStatus: 'active', goalUpdatedAt: 2_000_000_200_000 })
+      child.stdout.emit('data', `${JSON.stringify({ id: held.id, result: { goal: null } })}\n`)
+      const current = await firstRead
+      expect(current).toMatchObject({ ok: true, value: { inventoryRevision: expect.any(String) } })
+      expect(context.native.privateBranchEvidence(threadId)?.branches?.[0])
+        .toMatchObject({ goalStatus: 'active', goalUpdatedAt: 2_000_000_200_000 })
+      expect(goalRequests()).toHaveLength(2)
+    } finally {
+      context.triggerPluginOut(true)
+    }
+  })
+
+  it.each([false, true])('keeps the complete Codex roster when one latest Turn is unavailable (warm=%s)', async (warm) => {
+    const child = new FakeCodexProcess()
+    const threadId = FIXED_THREAD_IDS[3]
+    const key = crypto.createHash('sha256').update(threadId).digest('hex').slice(0, 32)
+    child.statusOverrides.set(threadId, 'idle')
+    child.interruptedTurnIds.add(threadId)
+    if (!warm) child.unavailableLatestTurnIds.add(threadId)
+    const context = loadCodexBridge(child)
+    const kernel = context.platform.companionKernel
+    const task = () => kernel.getPackage().tasks.find((row: Record<string, unknown>) => row.key === key)
+    try {
+      kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+      if (warm) {
+        await vi.waitFor(() => expect(task()).toMatchObject({ phase: 'stopped' }))
+        await vi.waitFor(() => expect(context.native.companionHostReconciliationPending()).toBe(false))
+        child.unavailableLatestTurnIds.add(threadId)
+        child.stdout.emit('data', `${JSON.stringify({ method: 'thread/unarchived', params: { threadId } })}\n`)
+      }
+      await vi.waitFor(() => expect(kernel.getPackage()).toMatchObject({
+        complete: true,
+        providerHealth: { codex: { status: 'degraded' } }
+      }))
+      expect(kernel.getPackage().tasks.length).toBe(FIXED_THREAD_IDS.length)
+      expect(task()).toMatchObject(warm
+        ? { phase: 'stopped' }
+        : { phase: 'unknown', freshness: 'verifying', capabilities: { continueTask: false } })
+      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list'
+        && frame.params?.threadId === threadId && frame.params?.limit === 1)).toHaveLength(warm ? 3 : 2)
+    } finally {
+      context.triggerPluginOut(true)
+    }
   })
 
   it('consumes a hot previous/next entry in preload without forwarding a duplicate Renderer payload', async () => {
@@ -9468,7 +9570,9 @@ draft: v7EvidenceDraft({
   it('keeps the task when the delayed second server verification contradicts the first', async () => {
     const child = new FakeCodexProcess()
     child.revertArchiveOnArchivedListRead = 2
-    const context = loadCodexBridge(child)
+    const context = loadCodexBridge(child, undefined, null, false, true, null, false, undefined, null, {
+      desktopRunning: () => false
+    })
     const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
     const completed = baseline.value.threads[3]
     child.archiveThreadId = FIXED_THREAD_IDS[3]
@@ -10521,6 +10625,58 @@ draft: v7EvidenceDraft({
     expect(JSON.stringify(deltas)).not.toContain('private completion body')
     stop()
     bridge.close()
+  })
+
+  it('retries one targeted latest-Turn read after a failure and only then publishes completion', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeCodexProcess()
+      child.inProgressTurnIds.add(FIXED_THREAD_IDS[0])
+      const desktopSocket = new FakeCodexDesktopSocket()
+      const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket, true)
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(0)
+      const targeted = () => child.writes.filter((frame) => frame.method === 'thread/turns/list'
+        && frame.params?.threadId === FIXED_THREAD_IDS[0] && frame.params?.limit === 1)
+      const before = targeted().length
+      const deltas: Array<Record<string, any>> = []
+      const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+      child.inProgressTurnIds.delete(FIXED_THREAD_IDS[0])
+      child.transientTurnsFailures = 1
+      desktopSocket.push({
+        type: 'broadcast',
+        method: 'thread-stream-state-changed',
+        sourceClientId: 'codex-desktop-owner',
+        version: 11,
+        params: {
+          hostId: 'local',
+          conversationId: FIXED_THREAD_IDS[0],
+          change: {
+            type: 'patches',
+            baseRevision: 1,
+            revision: 2,
+            patches: [
+              { op: 'replace', path: ['threadRuntimeStatus', 'type'], value: 'idle' },
+              { op: 'replace', path: ['requests'], value: [] }
+            ]
+          }
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(targeted()).toHaveLength(before + 1)
+      expect(deltas.some((delta) => delta.entries?.some((entry: Record<string, any>) => entry.lastTurnEvidence === 'targeted-after-exit'))).toBe(false)
+      await vi.advanceTimersByTimeAsync(300)
+      expect(targeted()).toHaveLength(before + 2)
+      expect(deltas.at(-1)?.entries?.[0]).toMatchObject({
+        key: baseline.value.threads[0].key,
+        lastTurnStatus: 'completed',
+        lastTurnEvidence: 'targeted-after-exit'
+      })
+      stop()
+      bridge.close()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not let an in-flight stale-active reader revoke a newer exact positive epoch', async () => {
@@ -12144,6 +12300,7 @@ describe('Desktop main end-event ordering', () => {
     if (options.missingSideTurnId) child.turnOverrides.set(FIXED_THREAD_IDS[1], { id: '', status: 'interrupted', startedAt: startedAt / 1000 })
     const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), socket, true)
     const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(baseline).toMatchObject({ ok: true })
     await vi.advanceTimersByTimeAsync(0)
     const parent = baseline.value.threads.find((row: any) => row.key === crypto.createHash('sha256').update(parentId).digest('hex').slice(0, 32))
     const kernel = seedSingleCodexKernelTask(context, baseline, parent)

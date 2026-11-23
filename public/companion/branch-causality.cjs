@@ -46,6 +46,9 @@ function sameTurnEvidenceDecision(previous, incoming) {
     return { accepted: false, reason: 'identity-incomparable' }
   }
   if (previous.causalKey !== incoming.causalKey) {
+    const order = compareCodexTurnOrder(previous, incoming)
+    if (order === 'newer') return { accepted: true, reason: 'predecessor-turn' }
+    if (order === 'older') return { accepted: false, reason: 'older-turn' }
     const previousStartedAt = finiteInteger(previous.turnStartedAt)
     const incomingStartedAt = finiteInteger(incoming.turnStartedAt)
     return previousStartedAt > 0 && incomingStartedAt > 0 && previousStartedAt !== incomingStartedAt
@@ -65,6 +68,25 @@ function sameTurnEvidenceDecision(previous, incoming) {
     accepted: incomingSequence > previousSequence,
     reason: incomingSequence > previousSequence ? 'accepted' : 'same-turn-stale'
   }
+}
+
+function compareCodexTurnOrder(previous, incoming) {
+  const previousDomain = typeof previous?.causalDomain === 'string' ? previous.causalDomain : ''
+  const incomingDomain = typeof incoming?.causalDomain === 'string' ? incoming.causalDomain : ''
+  if (!previousDomain || previousDomain !== incomingDomain) return 'unknown'
+  const previousKey = typeof previous?.causalKey === 'string' ? previous.causalKey : ''
+  const incomingKey = typeof incoming?.causalKey === 'string' ? incoming.causalKey : ''
+  if (previousKey && previousKey === incomingKey) return 'same'
+  const incomingPredecessor = typeof incoming?.turnPredecessorKey === 'string' ? incoming.turnPredecessorKey : ''
+  const previousPredecessor = typeof previous?.turnPredecessorKey === 'string' ? previous.turnPredecessorKey : ''
+  if (previousKey && incomingPredecessor === previousKey) return 'newer'
+  if (incomingKey && previousPredecessor === incomingKey) return 'older'
+  const previousStartedAt = finiteInteger(previous?.turnStartedAt)
+  const incomingStartedAt = finiteInteger(incoming?.turnStartedAt)
+  if (previousStartedAt > 0 && incomingStartedAt > 0 && previousStartedAt !== incomingStartedAt) {
+    return incomingStartedAt > previousStartedAt ? 'newer' : 'older'
+  }
+  return 'unknown'
 }
 
 /**
@@ -186,6 +208,7 @@ function mergeEvidenceLanes(previous, incoming, options = {}) {
 module.exports = {
   finiteInteger,
   noAttentionRank,
+  compareCodexTurnOrder,
   sameTurnEvidenceDecision,
   phaseEvidenceSupersedes,
   mergeEvidenceLanes

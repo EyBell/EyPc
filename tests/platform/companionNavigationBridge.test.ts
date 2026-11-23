@@ -216,6 +216,96 @@ describe('process-lifetime companion navigation', () => {
     expect(openTarget).toHaveBeenCalledTimes(2)
   })
 
+  it.each([
+    ['unavailable', 'dispatch-unconfirmed', false],
+    ['opened', '', false],
+    ['failed', 'open-failed', true]
+  ])('keeps alias renewal on the original target when the leading result is %s', async (outcome, errorCode, dispatchesTail) => {
+    let releaseFirst!: (result: Record<string, unknown>) => void
+    const opened: string[] = []
+    const incarnations = new Map<string, object>()
+    const { navigation, receipt } = readyNavigation({
+      captureTarget: (target: { key: string }) => {
+        const incarnation = incarnations.get(target.key) || {}
+        incarnations.set(target.key, incarnation)
+        return { epoch: 4, incarnation }
+      },
+      openTarget: async (target: { actionAlias: string }) => {
+        opened.push(target.actionAlias)
+        if (opened.length === 1) return new Promise((resolve) => { releaseFirst = resolve })
+        return nativeOpened()
+      }
+    })
+    const original = targets[0]
+    const renewed = { ...original, actionAlias: 'ct_codex_a_renewed_123456' }
+    navigation.sync({
+      lease: receipt.lease, enabled: true, providers: { codex: true, claude: true },
+      ready: true, targets: [original], cycleKeys: [original.key]
+    })
+    const first = navigation.cycle(1, { operationId: 'alias-first' })
+    await vi.waitFor(() => expect(opened).toEqual([original.actionAlias]))
+    navigation.sync({
+      lease: receipt.lease, enabled: true, providers: { codex: true, claude: true },
+      ready: true, targets: [renewed], cycleKeys: [renewed.key]
+    })
+    const tail = navigation.cycle(1, { operationId: 'alias-tail' })
+    releaseFirst(outcome === 'opened' ? nativeOpened() : {
+      outcome, ...(errorCode ? { errorCode } : {}), confirmsRead: false
+    })
+    await expect(first).resolves.toMatchObject({
+      outcome: outcome === 'opened' ? 'opened' : outcome,
+      operationId: 'alias-first',
+      ...(errorCode ? { errorCode } : {})
+    })
+    await expect(tail).resolves.toMatchObject({
+      outcome: dispatchesTail ? 'opened' : outcome === 'opened' ? 'opened' : 'unavailable',
+      operationId: 'alias-tail'
+    })
+    expect(opened).toEqual(dispatchesTail
+      ? [original.actionAlias, renewed.actionAlias]
+      : [original.actionAlias])
+    if (outcome === 'unavailable') {
+      expect(navigation.diagnostics().cursorKey).toBe('')
+      await expect(navigation.cycle(1, { operationId: 'alias-again' })).
+        resolves.toMatchObject({ outcome: 'opened', operationId: 'alias-again' })
+      expect(opened).toEqual([original.actionAlias, renewed.actionAlias])
+    }
+  })
+
+  it('dispatches again when alias renewal also changes the target epoch', async () => {
+    let releaseFirst!: (result: Record<string, unknown>) => void
+    const opened: string[] = []
+    const incarnation = {}
+    const { navigation, receipt } = readyNavigation({
+      captureTarget: (target: { actionAlias: string }) => ({
+        epoch: target.actionAlias.includes('renewed') ? 5 : 4,
+        incarnation
+      }),
+      openTarget: async (target: { actionAlias: string }) => {
+        opened.push(target.actionAlias)
+        if (opened.length === 1) return new Promise((resolve) => { releaseFirst = resolve })
+        return nativeOpened()
+      }
+    })
+    const original = targets[0]
+    const renewed = { ...original, actionAlias: 'ct_codex_a_renewed_123456' }
+    navigation.sync({
+      lease: receipt.lease, enabled: true, providers: { codex: true, claude: true },
+      ready: true, targets: [original], cycleKeys: [original.key]
+    })
+    const first = navigation.cycle(1, { operationId: 'epoch-first' })
+    await vi.waitFor(() => expect(opened).toEqual([original.actionAlias]))
+    navigation.sync({
+      lease: receipt.lease, enabled: true, providers: { codex: true, claude: true },
+      ready: true, targets: [renewed], cycleKeys: [renewed.key]
+    })
+    const tail = navigation.cycle(1, { operationId: 'epoch-tail' })
+    releaseFirst({ outcome: 'unavailable', errorCode: 'dispatch-unconfirmed', confirmsRead: false })
+    await expect(first).resolves.toMatchObject({ outcome: 'unavailable', operationId: 'epoch-first' })
+    await expect(tail).resolves.toMatchObject({ outcome: 'opened', operationId: 'epoch-tail' })
+    expect(opened).toEqual([original.actionAlias, renewed.actionAlias])
+  })
+
   it('commits the cycle cursor only after Host confirms the exact target opened', async () => {
     const opened: string[] = []
     let failFirst = true
@@ -501,12 +591,12 @@ describe('process-lifetime companion navigation', () => {
       cycleKeys: ['claude:local_a', 'codex-b', 'codex-a']
     })).toBe(true)
     await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'claude:local_a' })
-    expect(navigation.diagnostics()).toMatchObject({ walkHeld: true, walkAdoptedCount: 1 })
+    expect(navigation.diagnostics()).toMatchObject({ walkHeld: true, walkAdoptedCount: 1, ringRebuildCount: 1 })
 
     // Once the walk lapses, the next press adopts the published ring.
     vi.advanceTimersByTime(navigationModule.CYCLE_WALK_HOLD_MS + 1)
     await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'codex-b' })
-    expect(navigation.diagnostics()).toMatchObject({ walkRingCount: 3, walkAdoptedCount: 2 })
+    expect(navigation.diagnostics()).toMatchObject({ walkRingCount: 3, walkAdoptedCount: 2, ringRebuildCount: 2 })
     expect(opened).toEqual(['codex-a', 'claude:local_a', 'codex-b'])
   })
 
@@ -539,7 +629,7 @@ describe('process-lifetime companion navigation', () => {
     await expect(navigation.cycle(1)).resolves.toMatchObject({ key: 'claude:local_a' })
     await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
     await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-c' })
-    expect(navigation.diagnostics()).toMatchObject({ walkHeld: true, walkRingCount: 4, walkMergedCount: 1 })
+    expect(navigation.diagnostics()).toMatchObject({ walkHeld: true, walkRingCount: 4, walkMergedCount: 1, ringRebuildCount: 2 })
     expect(opened).toEqual(['codex-a', 'claude:local_a', 'codex-b', 'codex-c'])
   })
 
@@ -651,6 +741,66 @@ describe('process-lifetime companion navigation', () => {
       confirmsRead: false,
       message: '打开请求已发送，等待原生确认'
     })
+  })
+})
+
+
+describe('paired global cycle selection', () => {
+  it('opens only the armed published key and rejects a missing or ineligible one', async () => {
+    const calls: Array<[string, string]> = []
+    let armed = false
+    let paired = ''
+    const opened: string[] = []
+    const { navigation } = readyNavigation({
+      getPairedCycleTarget: (source: string, operationId: string) => {
+        calls.push([source, operationId])
+        return armed ? paired : undefined
+      },
+      openTarget: async (target: { key: string }) => {
+        opened.push(target.key)
+        return nativeOpened()
+      }
+    })
+    await expect(navigation.cycle(1, { source: 'local-shortcut', operationId: 'paired-local' }))
+      .resolves.toMatchObject({ key: 'codex-a', operationId: 'paired-local' })
+    armed = true
+    paired = ''
+    await expect(navigation.cycle(1, { source: 'global-shortcut', operationId: 'paired-empty' }))
+      .resolves.toMatchObject({ outcome: 'unavailable', operationId: 'paired-empty' })
+    paired = 'missing-key'
+    await expect(navigation.cycle(1, { source: 'global-shortcut', operationId: 'paired-missing' }))
+      .resolves.toMatchObject({ outcome: 'unavailable', operationId: 'paired-missing' })
+    paired = 'codex-b'
+    await expect(navigation.cycle(1, { source: 'global-shortcut', operationId: 'paired-hit' }))
+      .resolves.toMatchObject({ key: 'codex-b', operationId: 'paired-hit' })
+    expect(calls).toEqual([
+      ['global-shortcut', 'paired-empty'],
+      ['global-shortcut', 'paired-missing'],
+      ['global-shortcut', 'paired-hit']
+    ])
+    expect(opened).toEqual(['codex-a', 'codex-b'])
+    expect(navigation.diagnostics().cursorKey).toBe('codex-b')
+  })
+
+  it('keeps a repeated ordinary target behind a different queued open', async () => {
+    let releaseFirst!: (result: Record<string, unknown>) => void
+    const opened: string[] = []
+    const { navigation } = readyNavigation({
+      openTarget: async (target: { key: string }) => {
+        opened.push(target.key)
+        if (opened.length === 1) return new Promise((resolve) => { releaseFirst = resolve })
+        return nativeOpened()
+      }
+    })
+    const first = navigation.open({ key: 'codex-a', operationId: 'ordinary-a' })
+    await vi.waitFor(() => expect(opened).toEqual(['codex-a']))
+    const middle = navigation.open({ key: 'codex-b', operationId: 'ordinary-b' })
+    const repeated = navigation.open({ key: 'codex-a', operationId: 'ordinary-a2' })
+    releaseFirst({ outcome: 'failed', errorCode: 'open-failed' })
+    await expect(first).resolves.toMatchObject({ outcome: 'failed', operationId: 'ordinary-a' })
+    await expect(middle).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b', operationId: 'ordinary-b' })
+    await expect(repeated).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a', operationId: 'ordinary-a2' })
+    expect(opened).toEqual(['codex-a', 'codex-b', 'codex-a'])
   })
 })
 

@@ -1036,6 +1036,303 @@ describe('Codex controller', () => {
     }
   })
 
+  it('keeps task publication independent from a stalled quota read and starts Magpie separately', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.magpieQuotaAccess = true
+    let releaseQuota!: () => void
+    const quotaGate = new Promise<void>((resolve) => { releaseQuota = resolve })
+    const reads: Array<Record<string, unknown>> = []
+    const platform = {
+      codex: {
+        readSnapshot: async (options: Record<string, unknown>) => {
+          reads.push(options)
+          if (options.includeThreads === true) {
+            return {
+              ok: true as const,
+              receivedAt: 300,
+              value: {
+                version: 2 as const,
+                receivedAt: 300,
+                threads: [{ key: '1111111111111111', actionAlias: 'task-alias', name: '独立任务', status: 'active' as const, activeFlags: [], statusAuthority: 'connector' as const, updatedAt: 250, lastTurnStatus: 'inProgress' as const, lastTurnStartedAt: 240, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }],
+                projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
+                sourceFingerprint: 'a'.repeat(64),
+                completeness: 'verified' as const,
+                activityGeneration: 1
+              }
+            }
+          }
+          await quotaGate
+          return { ok: false as const, receivedAt: 900, error: { code: 'timeout' as const, message: 'quota stalled' } }
+        },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+    const pending = controller.refresh()
+    await vi.waitFor(() => expect(controller.view().taskInventory.conversations).toMatchObject({ status: 'ok', sourceCount: 1 }))
+    expect(controller.view().quota.status).not.toBe('error')
+    releaseQuota()
+    await pending
+    await vi.waitFor(() => expect(controller.view().quota.status).toBe('error'))
+    expect(controller.view().quota.status).toBe('error')
+    expect(controller.view().taskInventory.conversations).toMatchObject({ status: 'ok', sourceCount: 1 })
+    expect(reads.some((options) => options.includeThreads === true && options.inventoryPolicy === undefined)).toBe(true)
+    controller.dispose()
+  })
+
+  it('retries one unchanged reuse sample without marking the task inventory failed', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const now = Date.now()
+    const existingKey = '1111111111111111'
+    const firstKey = '2222222222222222'
+    const addedKey = '4444444444444444'
+    let reuseCount = 0
+    const thread = (key: string, name: string) => ({ key, actionAlias: `${name}-alias`, name, status: 'notLoaded' as const, activeFlags: [], updatedAt: now - 1_000, lastTurnStatus: 'failed' as const, lastTurnStartedAt: now - 2_000, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const })
+    const platform = { codex: { readSnapshot: async (options: Record<string, unknown>) => {
+      const reused = options.inventoryPolicy === 'reuse-verified'
+      if (reused) reuseCount += 1
+      const revision = reuseCount === 1 ? 'sample-1' : reuseCount === 2 ? 'sample-1' : 'sample-2'
+      const keys = reuseCount >= 3 ? [existingKey, firstKey, addedKey] : reuseCount === 1 ? [existingKey, firstKey] : [existingKey]
+      return { ok: true as const, receivedAt: now, value: { version: 2 as const, receivedAt: now, threads: keys.map((key) => thread(key, key === addedKey ? '后到成员' : key === firstKey ? '先到成员' : '已有任务')), projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint: 'd'.repeat(64), completeness: 'verified' as const, activityGeneration: 3, inventoryRevision: revision } }
+    }, close: () => undefined } } as unknown as EypcPlatformApi
+    const kernel = companionTaskKernelModule.createCompanionTaskKernel({ coalesceMs: 0, initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: false } } })
+    const controller = createCodexController({ platform: { ...platform, companionKernel: kernel }, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+    controller.start()
+    await controller.refresh()
+    kernel.publishEvidence(hostDraft([hostTask(existingKey, now), hostTask(firstKey, now, { displayName: '先到成员', actionAlias: '先到成员-alias' })], now, 2))
+    await vi.waitFor(() => expect(controller.view().taskInventory.conversations.all.map((task) => task.key)).toContain(firstKey))
+    kernel.publishEvidence(hostDraft([hostTask(existingKey, now), hostTask(firstKey, now), hostTask(addedKey, now, { displayName: '后到成员', actionAlias: '后到成员-alias' })], now, 3))
+    await vi.waitFor(() => expect(reuseCount).toBe(3))
+    expect(controller.view().taskInventory.conversations).toMatchObject({ status: 'ok' })
+    expect(controller.view().taskInventory.conversations.all.map((task) => task.key)).toEqual(expect.arrayContaining([existingKey, firstKey, addedKey]))
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(reuseCount).toBe(3)
+    controller.dispose()
+  })
+
+  it('hydrates a newly published member after an ordinary inventory read settles without it', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const now = Date.now()
+    const newKey = '2222222222222222'
+    const reads: Array<Record<string, unknown>> = []
+    let releaseInventory!: () => void
+    const platform = {
+      codex: {
+        readSnapshot: async (options: Record<string, unknown>) => {
+          reads.push(options)
+          const reuse = options.inventoryPolicy === 'reuse-verified'
+          if (options.includeThreads && !reuse) await new Promise<void>((resolve) => { releaseInventory = resolve })
+          const thread: CodexHostThread = {
+            key: newKey, name: '已补元数据', actionAlias: 'new-task-alias', status: 'notLoaded', activeFlags: [],
+            updatedAt: now - 100, lastTurnStatus: 'failed', lastTurnStartedAt: now - 200,
+            projectKey: 'chats', projectName: 'Chats', projectKind: 'chats'
+          }
+          return { ok: true as const, receivedAt: now, value: {
+            version: 2 as const, receivedAt: now, threads: reuse ? [thread] : [],
+            projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
+            sourceFingerprint: 'd'.repeat(64), completeness: 'verified' as const,
+            inventoryRevision: reuse ? 'new-sample' : 'old-sample'
+          } }
+        },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const kernel = companionTaskKernelModule.createCompanionTaskKernel({
+      coalesceMs: 0, initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: false } }
+    })
+    const controller = createCodexController({
+      platform: { ...platform, companionKernel: kernel },
+      getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined
+    })
+    try {
+      controller.start()
+      await vi.waitFor(() => expect(releaseInventory).toBeTypeOf('function'))
+      kernel.publishEvidence(hostDraft([hostTask(newKey, now, { displayName: '新任务' })], now, 2))
+      expect(controller.view().taskSnapshot.tasks.some(task => task.key === newKey)).toBe(true)
+      expect(reads.filter(options => options.inventoryPolicy === 'reuse-verified')).toHaveLength(0)
+      releaseInventory()
+      await vi.waitFor(() => expect(reads.filter(options => options.inventoryPolicy === 'reuse-verified')).toHaveLength(1))
+      expect(controller.view().taskInventory.conversations.all.some(task => task.key === newKey)).toBe(true)
+    } finally {
+      controller.dispose()
+    }
+  })
+
+  it('coalesces a later missing member into one reuse follow-up and keeps the same member from spinning', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const now = Date.now()
+    const existingKey = '1111111111111111'
+    const retainedKey = '3333333333333333'
+    const addedKey = '2222222222222222'
+    const collidedKey = '4444444444444444'
+    const fingerprint = 'b'.repeat(64)
+    const reads: Array<Record<string, unknown>> = []
+    const releases: Array<() => void> = []
+    const thread = (key: string, name: string) => ({
+      key,
+      actionAlias: `${name}-alias`,
+      name,
+      status: 'notLoaded' as const,
+      activeFlags: [],
+      updatedAt: now - 1_000,
+      lastTurnStatus: 'failed' as const,
+      lastTurnStartedAt: now - 2_000,
+      projectKey: 'chats',
+      projectName: 'Chats',
+      projectKind: 'chats' as const
+    })
+    const admitted = [existingKey, retainedKey]
+    const platform = {
+      codex: {
+        readSnapshot: async (options: Record<string, unknown>) => {
+          reads.push(options)
+          if (options.includeThreads !== true) {
+            return { ok: true as const, receivedAt: now, value: { version: 2 as const, receivedAt: now } }
+          }
+          const reused = options.inventoryPolicy === 'reuse-verified'
+          const keys = reused
+            ? admitted.filter((key) => key !== retainedKey)
+            : [existingKey, retainedKey]
+          if (reused) await new Promise<void>((resolve) => releases.push(resolve))
+          return {
+            ok: true as const,
+            receivedAt: now,
+            value: {
+              version: 2 as const,
+              receivedAt: now,
+              threads: keys.map((key) => thread(key, key === addedKey ? '新成员' : key === collidedKey ? '相撞成员' : key === retainedKey ? '仍在任务' : '已有任务')),
+              projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
+              sourceFingerprint: fingerprint,
+              completeness: 'verified' as const,
+              activityGeneration: 4
+            }
+          }
+        },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const kernel = companionTaskKernelModule.createCompanionTaskKernel({
+      coalesceMs: 0,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: false } }
+    })
+    const controller = createCodexController({
+      platform: { ...platform, companionKernel: kernel },
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+    const publish = (keys: string[], revision: number) => kernel.publishEvidence(hostDraft(keys.map((key) => hostTask(key, now, {
+      displayName: key,
+      actionAlias: `${key}-alias`
+    })), now, revision))
+
+    controller.start()
+    await controller.refresh()
+    publish([existingKey, retainedKey, addedKey], 2)
+    admitted.push(addedKey)
+    await vi.waitFor(() => expect(reads.filter((options) => options.inventoryPolicy === 'reuse-verified')).toHaveLength(1))
+    publish([existingKey, retainedKey, addedKey], 3)
+    publish([existingKey, retainedKey, addedKey, collidedKey], 4)
+    admitted.push(collidedKey)
+    publish([existingKey, retainedKey, addedKey, collidedKey], 5)
+    releases[0]!()
+    await vi.waitFor(() => expect(reads.filter((options) => options.inventoryPolicy === 'reuse-verified')).toHaveLength(2))
+    await Promise.resolve()
+    expect(reads.filter((options) => options.inventoryPolicy === 'reuse-verified')).toHaveLength(2)
+    releases[1]!()
+    await vi.waitFor(() => expect(controller.view().taskInventory.conversations.all.map((task) => task.key)).toEqual(expect.arrayContaining([existingKey, retainedKey, addedKey, collidedKey])))
+    expect(controller.view().taskInventory.conversations).toMatchObject({ status: 'ok', sourceCount: 4 })
+    expect(reads.filter((options) => options.inventoryPolicy === 'reuse-verified')).toHaveLength(2)
+    controller.dispose()
+  })
+
+  it('lets a structural refresh preempt an in-flight metadata reuse without deleting the held task', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const now = Date.now()
+    const existingKey = '1111111111111111'
+    const retainedKey = '3333333333333333'
+    const addedKey = '2222222222222222'
+    const fingerprint = 'c'.repeat(64)
+    const reads: Array<Record<string, unknown>> = []
+    let releaseReuse!: () => void
+    const thread = (key: string, name: string) => ({
+      key,
+      actionAlias: `${name}-alias`,
+      name,
+      status: 'notLoaded' as const,
+      activeFlags: [],
+      updatedAt: now - 1_000,
+      lastTurnStatus: 'failed' as const,
+      lastTurnStartedAt: now - 2_000,
+      projectKey: 'chats',
+      projectName: 'Chats',
+      projectKind: 'chats' as const
+    })
+    const platform = {
+      codex: {
+        readSnapshot: async (options: Record<string, unknown>) => {
+          reads.push(options)
+          if (options.includeThreads === true && options.inventoryPolicy === 'reuse-verified') {
+            await new Promise<void>((resolve) => { releaseReuse = resolve })
+          }
+          const keys = options.inventoryPolicy === 'reuse-verified'
+            ? [existingKey, addedKey]
+            : options.includeThreads === true && reads.filter((entry) => entry.includeThreads === true && entry.inventoryPolicy === undefined).length > 1
+              ? [existingKey]
+              : [existingKey, retainedKey]
+          return {
+            ok: true as const,
+            receivedAt: now,
+            value: {
+              version: 2 as const,
+              receivedAt: now,
+              threads: keys.map((key) => thread(key, key === retainedKey ? '仍在任务' : key === addedKey ? '新成员' : '已有任务')),
+              projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
+              sourceFingerprint: fingerprint,
+              completeness: 'verified' as const,
+              activityGeneration: 5
+            }
+          }
+        },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const kernel = companionTaskKernelModule.createCompanionTaskKernel({
+      coalesceMs: 0,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: false } }
+    })
+    const controller = createCodexController({
+      platform: { ...platform, companionKernel: kernel },
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+
+    controller.start()
+    await controller.refresh()
+    kernel.publishEvidence(hostDraft([
+      hostTask(existingKey, now, { displayName: '已有任务', actionAlias: '已有任务-alias' }),
+      hostTask(retainedKey, now, { displayName: '仍在任务', actionAlias: '仍在任务-alias' }),
+      hostTask(addedKey, now, { displayName: '新成员', actionAlias: '新成员-alias' })
+    ], now, 2))
+    await vi.waitFor(() => expect(reads.some((options) => options.inventoryPolicy === 'reuse-verified')).toBe(true))
+    const structural = controller.refresh()
+    await vi.waitFor(() => expect(reads.filter((options) => options.includeThreads === true && options.inventoryPolicy === undefined).length).toBeGreaterThan(1))
+    releaseReuse()
+    await structural
+    expect(controller.view().taskInventory.conversations.all.map((task) => task.key)).toEqual(expect.arrayContaining([existingKey, retainedKey]))
+    expect(controller.view().taskInventory.conversations.status).toBe('stale')
+    controller.dispose()
+  })
+
   it('automatically closes a confirmed missing-key quarantine when periodic task refresh is disabled', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(10_000)

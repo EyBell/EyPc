@@ -16,6 +16,7 @@ export function checkCompanionDiagnosticPrivacy(source, codexDiagnosticsSource) 
   const events = []
   const context = { crypto, COMPANION_DIAGNOSTIC_TASK_SALT: 'synthetic-session-salt',
     codexRecord: value => value && typeof value === 'object' ? value : {},
+    companionTaskStateBridge: null,
     runtimeDiagnostics: { record: event => events.push(event) } }
   vm.createContext(context)
   vm.runInContext(source.slice(begin, end), context)

@@ -1599,6 +1599,10 @@ function openTask(task: CodexTaskCard, source: 'card-click' | 'manual-quick-jump
   action('codex.task.open', { key: task.key, source })
 }
 
+function openFocusedTask(task: CodexTaskCard) {
+  openTask(task, quickMode.value ? 'manual-quick-jump' : 'local-shortcut')
+}
+
 function taskProject(task: CodexTaskCard) {
   return conversations.value?.projects.find((project) => project.key === task.projectKey)
 }
@@ -2385,13 +2389,17 @@ function closePanel() {
   restoreTrigger(trigger)
 }
 
-function executeDrawerAction(index: number, event?: Event) {
+function executeDrawerAction(index: number, event?: Event, source: 'keyboard' | 'pointer' = 'pointer') {
   const item = drawerActions.value[index]
   if (!item || item.disabled) {
     if (item?.disabledReason) liveMessage.value = item.disabledReason
     return
   }
   captureHintAnchor(event)
+  if (source === 'keyboard' && item.id === 'task-open' && drawerItem.value?.kind === 'task') {
+    openFocusedTask(drawerItem.value.task)
+    return
+  }
   item.run()
 }
 
@@ -2829,7 +2837,7 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.quickJump.openTasks') openQuickJump(false, 'tasks')
   else if (command === 'codex.list.up' && panel.value?.mode === 'drawer') moveDrawer(-1)
   else if (command === 'codex.list.down' && panel.value?.mode === 'drawer') moveDrawer(1)
-  else if (command === 'codex.task.openFocused' && panel.value?.mode === 'drawer') executeDrawerAction(drawerActiveIndex.value)
+  else if (command === 'codex.task.openFocused' && panel.value?.mode === 'drawer') executeDrawerAction(drawerActiveIndex.value, undefined, 'keyboard')
   else if (command === 'codex.list.up') moveFocus(-1)
   else if (command === 'codex.list.down') moveFocus(1)
   else if (command === 'codex.selection.toggle' && item?.kind === 'task') {
@@ -2838,7 +2846,7 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.selection.toggle' && item?.kind === 'project') {
     if (selectProjectChildren(item.project)) moveAfterCurrent()
   }
-  else if (command === 'codex.task.openFocused' && item?.kind === 'task') openTask(item.task)
+  else if (command === 'codex.task.openFocused' && item?.kind === 'task') openFocusedTask(item.task)
   else if (command === 'codex.task.openFocused' && item?.kind === 'project') toggleProject(item.project)
   else if (command === 'codex.detail.open') openPanel('detail')
   else if (command === 'codex.drawer.open') openPanel('drawer', panel.value?.mode === 'detail')
@@ -2850,7 +2858,7 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.search.focus') searchInput.value?.focus()
   else if (command === 'codex.thread.createFocused') openComposer()
   else if (command === 'codex.quick.activate') enterQuickMode()
-  else if (command.startsWith('codex.drawer.select.')) executeDrawerAction(Number(command.split('.').at(-1)) - 1)
+  else if (command.startsWith('codex.drawer.select.')) executeDrawerAction(Number(command.split('.').at(-1)) - 1, undefined, 'keyboard')
   else if (command === 'codex.layer.cancel') {
     cancelTopLayer()
   }
@@ -3416,14 +3424,60 @@ watch(() => {
     : { key: '', source })
 }, { flush: 'post', immediate: true })
 
+let visibleTaskReceipt = ''
+let visibleTaskFrame = 0
+let visibleTaskScroller: HTMLElement | null = null
+function visibleViewportTaskRows() {
+  if (!expanded.value || runtimeReloadRequired.value || floatState.value.nativeVisible === false) return null
+  if (floatState.value.transition?.phase === 'expanding' || floatState.value.transition?.phase === 'collapsing') return null
+  const scroller = taskScroll.value
+  if (!scroller?.isConnected || document.visibilityState === 'hidden') return null
+  const bounds = scroller.getBoundingClientRect()
+  if (bounds.width <= 0 || bounds.height <= 0) return null
+  const viewport = { left: Math.max(0, bounds.left), top: Math.max(0, bounds.top), right: Math.min(window.innerWidth, bounds.right), bottom: Math.min(window.innerHeight, bounds.bottom) }
+  if (viewport.right <= viewport.left || viewport.bottom <= viewport.top) return null
+  return [...scroller.querySelectorAll<HTMLElement>('.float-task-row')].flatMap((row) => {
+    const key = row.dataset.focusKey?.startsWith('task:') ? row.dataset.focusKey.slice(5) : ''
+    const semanticRevision = Number(row.dataset.semanticRevision)
+    const rect = row.getBoundingClientRect()
+    const shown = key && rect.width > 0 && rect.height > 0
+      && rect.bottom > viewport.top && rect.top < viewport.bottom
+      && rect.right > viewport.left && rect.left < viewport.right
+    return shown ? [{ key, phase: row.dataset.companionPhase || '', semanticRevision: Number.isInteger(semanticRevision) ? semanticRevision : null }] : []
+  })
+}
+function acknowledgeVisibleTasks() {
+  const revision = renderedTaskRevision.value
+  const rows = visibleViewportTaskRows()
+  if (!revision || !rows?.length) return
+  const receipt = `${floatState.value.windowGeneration || 0}:${revision}:${rows.map((row) => `${row.key}:${row.phase}:${row.semanticRevision}`).join('|')}`
+  if (receipt === visibleTaskReceipt) return
+  if (window.eypcFloat?.ackTaskSnapshot?.('visible', revision, { keys: rows.map((row) => row.key), rows })) visibleTaskReceipt = receipt
+}
+function scheduleVisibleTasks() {
+  cancelAnimationFrame(visibleTaskFrame)
+  const phase = floatState.value.transition?.phase
+  if (!expanded.value || floatState.value.nativeVisible === false
+    || phase === 'expanding' || phase === 'collapsing' || document.visibilityState === 'hidden') {
+    visibleTaskReceipt = ''
+    return
+  }
+  visibleTaskFrame = requestAnimationFrame(() => {
+    visibleTaskFrame = requestAnimationFrame(acknowledgeVisibleTasks)
+  })
+}
+watch([expanded, renderedTaskRevision, renderRows, () => floatState.value.nativeVisible, () => floatState.value.windowGeneration, () => floatState.value.transition?.phase], scheduleVisibleTasks, { flush: 'post' })
 watch(taskScroll, (element) => {
   taskScrollResizeObserver?.disconnect()
   taskScrollResizeObserver = null
   if (element && typeof ResizeObserver !== 'undefined') {
-    taskScrollResizeObserver = new ResizeObserver(updateBatchPlacement)
+    taskScrollResizeObserver = new ResizeObserver(() => { updateBatchPlacement(); scheduleVisibleTasks() })
     taskScrollResizeObserver.observe(element)
   }
   scheduleBatchPlacement()
+  visibleTaskScroller?.removeEventListener('scroll', scheduleVisibleTasks)
+  visibleTaskScroller = element
+  element?.addEventListener('scroll', scheduleVisibleTasks, { passive: true })
 })
 
 onMounted(() => {
@@ -3587,6 +3641,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cancelAnimationFrame(visibleTaskFrame)
+  visibleTaskScroller?.removeEventListener('scroll', scheduleVisibleTasks)
+  visibleTaskScroller = null
   if (taskActionFeedbackTimer) clearTimeout(taskActionFeedbackTimer)
   for (const pending of pendingTaskActions.values()) {
     if (pending.timer) clearTimeout(pending.timer)
@@ -3904,6 +3961,8 @@ onUnmounted(() => {
               :data-pin-source="row.task.pinSource"
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
+              :data-companion-phase="row.task.companionPhase || undefined"
+              :data-semantic-revision="row.task.semanticRevision"
               data-context-menu-target
               data-quick-jump-target
               :data-quick-jump-label="`聚焦任务 ${taskDisplayLabel(row.task)}`"

@@ -185,6 +185,20 @@ describe('canonical Companion task projection', () => {
     expect(state.dynamic.compactCounts.unread).toBe(0)
 
     state = applyCompanionTaskPackageViews(state, packageFor(canonical({
+      unread: true,
+      completedUnread: false,
+      dynamicGroup: 'completed',
+      semanticRevision: 9
+    }), 5))
+    expect(state.conversations.completed[0]).toMatchObject({
+      bucket: 'completed',
+      unreadState: 'read',
+      state: 'recent-activity',
+      semanticRevision: 9
+    })
+    expect(state.conversations.completed[0]?.pendingSince).toBeUndefined()
+
+    state = applyCompanionTaskPackageViews(state, packageFor(canonical({
       phase: 'running',
       cycleTier: 'active',
       dynamicGroup: 'active',

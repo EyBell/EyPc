@@ -4,6 +4,7 @@
 const SHORTCUT_SOURCES = new Set(['global-shortcut', 'local-shortcut', 'attention-shortcut', 'task-cycle', 'manual-quick-jump'])
 
 function hasCompletedUnread(task) {
+  if (task?.completedUnread === false) return false
   return task?.completedUnread === true || (task?.phase === 'completed' && task.unread === true)
 }
 

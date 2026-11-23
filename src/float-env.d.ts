@@ -9,6 +9,8 @@ export interface FloatRect { x: number; y: number; width: number; height: number
 export interface CodexFloatWindowState {
   presentationId?: number
   windowGeneration?: number
+  /** Native window visibility from the host state channel; false blocks visible receipts. */
+  nativeVisible?: boolean
   style?: 'water' | 'card' | 'edge'
   dragging?: boolean
   edge?: 'left' | 'right' | 'top' | 'bottom'
@@ -39,6 +41,10 @@ declare global {
       getState(): CodexFloatWindowState
       getHealth?(): { heartbeatSequence: number; lastHeartbeatAckAt: number }
       ackTaskSnapshot?(stage: 'applied' | 'rejected', revision: number, reason?: 'older-revision' | 'identity-mismatch' | 'invalid-payload'): boolean
+      ackTaskSnapshot?(stage: 'visible', revision: number, details: {
+        keys: string[]
+        rows?: Array<{ key: string; phase?: string; semanticRevision?: number | null }>
+      }): boolean
       onSnapshot(listener: (snapshot: CodexFloatSnapshotV1) => void): () => void
       onState(listener: (state: CodexFloatWindowState) => void): () => void
       onActivate?(listener: (payload: { requestedAt?: number; command?: 'new-thread' | 'quick' }) => void): () => void

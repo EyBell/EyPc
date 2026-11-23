@@ -108,12 +108,13 @@ function createCompanionNavigation(dependencies = {}) {
   const captureTarget = dependencies.captureTarget || (() => null)
   const isSameTarget = dependencies.isSameTarget || (() => true)
   const canOpenTarget = dependencies.canOpenTarget || (() => true)
+  const getPairedCycleTarget = dependencies.getPairedCycleTarget
 
   let enabled = false
   let enabledProviders = new Set()
   let leaseCounter = 0
   let activeLease = 0
-  let snapshot = { ready: false, targets: new Map(), cycleKeys: [], groups: emptyGroups() }
+  let snapshot = { ready: false, targets: new Map(), cycleKeys: [], cycleIndex: new Map(), groups: emptyGroups() }
   let snapshotFingerprint = ''
   let cursorKey = ''
   // A cursor that leaves the ring is not a lost cursor. A task can lose its
@@ -130,9 +131,11 @@ function createCompanionNavigation(dependencies = {}) {
   // act of opening a task changes the field it sorts on, so a live ring moved
   // under the user between two presses of one walk.
   let walkRing = []
+  let walkIndex = new Map()
   let walkExpiresAt = 0
   let walkAdoptedCount = 0
   let walkMergedCount = 0
+  let ringRebuildCount = 0
   // Where the next press counts from while an earlier one is still open.
   //
   // `cursorKey` only moves on a confirmed open, which is correct for it — but
@@ -145,6 +148,7 @@ function createCompanionNavigation(dependencies = {}) {
   let outstandingCycles = 0
   let coalescedAdvanceCount = 0
   let queuedCycle = null
+  let attentionTail = null
   let inFlightRequest = null
   const directQueue = []
   let dispatchInFlight = false
@@ -170,12 +174,16 @@ function createCompanionNavigation(dependencies = {}) {
   function resolveRequest(request, result) {
     if (request?.cycle === true && outstandingCycles > 0) outstandingCycles -= 1
     if (outstandingCycles === 0) pendingCursorKey = ''
+    const dispatchOperationId = typeof result?.dispatchOperationId === 'string' && result.dispatchOperationId
+      ? result.dispatchOperationId
+      : typeof request?.pairedDispatchOperationId === 'string' ? request.pairedDispatchOperationId : ''
     try {
       request.resolve({
         ...result,
         ...(typeof result?.operationId === 'string'
           ? { operationId: result.operationId }
-          : typeof request?.operationId === 'string' ? { operationId: request.operationId } : {})
+          : typeof request?.operationId === 'string' ? { operationId: request.operationId } : {}),
+        ...(dispatchOperationId ? { dispatchOperationId } : {})
       })
     } catch {}
   }
@@ -203,18 +211,28 @@ function createCompanionNavigation(dependencies = {}) {
     return outstandingCycles > 0 && pendingCursorKey ? pendingCursorKey : cursorKey
   }
 
+  function cancelAttentionTail() {
+    if (!attentionTail) return
+    const tail = attentionTail
+    attentionTail = null
+    replacedCount += 1
+    resolveRequest(tail, { ...superseded(), operationId: tail.operationId })
+  }
+
   function clearQueued(reason = '导航状态已重置') {
     cancelPendingCycle()
+    cancelAttentionTail()
     while (directQueue.length) resolveRequest(directQueue.shift(), unavailable(reason, 'reset'))
   }
 
   function clearSnapshot(reason) {
     clearQueued(reason)
-    snapshot = { ready: false, targets: new Map(), cycleKeys: [], groups: emptyGroups() }
+    snapshot = { ready: false, targets: new Map(), cycleKeys: [], cycleIndex: new Map(), groups: emptyGroups() }
     snapshotFingerprint = ''
     cursorKey = ''
     cursorDisplacedSide = ''
     walkRing = []
+    walkIndex = new Map()
     walkExpiresAt = 0
     pendingCursorKey = ''
   }
@@ -224,56 +242,52 @@ function createCompanionNavigation(dependencies = {}) {
     return walkRing.length > 0 && now < walkExpiresAt
   }
 
-  /**
-   * Resolves the ring this press walks, holding the one an in-progress walk
-   * started on and adopting the published ring otherwise.
-   *
-   * Adoption is also where a cursor that did not survive into the new ring is
-   * re-anchored, so a walk that resumes after the hold lapsed continues from the
-   * position it stopped at instead of from the head.
-   */
+  function indexOf(keys) {
+    return new Map(keys.map((key, index) => [key, index]))
+  }
+
+  function sameRing(left, right) {
+    return left === right || left.length === right.length && left.every((key, index) => key === right[index])
+  }
+
+  function adoptPublishedWalk() {
+    if (walkRing !== snapshot.cycleKeys) ringRebuildCount += 1
+    walkRing = snapshot.cycleKeys
+    walkIndex = snapshot.cycleIndex
+  }
+
+  function reconcileHeldWalk() {
+    const alive = walkRing.filter(key => snapshot.cycleIndex.has(key))
+    if (!alive.length) {
+      adoptPublishedWalk()
+      return
+    }
+    const aliveSet = new Set(alive)
+    const fresh = snapshot.cycleKeys.filter(key => !aliveSet.has(key))
+    if (fresh.length) {
+      walkMergedCount += 1
+      record({ level: 'debug', scope: 'navigation', event: 'ring-merged', outcome: 'merged',
+        cache: 'process-package', details: { heldCount: alive.length, mergedCount: fresh.length } })
+    }
+    const keys = fresh.length ? [...alive, ...fresh] : alive
+    const changed = !sameRing(walkRing, keys)
+    if (changed) ringRebuildCount += 1
+    if (sameRing(keys, snapshot.cycleKeys)) {
+      walkRing = snapshot.cycleKeys
+      walkIndex = snapshot.cycleIndex
+      return
+    }
+    if (!changed) return
+    walkRing = keys
+    walkIndex = indexOf(keys)
+  }
+
   function groupContaining(origin) {
     if (!origin) return ''
     for (const name of GROUP_ORDER) {
       if (snapshot.groups[name].includes(origin)) return name
     }
     return ''
-  }
-
-  function ringForCycle(now) {
-    if (walkHeld(now)) {
-      const previous = walkRing
-      const eligible = new Set(snapshot.cycleKeys)
-      const alive = walkRing.filter((key) => eligible.has(key))
-      if (alive.length) {
-        // The hold freezes the order the user is walking, not membership. A
-        // task published into the selected tier mid-walk joins at the tail.
-        // Hidden tasks and lower tiers leave immediately, even if manually
-        // openable targets still contain them.
-        const fresh = snapshot.cycleKeys.filter((key) => !alive.includes(key))
-        if (fresh.length) {
-          walkMergedCount += 1
-          record({
-            level: 'debug',
-            scope: 'navigation',
-            event: 'ring-merged',
-            outcome: 'merged',
-            cache: 'process-package',
-            details: { heldCount: alive.length, mergedCount: fresh.length }
-          })
-        }
-        walkRing = fresh.length ? [...alive, ...fresh] : alive
-        if (cursorKey && !walkRing.includes(cursorKey)) recoverCursor(previous)
-        return walkRing
-      }
-    }
-    const previous = walkRing.length ? walkRing : snapshot.cycleKeys
-    // Kernel owns tier selection and eligibility. Display groups cannot
-    // replace the highest non-empty tier selected for this cycle.
-    walkRing = snapshot.cycleKeys
-    walkAdoptedCount += 1
-    if (cursorKey && !walkRing.includes(cursorKey)) recoverCursor(previous)
-    return walkRing
   }
 
   /**
@@ -289,6 +303,7 @@ function createCompanionNavigation(dependencies = {}) {
   function recoverCursor(previousCycleKeys) {
     const lostIndex = previousCycleKeys.indexOf(cursorKey)
     const ring = walkRing.length ? walkRing : snapshot.cycleKeys
+    const positions = walkRing.length ? walkIndex : snapshot.cycleIndex
     const lostKey = cursorKey
     if (lostIndex >= 0 && ring.length) {
       for (const [side, indices] of [
@@ -297,7 +312,7 @@ function createCompanionNavigation(dependencies = {}) {
       ]) {
         for (const index of indices) {
           const candidate = previousCycleKeys[index]
-          if (!ring.includes(candidate)) continue
+          if (!positions.has(candidate)) continue
           cursorKey = candidate
           cursorDisplacedSide = side
           cursorRecoveredCount += 1
@@ -352,13 +367,10 @@ function createCompanionNavigation(dependencies = {}) {
       const target = normalizeTarget(value, enabledProviders)
       if (target && !targets.has(target.key)) targets.set(target.key, target)
     }
-    const cycleKeys = []
-    const seen = new Set()
-    for (const key of Array.isArray(input.cycleKeys) ? input.cycleKeys : []) {
-      if (typeof key !== 'string' || seen.has(key) || !targets.has(key)) continue
-      seen.add(key)
-      cycleKeys.push(key)
-    }
+    const publishedKeys = uniquePresentKeys(input.cycleKeys, targets)
+    const cycleChanged = !sameRing(snapshot.cycleKeys, publishedKeys)
+    const cycleKeys = cycleChanged ? publishedKeys : snapshot.cycleKeys
+    const cycleIndex = cycleChanged ? indexOf(cycleKeys) : snapshot.cycleIndex
     const groups = normalizeGroups(input.groups, targets)
     const fingerprint = JSON.stringify({
       ready: input.ready === true,
@@ -377,8 +389,8 @@ function createCompanionNavigation(dependencies = {}) {
       syncNoopCount += 1
       return true
     }
-    const previousCycleKeys = snapshot.cycleKeys
-    snapshot = { ready: input.ready === true, targets, cycleKeys, groups }
+    const previousWalk = walkRing
+    snapshot = { ready: input.ready === true, targets, cycleKeys, cycleIndex, groups }
     snapshotFingerprint = fingerprint
     if (cursorKey && !targets.has(cursorKey)) {
       cursorKey = ''
@@ -386,18 +398,11 @@ function createCompanionNavigation(dependencies = {}) {
     }
     // A hold preserves order only. Reconcile at publication so queued opens
     // and late in-flight results cannot keep an obsolete tier or hidden row.
-    if (input.reorder === true) {
-      const previousWalk = walkRing.length ? walkRing : previousCycleKeys
-      walkRing = cycleKeys
-      if (cursorKey && !cycleKeys.includes(cursorKey)) recoverCursor(previousWalk)
-    } else if (walkHeld()) {
-      ringForCycle(Date.now())
-    } else if (cursorKey && !cycleKeys.includes(cursorKey)) {
-      walkRing = cycleKeys
-      recoverCursor(previousCycleKeys)
-    }
-    if (queuedCycle && !cycleKeys.includes(queuedCycle.target.key)) cancelPendingCycle()
-    if (pendingCursorKey && !cycleKeys.includes(pendingCursorKey)) pendingCursorKey = ''
+    if (input.reorder === true || cycleChanged && !walkHeld()) adoptPublishedWalk()
+    else if (cycleChanged) reconcileHeldWalk()
+    if (cursorKey && !walkIndex.has(cursorKey)) recoverCursor(previousWalk)
+    if (queuedCycle && !cycleIndex.has(queuedCycle.target.key)) cancelPendingCycle()
+    if (pendingCursorKey && !cycleIndex.has(pendingCursorKey)) pendingCursorKey = ''
     return true
   }
 
@@ -407,9 +412,82 @@ function createCompanionNavigation(dependencies = {}) {
     return true
   }
 
+  function applicableRound(request) {
+    const attention = request?.attention
+    if (!attention || typeof attention !== 'object') return ''
+    const kind = typeof attention.kind === 'string' ? attention.kind : ''
+    const round = Number.isInteger(attention.round) ? String(attention.round) : ''
+    return kind || round ? `${kind}:${round}` : ''
+  }
+
+  function sameDispatchedTarget(left, right) {
+    const leftTarget = left?.target
+    const rightTarget = right?.target
+    if (!leftTarget || !rightTarget || leftTarget.provider !== rightTarget.provider || leftTarget.key !== rightTarget.key) return false
+    const leftContext = left.context && typeof left.context === 'object' ? left.context : null
+    const rightContext = right.context && typeof right.context === 'object' ? right.context : null
+    if (Boolean(leftContext) !== Boolean(rightContext)) return false
+    if (leftContext && (leftContext.epoch !== rightContext.epoch || leftContext.incarnation !== rightContext.incarnation
+      || leftContext.lifecycle !== rightContext.lifecycle)) return false
+    return applicableRound(left) === applicableRound(right)
+  }
+
+  function sameQueuedInstance(left, right) {
+    if (left?.cycle || right?.cycle || left?.source !== right?.source
+      || left?.cacheOnly !== right?.cacheOnly || left?.trustedResolvedTarget !== right?.trustedResolvedTarget) return false
+    if (!sameDispatchedTarget(left, right)) return false
+    const leftInstance = left?.attention?.instance
+    const rightInstance = right?.attention?.instance
+    if (typeof leftInstance === 'string' || typeof rightInstance === 'string') return leftInstance === rightInstance
+    return true
+  }
+
+  function sequenceTail() {
+    return directQueue.length ? directQueue[directQueue.length - 1] : dispatchInFlight ? inFlightRequest : null
+  }
+
+  function mergeConsecutive(request) {
+    const tail = sequenceTail()
+    if (!tail || !sameQueuedInstance(tail, request)) return null
+    return new Promise((resolve) => {
+      if (tail === inFlightRequest) {
+        if (attentionTail) {
+          replacedCount += 1
+          resolveRequest(attentionTail, { ...superseded(), operationId: attentionTail.operationId })
+        }
+        attentionTail = { ...request, resolve }
+        return
+      }
+      replacedCount += 1
+      resolveRequest(tail, { ...superseded(), operationId: tail.operationId })
+      directQueue[directQueue.length - 1] = { ...request, resolve }
+    })
+  }
+
+  function settleAttentionTail(request, result) {
+    if (!attentionTail || !sameQueuedInstance(request, attentionTail)) return
+    const tail = attentionTail
+    attentionTail = null
+    const dispatchOperationId = request.operationId
+    tail.pairedDispatchOperationId = dispatchOperationId
+    const confirmed = result?.outcome === 'opened' || result?.outcome === 'dispatched'
+    const unconfirmed = result?.outcome === 'unavailable' && result?.errorCode === 'dispatch-unconfirmed'
+    if (result?.outcome === 'failed' && currentRequest(tail)) {
+      directQueue.unshift(tail)
+      return
+    }
+    record({
+      level: 'debug', scope: 'navigation', event: 'open-attention',
+      outcome: unconfirmed ? 'unconfirmed' : confirmed ? 'reused' : result?.outcome || 'failed',
+      operationId: tail.operationId, provider: request.target.provider, taskRef: request.target.key,
+      details: { dispatchOperationId }
+    })
+    resolveRequest(tail, { ...result, operationId: tail.operationId, dispatchOperationId })
+  }
+
   function currentRequest(request) {
     if (disposed || !enabled || !enabledProviders.has(request.target.provider)) return false
-    if (request.cycle && !snapshot.cycleKeys.includes(request.target.key)) return false
+    if (request.cycle && !snapshot.cycleIndex.has(request.target.key)) return false
     return canOpenTarget(request)
   }
 
@@ -418,22 +496,25 @@ function createCompanionNavigation(dependencies = {}) {
     const freezeSpan = freezeTrace.begin('navigation.dispatch')
     currentConcurrent += 1
     maxConcurrent = Math.max(maxConcurrent, currentConcurrent)
+    let attentionResult = null
     try {
       if (!currentRequest(request)) {
-        resolveRequest(request, unavailable('任务已变化，请重试', 'stale-target'))
+        attentionResult = unavailable('任务已变化，请重试', 'stale-target')
+        resolveRequest(request, attentionResult)
         return
       }
       request.isCurrent = () => currentRequest(request)
       const result = normalizeOpenResult(await openTarget(request.target, request), request.target)
       const settled = request.attention ? request.attentionSettled === true : null
       const currentOperationId = result.operationId || request.operationId
-      const opened = result.outcome === 'opened' || result.outcome === 'dispatched'
+      const confirmed = result.outcome === 'opened' || result.outcome === 'dispatched'
+      const unconfirmed = result.outcome === 'unavailable' && result.errorCode === 'dispatch-unconfirmed'
       const sameTarget = isSameTarget(request)
-      if (opened && sameTarget && enabled && enabledProviders.has(request.target.provider)) {
+      if (confirmed && sameTarget && enabled && enabledProviders.has(request.target.provider)) {
         // Opening a row always publishes a result for Kernel focusedKey, but
         // only a currently eligible target owns the cycle cursor. An already
         // dispatched open cannot be recalled when its tier or visibility changes.
-        if (snapshot.cycleKeys.includes(request.target.key)
+        if (snapshot.cycleIndex.has(request.target.key)
           && (settled ?? (!request.cycle || canOpenTarget(request)))) {
           cursorKey = request.target.key
           cursorDisplacedSide = ''
@@ -455,6 +536,7 @@ function createCompanionNavigation(dependencies = {}) {
         }
       }
       lastOutcome = result.outcome
+      attentionResult = result
       resolveRequest(request, result)
       record({
         level: result.outcome === 'failed' ? 'error' : 'info',
@@ -477,8 +559,14 @@ function createCompanionNavigation(dependencies = {}) {
       // A rapid sequence may return to the target already being opened. The
       // final intent has then already been satisfied, so do not call Provider
       // twice merely because intermediate presses advanced the logical cursor.
-      if (opened && sameTarget && !directQueue.length && queuedCycle?.target.key === request.target.key
-        && queuedCycle.target.actionAlias === request.target.actionAlias
+      if (unconfirmed && sameDispatchedTarget(request, queuedCycle)) {
+        const held = queuedCycle
+        queuedCycle = null
+        resolveRequest(held, { ...result, operationId: held.operationId })
+        record({ level: 'debug', scope: 'navigation', event: 'cycle', outcome: 'unconfirmed',
+          operationId: held.operationId, provider: request.target.provider, taskRef: request.target.key,
+          details: { dispatchOperationId: currentOperationId } })
+      } else if (confirmed && sameTarget && !directQueue.length && sameDispatchedTarget(request, queuedCycle)
         && currentRequest(queuedCycle) && (settled ?? canOpenTarget(request))) {
         const satisfied = queuedCycle
         queuedCycle = null
@@ -489,15 +577,17 @@ function createCompanionNavigation(dependencies = {}) {
       }
     } catch {
       lastOutcome = 'failed'
-      record({ scope: 'navigation', event: `${request.target.provider}-open`, outcome: 'failed', code: 'exception', durationMs: Date.now() - startedAt, slowMs: 200, level: 'error', operationId: request.operationId, provider: request.target.provider, taskRef: request.target.key, source: request.source })
-      resolveRequest(request, {
+      attentionResult = {
         outcome: 'failed',
         errorCode: 'open-failed',
         message: '任务打开失败',
         provider: request.target.provider,
         key: request.target.key
-      })
+      }
+      record({ scope: 'navigation', event: `${request.target.provider}-open`, outcome: 'failed', code: 'exception', durationMs: Date.now() - startedAt, slowMs: 200, level: 'error', operationId: request.operationId, provider: request.target.provider, taskRef: request.target.key, source: request.source })
+      resolveRequest(request, attentionResult)
     } finally {
+      if (attentionResult) settleAttentionTail(request, attentionResult)
       freezeTrace.end(freezeSpan)
       currentConcurrent = Math.max(0, currentConcurrent - 1)
     }
@@ -518,6 +608,7 @@ function createCompanionNavigation(dependencies = {}) {
   }
 
   function queueCycle(request) {
+    cancelAttentionTail()
     if (dispatchInFlight || directQueue.length) {
       if (queuedCycle) {
         replacedCount += 1
@@ -534,6 +625,17 @@ function createCompanionNavigation(dependencies = {}) {
     const startedAt = Date.now()
     const source = input.source || 'task-cycle'
     const currentOperationId = operationId(input.operationId, 'cycle')
+    let pairedArmed = false
+    let pairedKey = ''
+    if (source === 'global-shortcut' && typeof getPairedCycleTarget === 'function') {
+      try {
+        const paired = getPairedCycleTarget(source, currentOperationId)
+        if (typeof paired === 'string') {
+          pairedArmed = true
+          pairedKey = paired
+        }
+      } catch {}
+    }
     const reject = (result) => {
       record({
         level: 'error',
@@ -550,14 +652,47 @@ function createCompanionNavigation(dependencies = {}) {
       return Promise.resolve({ ...result, operationId: currentOperationId })
     }
     if (disposed || !enabled || !snapshot.ready) return reject(unavailable('任务缓存尚未就绪', 'inventory-not-ready'))
+    if (pairedArmed) {
+      const pairedTarget = snapshot.targets.get(pairedKey)
+      const pairedContext = pairedTarget ? captureTarget(pairedTarget) : null
+      let pairedEligible = false
+      try {
+        pairedEligible = Boolean(pairedTarget) && snapshot.cycleIndex.has(pairedKey) && canOpenTarget({
+          target: pairedTarget, context: pairedContext, source, operationId: currentOperationId, cycle: true
+        })
+      } catch {}
+      if (!pairedEligible) return reject(unavailable('指定任务当前不可切换', 'unavailable'))
+      const pairedHeld = walkHeld(startedAt)
+      if (!pairedHeld) {
+        adoptPublishedWalk()
+        walkAdoptedCount += 1
+      }
+      walkExpiresAt = startedAt + CYCLE_WALK_HOLD_MS
+      acceptedCycleCount += 1
+      pendingCursorKey = pairedKey
+      outstandingCycles += 1
+      record({
+        level: 'debug', scope: 'navigation', event: 'target-selected', outcome: 'selected',
+        operationId: currentOperationId, provider: pairedTarget.provider, taskRef: pairedTarget.key, source,
+        cache: 'process-package',
+        details: { paired: true, cycleCount: snapshot.cycleKeys.length, held: pairedHeld }
+      })
+      return new Promise((resolve) => queueCycle({
+        target: pairedTarget, context: pairedContext, source, operationId: currentOperationId, cycle: true, resolve
+      }))
+    }
     if (!snapshot.cycleKeys.length) return reject(unavailable('当前没有可切换的任务', 'no-task'))
-    const ring = ringForCycle(startedAt)
-    if (!ring.length) return reject(unavailable('当前没有可切换的任务', 'no-task'))
+    const held = walkHeld(startedAt)
+    if (!held) {
+      adoptPublishedWalk()
+      walkAdoptedCount += 1
+    }
+    const ring = walkRing
     walkExpiresAt = startedAt + CYCLE_WALK_HOLD_MS
     const offset = direction === -1 ? -1 : 1
     const origin = walkOrigin()
     const coalescing = origin !== cursorKey
-    const currentIndex = ring.indexOf(origin)
+    const currentIndex = walkIndex.get(origin) ?? -1
     // A displaced anchor stands in for a ring position that no longer exists.
     // Moving away from the side the anchor was taken from is an ordinary step;
     // moving back toward the gap resolves to the anchor itself, which is exactly
@@ -587,7 +722,7 @@ function createCompanionNavigation(dependencies = {}) {
       taskRef: target.key,
       source,
       cache: 'process-package',
-      details: { direction: offset, currentIndex, nextIndex, cycleCount: ring.length, held: walkHeld(startedAt), coalescing, displaced: cursorDisplacedSide || 'none' }
+      details: { direction: offset, currentIndex, nextIndex, cycleCount: ring.length, held, coalescing, displaced: cursorDisplacedSide || 'none' }
     })
     const context = captureTarget(target)
     return new Promise((resolve) => queueCycle({ target, context, source, operationId: currentOperationId, cycle: true, resolve }))
@@ -618,6 +753,19 @@ function createCompanionNavigation(dependencies = {}) {
     const suppliedTarget = normalizeTarget(input.target, enabledProviders)
     const target = suppliedTarget?.key === key ? suppliedTarget : snapshot.targets.get(key)
     if (!target) return reject(unavailable('任务身份已失效，请刷新后重试', 'stale-target'))
+    const request = {
+      target,
+      context: captureTarget(target),
+      attention: input.attention,
+      cacheOnly: input.cacheOnly === true,
+      source,
+      operationId: currentOperationId,
+      trustedResolvedTarget: input.trustedResolvedTarget === true,
+      attentionKind: input.attentionKind === 'input' || input.attentionKind === 'completed-unread'
+        ? input.attentionKind : ''
+    }
+    const merged = mergeConsecutive(request)
+    if (merged) return merged
     if (directQueue.length >= MAX_DIRECT_QUEUE) return reject(unavailable('任务打开队列繁忙，请稍后重试', 'queue-full'))
     cancelPendingCycle()
     record({
@@ -633,18 +781,7 @@ function createCompanionNavigation(dependencies = {}) {
       details: { ready: snapshot.ready, targetCount: snapshot.targets.size }
     })
     return new Promise((resolve) => {
-      directQueue.push({
-        target,
-        context: captureTarget(target),
-        attention: input.attention,
-        cacheOnly: input.cacheOnly === true,
-        source,
-        operationId: currentOperationId,
-        trustedResolvedTarget: input.trustedResolvedTarget === true,
-        attentionKind: input.attentionKind === 'input' || input.attentionKind === 'completed-unread'
-          ? input.attentionKind : '',
-        resolve
-      })
+      directQueue.push({ ...request, resolve })
       pump()
     })
   }
@@ -684,6 +821,7 @@ function createCompanionNavigation(dependencies = {}) {
       walkRingCount: walkRing.length,
       walkAdoptedCount,
       walkMergedCount,
+      ringRebuildCount,
       coalescedAdvanceCount,
       outstandingCycles,
       pendingCycle: Boolean(queuedCycle),

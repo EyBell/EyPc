@@ -40,6 +40,7 @@ const placement = require('./float-placement.cjs')
 const CODEX_FLOAT_BRIDGE_REVISION = 'codex-float-bridge-v1'
 const CODEX_FLOAT_WINDOW_TITLE = 'EyPc Codex'
 const CODEX_FLOAT_WINDOW_SLOT = '__eypcCodexFloatWindow'
+const CODEX_FLOAT_TASK_PHASES = new Set(['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown'])
 
 const CODEX_FLOAT_CHANNELS = {
   snapshot: 'eypc-float:snapshot',
@@ -85,6 +86,7 @@ const CODEX_FLOAT_EXPANDED_MAX_HEIGHT = 460
 const CODEX_FLOAT_MARGIN = 12
 const CODEX_FLOAT_INTERACTION_IDLE_MS = 10_000
 const CODEX_FLOAT_TRANSITION_TIMEOUT_MS = 1500
+const CODEX_FLOAT_VISIBLE_PACKAGE_LIMIT = 8
 const CODEX_FLOAT_HEARTBEAT_MS = 2_000
 const CODEX_FLOAT_STALL_MS = 6_000
 const CODEX_FLOAT_RECOVERY_MS = 10_000
@@ -109,6 +111,8 @@ function createCodexFloatBridge(dependencies = {}) {
   const copyText = dependencies.copyText
   const openCodexThread = dependencies.openCodexThread
   const companionTaskKernel = dependencies.companionTaskKernel || null
+  const runtimeBuild = dependencies.runtimeBuild || null
+  const recordTaskPresentation = dependencies.recordTaskPresentation
   const floatDisplayForPoint = dependencies.displayForPoint
   const floatDisplayForPosition = dependencies.displayForPosition
   const validCodexResizeCorner = dependencies.validResizeCorner
@@ -139,6 +143,10 @@ function createCodexFloatBridge(dependencies = {}) {
   let codexFloatSnapshot = null
   let codexFloatBaseLastSentRevision = 0
   const codexFloatSentTaskRevisions = new Set()
+  const codexFloatSentPresentationPackages = new Map()
+  let codexFloatUnreportedRows = new Map()
+  const codexFloatSemanticMismatches = new Map()
+  let codexFloatVisibleRevision = 0
   let codexFloatTaskLastSentRevision = 0
   let codexFloatTaskAppliedRevision = 0
   let codexFloatTaskPendingRevision = 0
@@ -634,6 +642,10 @@ function createCodexFloatBridge(dependencies = {}) {
     clearCodexFloatTaskAckTimer()
     codexFloatBaseLastSentRevision = 0
     codexFloatSentTaskRevisions.clear()
+    codexFloatSentPresentationPackages.clear()
+    codexFloatUnreportedRows.clear()
+    codexFloatSemanticMismatches.clear()
+    codexFloatVisibleRevision = 0
     codexFloatTaskLastSentRevision = 0
     codexFloatTaskAppliedRevision = 0
     codexFloatTaskPendingRevision = 0
@@ -645,6 +657,12 @@ function createCodexFloatBridge(dependencies = {}) {
     codexFloatSentTaskRevisions.add(revision)
     if (codexFloatSentTaskRevisions.size > 128) {
       codexFloatSentTaskRevisions.delete(codexFloatSentTaskRevisions.values().next().value)
+    }
+    if (Array.isArray(taskPackage?.tasks) && typeof recordTaskPresentation === 'function') {
+      codexFloatSentPresentationPackages.set(revision, taskPackage)
+      if (codexFloatSentPresentationPackages.size > CODEX_FLOAT_VISIBLE_PACKAGE_LIMIT) {
+        codexFloatSentPresentationPackages.delete(codexFloatSentPresentationPackages.keys().next().value)
+      }
     }
     clearCodexFloatTaskAckTimer()
     if (!revision || revision <= codexFloatTaskAppliedRevision) return
@@ -783,6 +801,7 @@ function createCodexFloatBridge(dependencies = {}) {
       codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.state, {
         presentationId: codexFloatPresentationId,
         expanded: codexFloatExpanded,
+        nativeVisible: codexFloatWindowShown && nativeFloatPresentation(codexFloatWindow).nativeVisible !== false,
         viewportSize: { width: bounds.width, height: bounds.height },
         windowGeneration: codexFloatWindowGeneration,
         geometrySequence: codexFloatGeometrySequence,
@@ -1239,6 +1258,7 @@ function createCodexFloatBridge(dependencies = {}) {
         if (typeof codexFloatWindow.show === 'function') codexFloatWindow.show()
         if (typeof codexFloatWindow.focus === 'function') codexFloatWindow.focus()
         codexFloatActivationNeedsFocus = false
+        pushCodexFloatState()
       }
       const activation = { requestedAt: Date.now(), ...(command ? { command } : {}) }
       if (!codexFloatExpanded || codexFloatTransition) {
@@ -1421,6 +1441,7 @@ function createCodexFloatBridge(dependencies = {}) {
       if (codexFloatActivationNeedsFocus && typeof codexFloatWindow.focus === 'function') codexFloatWindow.focus()
       codexFloatActivationNeedsFocus = false
       codexFloatWindowShown = true
+      pushCodexFloatState()
     } catch {}
   }
 
@@ -1837,7 +1858,10 @@ function createCodexFloatBridge(dependencies = {}) {
     })
     ipc.on(CODEX_FLOAT_CHANNELS.returnFocus, () => {
       if (!codexFloatAlive()) return
-      try { codexFloatWindow.hide() } catch {}
+      try {
+        codexFloatWindow.hide()
+        pushCodexFloatState()
+      } catch {}
     })
     ipc.on(CODEX_FLOAT_CHANNELS.action, (_event, payload) => emitCodexFloatAction(record(payload).actionId, record(payload).args))
     ipc.on(CODEX_FLOAT_CHANNELS.taskPackageAck, (_event, payload) => {
@@ -1847,12 +1871,66 @@ function createCodexFloatBridge(dependencies = {}) {
       const stage = source.stage
       if (!Number.isInteger(sentRevision) || sentRevision <= 0 || !Number.isInteger(currentRevision) || currentRevision < 0) return
       if (source.windowGeneration !== codexFloatWindowGeneration || !codexFloatSentTaskRevisions.has(sentRevision)) return
-      const delivery = (outcome, revision, details) => runtimeDiagnostics.record({
-        level: 'debug', scope: 'float-bridge', event: 'task-package-ack', outcome, count: revision,
+      const delivery = (outcome, revision, details, elapsed) => (recordTaskPresentation || runtimeDiagnostics.record)({
+        level: elapsed > 250 ? 'info' : 'debug', scope: 'float-bridge', event: 'task-package-ack', outcome, count: revision, packageRevision: revision,
+        ...(elapsed === undefined ? {} : { durationMs: elapsed, slowMs: 250 }),
         details: { windowGeneration: codexFloatWindowGeneration, ...details }
       })
       if (stage === 'received') {
         delivery('received', sentRevision)
+        return
+      }
+      if (stage === 'visible') {
+        const taskPackage = codexFloatSentPresentationPackages.get(sentRevision)
+        if (!taskPackage || currentRevision !== sentRevision || currentRevision < codexFloatVisibleRevision
+          || !codexFloatAlive() || !codexFloatWindowShown || !codexFloatExpanded || codexFloatTransition
+          || !runtimeBuild?.builtAt || source.builtAt !== runtimeBuild.builtAt
+          || source.hostAssetId !== runtimeBuild.hostAssetId || source.rendererAssetId !== runtimeBuild.rendererAssetId
+          || !Array.isArray(source.keys)) return
+        const { nativeVisible, nativeOpacity } = nativeFloatPresentation(codexFloatWindow)
+        if (nativeVisible === false || nativeOpacity === 0) return
+        if (codexFloatVisibleRevision !== sentRevision) {
+          codexFloatVisibleRevision = sentRevision
+          codexFloatSemanticMismatches.clear()
+          codexFloatUnreportedRows = new Map(taskPackage.tasks.filter(task => task.provider === 'codex').map(task => [task.key, task]))
+        }
+        const reportedRows = Array.isArray(source.rows) && source.rows.length
+          ? source.rows
+          : source.keys.map((key) => ({ key, semanticRevision: null }))
+        const reportedKeys = new Set(source.keys)
+        for (const row of reportedRows.slice(0, 40)) {
+          const key = typeof row?.key === 'string' ? row.key : ''
+          const task = reportedKeys.has(key) ? codexFloatUnreportedRows.get(key) : undefined
+          if (!task) continue
+          const observedRevision = Number.isInteger(row.semanticRevision) ? row.semanticRevision : null
+          const observedPhase = CODEX_FLOAT_TASK_PHASES.has(row.phase) ? row.phase : ''
+          if (observedRevision !== task.semanticRevision || observedPhase !== task.phase) {
+            const signature = `${observedPhase}:${observedRevision}`
+            if (codexFloatSemanticMismatches.get(key) === signature) continue
+            codexFloatSemanticMismatches.set(key, signature)
+            recordTaskPresentation({
+              level: 'error', scope: 'float-bridge', event: 'float-task-presented', outcome: 'mismatch',
+              provider: 'codex', taskRef: task.key, phase: observedPhase,
+              packageRevision: sentRevision, details: {
+                windowGeneration: codexFloatWindowGeneration, hostAssetId: runtimeBuild.hostAssetId,
+                rendererAssetId: runtimeBuild.rendererAssetId, builtAt: runtimeBuild.builtAt,
+                expectedPhase: task.phase, semanticRevision: observedRevision, expectedSemanticRevision: task.semanticRevision
+              }
+            })
+            continue
+          }
+          codexFloatUnreportedRows.delete(key)
+          recordTaskPresentation({
+            level: 'info', scope: 'float-bridge', event: 'float-task-presented', outcome: 'visible',
+            provider: 'codex', taskRef: task.key, phase: observedPhase, turnStartedAt: task.turnStartedAt,
+            packageRevision: sentRevision, details: {
+              windowGeneration: codexFloatWindowGeneration, hostAssetId: runtimeBuild.hostAssetId,
+              rendererAssetId: runtimeBuild.rendererAssetId, builtAt: runtimeBuild.builtAt,
+              complete: taskPackage.complete, codexHealth: taskPackage.providerHealth?.codex?.status,
+              group: task.dynamicGroup, semanticRevision: task.semanticRevision
+            }
+          })
+        }
         return
       }
       if (stage === 'applied') {
@@ -1863,22 +1941,19 @@ function createCodexFloatBridge(dependencies = {}) {
         const clearsPending = codexFloatTaskPendingRevision > 0 && sentRevision >= codexFloatTaskPendingRevision
         codexFloatTaskAppliedRevision = Math.max(codexFloatTaskAppliedRevision, sentRevision)
         companionTaskKernel?.acknowledge?.({ consumer: 'float', revision: sentRevision })
+        const native = nativeFloatPresentation(codexFloatWindow)
+        const appliedPackage = codexFloatSentPresentationPackages.get(sentRevision)
+        const presentation = !appliedPackage ? 'rows-unavailable' : !appliedPackage.tasks.length ? 'empty'
+          : !codexFloatWindowShown || native.nativeVisible === false || native.nativeOpacity === 0 ? 'background'
+          : codexFloatExpanded ? 'expanded' : 'folded'
         if (clearsPending) {
           const elapsed = codexFloatTaskPendingStartedAt ? Date.now() - codexFloatTaskPendingStartedAt : 0
           clearCodexFloatTaskAckTimer()
           codexFloatTaskPendingRevision = 0
           codexFloatTaskSendAttempts = 0
           codexFloatTaskPendingStartedAt = 0
-          runtimeDiagnostics.record({
-            level: elapsed > 250 ? 'info' : 'debug',
-            scope: 'float-bridge',
-            event: 'task-package-ack',
-            outcome: 'applied',
-            durationMs: elapsed,
-            slowMs: 250,
-            count: sentRevision
-          })
-        } else delivery('applied', sentRevision)
+          delivery('applied', sentRevision, { presentation }, elapsed)
+        } else delivery('applied', sentRevision, { presentation })
         return
       }
       if (stage !== 'rejected') return

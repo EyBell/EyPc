@@ -227,6 +227,8 @@ export interface CodexReadOptions {
   includeQuota?: boolean
   includeConfig?: boolean
   includeThreads?: boolean
+  /** Host-owned verified snapshot reuse; ordinary structural reads stay fresh. */
+  inventoryPolicy?: 'reuse-verified'
 }
 
 export interface CodexFloatAction {
@@ -443,6 +445,13 @@ export interface CompanionTaskKernelBridge {
   getLatest(): CompanionTaskSnapshotV6
   subscribe(afterRevision: number, listener: (value: CompanionTaskSnapshotV6) => void): () => void
   acknowledge(input: { consumer: string; revision: number }): boolean
+  acknowledge(input: {
+    consumer: 'main-visible'
+    revision: number
+    presentation: 'visible' | 'hidden' | 'not-in-viewport' | 'not-displayed' | 'empty'
+    activeCount?: number
+    countStatus?: 'mismatch'
+  }): boolean
   diagnostics(): {
     revision: string
     packageRevision: string
@@ -536,7 +545,14 @@ export interface RuntimeDiagnosticsSnapshotV3 {
   directory: string
   activeFile: string
   totals: { events: number; filtered: number; debug: number; info: number; error: number; slow: number; writeFailures: number }
-  storage: { fileCount: number; totalBytes: number; maxFileBytes: number; maxTotalBytes: number; retentionDays: number }
+  storage: {
+    fileCount: number
+    totalBytes: number
+    maxFileBytes: number
+    maxTotalBytes: number
+    retentionDays: number
+    writeTiming?: { drainCount: number; syncWrites: number; drainMs: number; maxDrainMs: number }
+  }
   recent: RuntimeDiagnosticEventV3[]
 }
 
@@ -548,6 +564,32 @@ export interface RuntimeDiagnosticsClearResultV3 {
   remainingBytes: number
 }
 
+type CodexOpenBenchmarkCommand =
+  | { action: 'status' | 'reset' }
+  | { action: 'arm'; startRef: string; targetKey: string }
+  | { action: 'observe'; operationId: string; visibility: 'observed' | 'wrong-target' | 'timeout' | 'unconfirmed'; observedAt?: number }
+
+type CodexOpenBenchmarkResult = { outcome: 'unavailable'; errorCode: string } | {
+  outcome: 'available'
+  run: number
+  attempts: number
+  nextPair: number | null
+  armed: boolean
+  resetRequired: boolean
+  explicitEligible: boolean
+  defaultRoute: { count: number; medianMs?: number; p90Ms?: number }
+  explicitRoute: { count: number; medianMs?: number; p90Ms?: number }
+  trials: Array<{
+    operationId: string
+    pair: number
+    arm: 'default' | 'explicit'
+    dispatchAt?: number
+    dispatchOutcome: string
+    visibility: string
+    visibleMs?: number
+  }>
+}
+
 export interface EypcPlatformApi {
   runtimeIdentity?: RuntimeIdentityBridgeV1
   /** Renderer-owned result of the Main/Preload identity handshake. */
@@ -557,6 +599,7 @@ export interface EypcPlatformApi {
     snapshot(): RuntimeDiagnosticsSnapshotV3
     record(input: RuntimeDiagnosticInputV3): RuntimeDiagnosticEventV3 | null
     configure(settings: RuntimeDiagnosticsSettings): RuntimeDiagnosticsSnapshotV3
+    codexOpenBenchmark?(command: CodexOpenBenchmarkCommand): CodexOpenBenchmarkResult
     openDirectory(): Promise<FileActionResult>
     openFile?(): Promise<FileActionResult>
     clear?(): RuntimeDiagnosticsClearResultV3

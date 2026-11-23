@@ -108,3 +108,4 @@
 .operation-tooltip--compact::after { display: none; }
 
 .operation-tooltip--preserve-lines .operation-tooltip-label, .operation-tooltip--preserve-lines .operation-tooltip-detail { white-space: pre-line; text-align: left; }
+.operation-tooltip--float.operation-tooltip--preserve-lines .operation-tooltip-label { font-family: var(--eypc-font-mono); }

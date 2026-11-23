@@ -21,8 +21,8 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
 | 原始来源 | 71 documents / 356 ordered / 230 RAW-parent / 126 source-only |
 | 当前核心版本 | `EyPc V7`（`V7`） |
 | 当前统一运行合同 | `task-state-v12 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v7 / companion-task-snapshot-v7 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
-| 当前构建产物 | `host-7ddb644fdb6faa08d36c / renderer-df9a47127fd151767ff5` · `artifact-ready` |
-| 当前构建时间 | `2026/11/22 16:36:59`（`2026-11-22T08:36:59.474Z`） |
+| 当前构建产物 | `host-a6021cc8f152f708af66 / renderer-c0e6e715707df624d58f` · `artifact-ready` |
+| 当前构建时间 | `2026/11/23 13:50:58`（`2026-11-23T05:50:58.981Z`） |
 | 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
 
 <details>
@@ -62,20 +62,20 @@ Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
     "command": "companion-task-command-v1",
     "subscribe": "companion-task-subscribe-v1",
     "ack": "companion-task-ack-v2",
-    "host_asset": "host-7ddb644fdb6faa08d36c",
-    "renderer_asset": "renderer-df9a47127fd151767ff5",
+    "host_asset": "host-a6021cc8f152f708af66",
+    "renderer_asset": "renderer-c0e6e715707df624d58f",
     "artifact_state": "artifact-ready",
-    "built_at": "2026-11-22T08:36:59.474Z",
-    "built_at_local": "2026/11/22 16:36:59",
+    "built_at": "2026-11-23T05:50:58.981Z",
+    "built_at_local": "2026/11/23 13:50:58",
     "package_version": "0.1.0"
   },
   "content_digests": {
-    "requirement_registry": "5f622ca3b8b9a1bdb3553a030d99222cb3a59dbac892184e2f80a51478563906",
+    "requirement_registry": "12989a73d9541c077b21bf11ee795c8ae1898725bfdfbc0e9cd1c86bf1fed20e",
     "raw_sources": "4ac56d8edc3c83a513345ce470c3b7e5825d2f95e5af28ec57f4d7a764f75e00",
     "source_anchor_catalog": "75c5993c90ec2d03f22beadfce4424c18d33f4f590ba75f33e4dffb6082a26cd",
-    "product_body": "4ce0bf0c0ace270321df0d3234a56246e12c0eee3425f4f1de74bd7401b0b003",
-    "architecture": "76fdcf33997f33f80022f41be57ae6a0db70637b2c2b7dcffbcf508b72e0cf35",
-    "runtime_contract": "af5577e098aae2c82386cdbd0de4597a23bd729b7a2e0357ec0de568a3d9b794"
+    "product_body": "12a7cd1b6042ee8234e2b1f8b3747dee362155244d66458945ccf2507fcb96e4",
+    "architecture": "4c4c5cf08ac968e89d31bec9e94b243bc9bf80cb47afa037e9160a5fcc042eaf",
+    "runtime_contract": "1b3e5bd20855abee736a3dc85236c64ddd44820b9acd20b235adae6cf30a2b5a"
   }
 }
 ```
@@ -254,10 +254,11 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - 本地置顶用于暂存待查。进行中、待输入、待继续、已完成未读显示在对应状态分组并保留图钉，已完成已读和 `unknown` 显示在动态列表顶部的置顶分组。Kernel 以 `localPin || providerPin` 识别置顶，任意相位的置顶均豁免活动时间窗；本地置顶按持久化顺序在前，来源置顶按来源顺序在后。每个任务只出现在一个动态组，通用循环中的任务均在动态列表可见。角标仍按真实状态计数。已读置顶参与通用循环的第四层。「已完成未读」专用入口在真实未读为空时使用合格的置顶组成员兜底，包括可打开的 `unknown` 置顶。置顶轮次使用固定任务身份，成员元数据更新不重置已访问进度。取消置顶后恢复该状态的时间窗规则，待继续保持豁免。[RAW-205](requirements/shared-raw-205.md#L1) · [RAW-215](requirements/shared-raw-215.md#L1) · [RAW-222](requirements/shared-raw-222.md#L1)
 - 动态「置顶、正在进行中、待继续、已完成」分组可在当前 Float 会话内分别折叠；该状态不持久化，也不改变项目页项目折叠，待输入、状态未知和已完成未读仍不折叠。项目页 Pinned、Projects、已隐藏项目同样只在当前 Float 会话内折叠；「全部折叠 / 全部展开」只切换这些分组，不改写单个项目已持久化的折叠，搜索时临时展开以便看到结果。展开时标题不占快捷编号，当前可见可执行任务行按顺序取得 `Alt+1…9/0`；折叠时该组任务行隐藏，标题只占一个编号并且唯一行为是展开该组，后续可见任务从下一号连续编号。展开后立即按新可见顺序重算编号，不为隐藏任务保留空号；`Alt+F` 继续只标记真实任务行。
 - 「上一个/下一个」按 [RAW-222](requirements/shared-raw-222.md#L1) 选择已发布可信候选的最高非空层，依次为进行中 → 待输入／待确认（含当前 Plan interaction）→ 已完成未读＋待继续（含 artifact-only Plan）→ 已完成已读的本地／来源置顶。更高层有合格项即优先。待继续的实际 phase、unread、显示组和专用入口按原合同。隐藏、暂停、不可打开、子任务、关闭来源、普通已完成已读和 `unknown` 排除，活动窗与置顶豁免继续适用。可打开的 `unknown` 置顶只用于专用兜底。层内跨来源按最近提问时间倒序，再用创建时间和匿名 key 稳定排序。
-- 连按第一下立即提交打开请求，打开在途时每一下推进逻辑游标，只保留最后一个待派发目标。短时间连续切换固定幸存项次序，新合格项追加，失格项即时移除。重排后默认保留仍处于 `cycleKeys` 的游标，失格时按旧次序就近改锚，整层替换无共同候选时从新层边界开始。通用候选内的成功打开可承接已确认游标。派发前重核原任务及资格。尾键仅在同一目标仍合格且已成功派发时复用结果，首键失败时允许仍合格的尾键派发。[重排与派发条款](requirements/shortcut-management-raw-003.md#L1)
+- 连按第一下立即提交打开请求，打开在途时每一下推进逻辑游标，只保留最后一个待派发目标。短时间连续切换固定幸存项次序，新合格项追加，失格项即时移除。重排后默认保留仍处于 `cycleKeys` 的游标，失格时按旧次序就近改锚，整层替换无共同候选时从新层边界开始。通用候选内的成功打开可承接已确认游标。派发前重核原任务及资格。尾键仅在同一目标仍合格且已成功派发时复用结果。明确失败允许合格尾键派发。Codex 原生打开已调用且结果待确认时结束同目标尾键，新的显式按键仍可打开。[重排与派发条款](requirements/shortcut-management-raw-003.md#L1) · [结果待确认](261120/eypc-shortcut-optimization/jump-cache-component.md#verified-shortcut-cache-261122)
 - 每个任务行和项目行固定显示一个明显的文本化来源标记；即使只启用单一来源也不得省略，且图标与可访问名称必须同步表达来源。任务行可见标记为 `CC` / `CX` / `CS` / `OR`，Codex Host 额外进程为 `XH`；可访问名称仍为「归属 Claude / Codex / Cursor / Orca / Codex Host」。Claude 第二行项目名来自会话目录，Cursor 来自工作区文件夹；证据层必须把该名写入 Kernel，不得只显示来源平台。RAW-217 / RAW-218。
 - 所有打开由 `CompanionTaskCommandV1` 进入同一个 Command Gateway：Kernel 在命令所见 Snapshot 上解析原根任务，再由 Provider Adapter 执行 Codex 深链、Claude Epitaxy deep link、Cursor deeplink 或 Orca `terminal switch`。手动点击、Enter、角标、attention、快捷键和循环之间没有第二条效果通路；选择/打开不刷新或改写 phase，失败不清 unread。第一下循环立即派发；仅当打开仍在执行时，后续按键合并成一个最终 trailing 目标；全部 Provider 最大打开并发为 1。打开回执统一携带 `companion-open-handoff-v1`：当前外部链接最多证明 `requested/dispatched`，只有未来真实原生回执才能进入 `native-confirmed/applied`。打开前先经就绪层（`companion-open-readiness-v1`）：目标应用未运行时先启动（Codex 按「通过 CodexHost 打开 Codex」的有效模式决定经 `codexhost launch` 还是 `open -b`；Claude / Cursor 用 `open -b`；Orca 用 `orca open` 并等到 runtime `ready`），每 500 ms 轮询至进程出现（≤ 25 秒）并软等待就绪（≤ 8 秒）后才派发；超时或启动失败 fail-closed，不派发、不清 unread；探测未知时不启动。「跳转前确保目标应用已打开」默认开，关闭时回到只发深链。CodexHost 有效（`on`，或 `auto` 找到 codexhost 命令 / Host 描述符存活 / 当前 Desktop 环境带 CodexHost 启动变量）但找不到 codexhost 命令时拦下不启动；Claude 的在运行判定以 `pgrep -x Claude` 为准，不再要求辅助功能权限。RAW-202。
 - 后台按来源维护与发布可信任务快照。通用键、专用键、快速任务查看及精确快捷打开立即使用当时已发布的可信部分。尚未就绪的来源继续后台恢复。完全无可用缓存时结束本次触发，后续发布无补跳，界面无缓存等待或超时提示。可信快照确实没有合格任务时走原有无候选结果。按键入口、映射缺失和打开成功回执均无需触发或等待全量任务清单或强制预检。[分来源快照条款](requirements/shortcut-management-raw-002.md#L1) · [跳转缓存规格](261120/eypc-shortcut-optimization/jump-cache-component.md#L1)
+- Codex 以完整可信的首包参与任务显示和快捷键。可证实在插件重载前后仍运行的同一 Turn 从首次显示起即为进行中。Main 补项目与标题时可复用 Host 的同源库存，状态、计数和快捷键仍取该 V7 包。任务应用独立于额度、配置及 Magpie 结果。普通浮窗数字键、聚焦行打开和快看使用发布时的精确键，缺映射只补原目标。[首包验收](261114/codex-state-sync/delivery.md#verified-first-package-261122) · [精确目标](261120/eypc-shortcut-optimization/jump-cache-component.md#verified-shortcut-cache-261122)
 - 待输入和已完成未读的公开候选及新轮按最近提问时间排序。普通元数据更新保持轮内旧项次序。列表重排默认保留仍有效的已访问实例，失败或迟到的旧实例回执不推进新轮。真实未读清空后按置顶顺序重建兜底，待输入在新真实请求出现时重开整轮。[专用排序裁决](requirements/conflict-register.md#2026-08-29dec-20260829-02-attention-稳定轮次) · [RAW-188](requirements/shared-raw-188.md#L24) · [待输入 RAW-003](requirements/task-recovery-input-cycle-raw-003.md#L18)
 - Codex 原生任务的完成未读以匹配同任务、同完成实例的原生已读事件或读确认清除。实时连接断开时，允许在同一原生账号、本机和连接代次从持久状态复核原完成实例。成员按自身读态更新。派发后轮次访问记录可独立推进，应用前台、目标会话可见和原生清读分别取证。CodexHost 额外进程、Claude、Cursor、Orca 继续按各自已读合同处理。[Codex 清读条款](requirements/shortcut-management-raw-004.md#L1) · [11 月 20 日验收](261114/codex-state-sync/delivery.md#shortcut-read-reconciliation-261120)
 - `operationId` 负责幂等，命令按任务串行；`expectedRevision` 或 topology revision 变化时只重校验原任务键，绝不替换成邻近任务。Provider Adapter 的异常转换为该来源 `degraded + command failed`，不能使 Kernel、其它 Provider 或插件进程崩溃。Archive 不合并、不乐观移除，活动成员存在时必须拒绝。
@@ -293,7 +294,7 @@ Codex 原生分区给出置顶事实。有完整原生分区顺序时，用于�
 
 - Magpie Codex 周额度按本地／远端各自排除 free 账号后，对所有有效普通 `7days` 周窗口取均值；真实 0 参与，缺失、NaN、Infinity、unlimited、text 不按 0。单账号第一项／last 不替代均值，不跨来源混账号。验收算例 `0+85=42.5%`，Token 344.98 不抢占正周；最终最多一位小数，`0<p<1` 显示 `<1%`。来源候选为 fresh 正周＞fresh 正 Token＞stale 正周＞stale 正 Token＞明确零＞缺失，同层远端优先。周为零或缺失时余额只选单账号、不求和，按 promax→last→原序兜底。
 - 球心格、允许补环、实际展开卡、设置／外观预览共用同一 Magpie 周读数与完整 snapshot（含 Claude 权限）。grid 优先，Magpie 正周允许补入 Codex 0／缺失的普通周环，移环后球心去重，零值格收缩隐藏不改变均值；Codex 原生正周和 Claude 真实 0 不替代，Claude-only 缺普通周隐藏轨道；Claude 短周期／scoped、Token／Grok／Cursor 不驱动环。液面、卡片形态与贴边线仍用原生。
-- 展开卡的分类额度常态取最大单位 `D/H/M`，Cursor 常态显示月周期。悬停或键盘聚焦约 200ms 后，按账号显示 `短码-倒计时-MMDD-hhmm`，采用上海时区、24 小时制。提示内超过 30 分钟显示整小时，最低 `1H`，最后 30 分钟显示分钟。到期显示「待刷新」，缺时间显示 `—`。账号用两字母短码，Cursor 月周期用 `gk`，Bot 用 `bo`。点击、Enter 或 Space 刷新。提示与读屏说明 `!` 对应的「上次数据」和「部分数据」。[当前条款](requirements/codex-magpie-reset-hint-raw-001.md#当前有效变更)。
+- 展开卡的分类额度常态取最大单位 `D/H/M`，Cursor 常态显示月周期。悬停或键盘聚焦约 200ms 后，按账号等宽分行显示 `短码-MMDD-hhmm-倒计时`。重置时间采用上海时区、24 小时制。倒计时超过 30 分钟显示整小时，最低 `1H`，最后 30 分钟显示分钟。到期显示「待刷新」，缺时间显示 `—`。账号用两字母短码，Cursor 月周期用 `gk`，Bot 用 `bo`。点击、Enter 或 Space 刷新。提示与读屏说明 `!` 对应的「上次数据」和「部分数据」。[当前条款](requirements/codex-magpie-reset-hint-raw-001.md#当前有效变更)。
 - 2026-11-14 提示历史：Magpie 快照投影为 Cursor 常态 2D，月为 261117-135221，Bot 为 261116-135353，未载本机额度。[提示精简](261113/magpie-reset-hint/spec.md#requirements)。20:52 自然 Hook 回执覆盖当时源码及 Hook 文案：V7 / host-46e2d9b53fc524f3409c / renderer-84aa25e1092762ee1804 / builtAt 2026-11-14T12:52:06.897Z。真实插件验收未覆盖。
 - 2026-11-14 账号去重局部取代来源文案、展开重复额度和整组长提示：右侧按类别显示重置，旧均值、仲裁、缓存和唯一 key 保留。[追加条款](261112/magpie-codex-weekly/task-card.md#2026-11-14-账号去重追加条款)。 2026-11-14 14:31 生产投影：当前 c222 周 99%，排除两个重复 Codex 窗口，其余 Codex 61%，Cursor Models 45.4%；Cursor Grok Bot 留在 Cursor。宿主手测未验，最终构建身份由 current-truth 生成。同日规则裁决：收尾构建只由同步 Stop Hook 执行；未回结果不手动 build，也不编造新产物身份。
 - 任参与账号过期即汇总过期，缺有效周账号标「部分数据」；失败保留最近成功快照，关闭立即隐藏，过重置标「待刷新」而不推 100%。本次明确用户决定局部取代旧单账号周选择与轮换等冲突语义；[有效变更](261112/magpie-codex-weekly/task-card.md#2026-11-13-有效变更条款)及[现有登记 leaf](requirements/codex-magpie-weekly-raw-001.md#当前有效变更)保留来源，证据集中于[验证结论](261112/magpie-codex-weekly/task-card.md#本次验证结论)。不接入 `codex-2` 金额余额。

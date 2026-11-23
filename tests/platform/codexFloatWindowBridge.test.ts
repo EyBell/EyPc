@@ -22,6 +22,7 @@ interface Rect {
 const TEST_RUNTIME_IDENTITY = {
   revision: 'runtime-identity-v2',
   artifactState: 'artifact-ready',
+  builtAt: '2026-11-23T02:00:00.000Z',
   hostAssetId: 'host-test-current',
   rendererAssetId: 'renderer-test-current',
   kernelRevision: 'companion-task-kernel-v7',
@@ -283,7 +284,7 @@ function snapshot(overrides: Partial<FloatSnapshot> = {}): FloatSnapshot {
   }
 }
 
-function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Array<Record<string, any>>; platform?: string; captureDiagnostics?: boolean; capturePaint?: boolean; diagnosticsLevel?: string } = {}) {
+function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Array<Record<string, any>>; platform?: string; captureDiagnostics?: boolean; capturePaint?: boolean; diagnosticsLevel?: string; runtimeIdentity?: boolean } = {}) {
   const nativeBounds = (bounds: Rect): Rect => ({ ...bounds, y: Math.max(options.minimumY ?? -Infinity, bounds.y) })
   const leftoverWindows = options.leftoverWindows || []
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
@@ -366,6 +367,7 @@ function loadPreloadHarness(options: { minimumY?: number; leftoverWindows?: Arra
         })
       }
       if (name === './companion/task-kernel.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'))
+      if (name === './runtime-identity.cjs' && options.runtimeIdentity) return TEST_RUNTIME_IDENTITY
       if (name === 'node:buffer') return { Buffer }
       if (name === 'node:child_process') return { execFile, spawn }
       if (name === 'node:crypto') return crypto
@@ -480,7 +482,7 @@ function loadFloatRendererPreloadHarness(platform = 'darwin', renderOptions: { x
       observeInteraction(event: string, details: Record<string, unknown>): boolean
       getHealth(): { heartbeatSequence: number; lastHeartbeatAckAt: number }
       getSnapshot(): Record<string, any> | null
-      ackTaskSnapshot(stage: 'applied' | 'rejected', revision: number, reason?: string): boolean
+      ackTaskSnapshot(stage: 'applied' | 'rejected' | 'visible', revision: number, details?: string | { keys: string[]; rows?: Array<{ key: string; phase?: string; semanticRevision?: number | null }> }): boolean
       onSnapshot(listener: (value: Record<string, any>) => void): () => void
     },
     ipcHandlers,
@@ -580,6 +582,64 @@ describe('Codex float preload sizing', () => {
     expect(sent.at(-1)).toMatchObject({
       channel: 'eypc-float:task-package-ack',
       payload: { stage: 'rejected', reason: 'older-revision', currentRevision: 2 }
+    })
+  })
+
+  it('attributes visible rows to their sent package, build and expanded window generation', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10_000)
+    const host = loadPreloadHarness({ captureDiagnostics: true, runtimeIdentity: true })
+    const renderer = loadFloatRendererPreloadHarness()
+    const key = 'a'.repeat(32)
+    host.taskKernel.publishEvidence(companionDraft(1, { key }))
+    host.bridge.sync({ visible: true, snapshot: { ...snapshot({ baseRevision: 1 }), version: 2 } })
+    host.windowLoadedCallbacks[0]?.()
+    const initial = host.sent.find(item => item.channel === 'eypc-float:snapshot')
+    renderer.ipcHandlers.get(initial!.channel)?.({}, initial!.payload)
+    const revision = host.taskKernel.getLatest().packageRevision
+    const semanticRevision = host.taskKernel.getLatest().tasks[0].semanticRevision
+    expect(renderer.bridge.ackTaskSnapshot('visible', revision, {
+      keys: [key, 'invalid'],
+      rows: [{ key, phase: 'running', semanticRevision }, { key: 'invalid', phase: 'running', semanticRevision }]
+    })).toBe(true)
+    const ack = renderer.sent.at(-1)!
+    expect(ack.payload).toMatchObject({
+      stage: 'visible', currentRevision: revision, keys: [key], builtAt: TEST_RUNTIME_IDENTITY.builtAt
+    })
+    const deliver = (patch: Record<string, unknown> = {}) => host.ipcHandlers.get(ack.channel)?.({}, { ...ack.payload, ...patch })
+    const records = () => host.diagnosticEvents.filter(event => event.event === 'float-task-presented')
+    deliver()
+    expect(records()).toHaveLength(0)
+
+    const latestState = () => host.sent.filter(item => item.channel === 'eypc-float:state').at(-1)?.payload as {
+      presentationId: number; windowGeneration: number; transition: { id: number; phase: string }
+    }
+    const collapsed = latestState()
+    host.ipcHandlers.get('eypc-float:presentation-ready')?.({}, { id: collapsed.presentationId, windowGeneration: collapsed.windowGeneration })
+    setExpansion(host.ipcHandlers, true)
+    const expanding = latestState()
+    host.ipcHandlers.get('eypc-float:transition-ready')?.({}, { id: expanding.transition.id, windowGeneration: expanding.windowGeneration })
+    expect(latestState()).toMatchObject({ expanded: true, nativeVisible: true })
+    deliver({ windowGeneration: Number(ack.payload.windowGeneration) + 1 })
+    deliver({ builtAt: '2026-11-23T02:00:01.000Z' })
+    deliver({ keys: ['b'.repeat(32)] })
+    expect(records()).toHaveLength(0)
+    deliver({ rows: [{ key, phase: 'stopped', semanticRevision }] })
+    deliver({ rows: [{ key, phase: 'stopped', semanticRevision: semanticRevision + 9 }] })
+    deliver({ rows: [{ key, phase: 'stopped', semanticRevision: semanticRevision + 9 }] })
+    expect(records()).toEqual([semanticRevision, semanticRevision + 9].map((observed) => expect.objectContaining({
+      outcome: 'mismatch', phase: 'stopped',
+      details: expect.objectContaining({ expectedPhase: 'running', semanticRevision: observed, expectedSemanticRevision: semanticRevision })
+    })))
+
+    host.taskKernel.publishEvidence(companionDraft(2, { key, phase: 'waiting-input' }))
+    deliver()
+    deliver()
+    const visible = records().filter((event) => event.outcome === 'visible')
+    expect(visible).toHaveLength(1)
+    expect(visible[0]).toMatchObject({
+      outcome: 'visible', packageRevision: revision, taskRef: expect.stringMatching(/^h:/), phase: 'running',
+      details: { windowGeneration: ack.payload.windowGeneration, builtAt: TEST_RUNTIME_IDENTITY.builtAt, semanticRevision }
     })
   })
 

@@ -95,7 +95,7 @@ describe('Codex unread recovery isolation', () => {
 
 describe('Native Codex identity-scoped unread gate', () => {
   it('executes native/legacy source selection, identity isolation and live protocol acceptance', () => {
-    expect(checkCompanionNativeUnread(resolve('preload'))).toBe(40)
+    expect(checkCompanionNativeUnread(resolve('preload'))).toBe(44)
   })
   it('rejects the obsolete live unread protocol policy', () => {
     const temporary = mkdtempSync(join(tmpdir(), 'eypc-native-unread-'))
@@ -154,9 +154,14 @@ describe('Native Codex identity-scoped unread gate', () => {
 describe('Native Codex open experiment', () => {
   it('prepares ten balanced pairs and targets the same verified application once per explicit dispatch', async () => {
     let app = { path: '/Applications/Synthetic Codex.app', pid: 42, foreground: false }
+    let clock = 10_000
+    let appReads = 0
     const launches: string[][] = []
+    const events: Record<string, unknown>[] = []
     const experiment = createCodexDesktopOpenObservation({
-      record: () => undefined, platform: 'darwin', pairedBenchmark: true, readMacApp: async () => app,
+      record: (event: Record<string, unknown>) => events.push(event),
+      platform: 'darwin', pairedBenchmark: true, now: () => clock,
+      readMacApp: async () => { appReads += 1; return app },
       execFile: (file: string, args: string[], _options: unknown, callback: (error: Error | null) => void) => {
         launches.push([file, ...args])
         callback(null)
@@ -164,28 +169,117 @@ describe('Native Codex open experiment', () => {
     })
     const threadId = '12345678-1234-4234-8234-123456789abc'
     const target = `codex://threads/${threadId}`
-    const abandoned = await experiment.prepareBenchmarkTrial(threadId)
+    const key = 'a'.repeat(32)
+    const options = (operationId: string) => ({ operationId, key })
+    const arm = (operationId: string, secondArm = false) => {
+      expect(experiment.controlBenchmark({ action: 'arm', startRef: 'starting-chat', targetKey: key }))
+        .toMatchObject({ armed: true })
+      expect(experiment.selectBenchmarkTarget('local-shortcut', 'local')).toBeUndefined()
+      expect(experiment.selectBenchmarkTarget('global-shortcut', operationId)).toBe(secondArm ? key : undefined)
+    }
+    expect(experiment.selectBenchmarkTarget('global-shortcut', 'ordinary')).toBeUndefined()
+    await expect(experiment.prepareBenchmarkTrial(threadId, options('ordinary'))).resolves.toBeNull()
+    expect(appReads).toBe(0)
+    arm('abandoned')
+    const abandoned = await experiment.prepareBenchmarkTrial(threadId, options('abandoned'))
     const pairs: string[] = []
     for (let index = 0; index < 20; index += 1) {
-      const trial = await experiment.prepareBenchmarkTrial(threadId)
+      const operationId = `op-${index}`
+      arm(operationId, index % 2 === 1)
+      await expect(experiment.prepareBenchmarkTrial(threadId, options('ordinary'))).resolves.toBeNull()
+      const trial = await experiment.prepareBenchmarkTrial(threadId, options(operationId))
       expect(trial).toMatchObject({ ready: true, app, pair: Math.floor(index / 2) + 1 })
       expect(trial.start()).toBe(true)
+      expect(trial.start()).toBe(false)
       pairs.push(trial.arm)
+      const observed = experiment.begin({ threadId, key, operationId, pair: trial.pair, arm: trial.arm })
       await trial.open?.(target)
+      observed(true)
+      clock += trial.arm === 'explicit' ? 70 : 100
+      expect(experiment.controlBenchmark({ action: 'observe', operationId, visibility: 'observed', observedAt: clock }))
+        .toMatchObject({ attempts: index + 1 })
       if (index === 0) {
         expect(abandoned.start()).toBe(false)
+        expect(experiment.controlBenchmark({ action: 'arm', startRef: 'another-chat', targetKey: key }))
+          .toMatchObject({ errorCode: 'benchmark-pair-mismatch' })
         const otherThread = '22345678-1234-4234-8234-123456789abc'
-        await expect(experiment.prepareBenchmarkTrial(otherThread)).resolves.toMatchObject({ ready: false, errorCode: 'benchmark-pair-mismatch' })
+        arm('wrong-thread', true)
+        await expect(experiment.prepareBenchmarkTrial(otherThread, options('wrong-thread')))
+          .resolves.toMatchObject({ ready: false, errorCode: 'benchmark-pair-mismatch' })
         app = { ...app, foreground: true }
-        await expect(experiment.prepareBenchmarkTrial(threadId)).resolves.toMatchObject({ ready: false, errorCode: 'benchmark-pair-mismatch' })
-        app = { ...app, foreground: false, pid: 43 }
-        await expect(experiment.prepareBenchmarkTrial(threadId)).resolves.toMatchObject({ ready: false, errorCode: 'benchmark-application-unavailable' })
-        app = { ...app, pid: 42 }
+        arm('wrong-foreground', true)
+        await expect(experiment.prepareBenchmarkTrial(threadId, options('wrong-foreground')))
+          .resolves.toMatchObject({ ready: false, errorCode: 'benchmark-pair-mismatch' })
+        app = { ...app, foreground: false }
       }
     }
     expect(pairs.join(',')).toBe(Array.from({ length: 5 }, () => 'default,explicit,explicit,default').join(','))
     expect(launches).toEqual(Array.from({ length: 10 }, () => ['/usr/bin/open', '-a', app.path, target]))
-    await expect(experiment.prepareBenchmarkTrial(threadId)).resolves.toBeNull()
+    expect(events.filter(event => event.event === 'codex-open-target-visible' && event.outcome === 'observed')).toHaveLength(20)
+    expect(events.find(event => event.outcome === 'observed')).toMatchObject({ operationId: 'op-0', durationMs: 100 })
+    expect(experiment.controlBenchmark({ action: 'status' })).toMatchObject({
+      explicitEligible: true,
+      defaultRoute: { count: 10, medianMs: 100, p90Ms: 100 },
+      explicitRoute: { count: 10, medianMs: 70, p90Ms: 70 }
+    })
+    expect(experiment.controlBenchmark({ action: 'arm', startRef: 'starting-chat', targetKey: key }))
+      .toMatchObject({ errorCode: 'benchmark-reset-required' })
     expect(createCodexDesktopOpenObservation({ record: () => undefined, platform: 'darwin' }).prepareBenchmarkTrial).toBeNull()
+  })
+
+  it('requires a reset after the application process changes and ignores prior trial observations', async () => {
+    let pid = 42
+    const experiment = createCodexDesktopOpenObservation({
+      record: () => undefined, platform: 'darwin', pairedBenchmark: true, execFile: () => undefined,
+      readMacApp: async () => ({ path: '/Applications/Synthetic Codex.app', pid, foreground: false })
+    })
+    const threadId = '12345678-1234-4234-8234-123456789abc'
+    const key = 'a'.repeat(32)
+    const claim = (operationId: string) => {
+      expect(experiment.controlBenchmark({ action: 'arm', startRef: 'start', targetKey: key })).toMatchObject({ armed: true })
+      experiment.selectBenchmarkTarget('global-shortcut', operationId)
+      return experiment.prepareBenchmarkTrial(threadId, { operationId, key })
+    }
+    const first = await claim('first')
+    expect(first.start()).toBe(true)
+    pid += 1
+    await expect(claim('replaced')).resolves.toMatchObject({ ready: false, errorCode: 'benchmark-application-unavailable' })
+    expect(experiment.controlBenchmark({ action: 'status' })).toMatchObject({ attempts: 1, resetRequired: true, armed: false })
+    expect(experiment.controlBenchmark({ action: 'reset' })).toMatchObject({ attempts: 0, trials: [], resetRequired: false })
+    expect(experiment.controlBenchmark({ action: 'observe', operationId: 'first', visibility: 'timeout' }))
+      .toMatchObject({ errorCode: 'benchmark-observation-unavailable' })
+    await expect(claim('new-run')).resolves.toMatchObject({ ready: true, pair: 1, arm: 'default', app: { pid } })
+  })
+
+  it('assigns a frame to only its dispatch interval and retains earlier exact evidence after invalidation', async () => {
+    let clock = 10_000
+    const experiment = createCodexDesktopOpenObservation({
+      record: () => undefined, platform: 'darwin', pairedBenchmark: true, execFile: () => undefined, now: () => clock,
+      readMacApp: async () => ({ path: '/Applications/Synthetic Codex.app', pid: 42, foreground: false })
+    })
+    const threadId = '12345678-1234-4234-8234-123456789abc'
+    const key = 'a'.repeat(32)
+    const start = async (operationId: string) => {
+      experiment.controlBenchmark({ action: 'arm', startRef: 'start', targetKey: key })
+      experiment.selectBenchmarkTarget('global-shortcut', operationId)
+      const trial = await experiment.prepareBenchmarkTrial(threadId, { operationId, key })
+      expect(trial.start()).toBe(true)
+      experiment.begin({ threadId, key, operationId, pair: trial.pair, arm: trial.arm })(true)
+    }
+    await start('first')
+    clock = 10_100
+    await start('second')
+    clock = 10_500
+    experiment.clear()
+    clock = 10_550
+    const observe = (operationId: string, observedAt: number) =>
+      experiment.controlBenchmark({ action: 'observe', operationId, visibility: 'observed', observedAt })
+
+    expect(observe('first', 10_100)).toMatchObject({ errorCode: 'benchmark-observation-time-invalid' })
+    expect(observe('second', 10_500)).toMatchObject({ errorCode: 'benchmark-observation-time-invalid' })
+    expect(observe('first', 10_090)).toMatchObject({ trials: expect.arrayContaining([{ operationId: 'first',
+      pair: 1, arm: 'default', dispatchAt: 10_000, dispatchOutcome: 'dispatched', visibility: 'observed', visibleMs: 90 }]) })
+    expect(observe('second', 10_200)).toMatchObject({ trials: expect.arrayContaining([{ operationId: 'second',
+      pair: 1, arm: 'explicit', dispatchAt: 10_100, dispatchOutcome: 'dispatched', visibility: 'observed', visibleMs: 100 }]) })
   })
 })

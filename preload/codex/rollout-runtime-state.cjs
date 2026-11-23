@@ -49,7 +49,6 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
       'mcp_tool_call_end',
       'patch_apply_begin',
       'patch_apply_end',
-      'token_count'
     ])
     const liveResponseTypes = new Set([
       'custom_tool_call',
@@ -62,6 +61,8 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
     let lineEnd = -1
     let edgeEnd = 0
     let startEnd = -1
+    let sawTurnBoundary = false
+    let identifiedItemAt = 0
     for (const line of text.split('\n')) {
       lineEnd += line.length + 1
       if (!line || line.length > MAX_ROLLOUT_RUNTIME_LINE_BYTES) continue
@@ -78,6 +79,7 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         payload.completed_at
       )
       if (source.type === 'event_msg' && payload.type === 'task_started') {
+        sawTurnBoundary = true
         edgeEnd = lineEnd
         startEnd = lineEnd
         state.known = true
@@ -89,6 +91,8 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         continue
       }
       if (source.type === 'event_msg' && payload.type === 'task_complete') {
+        if (state.phase === 'active' && state.startedAt && turnId && state.turnId && turnId !== state.turnId) continue
+        sawTurnBoundary = true
         edgeEnd = lineEnd
         state.known = true
         state.phase = 'completed'
@@ -101,6 +105,8 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         continue
       }
       if (source.type === 'event_msg' && payload.type === 'turn_aborted') {
+        if (state.phase === 'active' && state.startedAt && turnId && state.turnId && turnId !== state.turnId) continue
+        sawTurnBoundary = true
         edgeEnd = lineEnd
         state.known = true
         state.phase = 'interrupted'
@@ -115,20 +121,24 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         state.edgeAt = observedAt
         continue
       }
-      const liveAppend = (source.type === 'event_msg' && liveEventTypes.has(payload.type))
-        || (source.type === 'response_item' && liveResponseTypes.has(payload.type))
-      if (!liveAppend) continue
-      edgeEnd = lineEnd
-      if (state.phase === 'completed' || state.phase === 'interrupted') {
-        state.startedAt = 0
-        state.turnId = ''
-        startEnd = -1
+      const identifiedItem = source.type === 'event_msg' && payload.type === 'item_completed'
+        && turnId && observedAt > 0
+      if (identifiedItem) {
+        if (sawTurnBoundary && !(state.phase === 'active' && state.startedAt && state.turnId === turnId)) continue
+        state.turnId = turnId
+        if (!sawTurnBoundary) identifiedItemAt = observedAt
       }
+      const liveAppend = identifiedItem || (source.type === 'event_msg' && liveEventTypes.has(payload.type))
+        || (source.type === 'response_item' && liveResponseTypes.has(payload.type))
+      if (!liveAppend || state.phase === 'completed' || state.phase === 'interrupted'
+        || turnId && state.turnId && turnId !== state.turnId) continue
+      edgeEnd = lineEnd
       state.known = true
       state.phase = 'active'
       state.edge = 'live-append'
       state.edgeAt = observedAt
     }
+    if (!sawTurnBoundary && identifiedItemAt > 0) state.turnActivityAt = identifiedItemAt
     if (state.edge === 'turn-aborted' && interruptedAt > 0) state.interruptedAt = interruptedAt
     if (state.known && appendedBytes > 0 && Buffer.byteLength(text.slice(edgeEnd)) < appendedBytes) {
       state.appended = true
@@ -147,8 +157,10 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
     const known = input.known
     const sameTurn = Boolean(runtime.turnId) && known?.lastTurnId === runtime.turnId
     if (runtime.phase === 'active') {
+      const knownStart = Number(known?.lastTurnStartedAt) || 0
+      if (runtime.turnActivityAt > 0 && (!sameTurn || !knownStart || runtime.turnActivityAt < knownStart)) return null
       if (!appended) {
-        if (!input.writable || !sameTurn || !runtime.startedAt || input.confirmedTerminal
+        if (!input.writable || !sameTurn || !(runtime.startedAt > 0 || runtime.turnActivityAt > 0) || input.confirmedTerminal
           || !['interrupted', 'inProgress'].includes(known.lastTurnStatus)
           || known.idleConfirmed || known.appServerLiveActive || known.activeFlags?.length || currentOwner) return null
       } else if (input.confirmedTerminal || known?.lastTurnStatus === 'completed') {

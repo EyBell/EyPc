@@ -1115,20 +1115,18 @@ describe('Codex Companion V4 UI contract', () => {
     const { wrapper, action } = mountFloat(true, floatSnapshot('all'))
     await wrapper.vm.$nextTick()
     const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    const expected = {
-      key: TASK_FAILED,
-      source: 'card-click'
-    }
+    const clicked = { key: TASK_FAILED, source: 'card-click' }
+    const keyed = { key: TASK_FAILED, source: 'local-shortcut' }
 
     await failed.get('.task-open').trigger('click')
-    expect(action).toHaveBeenLastCalledWith('codex.task.open', expected)
+    expect(action).toHaveBeenLastCalledWith('codex.task.open', clicked)
     action.mockClear()
     await failed.get('.task-title-button').trigger('click')
-    expect(action).toHaveBeenCalledWith('codex.task.open', expected)
+    expect(action).toHaveBeenCalledWith('codex.task.open', clicked)
     action.mockClear()
     ;(failed.element as HTMLElement).focus()
     await failed.trigger('keydown', { key: 'Enter', code: 'Enter' })
-    expect(action).toHaveBeenCalledWith('codex.task.open', expected)
+    expect(action).toHaveBeenCalledWith('codex.task.open', keyed)
   })
 
   it('routes every card entry by anonymous key even when its advisory alias is absent', async () => {
@@ -1139,7 +1137,8 @@ describe('Codex Companion V4 UI contract', () => {
     const { wrapper, action } = mountFloat(true, source)
     await wrapper.vm.$nextTick()
     const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    const expected = { key: TASK_FAILED, source: 'card-click' }
+    const clicked = { key: TASK_FAILED, source: 'card-click' }
+    const keyed = { key: TASK_FAILED, source: 'local-shortcut' }
 
     await failed.get('.task-open').trigger('click')
     await failed.get('.task-title-button').trigger('click')
@@ -1147,9 +1146,9 @@ describe('Codex Companion V4 UI contract', () => {
     await failed.trigger('keydown', { key: 'Enter', code: 'Enter' })
 
     expect(action.mock.calls.filter(([id]) => id === 'codex.task.open')).toEqual([
-      ['codex.task.open', expected],
-      ['codex.task.open', expected],
-      ['codex.task.open', expected]
+      ['codex.task.open', clicked],
+      ['codex.task.open', clicked],
+      ['codex.task.open', keyed]
     ])
   })
 
@@ -1713,6 +1712,116 @@ describe('Codex Companion V4 UI contract', () => {
     const afterOpen = wrapper.findAll('.float-task-row').filter((row) => row.find('.task-quick-index').exists())
     expect(afterOpen.length).toBeGreaterThan(0)
     expect(afterOpen[0].attributes('aria-label')).toContain('快捷键 Alt+1 打开')
+  })
+
+  it('opens the drawer task from keyboard as a local shortcut and keeps pointer clicks as card clicks', async () => {
+    const { wrapper, action } = mountFloat(true, floatSnapshot('ongoing'))
+    await wrapper.vm.$nextTick()
+    await wrapper.get(`[data-focus-key="task:${TASK_ACTIVE}"]`).trigger('contextmenu')
+    await wrapper.get('.codex-float-root').trigger('keydown', { key: '1', code: 'Digit1', ctrlKey: true })
+    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ key: TASK_ACTIVE, source: 'local-shortcut' }))
+    action.mockClear()
+    await wrapper.get('[data-drawer-action-id="task-open"]').trigger('click')
+    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ key: TASK_ACTIVE, source: 'card-click' }))
+  })
+
+  it('acks only task rows actually inside the expanded native-visible viewport', async () => {
+    const rect = { x: 20, y: 30, left: 20, right: 180, top: 30, bottom: 90, width: 160, height: 60, toJSON() { return this } }
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect as DOMRect)
+    let emitState: ((state: CodexFloatWindowState) => void) | undefined
+    const source = floatSnapshot('ongoing')
+    source.runtimeIdentity = {
+      status: 'host-loaded',
+      actual: { hostAssetId: __EYPC_HOST_ASSET_ID__, rendererAssetId: __EYPC_RENDERER_ASSET_ID__ }
+    } as CodexFloatSnapshotV1['runtimeIdentity']
+    const { wrapper } = mountFloat(true, source, {
+      getState: () => ({ expanded: true, pinned: false, resizing: false, resizeCorner: 'bottom-right', expandedSize: { displayId: '1', width: 360, height: 420, manual: false }, nativeVisible: false, windowGeneration: 4 }),
+      onState: (listener) => { emitState = listener; return () => undefined }
+    })
+    const ack = window.eypcFloat?.ackTaskSnapshot as ReturnType<typeof vi.fn>
+    const frames = async () => { await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))) }
+    await frames()
+    expect(ack).not.toHaveBeenCalledWith('visible', expect.any(Number), expect.anything())
+    emitState?.({ expanded: true, pinned: false, resizing: false, resizeCorner: 'bottom-right', expandedSize: { displayId: '1', width: 360, height: 420, manual: false }, nativeVisible: true, windowGeneration: 4 })
+    await wrapper.vm.$nextTick()
+    await frames()
+    expect(ack).toHaveBeenCalledWith('visible', expect.any(Number), expect.objectContaining({
+      keys: expect.arrayContaining([TASK_ACTIVE]),
+      rows: expect.arrayContaining([expect.objectContaining({ key: TASK_ACTIVE, phase: 'running', semanticRevision: expect.any(Number) })])
+    }))
+    const windowState = { expanded: true, pinned: false, resizing: false, resizeCorner: 'bottom-right',
+      expandedSize: { displayId: '1', width: 360, height: 420, manual: false }, windowGeneration: 4 } as const
+    ack.mockClear()
+    emitState?.({ ...windowState, nativeVisible: false })
+    await wrapper.vm.$nextTick()
+    await frames()
+    expect(ack).not.toHaveBeenCalledWith('visible', expect.any(Number), expect.anything())
+    emitState?.({ ...windowState, nativeVisible: true })
+    await wrapper.vm.$nextTick()
+    await frames()
+    expect(ack).toHaveBeenCalledWith('visible', expect.any(Number), expect.objectContaining({ keys: expect.arrayContaining([TASK_ACTIVE]) }))
+    spy.mockRestore()
+  })
+
+  it('acks the visible Main appearance active count once', async () => {
+    const acknowledge = vi.fn<(input: unknown) => boolean>(() => true)
+    const platform = window.eypcPlatform
+    window.eypcPlatform = { companionKernel: { acknowledge } } as unknown as NonNullable<Window['eypcPlatform']>
+    const rect = { x: 10, y: 10, left: 10, right: 40, top: 10, bottom: 40, width: 30, height: 30, toJSON() { return this } }
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect as DOMRect)
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
+    try {
+      const settings = defaultCodexSettings()
+      const snapshot = { settings, quota: emptyCodexQuota(), claudeQuota: emptyClaudeQuota(), claudeEnvironment: emptyClaudeEnvironment(), taskState: { dynamic: { compactCounts: { input: 1, active: 2, unread: 4 } } }, environment: emptyCodexEnvironment(), floatHost: {}, taskSnapshot: { packageRevision: 7, tasks: [{ key: 'task' }] }, config: emptyCodexConfig(), modelCatalog: emptyCodexModelCatalog(), refreshing: false, runtimeIdentity: { status: 'host-loaded' } } as unknown as CodexRuntimeView
+      const wrapper = mount(CodexPage, { attachTo: document.body, props: { snapshot } })
+      mounted.push(wrapper)
+      await wrapper.get('#codex-config-tab-water').trigger('click')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('.appearance-counter.active').exists()).toBe(true)
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      expect(acknowledge).toHaveBeenCalledWith({ consumer: 'main-visible', revision: 7, presentation: 'visible', activeCount: 2 })
+      acknowledge.mockClear()
+      wrapper.get('.appearance-counter.active').element.textContent = '2\u4e2a'
+      window.dispatchEvent(new Event('scroll'))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      expect(acknowledge).toHaveBeenCalledWith({ consumer: 'main-visible', revision: 7, presentation: 'visible', countStatus: 'mismatch' })
+      expect(acknowledge.mock.calls.at(-1)?.[0]).not.toHaveProperty('activeCount')
+      wrapper.get('.appearance-counter.active').element.remove()
+      snapshot.taskState.dynamic.compactCounts.active = 9
+      await wrapper.setProps({ snapshot: { ...snapshot } })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      expect(acknowledge).toHaveBeenCalledWith({ consumer: 'main-visible', revision: 7, presentation: 'visible', activeCount: 0 })
+      await wrapper.get('#codex-config-tab-shortcuts').trigger('click')
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      expect(acknowledge).toHaveBeenCalledWith({ consumer: 'main-visible', revision: 7, presentation: 'not-displayed' })
+      const animation = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(42)
+      const visibility = vi.spyOn(document, 'visibilityState', 'get')
+      try {
+        await wrapper.setProps({ snapshot: { ...snapshot, taskSnapshot: { ...snapshot.taskSnapshot, packageRevision: 8 } } })
+        expect(acknowledge).toHaveBeenCalledWith({ consumer: 'main-visible', revision: 8, presentation: 'not-displayed' })
+        visibility.mockReturnValue('hidden')
+        await wrapper.setProps({ snapshot: { ...snapshot, taskSnapshot: { ...snapshot.taskSnapshot, packageRevision: 9 } } })
+        expect(acknowledge).toHaveBeenCalledWith({ consumer: 'main-visible', revision: 9, presentation: 'hidden' })
+      } finally {
+        visibility.mockRestore()
+        animation.mockRestore()
+      }
+    } finally {
+      spy.mockRestore()
+      window.eypcPlatform = platform
+    }
+  })
+
+  it('opens the keyboard-focused row as a local shortcut without entering quick mode', async () => {
+    const { wrapper, action } = mountFloat(true, floatSnapshot('ongoing'))
+    await wrapper.vm.$nextTick()
+    const row = wrapper.get(`[data-focus-key="task:${TASK_ACTIVE}"]`)
+    await row.get('.task-title-button').trigger('click')
+    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ key: TASK_ACTIVE, source: 'card-click' }))
+    action.mockClear()
+    await row.trigger('keydown', { key: 'Enter', code: 'Enter' })
+    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ key: TASK_ACTIVE, source: 'local-shortcut' }))
   })
 
   it('opens the numbered row with Alt+number without entering filter mode', async () => {
@@ -2280,7 +2389,7 @@ describe('Codex Companion V4 UI contract', () => {
     expect(document.querySelector('[role="tooltip"]')).toBeNull()
     await vi.advanceTimersByTimeAsync(1)
     expect(document.querySelector('.operation-tooltip--preserve-lines')?.textContent)
-      .toContain('gk-10M-0718-1650\nbo-30M-0718-1710')
+      .toContain('gk-0718-1650-10M\nbo-0718-1710-30M')
 
     await cursor.trigger('keydown', { key: 'Enter' })
     expect(action).toHaveBeenCalledWith('codex.quota.refresh', { source: 'float-quota-chip', provider: 'codex' })

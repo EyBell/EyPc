@@ -86,6 +86,8 @@ function codexBranchObservationV7(value = {}) {
       authority: branch.activityEvidence === 'activity-event' ? 'live-turn' : 'inventory',
       causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
       causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
+      ...(typeof branch.turnPredecessorKey === 'string' && branch.turnPredecessorKey
+        ? { turnPredecessorKey: branch.turnPredecessorKey } : {}),
       causalSequence: Number.isSafeInteger(branch.activeEvidenceSequence) && branch.activeEvidenceSequence > 0 ? branch.activeEvidenceSequence : 0,
       exact: true,
       sequence: activeSequence || integer(branch.observedAt),
@@ -102,6 +104,8 @@ function codexBranchObservationV7(value = {}) {
       authority: 'terminal',
       causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
       causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
+      ...(typeof branch.turnPredecessorKey === 'string' && branch.turnPredecessorKey
+        ? { turnPredecessorKey: branch.turnPredecessorKey } : {}),
       causalSequence: Number.isSafeInteger(branch.terminalEvidenceSequence) && branch.terminalEvidenceSequence > 0 ? branch.terminalEvidenceSequence : 0,
       exact: true,
       sequence: terminalSequence || integer(branch.observedAt),
@@ -122,6 +126,8 @@ function codexBranchObservationV7(value = {}) {
       authority: 'inventory',
       causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
       causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
+      ...(typeof branch.turnPredecessorKey === 'string' && branch.turnPredecessorKey
+        ? { turnPredecessorKey: branch.turnPredecessorKey } : {}),
       causalSequence: Number.isSafeInteger(branch.terminalEvidenceSequence) && branch.terminalEvidenceSequence > 0 ? branch.terminalEvidenceSequence : 0,
       exact: false,
       sequence: terminalSequence || integer(branch.turnStartedAt) || integer(branch.observedAt),
@@ -427,6 +433,8 @@ function createEvidenceNodeV7(input = {}) {
         statusEnteredAt: integer(value.statusEnteredAt),
         turnStartedAt: integer(value.turnStartedAt),
         terminalAt: integer(value.terminalAt),
+        ...(typeof value.turnPredecessorKey === 'string' && value.turnPredecessorKey
+          ? { turnPredecessorKey: value.turnPredecessorKey.slice(0, 160) } : {}),
         ...(value.inventoryRootCompletion === true ? { inventoryRootCompletion: true } : {}),
         ...(value.ordinarySideInterruptedAt > 0 ? { ordinarySideInterruptedAt: integer(value.ordinarySideInterruptedAt) } : {})
       }

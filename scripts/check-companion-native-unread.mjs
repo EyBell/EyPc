@@ -8,7 +8,8 @@ import vm from 'node:vm'
 
 export function checkCompanionNativeUnread(assetRoot) {
   const require = createRequire(resolve(assetRoot, 'index.js'))
-  const { parseCodexDesktopUnreadState: parse, codexReadStateContextBinding: bind } = require('./codex/desktop-unread-evidence.cjs')
+  const { parseCodexDesktopUnreadState: parse, codexReadStateContextBinding: bind,
+    createCodexDesktopUnreadRecovery } = require('./codex/desktop-unread-evidence.cjs')
   const main = '12345678-1234-4234-8234-123456789abc'
   const side = '22345678-1234-4234-8234-123456789abc'
   const remote = '32345678-1234-4234-8234-123456789abc'
@@ -51,6 +52,22 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(boundNativeUnreadIds({ ...protectedState, 'electron-renderer-content-owner': otherKey },
     { identityKey, executionHostKey: localHost }), null, 'a changed renderer account invalidates the target read')
   let currentCompletion = 'first'
+  const oldShadow = { ownerClientId: 'owner', revision: 7, hasUnreadTurn: true, unreadEvidence: 'snapshot' }
+  const readBridge = { state: 'connected', inventory: new Set([main]), shadows: new Map([[main, oldShadow]]),
+    liveUnread: new Map(), sideShadows: new Map(), followAny: () => true }
+  const recovery = createCodexDesktopUnreadRecovery({
+    knownThread: () => ({ unreadAuthority: 'desktop-persisted', hasUnreadTurn: true }),
+    completedInstance: () => currentCompletion
+  })
+  recovery.persistenceFailed(readBridge, {
+    unreadFailureReason: 'binding-unavailable', unreadSourceFingerprint: 'a'.repeat(64)
+  }, true)
+  currentCompletion = 'second'
+  const oldRead = { ...oldShadow, hasUnreadTurn: false, runtime: { status: 'idle' } }
+  assert.equal(recovery.snapshotAccepted(readBridge, main, oldRead, oldShadow, 'owner'), false)
+  assert.equal(oldRead.hasUnreadTurn, undefined, 'a recovery snapshot from the earlier completion cannot clear the new one')
+  assert.deepEqual(oldRead.runtime, { status: 'idle' }, 'obsolete read evidence does not suppress other snapshot fields')
+  currentCompletion = 'first'
   let currentGeneration = 1
   let clock = 1000
   const openEvents = []
@@ -83,6 +100,18 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert(!openEvents.some(event => event.operationId === 'open-second' && event.outcome === 'confirmed'), 'the repeated open has no attributable receipt')
   assert(openEvents.some(event => event.event === 'codex-open-target-visible' && event.outcome === 'unconfirmed'),
     'dispatch does not establish target visibility')
+  const timedOut = observation.begin({
+    threadId: main, key: 'main', operationId: 'open-timeout', dispatchTimeoutMs: 10_000,
+    readScope: { current: () => currentCompletion === 'second', acceptsLive: observed => observed === binding }
+  })
+  clock += 10_000
+  timedOut(false, 'unconfirmed')
+  currentCompletion = 'third'
+  assert.equal(observation.nativeRead(main, binding), false, 'an unconfirmed dispatch guards the original completion')
+  assert(openEvents.some(event => event.operationId === 'open-timeout' && event.event === 'codex-open-native-read'
+    && event.outcome === 'superseded'))
+  clock += 4_000
+  assert.equal(observation.nativeRead(main, binding), true, 'a subsequent independent read remains eligible')
   const { codexDesktopIpcVersionAccepted } = require('./codex/desktop-protocol.cjs')
   const file = resolve(assetRoot, assetRoot.endsWith('preload') ? 'index.js' : 'preload.js')
   const source = readFileSync(file, 'utf8')
@@ -275,7 +304,7 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(queries[0].options.settleSnapshotTerminal, true)
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 0, '', false, true), true, 'exact inactive member terminal can settle at first successful read')
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 200, 'inProgress', true, true), false, 'idle cannot authorize an older member epoch')
-  return 40
+  return 44
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

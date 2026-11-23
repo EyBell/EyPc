@@ -56,6 +56,66 @@ const emit = defineEmits<{ dispatch: [actionId: string, args?: Record<string, un
 const codexPageRoot = ref<HTMLElement | null>(null)
 let renderedTaskRevision = 0
 
+type MainTaskPresentation = 'visible' | 'hidden' | 'not-in-viewport' | 'not-displayed' | 'empty'
+type MainTaskObservation = { presentation: MainTaskPresentation; activeCount?: number; countStatus?: 'mismatch' }
+let visibleReceipt = ''
+let visibleFrame = 0
+function intersectsViewport(rect: DOMRect, boundary?: DOMRect) {
+  const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
+  return rect.width > 0 && rect.height > 0
+    && rect.bottom > viewport.top && rect.top < viewport.bottom
+    && rect.right > viewport.left && rect.left < viewport.right
+    && (!boundary || rect.bottom > boundary.top && rect.top < boundary.bottom && rect.right > boundary.left && rect.left < boundary.right)
+}
+function mainTaskObservation(measureViewport: boolean): MainTaskObservation | null {
+  const element = codexPageRoot.value
+  const revision = props.snapshot.taskSnapshot.packageRevision
+  if (!element?.isConnected || !revision || props.snapshot.runtimeIdentity?.status !== 'host-loaded'
+    || Number(element.dataset.companionPackageRevision) !== revision) return null
+  if (!props.snapshot.taskSnapshot.tasks.length) return { presentation: 'empty' }
+  if (document.visibilityState === 'hidden') return { presentation: 'hidden' }
+  const tasksDisplayed = props.snapshot.settings.conversationInboxEnabled
+    && props.snapshot.settings.compactFields.includes('tasks')
+    && activeConfigTab.value === 'water'
+    && appearanceMode.value === 'water'
+  if (!tasksDisplayed) return { presentation: 'not-displayed' }
+  if (!measureViewport) return null
+  const preview = element.querySelector<HTMLElement>('.appearance-studio .appearance-complete')
+  const previewRect = preview?.getBoundingClientRect()
+  if (!preview || !previewRect || !intersectsViewport(previewRect, element.getBoundingClientRect())) return { presentation: 'not-in-viewport' }
+  const counter = element.querySelector<HTMLElement>('.appearance-studio .appearance-counter.active')
+  if (!counter) return { presentation: 'visible', activeCount: 0 }
+  const counterRect = counter.getBoundingClientRect()
+  if (!intersectsViewport(counterRect, previewRect)) return { presentation: 'not-in-viewport' }
+  const text = counter.textContent?.trim() || ''
+  if (!/^\d+$/.test(text)) return { presentation: 'visible', countStatus: 'mismatch' }
+  return { presentation: 'visible', activeCount: Number(text) }
+}
+function acknowledgeTaskPresentation(observed: MainTaskObservation | null) {
+  if (!observed) return
+  const revision = props.snapshot.taskSnapshot.packageRevision
+  const receipt = `${revision}:${observed.presentation}:${observed.countStatus ?? ''}:${observed.activeCount ?? ''}`
+  if (receipt === visibleReceipt) return
+  const accepted = window.eypcPlatform?.companionKernel?.acknowledge({
+    consumer: 'main-visible',
+    revision,
+    presentation: observed.presentation,
+    ...(observed.countStatus ? { countStatus: observed.countStatus } : {}),
+    ...(observed.activeCount === undefined ? {} : { activeCount: observed.activeCount })
+  })
+  if (accepted) visibleReceipt = receipt
+}
+function scheduleVisibleTaskPackage() {
+  cancelAnimationFrame(visibleFrame)
+  const presentation = mainTaskObservation(false)
+  if (presentation) {
+    acknowledgeTaskPresentation(presentation)
+    return
+  }
+  visibleFrame = requestAnimationFrame(() => {
+    visibleFrame = requestAnimationFrame(() => acknowledgeTaskPresentation(mainTaskObservation(true)))
+  })
+}
 function acknowledgeRenderedTaskPackage() {
   const revision = props.snapshot.taskSnapshot.packageRevision
   const element = codexPageRoot.value
@@ -68,8 +128,19 @@ function acknowledgeRenderedTaskPackage() {
 }
 
 watch([codexPageRoot, () => props.snapshot.taskSnapshot.packageRevision], acknowledgeRenderedTaskPackage, { flush: 'post' })
-onMounted(() => document.addEventListener('visibilitychange', acknowledgeRenderedTaskPackage))
-onBeforeUnmount(() => document.removeEventListener('visibilitychange', acknowledgeRenderedTaskPackage))
+onMounted(() => {
+  document.addEventListener('visibilitychange', acknowledgeRenderedTaskPackage)
+  document.addEventListener('visibilitychange', scheduleVisibleTaskPackage)
+  window.addEventListener('resize', scheduleVisibleTaskPackage)
+  window.addEventListener('scroll', scheduleVisibleTaskPackage, true)
+})
+onBeforeUnmount(() => {
+  cancelAnimationFrame(visibleFrame)
+  document.removeEventListener('visibilitychange', acknowledgeRenderedTaskPackage)
+  document.removeEventListener('visibilitychange', scheduleVisibleTaskPackage)
+  window.removeEventListener('resize', scheduleVisibleTaskPackage)
+  window.removeEventListener('scroll', scheduleVisibleTaskPackage, true)
+})
 const themePresetError = ref('')
 const THEME_PRESET_BUILTIN_PREFIX = 'builtin:'
 const THEME_PRESET_SAVED_PREFIX = 'saved:'
@@ -95,6 +166,16 @@ const configTabs: Array<{ id: CodexConfigTabId; label: string }> = [
 ]
 const activeConfigTab = ref<CodexConfigTabId>('shortcuts')
 const appearanceMode = ref<'water' | 'card'>('water')
+watch([
+  codexPageRoot,
+  activeConfigTab,
+  appearanceMode,
+  () => props.snapshot.taskSnapshot.packageRevision,
+  () => props.snapshot.taskSnapshot.tasks.length,
+  () => props.snapshot.taskState.dynamic.compactCounts.active,
+  () => props.snapshot.settings.conversationInboxEnabled,
+  () => props.snapshot.settings.compactFields.join(',')
+], scheduleVisibleTaskPackage, { flush: 'post' })
 const APPEARANCE_ADVANCED_STORAGE_KEY = 'eypc.codex.appearance-advanced-open'
 function readAppearanceAdvancedOpen() {
   try { return localStorage.getItem(APPEARANCE_ADVANCED_STORAGE_KEY) === '1' } catch { return false }

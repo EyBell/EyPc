@@ -392,7 +392,7 @@ function resetHintLine(fact: CompanionQuotaWindowFact, now: number): string {
     : remaining <= 30 * 60_000
       ? `${Math.ceil(remaining / 60_000)}M`
       : `${Math.max(1, Math.floor(remaining / 3_600_000))}H`
-  return `${account}-${countdown}-${clock(resetAt)}`
+  return `${account}-${clock(resetAt)}-${countdown}`
 }
 
 function group(category: CompanionQuotaCategory, label: string, facts: CompanionQuotaWindowFact[], now: number, ambiguous: ReadonlySet<string>, partial = false): CompanionQuotaResetGroup | null {

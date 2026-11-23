@@ -154,6 +154,9 @@ function createCodexRuntimeDiagnostics(dependencies) {
   function errorResult(error) {
     const diagnostic = diagnosticFor(error)
     const sourceCode = error && typeof error === 'object' ? String(error.code || '') : ''
+    if (sourceCode === 'inventory-superseded') {
+      return { ok: false, error: { code: 'unavailable', message: 'Codex 任务来源已变化，本次读取已作废' }, receivedAt: Date.now() }
+    }
     const code = sourceCode === 'ETIMEDOUT' || sourceCode === 'timeout'
       ? 'timeout'
       : ['not-authenticated', 'runtime-unavailable', 'process-exited', 'protocol-error'].includes(sourceCode)
@@ -197,6 +200,12 @@ function createCodexRuntimeDiagnostics(dependencies) {
   }
 
   function snapshotFailure(error) {
+    if (error?.code === 'inventory-superseded') {
+      runtimeDiagnostics.record({
+        level: 'info', scope: 'task-recovery', event: 'codex-snapshot-read', outcome: 'superseded', provider: 'codex'
+      })
+      return errorResult(error)
+    }
     const failure = captureFailure(error, { stage: 'task-projection', category: 'projection-failed' })
     runtimeDiagnostics.record({
       level: 'error', scope: 'task-recovery', event: 'codex-snapshot-read', outcome: 'failed',
@@ -207,7 +216,7 @@ function createCodexRuntimeDiagnostics(dependencies) {
 
   function preflightRead(result) {
     if (result?.ok && Array.isArray(result.value?.threads) && result.value.completeness === 'verified') {
-      return { provider: 'codex', status: 'ready', value: result.value }
+      return { provider: 'codex', status: result.value.inventoryDegraded === true ? 'degraded' : 'ready', value: result.value }
     }
     const diagnostic = diagnosticFor(result?.error)
       || safeDiagnostic({ stage: 'task-projection', category: 'invalid-data' })
@@ -284,10 +293,11 @@ function createCodexRuntimeDiagnostics(dependencies) {
     })
   }
 
-  async function request(method, params, timeoutMs) {
+  async function request(method, params, timeoutMs, isCurrent) {
     let phase = 'startup'
     try {
       await startCodexServer()
+      if (isCurrent?.() === false) return null
       phase = 'thread-list'
       return await sendCodexRpc(method, params, timeoutMs)
     } catch (error) {
