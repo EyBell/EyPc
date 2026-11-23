@@ -1,8 +1,20 @@
 # EyPc Project Status Hub
 
+<a id="shortcut-pair-pause-261123"></a>
+
+- 2026-11-23，快捷键配对测试按用户指示暂停，恢复只按后续说明。历史有效配对保持 0/10，已记录实机结果保留。双端首次可见仍待验。[现行验收](261120/eypc-shortcut-optimization/jump-cache-component.md#armed-window-pairs-261123)
+
+<a id="live-task-state-idle-probe-261123"></a>
+
+- 2026-11-23 14:39:34.347，实时脚本空闲核查通过本地 `closeout`。产物为 `V7` / `host-dece0e1c31dbe7342127` / `renderer-27a973536c537911b21e`，builtAt `2026-11-23T06:39:34.347Z`。修订脚本已在实载的 14:26:34 版上完成 58 秒监听取证。双端首次可见待验。快捷键配对按[暂停登记](#shortcut-pair-pause-261123)保留历史 0/10。[开发插件入口](../../dist/plugin.json#L1) · [实机证据](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-1431-261123)
+
+<a id="live-task-state-watch-recovery-261123"></a>
+
+- 2026-11-23 14:26:34.795，V7 任务状态监听保活和静默重接通过本地 `closeout`。产物为 `V7` / `host-dece0e1c31dbe7342127` / `renderer-27a973536c537911b21e`，builtAt `2026-11-23T06:26:34.795Z`。14:31:11.178 确认实载。同一原生 Turn 在 #2 为「进行中」，Plan 实机转态通过，首包在 8.234 秒发出。[实机核验](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-1431-261123)
+
 <a id="live-task-state-script-build-261123"></a>
 
-- 2026-11-23 13:50:58.981，V7 实时任务脚本和全局快捷键配对首臂修复通过本地 `closeout`。产物为 `V7` / `host-a6021cc8f152f708af66` / `renderer-c0e6e715707df624d58f`，builtAt `2026-11-23T05:50:58.981Z`。当前输入与成功收据匹配，107 组源码、`public` 和 `dist` 镜像一致。新版脚本实机读取、同轮双端首显及十组精确快捷键配对待验。[开发插件入口](../../dist/plugin.json#L1) · [脚本与验收](261114/codex-state-sync/delivery.md#live-task-state-script-261123)
+- 2026-11-23 13:50:58.981，V7 实时任务脚本和全局快捷键配对首臂修复通过本地 `closeout`。产物为 `V7` / `host-a6021cc8f152f708af66` / `renderer-c0e6e715707df624d58f`。14:00:10.742 确认实载，实时脚本读到首个完整包用时 9.825 秒，Main 后台、Float 折叠。[脚本与实机核验](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-1400-261123)
 
 <a id="continued-plan-turn-build-261123"></a>
 

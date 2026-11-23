@@ -270,7 +270,6 @@ function startCompanionTaskStateBridge({
         const data = encode({ type: 'heartbeat' }, sequence)
         for (const watcher of watchers.keys()) send(watcher, data)
       }, HEARTBEAT_MS)
-      heartbeat.unref()
     }
   })
   server.on('connection', (socket) => {
