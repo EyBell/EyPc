@@ -4,6 +4,15 @@
 
 - 2026-11-23，快捷键配对测试按用户指示暂停，恢复只按后续说明。历史有效配对保持 0/10，已记录实机结果保留。双端首次可见仍待验。[现行验收](261120/eypc-shortcut-optimization/jump-cache-component.md#armed-window-pairs-261123)
 
+<a id="side-rollout-completion-build-261123"></a>
+
+- 2026-11-23 15:39:49.879，Codex 子任务完成同步修复通过本地 `closeout`。产物为 `V7` / `host-102329f9ef4348512943` / `renderer-22d1456e9c237f554b98`，builtAt `2026-11-23T07:39:49.879Z`。源码和随包各通过 294 个生命周期检查点，107 组镜像与成功收据一致。[开发插件入口](../../dist/plugin.json#L1) · [修复与回放](261114/codex-state-sync/delivery.md#side-rollout-completion-261123)
+- 2026-11-23 16:44:52.186，握手确认实载该包。首个完整包 #2 在 7.685 秒后接纳，原误报组已完成。16:45:05.015 主任务开启新轮，#12 发布为进行中。Main 收包时外观页不可见，Float 折叠态应用，双端实际展示待验。[实载与轮次对账](261114/codex-state-sync/status-read-investigation-261116.md#side-rollout-completion-reload-261123)
+
+<a id="same-turn-input-resume-build-261123"></a>
+
+- 2026-11-23 15:01:38.767，同一 Codex 轮答复后恢复「进行中」的修复通过本地 `closeout`。产物为 `V7` / `host-f562ead076a12d9e1ab9` / `renderer-d8cdfcb18129b41d39b0`，builtAt `2026-11-23T07:01:38.767Z`。源码和随包各通过 289 个生命周期检查点，107 组镜像与当前输入、成功收据一致。15:13:52.665 确认实载。脚本核到 Plan 新轮从「待输入」切至「进行中」，真实提问同轮答复和双端可见转态待验。[开发插件入口](../../dist/plugin.json#L1) · [实载回读](261114/codex-state-sync/status-read-investigation-261116.md#same-turn-input-resume-reload-261123)
+
 <a id="live-task-state-idle-probe-261123"></a>
 
 - 2026-11-23 14:39:34.347，实时脚本空闲核查通过本地 `closeout`。产物为 `V7` / `host-dece0e1c31dbe7342127` / `renderer-27a973536c537911b21e`，builtAt `2026-11-23T06:39:34.347Z`。修订脚本已在实载的 14:26:34 版上完成 58 秒监听取证。双端首次可见待验。快捷键配对按[暂停登记](#shortcut-pair-pause-261123)保留历史 0/10。[开发插件入口](../../dist/plugin.json#L1) · [实机证据](261114/codex-state-sync/status-read-investigation-261116.md#r21-reload-1431-261123)

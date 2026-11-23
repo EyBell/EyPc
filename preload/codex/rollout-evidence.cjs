@@ -63,10 +63,11 @@ function createCodexRolloutEvidence(dependencies = {}) {
         : []
     )
     if (typeof text !== 'string' || !text) {
-      return { known: pendingCallIds.size > 0, pending: pendingCallIds.size > 0, correlations: pendingCallIds, edge: 'none' }
+      return { known: pendingCallIds.size > 0, pending: pendingCallIds.size > 0, correlations: pendingCallIds, edge: 'none', waitingSince: 0 }
     }
     let known = pendingCallIds.size > 0
     let edge = 'none'
+    let waitingSince = 0
     for (const line of text.split(/\r?\n/)) {
       if (!line || line.length > MAX_ROLLOUT_LINE_BYTES) continue
       let parsed
@@ -75,22 +76,13 @@ function createCodexRolloutEvidence(dependencies = {}) {
       const payload = record(source.payload)
       const isUserContinuation = (source.type === 'event_msg' && payload.type === 'user_message')
         || (source.type === 'response_item' && payload.type === 'message' && payload.role === 'user')
-      if (isUserContinuation) {
+      const isTurnStart = source.type === 'event_msg' && payload.type === 'task_started'
+      const isTurnEnd = source.type === 'event_msg' && (payload.type === 'task_complete' || payload.type === 'turn_aborted')
+      if (isUserContinuation || isTurnStart || isTurnEnd) {
         pendingCallIds.clear()
+        waitingSince = 0
         known = true
-        edge = 'resume'
-        continue
-      }
-      if (source.type === 'event_msg' && payload.type === 'task_started') {
-        pendingCallIds.clear()
-        known = true
-        edge = 'resume'
-        continue
-      }
-      if (source.type === 'event_msg' && (payload.type === 'task_complete' || payload.type === 'turn_aborted')) {
-        pendingCallIds.clear()
-        known = true
-        edge = 'terminal'
+        edge = isTurnEnd ? 'terminal' : 'resume'
         continue
       }
       if (source.type !== 'response_item') continue
@@ -99,16 +91,17 @@ function createCodexRolloutEvidence(dependencies = {}) {
         : ''
       if (!callId) continue
       if (payload.type === 'function_call' && payload.name === 'request_user_input') {
+        if (!pendingCallIds.size || !waitingSince) waitingSince = codexRolloutTimestampMs(source.timestamp)
         pendingCallIds.add(callId)
         known = true
         edge = 'waiting'
       } else if (payload.type === 'function_call_output') {
-        if (pendingCallIds.has(callId)) edge = 'resume'
-        pendingCallIds.delete(callId)
+        if (pendingCallIds.delete(callId)) edge = 'resume'
+        if (!pendingCallIds.size) waitingSince = 0
         known = true
       }
     }
-    return { known, pending: pendingCallIds.size > 0, correlations: pendingCallIds, edge }
+    return { known, pending: pendingCallIds.size > 0, correlations: pendingCallIds, edge, waitingSince }
   }
 
   function codexRolloutHasPendingUserInputText(text) {

@@ -1482,7 +1482,7 @@ async function resolveCodexProxyEnvironment() {
 function codexRolloutPendingUserInputStateText(text, initialCorrelations) {
   return codexRolloutEvidence
     ? codexRolloutEvidence.codexRolloutPendingUserInputStateText(text, initialCorrelations)
-    : { known: false, pending: false, correlations: new Set(), edge: 'none' }
+    : { known: false, pending: false, correlations: new Set(), edge: 'none', waitingSince: 0 }
 }
 
 function codexRolloutHasPendingUserInputText(text) {
@@ -5116,7 +5116,7 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value, waiti
   return true
 }
 
-function codexApplySideTerminalNotification(bridge, parentThreadId, threadId, value, predecessorId) {
+function codexApplySideTerminalNotification(bridge, parentThreadId, threadId, value, predecessorId, options = {}) {
   const turn = sanitizeCodexTurnStatus(value)
   if (!turn?.id || !turn.startedAt || !['completed', 'interrupted', 'failed'].includes(turn.status)
     || codexSideParentThreadId(threadId) !== parentThreadId) return false
@@ -5143,7 +5143,7 @@ function codexApplySideTerminalNotification(bridge, parentThreadId, threadId, va
   if (turn.status === 'completed') codexClearStalePreCompletionLiveUnread(bridge, threadId)
   if (bridge.hasOtherActiveBranch(parentThreadId, threadId)) codexNoteActivityDecision('branchTerminalDeferred')
   bridge.cancelLatestTurnRefreshByKey(`${parentThreadId}:${threadId}`)
-  bridge.emitParentActivity(parentThreadId)
+  if (options.deferPublish !== true) bridge.emitParentActivity(parentThreadId)
   return true
 }
 
@@ -9545,11 +9545,14 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
       && previous?.parentThreadId === parentThreadId
       && codexTimestampMs(previous.turnStartedAt) === codexTimestampMs(turn.startedAt)
       && (!turn.id || !previous.turnId || turn.id === previous.turnId)
+    let terminal = codexReadPrivateBranchTerminal(parentThreadId, threadId)
+    const repeatedCompletedTurn = turn?.id && terminal?.lastTurnStatus === 'completed'
+      && terminal.turnRef === codexDesktopRequestCorrelation({ id: turn.id })
     // A connector row can lag behind a turn actually running in another
     // process. The fresh targeted latest-Turn read this cycle is itself the
     // verification, so fresh inProgress opens live even on an idle/notLoaded
     // row; a cached inProgress never does (RAW-181#4).
-    const turnLive = turn?.status === 'inProgress'
+    const turnLive = turn?.status === 'inProgress' && !repeatedCompletedTurn
       && (connectorStatus === 'active' || turns.readSucceededIds?.has(threadId) === true)
     if (turnLive && connectorStatus !== 'active') {
       recoveredLiveByParent.set(parentThreadId, (recoveredLiveByParent.get(parentThreadId) || 0) + 1)
@@ -9561,8 +9564,10 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
         : codexNextLiveEvidenceSequence()
       : 0
     codexInventorySideRelations.set(threadId, parentThreadId)
-    if (turnLive) codexForgetPrivateBranchTerminal(parentThreadId, threadId)
-    const terminal = codexReadPrivateBranchTerminal(parentThreadId, threadId)
+    if (turnLive) {
+      codexForgetPrivateBranchTerminal(parentThreadId, threadId)
+      terminal = null
+    }
     // Raw native membership only; machine-run and opened-read resolution live
     // in codexDesktopUnreadObservation, which the branch projection asks first.
     const unreadKnown = unreadIds instanceof Set
@@ -9583,7 +9588,7 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
       hasUnreadTurn: unreadKnown && unreadIds.has(threadId),
       turnId: typeof turn?.id === 'string' ? turn.id : '',
       turnStartedAt: codexTimestampMs(turn?.startedAt),
-      lastTurnStatus: turn?.status || terminal?.lastTurnStatus || '',
+      lastTurnStatus: repeatedCompletedTurn ? terminal.lastTurnStatus : turn?.status || terminal?.lastTurnStatus || '',
       lastTurnEvidence: turnLive ? 'turn-started' : terminal?.lastTurnEvidence || 'inventory',
       terminalEvidenceSequence: Number(terminal?.terminalEvidenceSequence) || 0,
       terminalAt: Number(terminal?.terminalAt) || 0,
@@ -10150,6 +10155,7 @@ function codexThreadPersistedInputEvidence(thread, lastTurn) {
     size: stat.size,
     mtimeMs,
     pending: state.pending,
+    waitingSince: state.waitingSince,
     correlations: state.correlations,
     ...(needsRuntime ? { runtime: codexRolloutRuntimeStateText(text) } : {})
   }
@@ -10320,6 +10326,31 @@ function codexApplyRolloutTerminal(tracker, known, runtime) {
   )
 }
 
+function codexApplyRolloutSideCompletion(tracker, runtime, emit) {
+  const { threadId, parentThreadId } = tracker
+  if (runtime?.edge !== 'task-complete' || !runtime.turnId || tracker.sideDomain !== codexCausalDomain
+    || !codexActivityInventory.has(parentThreadId) || codexSideParentThreadId(threadId) !== parentThreadId
+    || codexRetiredThreadIds.has(threadId) || codexRetiredThreadIds.has(parentThreadId)) return false
+  const side = codexInventorySideBranchEvidence.get(threadId)
+  const live = codexAppServerSideActivity(parentThreadId, threadId)
+  if (live?.appServerLiveActive === true && (live.turn?.status !== 'inProgress' || live.activeFlags?.length)) return false
+  const current = live?.appServerLiveActive === true
+    ? live.turn
+    : side?.parentThreadId === parentThreadId && side.lastTurnStatus === 'inProgress'
+      ? { id: side.turnId, startedAt: side.turnStartedAt }
+      : null
+  const startedAt = codexTimestampMs(current?.startedAt)
+  const completedAt = codexTimestampMs(runtime.edgeAt)
+  if (!startedAt || completedAt < startedAt || current.id !== runtime.turnId) return false
+  const bridge = codexEnsureDesktopBridge()
+  const shadow = bridge.sideShadows.get(threadId)
+  const turn = { id: current.id, status: 'completed', startedAt, completedAt }
+  if (codexDesktopHasStickyPendingRequest(shadow)
+    || codexDesktopActivityResolution?.codexDesktopTerminalConflictsWithOwner(turn, shadow,
+      codexDesktopRequestCorrelation({ id: turn.id }))) return false
+  return codexApplySideTerminalNotification(bridge, parentThreadId, threadId, turn, undefined, { deferPublish: !emit })
+}
+
 function codexRestoreRolloutFallback(tracker) {
   const known = codexActivityInventory.get(tracker.threadId)
   if (!known || !tracker.rolloutLiveSequence
@@ -10357,6 +10388,9 @@ function codexRestoreRolloutFallback(tracker) {
 }
 
 function codexApplyRolloutDecisionState(tracker, state, emit = true, options = {}) {
+  if (tracker.parentThreadId) {
+    return options.observeRuntime === true && codexApplyRolloutSideCompletion(tracker, state.runtime, emit)
+  }
   const known = codexActivityInventory.get(tracker.threadId)
   if (!known) return false
   const bridge = codexEnsureDesktopBridge()
@@ -10397,8 +10431,8 @@ function codexApplyRolloutDecisionState(tracker, state, emit = true, options = {
       flags: ['waitingOnUserInput'],
       previousFlags: known.connectorActiveFlags,
       previousWaitingSince: known.connectorWaitingSince,
-      evidenceAt: codexTimestampMs(known.lastTurnCompletedAt)
-        || codexTimestampMs(known.lastTurnStartedAt)
+      evidenceAt: state.input.waitingSince
+        || Math.max(codexTimestampMs(known.lastTurnCompletedAt), turnStartedAt, Date.now())
     })
     known.connectorStatus = 'active'
     known.connectorActiveFlags = waitingEdge.flags
@@ -10435,17 +10469,16 @@ function codexApplyRolloutDecisionState(tracker, state, emit = true, options = {
     delete known.connectorWaitingSince
     if (mainShadow?.ownerDisconnectedAt) bridge.clearOrphanedPending(tracker.threadId)
     if (resumed) {
-      const sameRolloutEpoch = tracker.rolloutLiveSequence
-        && tracker.rolloutLiveSequence === known.appServerLiveSequence
+      const nativeClearSequence = hasCurrentLiveOwner
         && known.appServerLiveActive === true
-      const sequence = sameRolloutEpoch
-        ? tracker.rolloutLiveSequence
-        : codexMarkAppServerLiveActive(known, true)
+        && tracker.rolloutLiveSequence === known.appServerLiveSequence
+        ? tracker.rolloutLiveSequence : 0
+      const sequence = codexMarkAppServerLiveActive(known, true)
       tracker.rolloutLiveSequence = sequence
       bridge.clearWaitingEvidence(
         tracker.threadId,
         ['waitingOnUserInput'],
-        { sequence }
+        { sequence: nativeClearSequence || sequence }
       )
       const remainingWaitingFlags = known.activeFlags
         .filter((flag) => flag === 'waitingOnApproval')
@@ -10494,9 +10527,10 @@ function codexRefreshRolloutDecisionTracker(threadId, options = {}) {
     if (sameSample && options.force !== true) return false
     appendedBytes = sameFile && Number.isFinite(tracker.size) ? Math.max(0, stat.size - tracker.size) : 0
     writable = Boolean(options.writableFile && options.writableFile.dev === stat.dev && options.writableFile.ino === stat.ino)
+    const inputCorrelations = sameFile && stat.size >= tracker.size ? tracker.inputCorrelations : undefined
     rollout = sameSample && tracker.decisionState
-      ? tracker.decisionState : codexRolloutDecisionState(tracker.candidate, stat, tracker.inputCorrelations, appendedBytes)
-    if (writable || appendedBytes) {
+      ? tracker.decisionState : codexRolloutDecisionState(tracker.candidate, stat, inputCorrelations, appendedBytes)
+    if (writable || appendedBytes || options.observeRuntime === true) {
       const current = fs.statSync(tracker.candidate)
       if (current.ino !== stat.ino || current.dev !== stat.dev
         || current.size !== stat.size || current.mtimeMs !== stat.mtimeMs) return false
@@ -10742,12 +10776,16 @@ function codexSyncRolloutDecisionTrackers(rows, turnStatuses, coldRollouts, dirt
     const rollout = codexThreadRolloutCandidate(thread)
     if (!rollout) continue
     retained.add(thread.id)
+    const parentThreadId = codexSideParentThreadId(thread.id)
+    const side = parentThreadId ? codexInventorySideBranchEvidence.get(thread.id) : null
     const signature = `${rollout.stat.size}:${codexTimestampMs(rollout.stat.mtimeMs)}`
     let tracker = codexRolloutDecisionTrackers.get(thread.id)
-    if (tracker && tracker.candidate !== rollout.candidate) {
+    if (tracker && (tracker.candidate !== rollout.candidate || tracker.parentThreadId !== parentThreadId
+      || parentThreadId && tracker.sideDomain !== codexCausalDomain)) {
       codexCloseRolloutDecisionTracker(tracker)
       tracker = null
     }
+    const verifySide = side?.lastTurnStatus === 'inProgress' && side.turnId && tracker?.lastTurnId !== side.turnId
     if (tracker) {
       // Inventory refreshes and fs.watch callbacks race on the same rollout.
       // Reduce an unseen append before advancing the tracker's baseline, or the
@@ -10761,11 +10799,14 @@ function codexSyncRolloutDecisionTrackers(rows, turnStatuses, coldRollouts, dirt
     if (!tracker) {
       tracker = {
         threadId: thread.id,
+        parentThreadId,
+        sideDomain: parentThreadId ? codexCausalDomain : '',
         candidate: rollout.candidate,
         signature,
         size: rollout.stat.size,
         dev: rollout.stat.dev,
         ino: rollout.stat.ino,
+        lastTurnId: lastTurn.id,
         lastTurnStatus: lastTurn.status,
         lastTurnStartedAt: lastTurn.startedAt,
         lastTurnCompletedAt: lastTurn.completedAt,
@@ -10780,6 +10821,7 @@ function codexSyncRolloutDecisionTrackers(rows, turnStatuses, coldRollouts, dirt
       }
       codexRolloutDecisionTrackers.set(thread.id, tracker)
     } else {
+      tracker.lastTurnId = lastTurn.id
       tracker.lastTurnStatus = lastTurn.status
       tracker.lastTurnStartedAt = lastTurn.startedAt
       tracker.lastTurnCompletedAt = lastTurn.completedAt
@@ -10793,6 +10835,7 @@ function codexSyncRolloutDecisionTrackers(rows, turnStatuses, coldRollouts, dirt
       && inputCache.correlations instanceof Set) {
       tracker.inputCorrelations = new Set(inputCache.correlations)
     }
+    if (verifySide) codexRefreshRolloutDecisionTracker(thread.id, { force: true, observeRuntime: true, emit: false })
     const coldRollout = coldRollouts?.get(thread.id)
     if (coldRollout?.candidate === rollout.candidate && coldRollout.stat.ino === rollout.stat.ino
       && coldRollout.stat.dev === rollout.stat.dev
@@ -11344,11 +11387,10 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
     const lastTurn = codexDesktopActivityResolution?.codexDesktopInventoryTurnCandidate(independentTurn,
       codexDesktopBridge?.shadows.get(thread.id), codexActivityInventory.get(thread.id), codexDesktopRequestCorrelation({ id: independentTurn.id })) || independentTurn
     if (lastTurn !== independentTurn) codexThreadTurnStatusCache.delete(thread.id)
-    const persistedPendingInput = connectorStatus !== 'active'
-      && codexThreadPersistedInputEvidence(thread, lastTurn)?.pending === true
+    const persistedInput = connectorStatus !== 'active' ? codexThreadPersistedInputEvidence(thread, lastTurn) : null
     const planLifecycle = codexThreadPersistedPlanLifecycle(thread, lastTurn)
     const lastTurnEvidence = codexInventoryTerminalEvidence(thread, lastTurn)
-    const persistedDecision = persistedPendingInput
+    const persistedDecision = persistedInput?.pending === true
     const status = persistedDecision ? 'active' : verifyingTurn ? 'notLoaded' : connectorStatus
     const activeFlags = persistedDecision
       ? ['waitingOnUserInput']
@@ -11369,7 +11411,7 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       status,
       activeFlags,
       ...(activeFlags.length
-        ? { waitingSince: codexTimestampMs(lastTurn.completedAt) || codexTimestampMs(lastTurn.startedAt) || now }
+        ? { waitingSince: persistedInput?.waitingSince || codexTimestampMs(lastTurn.completedAt) || codexTimestampMs(lastTurn.startedAt) || now }
         : {}),
       ...(['ready', 'cleared'].includes(planLifecycle.planLifecycleState) ? {
         planReady: planLifecycle.planReady,

@@ -228,6 +228,13 @@ Main 直接记录「后台」和「未展示」两种回执。可见计数仍在
 1. 继续讨论 Plan 后，可信运行的新轮显示「进行中」。回放覆盖同一成员的旧 Plan 请求随新活动重放，以及新轮后只到旧请求的情况。V7 用已接纳的活动与请求时序关闭可确认属于较早轮次的 Plan 请求。同秒或时序不明的请求仍由原生请求事实裁决。Plan 产物可保留，当前轮新提问和审批仍能进入待处理。[请求裁决](../../../../preload/companion/task-kernel.cjs#L1181) · [用户说明](../../../../src/help/guides/codex.md#L126)
 2. 定向回放通过 8 项，含旧请求重放、保留 Plan 产物和当前请求继续待输入。扩展复核中的 4 项 fallback 交接断言与 1 项 Desktop 桥接轮次断言，在 12:46:14 随包源码上复现相同结果。本轮实机日志未取得可对账的旧 Plan 请求与新轮冲突样本。[修复构建](../../PROJECT_STATUS.md#continued-plan-turn-build-261123) · [现场记录](status-read-investigation-261116.md#r21-reload-1325-261123)
 
+<a id="same-turn-input-resume-261123"></a>
+
+### 同轮答复后恢复进行中
+
+1. 按原 S05，在原生请求收到对应答复且同一轮继续运行时，根任务应退出该次待输入。14:26:34 实载版的文件回退路径沿用开轮序号，V7 保留了后来生成的已答请求。同一轮的真实未答请求、后续新提问和原生审批继续按各自证据结算。[原 S05](raw-requirement.md#L49) · [现场核验](status-read-investigation-261116.md#same-turn-input-resume-observation-261123)
+2. Host 对匹配的答复发布新的活动序号，V7 据此关闭同轮旧输入。提问使用文件事件时刻，后续同轮提问可生成独立待输入。当前 Desktop 所有者的新请求仍按原生证据裁决。生命周期门禁回放了不匹配输出、匹配答复、同轮再次提问及独立审批，纳入 15:01:38 本地构建。新包的同轮真实答复与双端展示待用宿主握手和状态脚本对账。[文件解析](../../../../preload/codex/rollout-evidence.cjs#L59) · [Host 写回](../../../../preload/index.js#L10438) · [构建回放](../../../../scripts/check-companion-lifecycles.mjs#L1347)
+
 <a id="live-task-state-script-261123"></a>
 
 ### 脚本读取实时任务包
@@ -290,6 +297,15 @@ Main 直接记录「后台」和「未展示」两种回执。可见计数仍在
 1. 14:23 的 #1867 已应用。原生主轮成功完成，组内一条机器成员在该主轮开始前已中断。两条 spawn 边仍为 `open`，V7 当前数据未确认委派关闭。机器中断保留在根相位归约，组进入待继续，根继续资格关闭。插件组未读为真，原生同轮读态待确认。[同组实机](status-read-investigation-261116.md#post-update-machine-stop-261120)
 2. B08 补齐精确机器关系、对应运行终态及当前活动范围。B09 评判旧运行结果是否参与当前根组，并保留成员历史。验收同时覆盖旧轮已结束、关系仍挂接以及新机器轮或请求重新活动，避免回避真实组内待办。[机器委派的组态验收](native-status-parity-plan.md#post-update-acceptance)
 3. 重开后的原生只读确认主轮和机器旧轮的结束时间，委派仍为 `open`。独立实例无实时请求覆盖。R22 另发现原生直接关系能列出四条已完成机器成员，下一批先证实这一读取在 EyPc 同版连接的覆盖与分页，再复用现有拓扑和 V7 归约。[实机补读](status-read-investigation-261116.md#reopen-parity-261120)
+
+<a id="side-rollout-completion-261123"></a>
+
+### 子任务完成后整组退出进行中
+
+1. 按 S02、S04 和 S07 核实。15:01:38 实载版在 Desktop IPC 断线时，首包接纳机器成员的运行证据，运行文件监听随后缺少向该成员写入完成的路径。原生已结束的子轮仍被算作运行，V7 整组继续显示「进行中」。[原要求](raw-requirement.md#L45) · [实机记录](status-read-investigation-261116.md#side-rollout-completion-observation-261123)
+2. 复用现有文件监听和子任务完成入口。稳定样本的原生完成事件须匹配当前来源、父关系和精确 Turn，连接上的当前活动或待办证据继续参与校验。冷库存并入同一完整包，热态只更新原组。已确认完成的同一轮可抵御迟到的运行库存，新轮按现有活动证据重新归组。[文件完成入口](../../../../preload/index.js#L10329) · [库存保护](../../../../preload/index.js#L9549)
+3. 门禁覆盖主轮完成而子任务真在运行、子任务同轮完成、旧库存重放、新轮重开、当前所有者冲突和来源变化。15:39:49 修复包通过构建。[回放](../../../../scripts/check-companion-lifecycles.mjs#L1426) · [构建结果](../../PROJECT_STATUS.md#side-rollout-completion-build-261123)
+4. 16:44:52 实载后，#2 中原误报组和十条已准入的子任务全部完成。主任务随后开启新轮，#12 恢复进行中，旧子轮保留完成。Main 收包和 Float 折叠态应用已对账。双端可见展示和运行中子轮自然完成的实机转态待验。[实载与轮次对账](status-read-investigation-261116.md#side-rollout-completion-reload-261123)
 
 <a id="shortcut-read-reconciliation-261120"></a>
 

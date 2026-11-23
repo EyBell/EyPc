@@ -676,7 +676,7 @@ async function checkColdRolloutAdmission(require, source, fixture) {
       codexProcess: null, CODEX_COLD_ROLLOUT_PROBE_LIMIT: 16, CODEX_COLD_ROLLOUT_PROBE_TIMEOUT_MS: 750,
       codexThreadRolloutCandidate: row => ({ candidate: row.path || candidate, stat }), codexRolloutDecisionTrackers: trackers,
       codexThreadTurnStatusDirty: dirty, codexThreadPendingInputCache: new Map(),
-      codexActivityInventory: new Map([[threadId, known]]),
+      codexActivityInventory: new Map([[threadId, known]]), codexInventorySideBranchEvidence: new Map(),
       codexDesktopBridge: desktop,
       codexInventoryMembershipGeneration: 1, codexCausalDomain: 'source',
       codexSnapshotScopeCurrent: scope => scope.bridge === desktop && scope.stream === desktop.streamGeneration,
@@ -1344,6 +1344,187 @@ function checkMemberRequestWatermarks(source, fixture) {
   return 6
 }
 
+function checkRolloutInputResume(require, source, fixture, codexBranchObservationV7) {
+  const { createCodexRolloutEvidence } = require('./codex/rollout-evidence.cjs')
+  const { createCodexDesktopActivityResolution } = require('./codex/desktop-activity-resolution.cjs')
+  const { createCodexDesktopRequestProjection } = require('./codex/desktop-request-projection.cjs')
+  const threadId = 'synthetic-input-thread'
+  const startedAt = 1000
+  let sequence = 218
+  let generation = 0
+  const helpers = { record: value => value ?? {}, timestampMs: value => Number(value) || 0,
+    nextLiveEvidenceSequence: () => ++sequence }
+  const rollout = createCodexRolloutEvidence(helpers)
+  const requests = createCodexDesktopRequestProjection(helpers)
+  const { codexReduceWaitingEdge } = createCodexDesktopActivityResolution({ ...helpers, validThreadId: () => true,
+    isConfirmedTurnEvidence: () => false, waitingEvidenceVisible: () => true,
+    desktopRequestFlag: requests.codexDesktopRequestFlag,
+    desktopIsPlanImplementationRequest: requests.codexDesktopIsPlanImplementationRequest })
+  const known = { status: 'active', activeFlags: [], connectorStatus: 'active', connectorActiveFlags: [],
+    statusAuthority: 'app-server-live', connectorStatusAuthority: 'connector', activityEvidence: 'activity-event',
+    lastTurnStatus: 'inProgress', lastTurnId: 'same-turn', lastTurnStartedAt: startedAt, turnStartedAt: startedAt,
+    lastTurnEvidence: 'turn-started', appServerLiveActive: true, appServerLiveSequence: sequence, activeEvidenceSequence: sequence }
+  const tracker = { threadId, rolloutLiveSequence: sequence }
+  const clear = []
+  const bridge = { shadows: new Map(), cancelWaitingEdgeRefresh() {},
+    clearWaitingEvidence: (id, flags, options) => clear.push([id, ...flags, options.sequence]) }
+  const markStart = source.indexOf('function codexMarkAppServerLiveActive(')
+  const markEnd = source.indexOf('\nfunction codexMarkConfirmedTerminalEvidence(', markStart)
+  const applyStart = source.indexOf('function codexApplyRolloutDecisionState(')
+  const applyEnd = source.indexOf('\nfunction codexRefreshRolloutDecisionTracker(', applyStart)
+  assert(markStart >= 0 && markEnd > markStart && applyStart >= 0 && applyEnd > applyStart)
+  const apply = new Script(`${source.slice(markStart, markEnd)}\n${source.slice(applyStart, applyEnd)}
+    codexApplyRolloutDecisionState`).runInNewContext({
+    codexActivityInventory: new Map([[threadId, known]]), codexEnsureDesktopBridge: () => bridge,
+    codexActivityPublicEntry: value => value, codexTimestampMs: helpers.timestampMs,
+    codexNextLiveEvidenceSequence: helpers.nextLiveEvidenceSequence, codexRolloutEvidence: rollout,
+    codexReduceWaitingEdge, codexDesktopHasStickyPendingRequest: () => false
+  })
+  const snapshot = fixture()
+  let text = ''
+  const event = (timestamp, payload) => JSON.stringify({ type: 'response_item', timestamp, payload })
+  const question = (callId, timestamp) => event(timestamp, { type: 'function_call', name: 'request_user_input', call_id: callId })
+  const answer = (callId, timestamp) => event(timestamp, { type: 'function_call_output', call_id: callId })
+  function publish(expected, line = '', interactions = []) {
+    text += `${line}\n`
+    apply(tracker, { input: rollout.codexRolloutPendingUserInputStateText(text), plan: {} }, false)
+    const { interactionKind } = codexBranchObservationV7(known)
+    const projected = requests.codexDesktopProjectFallbackInteractions({
+      parentTaskKey: 'main', members: [{ taskKey: 'main', kind: interactionKind,
+        waitingSince: known.waitingSince, turnEpoch: startedAt,
+        clearSequence: interactionKind ? 0 : known.activeEvidenceSequence, exact: true }],
+      nativeEvidence: { interactions }
+    })
+    snapshot.publish([{ key: 'main', phase: 'running', epoch: startedAt, branch: known }], ++generation,
+      { complete: generation === 1, hostEvidence: true })
+    snapshot.publishRequests(projected.interactions, projected.interactionSets, ++generation)
+    snapshot.expectRoot(expected, false, 1)
+    return projected.interactions
+  }
+  try {
+    publish('running')
+    const [first] = publish('waiting-input', question('first', 2000))
+    publish('waiting-input', answer('unrelated', 2100))
+    assert.equal(clear.length, 0, 'an unrelated output cannot close the pending question')
+    const [resolved] = publish('running', answer('first', 2200))
+    assert.equal(resolved.interactionRef, first.interactionRef)
+    assert(resolved.sequence > first.sequence, 'the matched answer advances beyond the question and original activity')
+    assert.equal(resolved.state, 'resolved')
+    const next = publish('waiting-input', question('next', 2300)).find(request => request.state === 'opened')
+    assert.notEqual(next.interactionRef, first.interactionRef, 'another question in the same Turn has its own instance')
+    bridge.shadows.set(threadId, {})
+    const approval = { ...next, kind: 'approval', interactionRef: 'a'.repeat(32),
+      sequence: ++sequence, requestSetRevision: sequence }
+    const pending = publish('waiting-approval', answer('next', 2400), [approval])
+    assert(pending.some(request => request.interactionRef === approval.interactionRef && request.state === 'opened'))
+    assert(clear.every(([id, flag]) => id === threadId && flag === 'waitingOnUserInput'))
+    assert.equal(clear.at(-1)[2], resolved.sequence, 'an older rollout does not widen the current native owner cutoff')
+    assert.equal(known.lastTurnId, 'same-turn')
+  } finally { snapshot.kernel.close() }
+}
+
+function checkRolloutSideCompletion(require, source, fixture) {
+  const { createCodexRolloutRuntimeState } = require('./codex/rollout-runtime-state.cjs')
+  const { createCodexDesktopActivityResolution } = require('./codex/desktop-activity-resolution.cjs')
+  const parentThreadId = 'main'
+  const threadId = 'side'
+  const domain = 'source'
+  const tracker = { threadId, parentThreadId, sideDomain: domain }
+  const parents = new Map([[threadId, parentThreadId]])
+  const inventory = new Map()
+  const terminals = new Map()
+  const turnCache = new Map()
+  const published = []
+  const bridge = { sideShadows: new Map(), hasOtherActiveBranch: () => false, cancelLatestTurnRefreshByKey() {},
+    emitParentActivity: id => published.push(id) }
+  let evidenceSequence = 100
+  const utilities = { record: value => value ?? {}, timestampMs: value => Number(value) || 0 }
+  const confirmed = value => value === 'turn-completed'
+  const resolution = createCodexDesktopActivityResolution({ ...utilities, validThreadId: Boolean,
+    isConfirmedTurnEvidence: confirmed, waitingEvidenceVisible: () => true,
+    desktopRequestFlag: () => '', desktopIsPlanImplementationRequest: () => false })
+  const rollout = createCodexRolloutRuntimeState({ ...utilities,
+    rolloutTimestampMs: (...values) => values.map(utilities.timestampMs).find(Boolean) || 0 })
+  const declarations = ['codexPrivateBranchTerminalKey', 'codexRememberPrivateBranchTerminal',
+    'codexForgetPrivateBranchTerminal', 'codexReadPrivateBranchTerminal', 'codexApplySideTerminalNotification',
+    'codexApplyRolloutSideCompletion', 'codexApplyRolloutDecisionState', 'codexSyncInventorySideTopology']
+    .map(name => {
+      const start = source.indexOf(`function ${name}(`)
+      const end = source.indexOf('\nfunction ', start + 1)
+      assert(start >= 0 && end > start, name)
+      return source.slice(start, end)
+    })
+  const host = new Script(`${declarations.join('\n')}
+    ({ apply: codexApplyRolloutDecisionState, sync: codexSyncInventorySideTopology, terminal: codexReadPrivateBranchTerminal })`)
+    .runInNewContext({
+      codexCausalDomain: domain, validCodexThreadId: Boolean, codexRecord: utilities.record,
+      codexTimestampMs: utilities.timestampMs, codexActivityInventory: new Map([[parentThreadId, {}]]),
+      codexRetiredThreadIds: new Map(), codexInventorySideRelations: parents, codexInventorySideBranchEvidence: inventory,
+      codexSideParentThreadId: id => parents.get(id), codexDesktopSideRelations: new Map(), codexDesktopBridge: bridge,
+      codexEnsureDesktopBridge: () => bridge, codexThreadTurnStatusCache: turnCache, codexAppServerSideActivities: new Map(),
+      codexAppServerSideActivity: () => null, codexPrivateBranchTerminals: terminals, CODEX_PRIVATE_BRANCH_TERMINAL_LIMIT: 10,
+      codexIsConfirmedTurnEvidence: confirmed, sanitizeCodexTurnStatus: value => value,
+      codexDesktopRequestCorrelation: value => value.id, codexDesktopActivityResolution: resolution,
+      codexDesktopHasStickyPendingRequest: () => false, codexNextLiveEvidenceSequence: () => ++evidenceSequence,
+      codexPrivateBranchIdleConfirmed: () => false, codexClearStalePreCompletionLiveUnread() {},
+      codexThreadGoalNeedsTerminalRefresh: () => false, codexPrivateThreadGoalEvidence: () => ({}),
+      codexLegacySideActive: false, codexRejectInternalReviewThread: () => false, codexThreadActions: new Map(),
+      codexCompleteInventoryThreadIds: null, codexThreadPersistedPlanLifecycle: () => ({}),
+      codexReconcileInventorySideOpenedReadWithTurn() {}, codexRefreshSpawnEdgeEvidence() {},
+      codexInventoryThreadTopologyModule: null
+    })
+  const scenario = fixture()
+  let revision = 0
+  const child = { id: threadId, status: { type: 'notLoaded' } }
+  function inventoryResult(turn) {
+    host.sync(new Map([[threadId, parentThreadId]]), new Map(), new Map([[threadId, child]]),
+      { latest: new Map([[threadId, turn]]), readSucceededIds: new Set([threadId]) })
+  }
+  function publish(expected) {
+    const side = inventory.get(threadId)
+    const terminal = host.terminal(parentThreadId, threadId)
+    const activeSequence = side.activeEvidenceSequence
+    const fields = resolution.codexDesktopBranchTurnFields({ inventoryEvidence: side, activity: side }, {}, {
+      live: side.status === 'active', terminal, terminalStrictlyNewer: terminal?.terminalEvidenceSequence > activeSequence,
+      activeSequence, turnRef: side.turnId
+    })
+    scenario.publish([{ key: 'main', epoch: 1000, branch: {} }, {
+      key: 'side', epoch: fields.turnStartedAt, branch: { ...side, ...fields }
+    }], ++revision, { complete: revision === 1, hostEvidence: true })
+    scenario.expectRoot(expected, false, 2)
+  }
+  function complete(turnId, at, emit = true, sourceTracker = tracker) {
+    const runtime = rollout.codexRolloutRuntimeStateText(JSON.stringify({
+      type: 'event_msg', timestamp: at, payload: { type: 'task_complete', turn_id: turnId }
+    }))
+    return host.apply(sourceTracker, { runtime }, emit, { observeRuntime: true })
+  }
+  try {
+    const turn = { id: 'side-first', status: 'inProgress', startedAt: 1500 }
+    inventoryResult(turn)
+    publish('running')
+    assert.equal(complete('previous-turn', 1700), false)
+    assert.equal(complete(turn.id, 1400), false)
+    assert.equal(complete(turn.id, 1700, true, { ...tracker, sideDomain: 'old-source' }), false)
+    bridge.sideShadows.set(threadId, { ownerClientId: 'live-owner', canonicalLatestComplete: true,
+      currentCanonicalTurn: { turnRef: turn.id, status: turn.status, startedAt: turn.startedAt } })
+    assert.equal(complete(turn.id, 1700), false, 'current Desktop activity vetoes a conflicting file terminal')
+    bridge.sideShadows.clear()
+    assert.equal(complete(turn.id, 1700), true)
+    assert.deepEqual(published, [parentThreadId])
+    assert.equal(host.terminal(parentThreadId, threadId)?.terminalAt, 1700)
+    publish('completed')
+    inventoryResult(turn)
+    publish('completed')
+    const next = { ...turn, id: 'side-next', startedAt: 1800 }
+    inventoryResult(next)
+    publish('running')
+    assert.equal(complete(next.id, 1900, false), true)
+    assert.deepEqual(published, [parentThreadId], 'cold Side completion joins the inventory package')
+    publish('completed')
+  } finally { scenario.kernel.close() }
+}
+
 async function checkAttentionSettlement(fixture) {
   const rows = [
     { key: 'task-b', lastQuestionAt: 300, phase: 'waiting-input' },
@@ -1568,7 +1749,7 @@ export async function checkCompanionLifecycles(assetRoot) {
       assert.equal(snapshot.tasks[0].topology.memberCount, count)
       assert.equal(snapshot.views.counts.unread, unreadEntry ? 1 : 0)
       assert.equal(snapshot.views.counts.active, phase === 'running' ? 1 : 0)
-      assert.equal(snapshot.views.counts.input, phase === 'waiting-input' ? 1 : 0)
+      assert.equal(snapshot.views.counts.input, ['waiting-input', 'waiting-approval'].includes(phase) ? 1 : 0)
       assert(!snapshot.views.cycleKeys.includes('side'))
       checked++
       return snapshot.tasks[0]
@@ -1994,6 +2175,8 @@ export async function checkCompanionLifecycles(assetRoot) {
   checked += checkRolloutTailSampleReuse(source)
   checked += checkInventoryProjectAssignments(source)
   checked += checkMemberRequestWatermarks(source, fixture)
+  checkRolloutInputResume(require, source, fixture, codexBranchObservationV7)
+  checkRolloutSideCompletion(require, source, fixture)
   checked += await checkAttentionSettlement(fixture)
   checked += await checkInFlightShortcutRetention(fixture)
   checked += await checkStableShortcutRing(fixture)
