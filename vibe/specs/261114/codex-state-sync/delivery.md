@@ -280,6 +280,8 @@ Main 直接记录「后台」和「未展示」两种回执。可见计数仍在
 
 ### 脚本读取实时任务包
 
+任务数与 Main、Float 的展示一致性按[项目 F1 验收规则](../../../rules/project-runtime.md#companion-task-count-acceptance)检查。11 月 24 日的既有结果和复测处置见 [F1 验收记录](status-read-investigation-261116.md#script-display-f1-261124)。
+
 1. `node scripts/read-eypc-task-state.mjs` 读取当前宿主已发布的 V7 包。`--watch` 先返回当前包，再接收发布变化与展示回执。用 `hostGeneration` 和 `packageRevision` 对账。`host` 给出实际 build 标识和握手，`firstComplete` 记首个完整包的接纳时刻。包内含任务相位、轮次开始时刻、未读、来源健康、计数、分组与快捷键候选。[脚本入口](../../../../scripts/read-eypc-task-state.mjs#L1)
 2. Host 按原包号复用匿名投影。持续读取不发起库存、轮次或额度请求。接口使用本机回环地址和当前用户目录下的凭据，磁盘描述文件只保存连接信息。有活动监听时 Host 维持心跳，最后一个监听离开时停止心跳。连接空闲时，脚本核同一宿主的快照序号。宿主可达且序号一致时，原订阅继续接收更新。订阅落后或连接中断时重接，按宿主代次与序号去重，无法恢复时报告 `unavailable`。可用包通过 `complete` 和 `freshness` 区分准备中、核验中和有效空包。[宿主只读出口](../../../../preload/companion/task-state-bridge.cjs#L1) · [脚本空闲核查](../../../../scripts/read-eypc-task-state.mjs#L42)
 3. `consumerReceipts` 与后续 `receipt` 事件沿用 Main、Float 的已校验回执。按宿主代次、窗代和包号核对。Main 记录当次可见计数，Float 记录当次入视口行的相位。记录反映回执采样时的展示情况。匿名任务引用只在同一宿主代次内用于对账。跨重载续核同一原生 Turn 以及 Codex 目标会话的首次可见分别沿用现场验收。

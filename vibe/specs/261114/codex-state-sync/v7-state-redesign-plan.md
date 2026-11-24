@@ -132,3 +132,5 @@ flowchart TD
 | 5 | 快捷执行 | 普通步进和锁定目标共用持有环及选中后的提交。逻辑游标、操作号和待派发目标一起入队。队列和应用就绪后复核同一身份与实例，适用时再复核层或专用轮次。连按保留最后一个通用待派发目标。派发、精确可见和原生清读分别取证，缺映射时由后台补同一目标。[导航提交](../../../../preload/companion/navigation.cjs#L634) · [快捷缓存合同](../../261120/eypc-shortcut-optimization/jump-cache-component.md#L7) |
 
 验证选择现有 Companion 状态、原生未读、来源隔离和导航入口。沿前置构建取得源码和随包证据。实机按同一原生 Turn、构建与任务包核对，覆盖主轮完成且子仍运行、子轮自然完成、同轮答复、真实新轮、过期回执、旧代 Codex 与其他来源同时更新，以及高速连按期间的资格变化。快捷窗口配对沿既有暂停登记。[验证映射](../../../knowledge/verification-map.md#L35) · [配对暂停](../../PROJECT_STATUS.md#shortcut-pair-pause-261123)
+
+任务数与 Main、Float 的展示一致性按[项目 F1 验收规则](../../../rules/project-runtime.md#companion-task-count-acceptance)检查。

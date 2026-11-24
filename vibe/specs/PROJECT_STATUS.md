@@ -1,5 +1,7 @@
 # EyPc Project Status Hub
 
+- 2026-11-24 17:39:58.279，F1 同包对账通过。脚本读出的 #92 角标与 Main 实际回执一致，展开 Float 同包的 3 条进行中行和 2 条原生图钉已逐条核对。F1 复测和快捷键实触测试按用户决定收口。[验收规则](../rules/project-runtime.md#companion-task-count-acceptance) · [F1 凭证](261114/codex-state-sync/status-read-investigation-261116.md#script-display-f1-261124)
+
 <a id="state-navigation-build-261123"></a>
 
 - 2026-11-23 20:20:52.644，Codex 轮次、主子归组、来源隔离和快捷导航重构通过本地 `closeout`。产物 `V7` / `host-965a292eb51c05c24c4a` / `renderer-5633387d2636d50becb4`，builtAt `2026-11-23T12:20:52.644Z`。源码与随包各通过 40 个主子状态场景、314 个生命周期和 45 个原生未读检查点。实载回读为 15:39:49.879 版。待从开发插件入口重新接入后，逐项核原生轮次、四来源、Main／Float 与快捷操作。[开发插件入口](../../dist/plugin.json#L1) · [分批记录与手测](261114/codex-state-sync/delivery.md#state-navigation-batches-261123)
