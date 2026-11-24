@@ -1,8 +1,24 @@
 # EyPc Project Status Hub
 
+<a id="state-navigation-build-261123"></a>
+
+- 2026-11-23 20:20:52.644，Codex 轮次、主子归组、来源隔离和快捷导航重构通过本地 `closeout`。产物 `V7` / `host-965a292eb51c05c24c4a` / `renderer-5633387d2636d50becb4`，builtAt `2026-11-23T12:20:52.644Z`。源码与随包各通过 40 个主子状态场景、314 个生命周期和 45 个原生未读检查点。实载回读为 15:39:49.879 版。待从开发插件入口重新接入后，逐项核原生轮次、四来源、Main／Float 与快捷操作。[开发插件入口](../../dist/plugin.json#L1) · [分批记录与手测](261114/codex-state-sync/delivery.md#state-navigation-batches-261123)
+
+<a id="theme-release-index"></a>
+
+## 发布主题索引
+
+| 主题 | 实现 | 发布 | 验收 |
+| --- | --- | --- | --- |
+| [Codex 状态与快捷导航重构](261114/codex-state-sync/delivery.md#state-navigation-release-261123) | 源码 `9438660225dcb11d50ace8b46d9a9ab0eddffa5d`，20:20:52.644 构建通过 | 待发布。Git 交付与实载分开，以 `origin/main` 回读该提交为准 | 实载仍为 15:39:49.879；四来源、主浮窗和快捷实机未完成，配对暂停 |
+
 <a id="shortcut-pair-pause-261123"></a>
 
 - 2026-11-23，快捷键配对测试按用户指示暂停，恢复只按后续说明。历史有效配对保持 0/10，已记录实机结果保留。双端首次可见仍待验。[现行验收](261120/eypc-shortcut-optimization/jump-cache-component.md#armed-window-pairs-261123)
+
+<a id="main-turn-second-completion-build-261123"></a>
+
+- 2026-11-23 19:28:54.124，Codex 主轮整秒完成结算修复通过本地 `closeout`。产物为 `V7` / `host-a5ae064ba1a21bda40b4` / `renderer-4c8960b0a30ae4d1faad`，builtAt `2026-11-23T11:28:54.124Z`。源码和随包各通过 299 个生命周期检查点。当前实载仍是 15:39:49 版，新版待重载后核主轮自然完成、真实新轮及 Float/Main。[开发插件入口](../../dist/plugin.json#L1) · [修复与回放](261114/codex-state-sync/delivery.md#main-turn-second-completion-261123)
 
 <a id="side-rollout-completion-build-261123"></a>
 
