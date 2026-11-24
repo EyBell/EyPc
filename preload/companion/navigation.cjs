@@ -621,6 +621,45 @@ function createCompanionNavigation(dependencies = {}) {
     pump()
   }
 
+  function beginHeldWalk(startedAt) {
+    const held = walkHeld(startedAt)
+    if (!held) {
+      adoptPublishedWalk()
+      walkAdoptedCount += 1
+    }
+    walkExpiresAt = startedAt + CYCLE_WALK_HOLD_MS
+    return held
+  }
+
+  function commitSelectedCycle(selection) {
+    const target = selection.target
+    const coalescing = selection.coalescing === true
+    acceptedCycleCount += 1
+    if (coalescing) coalescedAdvanceCount += 1
+    pendingCursorKey = target.key
+    outstandingCycles += 1
+    record({
+      level: 'debug',
+      scope: 'navigation',
+      event: 'target-selected',
+      outcome: 'selected',
+      operationId: selection.operationId,
+      provider: target.provider,
+      taskRef: target.key,
+      source: selection.source,
+      cache: 'process-package',
+      details: selection.details
+    })
+    return new Promise((resolve) => queueCycle({
+      target,
+      context: selection.context,
+      source: selection.source,
+      operationId: selection.operationId,
+      cycle: true,
+      resolve
+    }))
+  }
+
   function cycle(direction, input = {}) {
     const startedAt = Date.now()
     const source = input.source || 'task-cycle'
@@ -662,33 +701,19 @@ function createCompanionNavigation(dependencies = {}) {
         })
       } catch {}
       if (!pairedEligible) return reject(unavailable('指定任务当前不可切换', 'unavailable'))
-      const pairedHeld = walkHeld(startedAt)
-      if (!pairedHeld) {
-        adoptPublishedWalk()
-        walkAdoptedCount += 1
-      }
-      walkExpiresAt = startedAt + CYCLE_WALK_HOLD_MS
-      acceptedCycleCount += 1
-      pendingCursorKey = pairedKey
-      outstandingCycles += 1
-      record({
-        level: 'debug', scope: 'navigation', event: 'target-selected', outcome: 'selected',
-        operationId: currentOperationId, provider: pairedTarget.provider, taskRef: pairedTarget.key, source,
-        cache: 'process-package',
+      const pairedHeld = beginHeldWalk(startedAt)
+      return commitSelectedCycle({
+        target: pairedTarget,
+        context: pairedContext,
+        source,
+        operationId: currentOperationId,
+        coalescing: false,
         details: { paired: true, cycleCount: snapshot.cycleKeys.length, held: pairedHeld }
       })
-      return new Promise((resolve) => queueCycle({
-        target: pairedTarget, context: pairedContext, source, operationId: currentOperationId, cycle: true, resolve
-      }))
     }
     if (!snapshot.cycleKeys.length) return reject(unavailable('当前没有可切换的任务', 'no-task'))
-    const held = walkHeld(startedAt)
-    if (!held) {
-      adoptPublishedWalk()
-      walkAdoptedCount += 1
-    }
+    const held = beginHeldWalk(startedAt)
     const ring = walkRing
-    walkExpiresAt = startedAt + CYCLE_WALK_HOLD_MS
     const offset = direction === -1 ? -1 : 1
     const origin = walkOrigin()
     const coalescing = origin !== cursorKey
@@ -708,24 +733,14 @@ function createCompanionNavigation(dependencies = {}) {
     const key = ring[nextIndex]
     const target = snapshot.targets.get(key)
     if (!target) return reject(unavailable('任务缓存已变化，请重试', 'stale-target'))
-    acceptedCycleCount += 1
-    if (coalescing) coalescedAdvanceCount += 1
-    pendingCursorKey = key
-    outstandingCycles += 1
-    record({
-      level: 'debug',
-      scope: 'navigation',
-      event: 'target-selected',
-      outcome: 'selected',
-      operationId: currentOperationId,
-      provider: target.provider,
-      taskRef: target.key,
+    return commitSelectedCycle({
+      target,
+      context: captureTarget(target),
       source,
-      cache: 'process-package',
+      operationId: currentOperationId,
+      coalescing,
       details: { direction: offset, currentIndex, nextIndex, cycleCount: ring.length, held, coalescing, displaced: cursorDisplacedSide || 'none' }
     })
-    const context = captureTarget(target)
-    return new Promise((resolve) => queueCycle({ target, context, source, operationId: currentOperationId, cycle: true, resolve }))
   }
 
   function open(input = {}) {

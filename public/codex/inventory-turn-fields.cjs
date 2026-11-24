@@ -1,6 +1,6 @@
 'use strict'
 
-const { compareCodexTurnOrder } = require('../companion/branch-causality.cjs')
+const { alignCodexCompletedTurn, compareCodexTurnOrder } = require('../companion/branch-causality.cjs')
 
 /**
  * Merges a freshly read inventory turn projection with the previously known
@@ -67,6 +67,31 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     return Array.isArray(page.data) && page.data.length === 0 && page.nextCursor == null && page.backwardsCursor == null
   }
 
+  function codexAlignCompletedTurnStart(known, turn) {
+    if (turn?.status !== 'completed' || (known?.lastTurnStatus || known?.status) !== 'inProgress') return turn
+    const incoming = { ...turnOrderShape(turn), terminalAt: timestampMs(turn.completedAt) }
+    const aligned = alignCodexCompletedTurn(turnOrderShape(known), incoming)
+    if (aligned === incoming) return turn
+    return {
+      ...turn,
+      startedAt: aligned.turnStartedAt,
+      ...(aligned.terminalAt ? { completedAt: aligned.terminalAt } : {})
+    }
+  }
+
+  function codexTerminalTurnTransition(known, value, predecessorId) {
+    if (!['completed', 'interrupted', 'failed'].includes(value?.status) || !timestampMs(value.startedAt)) return null
+    const candidate = predecessorId && value.id ? { ...value, predecessorId } : value
+    const turn = codexAlignCompletedTurnStart(known, candidate)
+    const order = compareInventoryTurns(known, turn)
+    const previous = turnOrderShape(known)
+    const incoming = turnOrderShape(turn)
+    if (order === 'older' || order === 'unknown' && previous.causalKey && incoming.causalKey
+      && previous.causalKey !== incoming.causalKey
+      || order !== 'newer' && incoming.turnStartedAt < previous.turnStartedAt) return null
+    return { turn, order }
+  }
+
   function codexMergedInventoryTurnFields(projection, previousActivity) {
     if (!projection?.lastTurnStatus) return {}
     const next = {
@@ -130,11 +155,12 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     return next
   }
 
-  function codexCompletedTurnUpdate(known, turn, requireFresh = false) {
-    if (turn?.status !== 'completed' || !timestampMs(turn.startedAt)) return null
+  function codexCompletedTurnUpdate(known, candidate, requireFresh = false) {
+    if (candidate?.status !== 'completed') return null
+    const transition = codexTerminalTurnTransition(known, candidate)
+    if (!transition) return null
+    const { turn, order } = transition
     const baselineStartedAt = timestampMs(known.lastTurnStartedAt)
-    const order = compareInventoryTurns(known, turn)
-    if (order === 'older' || order === 'unknown' && known.lastTurnId && turn.id && known.lastTurnId !== turn.id) return null
     const fresh = order === 'newer' || turn.startedAt > baselineStartedAt
       || turn.startedAt === baselineStartedAt && known.lastTurnStatus !== 'completed'
       || turn.startedAt === baselineStartedAt && known.lastTurnStatus === 'completed'
@@ -186,6 +212,8 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     compareInventoryTurns,
     codexOrderedTurnPair,
     codexExactEmptyTurnPage,
+    codexAlignCompletedTurnStart,
+    codexTerminalTurnTransition,
     codexMergedInventoryTurnFields,
     codexCompletedTurnUpdate,
     sanitizeCodexTurnStatus,

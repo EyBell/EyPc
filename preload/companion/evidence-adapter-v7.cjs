@@ -51,18 +51,57 @@ function activityFromPhaseV7(phase, options = {}) {
   return 'unknown'
 }
 
-/**
- * Normalize Codex-private branch facts into provider-neutral evidence. This is
- * vocabulary translation only: no public phase, group, count or cycle is
- * emitted. Interaction and Plan facts remain independent of activity.
- */
+const CODEX_TERMINAL_ACTIVITY = Object.freeze({
+  completed: 'turn-completed',
+  interrupted: 'turn-interrupted',
+  failed: 'turn-failed'
+})
+
+function codexTurnCandidateV7(branch, turn, live, flags) {
+  const terminalKind = CODEX_TERMINAL_ACTIVITY[turn.lastTurnStatus]
+  const exactTerminal = terminalKind && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(turn.lastTurnEvidence)
+  const inventoryTerminal = terminalKind && turn.lastTurnEvidence === 'inventory'
+  const running = live && (turn.lastTurnStatus === 'inProgress' || !flags.length && !branch.groupActivityConfirmed)
+    && branch.connectorOnly !== true && !exactTerminal
+  if (!running && !exactTerminal && !inventoryTerminal) return null
+
+  const sourceSequence = running ? turn.activeEvidenceSequence : turn.terminalEvidenceSequence
+  const causalSequence = Number.isSafeInteger(sourceSequence) && sourceSequence > 0 ? sourceSequence : 0
+  const startedAt = integer(turn.turnStartedAt)
+  const observedAt = integer(branch.observedAt)
+  const terminalAt = running ? 0 : integer(turn.terminalAt) || (inventoryTerminal ? startedAt : 0)
+  const transitionAt = turn === branch ? integer(branch.transitionAt) : 0
+  return {
+    kind: running ? 'turn-running' : terminalKind,
+    authority: running && branch.activityEvidence === 'activity-event' ? 'live-turn' : exactTerminal ? 'terminal' : 'inventory',
+    causalKey: turn.causalKey,
+    causalDomain: turn.causalDomain,
+    turnPredecessorKey: turn.turnPredecessorKey,
+    causalSequence,
+    exact: Boolean(running || exactTerminal),
+    sequence: integer(sourceSequence) || (inventoryTerminal && !running ? startedAt : 0) || observedAt,
+    observedAt,
+    statusEnteredAt: transitionAt || (running ? integer(branch.waitingSince) : terminalAt) || startedAt,
+    turnStartedAt: startedAt,
+    terminalAt,
+    ...(turn === branch && branch.ordinarySideInterruptedAt > 0 && branch.branchKind === 'side'
+      && terminalKind === 'turn-interrupted' && exactTerminal && !flags.length && !branch.planReady && !branch.planImplementationOnly
+      && branch.goalFreshness === 'fresh' && ['none', 'complete'].includes(branch.goalStatus)
+      ? { ordinarySideInterruptedAt: integer(branch.ordinarySideInterruptedAt) } : {}),
+    ...(inventoryTerminal && branch.branchKind === 'main' && branch.hostExternal !== true && terminalKind === 'turn-completed'
+      && turn.turnStartedAtSource === 'inventory' && turn.turnRef && startedAt > 0
+      && !flags.length && !branch.planReady && !branch.planImplementationOnly
+      && branch.goalStatus === 'none' && branch.goalFreshness === 'fresh' ? { inventoryRootCompletion: true } : {})
+  }
+}
+
 function codexBranchObservationV7(value = {}) {
   const branch = record(value)
   const flags = Array.isArray(branch.activeFlags) ? branch.activeFlags : []
   const activeSequence = integer(branch.activeEvidenceSequence)
   const terminalSequence = integer(branch.terminalEvidenceSequence)
   const goalSequence = integer(branch.goalEvidenceSequence)
-  const exactTerminal = ['completed', 'interrupted', 'failed'].includes(branch.lastTurnStatus)
+  const exactTerminal = CODEX_TERMINAL_ACTIVITY[branch.lastTurnStatus]
     && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(branch.lastTurnEvidence)
   const terminalNewer = exactTerminal && terminalSequence > 0 && activeSequence > 0
     && terminalSequence > activeSequence
@@ -72,75 +111,13 @@ function codexBranchObservationV7(value = {}) {
     || branch.statusAuthority === 'persisted-decision'
     || hostExternalLive
   const hasLiveShape = branch.activityEvidence === 'activity-event'
-    || activeSequence > 0
-    || flags.length > 0
-    || branch.planImplementationOnly === true
-    || hostExternalLive
+    || activeSequence > 0 || flags.length > 0 || branch.planImplementationOnly === true || hostExternalLive
   const hostSettled = branch.hostExternal === true && exactTerminal && flags.length === 0
   const live = branch.status === 'active' && liveAuthority && !hostSettled && !terminalNewer && hasLiveShape
-  const candidates = []
-  if (live && (branch.lastTurnStatus === 'inProgress' || !flags.length && !branch.groupActivityConfirmed)
-    && branch.connectorOnly !== true) {
-    candidates.push({
-      kind: 'turn-running',
-      authority: branch.activityEvidence === 'activity-event' ? 'live-turn' : 'inventory',
-      causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
-      causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
-      ...(typeof branch.turnPredecessorKey === 'string' && branch.turnPredecessorKey
-        ? { turnPredecessorKey: branch.turnPredecessorKey } : {}),
-      causalSequence: Number.isSafeInteger(branch.activeEvidenceSequence) && branch.activeEvidenceSequence > 0 ? branch.activeEvidenceSequence : 0,
-      exact: true,
-      sequence: activeSequence || integer(branch.observedAt),
-      observedAt: integer(branch.observedAt),
-      statusEnteredAt: integer(branch.transitionAt) || integer(branch.waitingSince),
-      turnStartedAt: integer(branch.turnStartedAt),
-      terminalAt: 0
-    })
-  }
-  if (exactTerminal) {
-    candidates.push({
-      kind: branch.lastTurnStatus === 'completed' ? 'turn-completed'
-        : branch.lastTurnStatus === 'failed' ? 'turn-failed' : 'turn-interrupted',
-      authority: 'terminal',
-      causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
-      causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
-      ...(typeof branch.turnPredecessorKey === 'string' && branch.turnPredecessorKey
-        ? { turnPredecessorKey: branch.turnPredecessorKey } : {}),
-      causalSequence: Number.isSafeInteger(branch.terminalEvidenceSequence) && branch.terminalEvidenceSequence > 0 ? branch.terminalEvidenceSequence : 0,
-      exact: true,
-      sequence: terminalSequence || integer(branch.observedAt),
-      observedAt: integer(branch.observedAt),
-      statusEnteredAt: integer(branch.transitionAt) || integer(branch.terminalAt),
-      turnStartedAt: integer(branch.turnStartedAt),
-      terminalAt: integer(branch.terminalAt),
-      ...(branch.ordinarySideInterruptedAt > 0 && branch.branchKind === 'side' && branch.lastTurnStatus === 'interrupted'
-        && !flags.length && !branch.planReady && !branch.planImplementationOnly
-        && branch.goalFreshness === 'fresh' && ['none', 'complete'].includes(branch.goalStatus)
-        ? { ordinarySideInterruptedAt: integer(branch.ordinarySideInterruptedAt) } : {})
-    })
-  } else if (['completed', 'interrupted', 'failed'].includes(branch.lastTurnStatus)
-    && branch.lastTurnEvidence === 'inventory') {
-    candidates.push({
-      kind: branch.lastTurnStatus === 'completed' ? 'turn-completed'
-        : branch.lastTurnStatus === 'failed' ? 'turn-failed' : 'turn-interrupted',
-      authority: 'inventory',
-      causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,
-      causalDomain: typeof branch.causalDomain === 'string' ? branch.causalDomain : undefined,
-      ...(typeof branch.turnPredecessorKey === 'string' && branch.turnPredecessorKey
-        ? { turnPredecessorKey: branch.turnPredecessorKey } : {}),
-      causalSequence: Number.isSafeInteger(branch.terminalEvidenceSequence) && branch.terminalEvidenceSequence > 0 ? branch.terminalEvidenceSequence : 0,
-      exact: false,
-      sequence: terminalSequence || integer(branch.turnStartedAt) || integer(branch.observedAt),
-      observedAt: integer(branch.observedAt),
-      statusEnteredAt: integer(branch.transitionAt) || integer(branch.turnStartedAt),
-      turnStartedAt: integer(branch.turnStartedAt),
-      terminalAt: integer(branch.terminalAt) || integer(branch.turnStartedAt),
-      ...(branch.branchKind === 'main' && branch.hostExternal !== true && branch.lastTurnStatus === 'completed'
-        && branch.turnStartedAtSource === 'inventory' && branch.turnRef && integer(branch.turnStartedAt) > 0
-        && !flags.length && !branch.planReady && !branch.planImplementationOnly
-        && branch.goalStatus === 'none' && branch.goalFreshness === 'fresh' ? { inventoryRootCompletion: true } : {})
-    })
-  }
+  const candidates = [codexTurnCandidateV7(branch, branch, live, flags)]
+  if (branch.competingTurn) candidates.push(codexTurnCandidateV7(branch, branch.competingTurn,
+    branch.competingTurn.lastTurnStatus === 'inProgress', flags))
+  const activityCandidates = candidates.filter(Boolean)
   const interactionKind = live && flags.includes('waitingOnApproval')
     ? 'approval'
     : live && flags.includes('waitingOnUserInput')
@@ -188,7 +165,7 @@ function codexBranchObservationV7(value = {}) {
     },
     kind: 'unknown',
     exact: false,
-    candidates: candidates.length ? candidates : [{
+    candidates: activityCandidates.length ? activityCandidates : [{
       kind: 'unknown',
       authority: 'unknown',
       causalKey: typeof branch.causalKey === 'string' ? branch.causalKey : undefined,

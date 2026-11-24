@@ -95,7 +95,7 @@ describe('Codex unread recovery isolation', () => {
 
 describe('Native Codex identity-scoped unread gate', () => {
   it('executes native/legacy source selection, identity isolation and live protocol acceptance', () => {
-    expect(checkCompanionNativeUnread(resolve('preload'))).toBe(44)
+    expect(checkCompanionNativeUnread(resolve('preload'))).toBe(45)
   })
   it('rejects the obsolete live unread protocol policy', () => {
     const temporary = mkdtempSync(join(tmpdir(), 'eypc-native-unread-'))

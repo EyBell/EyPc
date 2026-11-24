@@ -1,5 +1,7 @@
 'use strict'
 
+const { alignCodexCompletedTurn, sameTurnEvidenceDecision } = require('../companion/branch-causality.cjs')
+
 /**
  * Resolves a Desktop session shadow into an activity verdict, and the
  * smaller judgments built on top of it: whether a terminal turn result is
@@ -495,41 +497,63 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
   }
 
   function codexDesktopBranchTurnFields(row, known, options = {}) {
-    const { live, terminalStrictlyNewer, activeSequence, idleConfirmed, main, turnRef } = options
+    const { live, activeSequence, idleConfirmed, main, turnRef } = options
     let terminal = options.terminal
     if (terminal?.lastTurnEvidence === 'targeted-after-exit' && codexDesktopTerminalConflictsWithOwner({
       status: terminal.lastTurnStatus, startedAt: terminal.turnStartedAt
-    }, row.shadow)) terminal = null
+    }, row.shadow, terminal.turnRef)) terminal = null
     const baseline = codexDesktopBranchInventoryTurn(row.shadow, row.inventoryEvidence, known, main, turnRef)
     const waiting = row.activity?.activeFlags?.length > 0
     const shadowTurn = row.shadow?.asyncTurns?.at(-1) || row.shadow?.currentCanonicalTurn
     const hasRunningTurn = row.appServerActivity?.turn?.status === 'inProgress' || shadowTurn?.status === 'inProgress'
       || baseline.lastTurnStatus === 'inProgress'
-    const selectedLive = live && (!waiting || hasRunningTurn) && (!terminal || !terminalStrictlyNewer)
-    const fields = selectedLive
-      ? { lastTurnStatus: 'inProgress', lastTurnEvidence: 'turn-started',
-          activeEvidenceSequence: activeSequence || Number(known.activeEvidenceSequence) || 0, idleConfirmed: false }
-      : terminal
-        ? { lastTurnStatus: terminal.lastTurnStatus, lastTurnEvidence: terminal.lastTurnEvidence,
-            terminalEvidenceSequence: Number(terminal.terminalEvidenceSequence) || 0,
-            activeEvidenceSequence: Number(terminal.activeEvidenceSequence) || activeSequence, idleConfirmed }
-        : { ...baseline, activeEvidenceSequence: activeSequence }
-    const shadowStart = timestampMs(shadowTurn?.startedAt)
-    const selectedTurnRef = selectedLive
-      ? row.lane === 'app-server' ? turnRef : shadowTurn?.turnRef || turnRef
-      : terminal ? terminal.turnRef : turnRef
-    return { ...fields,
-      turnRef: selectedTurnRef || '',
-      turnStartedAtSource: selectedLive ? row.lane === 'app-server' ? 'app-server'
-        : row.shadow?.asyncTurns?.at(-1) ? 'desktop-overlay' : shadowTurn ? 'desktop-canonical' : 'inventory'
-        : terminal ? 'terminal' : 'inventory',
-      turnStartedAt: selectedLive ? row.lane === 'app-server'
+    const liveTurnRef = row.lane === 'app-server' ? turnRef || '' : shadowTurn?.turnRef || turnRef || ''
+    const predecessorFor = ref => ref && ref === options.latestTurnRef ? options.latestTurnPredecessorRef || '' : ''
+    const liveTurn = live && (!waiting || hasRunningTurn) ? {
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started',
+      activeEvidenceSequence: activeSequence || Number(known.activeEvidenceSequence) || 0,
+      terminalEvidenceSequence: 0,
+      idleConfirmed: false,
+      turnRef: liveTurnRef,
+      turnPredecessorRef: predecessorFor(liveTurnRef),
+      turnStartedAtSource: row.lane === 'app-server' ? 'app-server'
+        : row.shadow?.asyncTurns?.at(-1) ? 'desktop-overlay' : shadowTurn ? 'desktop-canonical' : 'inventory',
+      turnStartedAt: row.lane === 'app-server'
         ? timestampMs(options.liveTurnStartedAt)
-        : shadowTurn ? shadowStart : timestampMs(baseline.turnStartedAt)
-        : terminal ? timestampMs(terminal.turnStartedAt) : timestampMs(baseline.turnStartedAt),
-      terminalAt: timestampMs(terminal?.terminalAt)
-        || (terminal?.lastTurnStatus === 'completed' ? timestampMs(known.lastTurnCompletedAt) : timestampMs(terminal?.turnStartedAt))
+        : shadowTurn ? timestampMs(shadowTurn.startedAt) : timestampMs(baseline.turnStartedAt),
+      terminalAt: 0
+    } : null
+    let terminalTurn = terminal ? {
+      lastTurnStatus: terminal.lastTurnStatus,
+      lastTurnEvidence: terminal.lastTurnEvidence,
+      terminalEvidenceSequence: Number(terminal.terminalEvidenceSequence) || 0,
+      activeEvidenceSequence: Number(terminal.activeEvidenceSequence) || activeSequence,
+      idleConfirmed,
+      turnRef: terminal.turnRef || '',
+      turnPredecessorRef: terminal.turnPredecessorRef || predecessorFor(terminal.turnRef),
+      turnStartedAtSource: 'terminal',
+      turnStartedAt: timestampMs(terminal.turnStartedAt),
+      terminalAt: timestampMs(terminal.terminalAt)
+        || (terminal.lastTurnStatus === 'completed' ? timestampMs(known.lastTurnCompletedAt) : timestampMs(terminal.turnStartedAt))
+    } : null
+    if (liveTurn?.turnRef && terminalTurn?.turnRef) {
+      const causalDomain = options.causalDomain || terminal.causalDomain || 'codex-member'
+      const previous = { ...liveTurn, causalDomain, causalKey: liveTurn.turnRef,
+        turnPredecessorKey: liveTurn.turnPredecessorRef, liveCurrent: true }
+      const candidate = { ...terminalTurn, causalDomain: terminal.causalDomain || causalDomain,
+        causalKey: terminalTurn.turnRef, turnPredecessorKey: terminalTurn.turnPredecessorRef, exactTerminal: true,
+        kind: terminalTurn.lastTurnStatus === 'completed' ? 'turn-completed' : '' }
+      const aligned = terminalTurn.lastTurnStatus === 'completed' ? alignCodexCompletedTurn(previous, candidate) : candidate
+      terminalTurn = { ...terminalTurn, turnStartedAt: aligned.turnStartedAt, terminalAt: aligned.terminalAt }
+      const accepted = sameTurnEvidenceDecision(previous, aligned)?.accepted
+      const useTerminal = accepted ?? (terminalTurn.terminalEvidenceSequence > liveTurn.activeEvidenceSequence)
+      return { ...(useTerminal ? terminalTurn : liveTurn), competingTurn: useTerminal ? liveTurn : terminalTurn }
     }
+    if (terminalTurn && (!liveTurn || terminalTurn.terminalEvidenceSequence > liveTurn.activeEvidenceSequence)) return terminalTurn
+    if (liveTurn) return liveTurn
+    return { ...baseline, activeEvidenceSequence: activeSequence, turnRef: turnRef || '', turnPredecessorRef: predecessorFor(turnRef),
+      turnStartedAtSource: 'inventory', turnStartedAt: timestampMs(baseline.turnStartedAt), terminalAt: 0 }
   }
 
   function codexDesktopActivityRebase(branch, previous, causalDomain) {

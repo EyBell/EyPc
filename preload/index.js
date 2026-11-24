@@ -3677,6 +3677,7 @@ function codexRememberPrivateBranchTerminal(parentThreadId, branchThreadId, turn
     parentThreadId,
     branchThreadId,
     turnRef: turnRef || (sameTerminal ? previous.turnRef : '') || '',
+    turnPredecessorRef: codexDesktopRequestCorrelation({ id: source.predecessorId }) || (sameTerminal ? previous.turnPredecessorRef : '') || '',
     causalDomain: codexCausalDomain,
     lastTurnStatus: source.status,
     lastTurnEvidence: evidence,
@@ -4918,8 +4919,9 @@ function codexRecordCompletedPlanArtifact(known) {
 
 function codexApplyCompletedTurnNotification(bridge, known, threadId, value, options = {}) {
   if (!bridge || !known || !validCodexThreadId(threadId)) return false
-  const turn = sanitizeCodexTurnStatus(value)
-  if (!turn?.startedAt || !['completed', 'interrupted', 'failed'].includes(turn.status)) return false
+  const transition = codexInventoryTurnFieldsModule?.codexTerminalTurnTransition(known, sanitizeCodexTurnStatus(value), options.predecessorId)
+  if (!transition) return false
+  const { turn, order } = transition
   const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
   const previousCompletedAt = codexTimestampMs(known.lastTurnCompletedAt)
   // An exact turn/completed notification is stronger than the local time at
@@ -4930,11 +4932,7 @@ function codexApplyCompletedTurnNotification(bridge, known, threadId, value, opt
   // A resumed interrupted/failed Turn can keep the same startedAt. If its
   // exact latest outcome is now completed, that terminal transition is newer
   // even when the intermediate inProgress notification was missed.
-  const orderedSuccessor = options.predecessorId && options.predecessorId === known.lastTurnId
-    && turn.id && turn.id !== known.lastTurnId
-  if (orderedSuccessor) turn.predecessorId = options.predecessorId
-  if (turn.startedAt === previousStartedAt && turn.id && known.lastTurnId && turn.id !== known.lastTurnId
-    && !orderedSuccessor) return false
+  const orderedSuccessor = order === 'newer'
   const recoveredTerminalRevision = turn.startedAt === previousStartedAt
     && known.lastTurnStatus !== turn.status
   const unresolvedLiveActive = known.status === 'active'
@@ -5117,20 +5115,21 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value, waiti
 }
 
 function codexApplySideTerminalNotification(bridge, parentThreadId, threadId, value, predecessorId, options = {}) {
-  const turn = sanitizeCodexTurnStatus(value)
-  if (!turn?.id || !turn.startedAt || !['completed', 'interrupted', 'failed'].includes(turn.status)
+  const candidate = sanitizeCodexTurnStatus(value)
+  if (!candidate?.id || !candidate.startedAt || !['completed', 'interrupted', 'failed'].includes(candidate.status)
     || codexSideParentThreadId(threadId) !== parentThreadId) return false
   const live = codexAppServerSideActivity(parentThreadId, threadId)
   const cached = codexThreadTurnStatusCache.get(threadId)?.turn
   const previous = codexReadPrivateBranchTerminal(parentThreadId, threadId)
   const current = live?.turn || cached
+  const transition = codexInventoryTurnFieldsModule?.codexTerminalTurnTransition(current, candidate, predecessorId)
+  if (!transition) return false
+  const { turn, order } = transition
   const ref = codexDesktopRequestCorrelation({ id: turn.id })
-  if (current?.startedAt > turn.startedAt || previous?.turnStartedAt > turn.startedAt) return true
+  if (order !== 'newer' && previous?.turnStartedAt > turn.startedAt) return true
   const predecessorRef = predecessorId ? codexDesktopRequestCorrelation({ id: predecessorId }) : ''
-  if ((current?.id && current.id !== turn.id && current.startedAt === turn.startedAt && current.id !== predecessorId)
-    || (previous?.turnRef && previous.turnRef !== ref && previous.turnStartedAt === turn.startedAt
-      && previous.turnRef !== predecessorRef)) return false
-  if (predecessorId) turn.predecessorId = predecessorId
+  if (previous?.turnRef && previous.turnRef !== ref && previous.turnStartedAt === turn.startedAt
+    && previous.turnRef !== predecessorRef) return false
   if (previous?.turnRef === ref && previous.lastTurnStatus === turn.status
     && previous.lastTurnEvidence === 'turn-completed') return true
   codexAppServerSideActivities.delete(threadId)
@@ -6326,6 +6325,7 @@ class CodexDesktopCompanionBridge {
           finish(false)
           return
         }
+        queriedTurn = codexInventoryTurnFieldsModule?.codexAlignCompletedTurnStart(member ? previousTurn : known, queriedTurn) || queriedTurn
         const ownerShadow = this.shadows.get(queryThreadId) || this.sideShadows.get(queryThreadId)
         const turn = codexDesktopActivityResolution?.codexDesktopTerminalConflictsWithOwner(
           queriedTurn, ownerShadow, codexDesktopRequestCorrelation({ id: queriedTurn?.id })) ? null : queriedTurn
@@ -9742,11 +9742,8 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
     if (row.inventoryEvidence?.closedSpawnObservedAt > 0
       && activeSequence >= row.inventoryEvidence.closedSpawnObservedAt) row.inventoryEvidence.closedSpawnObservedAt = 0
     let terminal = codexReadPrivateBranchTerminal(parentThreadId, row.threadId)
-    if (live && !row.activity.activeFlags?.length && activeSequence > 0
-      && activeSequence >= Number(terminal?.terminalEvidenceSequence || Number.MAX_SAFE_INTEGER)) {
-      codexForgetPrivateBranchTerminal(parentThreadId, row.threadId)
-      terminal = null
-    } else if (!terminal && row.threadId === parentThreadId && exactParentTerminal) {
+    if (terminal?.causalDomain !== codexCausalDomain) terminal = null
+    if (!terminal && row.threadId === parentThreadId && exactParentTerminal) {
       terminal = codexDesktopActivityResolution?.codexDesktopMainTerminalFallback(known, activeSequence)
       if (terminal) terminal = { ...terminal,
         turnRef: codexDesktopRequestCorrelation({ id: known.lastTurnId }) || '', causalDomain: codexCausalDomain }
@@ -9756,20 +9753,19 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       || row.activity?.status === 'idle'
       || row.threadId === parentThreadId && known.idleConfirmed === true
     )
-    const terminalStrictlyNewer = Boolean(terminal)
-      && Number(terminal.terminalEvidenceSequence) > 0
-      && activeSequence > 0
-      && Number(terminal.terminalEvidenceSequence) > activeSequence
     const goalEvidence = codexPrivateThreadGoalEvidence(row.threadId)
     const plan = row.threadId === parentThreadId ? known : row.inventoryEvidence
+    const cachedTurn = codexThreadTurnStatusCache.get(row.threadId)?.turn
     const branchTurnRef = codexDesktopRequestCorrelation({ id: row.lane === 'app-server'
-      ? row.threadId === parentThreadId ? known.lastTurnId : codexThreadTurnStatusCache.get(row.threadId)?.turn?.id
+      ? row.threadId === parentThreadId ? known.lastTurnId : cachedTurn?.id
       : row.inventoryEvidence?.lastTurnStatus ? row.inventoryEvidence.turnId
         : row.threadId === parentThreadId ? known.connectorLastTurnStatus ? known.connectorLastTurnId : known.lastTurnId : '' })
     const turnFields = codexDesktopActivityResolution?.codexDesktopBranchTurnFields(row, known, {
-      terminal, live, terminalStrictlyNewer, activeSequence, idleConfirmed, main: row.threadId === parentThreadId,
+      terminal, live, activeSequence, idleConfirmed, causalDomain: codexCausalDomain, main: row.threadId === parentThreadId,
       turnRef: branchTurnRef,
-      liveTurnStartedAt: row.threadId === parentThreadId ? known.lastTurnStartedAt : codexThreadTurnStatusCache.get(row.threadId)?.turn?.startedAt
+      latestTurnRef: codexDesktopRequestCorrelation({ id: cachedTurn?.id }),
+      latestTurnPredecessorRef: codexDesktopRequestCorrelation({ id: cachedTurn?.predecessorId }),
+      liveTurnStartedAt: row.threadId === parentThreadId ? known.lastTurnStartedAt : cachedTurn?.startedAt
     }) || {}
     const machineWithSpawn = sourceIdentity === 'machine' && row.inventoryEvidence?.parentThreadId === parentThreadId
       && row.inventoryEvidence.spawnEdgeStatus !== undefined
@@ -9780,7 +9776,7 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
           && stream?.available === true && stream.generation === bridge.streamGeneration
           && stream.ownerClientId === shadow.ownerClientId
       })
-    const machineRunInterruptedAt = machineWithSpawn && !live && turnFields.lastTurnStatus === 'interrupted'
+    const machineRunInterruptedAt = machineWithSpawn && turnFields.lastTurnStatus === 'interrupted'
       && terminal?.turnRef && terminal.turnRef === turnFields.turnRef && terminal.turnStartedAt === turnFields.turnStartedAt
       ? terminal.sideInterruptedAt : undefined
     if (machineRunInterruptedAt) turnFields.terminalAt = machineRunInterruptedAt
@@ -9791,21 +9787,16 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       ? codexDesktopActivityResolution?.codexDesktopCanonicalTerminalDecision(row.shadow, {
           terminal,
           branchTurnStartedAt: exactBranchLive
-            ? row.threadId === parentThreadId ? known.lastTurnStartedAt : codexThreadTurnStatusCache.get(row.threadId)?.turn?.startedAt
+            ? row.threadId === parentThreadId ? known.lastTurnStartedAt : cachedTurn?.startedAt
             : turnFields.turnStartedAt,
           branchTurnRef: exactBranchLive ? codexDesktopRequestCorrelation({ id: row.threadId === parentThreadId
-            ? known.lastTurnId : codexThreadTurnStatusCache.get(row.threadId)?.turn?.id }) : turnFields.turnRef,
+            ? known.lastTurnId : cachedTurn?.id }) : turnFields.turnRef,
           branchLiveExact: exactBranchLive,
           branchLiveSequence: activeSequence
         }) : null
     const nodeKey = row.threadId === parentThreadId ? known.key : `codex-child:${codexPrivateBranchRef(parentThreadId, row.threadId)}`
     const causalKey = companionCausalKey('codex', nodeKey, turnFields.turnRef)
-    const cachedTurn = codexThreadTurnStatusCache.get(row.threadId)?.turn
-    const predecessorId = cachedTurn?.predecessorId && cachedTurn.id
-      && codexDesktopRequestCorrelation({ id: cachedTurn.id }) === turnFields.turnRef
-      ? cachedTurn.predecessorId : ''
-    const turnPredecessorKey = predecessorId
-      ? companionCausalKey('codex', nodeKey, codexDesktopRequestCorrelation({ id: predecessorId })) : ''
+    const turnPredecessorKey = companionCausalKey('codex', nodeKey, turnFields.turnPredecessorRef)
     const relationOnly = row.threadId !== parentThreadId
       && (codexInventorySideRelations.get(row.threadId) === parentThreadId
         || codexDesktopSideRelations.get(row.threadId) === parentThreadId)
@@ -9850,7 +9841,7 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       machineRunInterruptedAt,
       relationOnly,
       emptyTurnHistory,
-      ordinarySideInterruptedAt: !live && terminal?.turnRef && terminal.turnRef === turnFields.turnRef
+      ordinarySideInterruptedAt: terminal?.turnRef && terminal.turnRef === turnFields.turnRef
         && terminal.turnStartedAt === turnFields.turnStartedAt && turnFields.lastTurnStatus === 'interrupted'
         && row.shadow?.ephemeral !== true && !['machine', 'guardian_review'].includes(sourceIdentity)
         ? terminal.ordinarySideInterruptedAt : undefined,
@@ -13563,7 +13554,15 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
     const isRoot = branch.branchKind !== 'side'
     const branchRef = isRoot ? 'root' : branch.ref
     const nodeKey = isRoot ? key : `codex-child:${branch.ref}`
-    const observation = codexBranchObservationV7(branch)
+    const observation = codexBranchObservationV7(branch.competingTurn ? {
+      ...branch,
+      competingTurn: {
+        ...branch.competingTurn,
+        causalKey: companionCausalKey('codex', nodeKey, branch.competingTurn.turnRef),
+        causalDomain: branch.causalDomain,
+        turnPredecessorKey: companionCausalKey('codex', nodeKey, branch.competingTurn.turnPredecessorRef)
+      }
+    } : branch)
     const hydrationOnlyActive = isRoot
       && input.authority === 'provider-live'
       && thread.status === 'active'
@@ -13690,7 +13689,7 @@ function companionCodexEvidenceV7(threadValue, input = {}) {
       attentionOrder: order++,
       hidden,
       turnMode: isRoot ? rootSource.turnMode : 'unknown',
-      idleConfirmed: !(observation.candidates || []).some((candidate) => candidate.kind === 'turn-running'),
+      idleConfirmed: branch.idleConfirmed === true || !observation.candidates.some((candidate) => candidate.kind === 'turn-running'),
       localPin,
       ...companionProviderPinFields({ pinned: pinLane ? rootSource.nativePinned === true : null, order: rootSource.nativePinnedOrder, authority: pinLane, fallbackOrder: order }),
       // Only a root row carries a hand-set phase: a topology child has its own
@@ -14404,10 +14403,10 @@ async function preflightCompanionTaskPackageV7(input = {}) {
       }))
   }
   if (providers.claude) {
-    reads.push(Promise.all([
-      Promise.resolve(claudeBridge?.readCodeSnapshot({ now: Date.now() })),
-      Promise.resolve(claudeBridge?.readCodeUnread())
-    ]).then(([value, unread]) => {
+    reads.push(Promise.resolve().then(() => Promise.all([
+      claudeBridge?.readCodeSnapshot({ now: Date.now() }),
+      claudeBridge?.readCodeUnread()
+    ])).then(([value, unread]) => {
       if (!claudeBridge || !value || value.available === false || !Array.isArray(value.sessions) || value.truncated === true) {
         return { provider: 'claude', status: 'unavailable', errorCode: 'claude-task-preflight-failed' }
       }
@@ -14428,7 +14427,7 @@ async function preflightCompanionTaskPackageV7(input = {}) {
       .catch(() => ({ provider: 'cursor', status: 'unavailable', errorCode: 'cursor-task-preflight-failed' })))
   }
   if (providers.orca) {
-    reads.push(Promise.resolve(orcaBridge?.readInventory?.() || orcaUnavailable('inventory'))
+    reads.push(Promise.resolve().then(() => orcaBridge?.readInventory?.() || orcaUnavailable('inventory'))
       .then((inventory) => inventory?.available === true
         && Array.isArray(inventory.sessions) && inventory.truncated !== true
         ? { provider: 'orca', status: 'ready', value: inventory }
@@ -14451,8 +14450,7 @@ async function preflightCompanionTaskPackageV7(input = {}) {
   }]))
   const evidenceBatches = Object.fromEntries(companionProviderOrder.map((provider) => [provider, null]))
   let taskCount = 0
-  try {
-  for (const result of rows) {
+  function projectProvider(result) {
     const provider = result.provider
     const snapshotScope = provider === 'codex' && result.value ? codexSnapshotScopes.get(result.value.threads) : null
     if (provider === 'codex' && result.value && (!codexSnapshotScopeCurrent(snapshotScope)
@@ -14468,8 +14466,8 @@ async function preflightCompanionTaskPackageV7(input = {}) {
       errorCode: result.errorCode || ''
     }
     if (provider === 'codex') providerHealth.codex = codexDesktopBridge?.streamProviderHealth(providerHealth.codex) || providerHealth.codex
-    if (!available) continue
-    result.projection = 'failed'
+    if (!available) return
+    let claudeUnread = null
     const nodes = []
     const interactions = []
     const interactionSets = []
@@ -14516,7 +14514,7 @@ async function preflightCompanionTaskPackageV7(input = {}) {
         ? new Set(result.unread.ids.filter((value) => typeof value === 'string'))
         : companionClaudeUnreadSnapshot.available ? new Set(companionClaudeUnreadSnapshot.ids) : new Set()
       if (result.unread) {
-        companionClaudeUnreadSnapshot = {
+        claudeUnread = {
           ids: unreadIds,
           generation: Number(result.unread.generation) || 0,
           readAt: companionEvidenceSequenceV7(result.unread.readAt, readAt),
@@ -14615,11 +14613,9 @@ async function preflightCompanionTaskPackageV7(input = {}) {
         order += evidence.nodes.length
       }
     }
-    result.taskCount = nodes.filter((node) => node.role === 'root').length
-    taskCount += result.taskCount
     const snapshotLanes = completeLanes.filter((lane) => lane !== 'topology')
     if (topologyComplete) snapshotLanes.push('topology')
-    evidenceBatches[provider] = createCompanionEvidenceBatchV7({
+    const batch = createCompanionEvidenceBatchV7({
       provider,
       nodes,
       interactions,
@@ -14631,14 +14627,28 @@ async function preflightCompanionTaskPackageV7(input = {}) {
       relationsComplete: topologyComplete,
       health: result.status
     })
-    if (provider === 'codex') codexEvidenceScopes.set(evidenceBatches.codex, {
+    if (provider === 'codex') codexEvidenceScopes.set(batch, {
       ...snapshotScope, fingerprint: result.value.sourceFingerprint || ''
     })
+    if (claudeUnread) companionClaudeUnreadSnapshot = claudeUnread
+    evidenceBatches[provider] = batch
+    result.taskCount = nodes.filter((node) => node.role === 'root').length
+    taskCount += result.taskCount
     result.projection = 'completed'
   }
-  } catch (error) {
-    codexRuntimeDiagnostics.coldPreflight({ startedAt, providers, rows, taskCount, providerHealth, sourceLaneGenerations }, error)
-    throw error
+  let projectionError = null
+  for (const result of rows) {
+    try {
+      projectProvider(result)
+    } catch (error) {
+      const { provider } = result
+      projectionError ||= error
+      result.projection = 'failed'
+      result.status = companionTaskKernel?.isProviderCached(provider) ? 'degraded' : 'unavailable'
+      result.errorCode = `${provider}-evidence-projection-failed`
+      providerHealth[provider] = { status: result.status, generation: 0, errorCode: result.errorCode }
+      for (const lane of companionEvidenceChannelsV7) sourceLaneGenerations[provider][lane] = 0
+    }
   }
   for (const provider of companionProviderOrder) {
     if (evidenceBatches[provider]) continue
@@ -14652,7 +14662,7 @@ async function preflightCompanionTaskPackageV7(input = {}) {
     provider,
     companionCounterAggregate(sourceLaneGenerations[provider])
   ]))
-  codexRuntimeDiagnostics.coldPreflight({ startedAt, providers, rows, taskCount, providerHealth, sourceGenerations, sourceLaneGenerations })
+  codexRuntimeDiagnostics.coldPreflight({ startedAt, providers, rows, taskCount, providerHealth, sourceGenerations, sourceLaneGenerations }, projectionError)
   return {
     schema: companionV7Revisions.draft,
     producer: 'host-preflight',
@@ -15252,7 +15262,7 @@ function publishCompanionEvidenceBatchesV3(input = {}) {
     sourceLaneGenerations,
     providerHealth,
     evidenceBatches
-  })
+  }, { sourceProviders: [...new Set([...Object.keys(requestedBatches), ...Object.keys(input.providerHealth || {})])] })
   return Boolean(result)
 }
 

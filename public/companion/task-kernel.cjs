@@ -17,7 +17,8 @@ const {
   buildCompanionTaskTopology,
   normalizeRelation
 } = require('./task-topology.cjs')
-const { finiteInteger, phaseEvidenceSupersedes, sameTurnEvidenceDecision, compareCodexTurnOrder } = require('./branch-causality.cjs')
+const { finiteInteger, phaseEvidenceSupersedes, sameTurnEvidenceDecision, compareCodexTurnOrder,
+  alignCodexCompletedTurn } = require('./branch-causality.cjs')
 const {
   TASK_PHASES,
   isKnownTaskPhase,
@@ -151,6 +152,7 @@ function taskPhaseObservation(task) {
   const terminal = isTerminalTaskPhase(phase)
   const sequence = finiteInteger(task.phaseRevision, finiteInteger(task.statusEnteredAt))
   return {
+    kind: task.turnKind,
     causalKey: task.causalKey,
     turnPredecessorKey: task.turnPredecessorKey,
     causalDomain: task.causalDomain,
@@ -377,6 +379,7 @@ function activityCandidateCausalObservationV7(candidate) {
   const liveCurrent = phase === 'running'
   const exactTerminal = candidate.exact === true && isTerminalTaskPhase(phase)
   return {
+    kind: candidate.kind,
     causalKey: candidate.causalKey,
     turnPredecessorKey: candidate.turnPredecessorKey,
     causalDomain: candidate.causalDomain,
@@ -485,6 +488,7 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
     observationGeneration: finiteInteger(observationGeneration),
     phaseRevision: sequence || finiteInteger(activityCandidate.statusEnteredAt),
     statusEnteredAt: finiteInteger(activityCandidate.statusEnteredAt),
+    ...(hostEvidence && provider === 'codex' && phase === 'running' ? { idleConfirmed: false } : {}),
     turnStartedAt: finiteInteger(activityCandidate.turnStartedAt),
     terminalAt: finiteInteger(activityCandidate.terminalAt),
     causalKey: typeof activityCandidate.causalKey === 'string' ? activityCandidate.causalKey : '',
@@ -2059,8 +2063,12 @@ function createCompanionTaskKernel(dependencies = {}) {
     const machineFilteredMembers = historicalMachineMembers.length
       ? phaseMembers.filter((member) => !historicalMachineMembers.includes(member))
       : phaseMembers
-    const groupActivity = root.codexState?.groupActivityConfirmed === true
     const memberPhase = aggregateMemberPhase(machineFilteredMembers)
+    const settledMembers = rootTurnSettled && members.length > 1
+      && machineFilteredMembers.every((member) => isTerminalTaskPhase(member.phase)
+        && member.freshness === 'fresh' && member.causalReliable === true
+        && member.causalDomain === root.causalDomain)
+    const groupActivity = root.codexState?.groupActivityConfirmed === true && !settledMembers
     const activityPhase = groupActivity && !isAttentionTaskPhase(memberPhase) ? 'running' : memberPhase
     const main = root.memberStatus
     const confirmedMainStop = codexRoot && root.phase === 'stopped' && activityPhase === 'unknown'
@@ -2095,6 +2103,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     const sideWorkBlocksPlan = codexRoot && writeMembers.some((member) => member.key !== root.key
       && (isLiveTaskPhase(member.phase) || taskOpenInteractions(member).length > 0
         || CODEX_STOPPED_GOALS.has(member.memberStatus?.goal) || hasCurrentPlanArtifact(member)))
+    const rootRequestBlocksPlan = codexRoot && taskOpenInteractions(root)
+      .some((request) => request.kind === 'approval' || request.kind === 'user-input')
     const goalLimited = ['usageLimited', 'budgetLimited'].includes(main?.goal)
     const capabilities = { ...(root.capabilities || {}) }
     if (liveCount > 0 || isLiveTaskPhase(phase) || stateWriteBlocked) capabilities.archive = false
@@ -2106,7 +2116,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     // finalizeTask must not restore the provider declaration after aggregation.
     const providerCapabilities = { ...(root.providerCapabilities || root.capabilities) }
     if (stateWriteBlocked) providerCapabilities.archive = false
-    if (sideWorkBlocksPlan) providerCapabilities.executePlan = false
+    if (sideWorkBlocksPlan || rootRequestBlocksPlan) providerCapabilities.executePlan = false
     if (typeof providerCapabilities.continueTask === 'boolean') providerCapabilities.continueTask &&= canContinue
     return {
       ...root,
@@ -2393,6 +2403,10 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
 
     const provider = incoming.provider
+    if (provider === 'codex' && previous.activityPhase === 'running' && incoming.turnKind === 'turn-completed'
+      && incoming.causalAuthority === 'terminal' && incoming.causalReliable) {
+      incoming = alignCodexCompletedTurn(previous, incoming)
+    }
     const activityUnobserved = provider === 'codex' && incoming.metadataPartial === true
       && incoming.activityObserved === false
     const unreadOnly = activityUnobserved && incoming.planLifecycleState === 'unknown'
@@ -2469,7 +2483,8 @@ function createCompanionTaskKernel(dependencies = {}) {
         && (!previous.turnStartedAt || previous.turnStartedAt === incoming.turnStartedAt)) {
         // Bind the first scoped Host observation to the retained, unscoped verdict.
         activityDecisionReason = 'turn-identity-established'
-      } else if (draftProducer(draft.producer) !== 'renderer' && canRebaseActivity(previous, incoming, activityRebase)) {
+      } else if (draftProducer(draft.producer) !== 'renderer' && turnOrder !== 'older'
+        && causalDecision?.reason !== 'older-turn-start' && canRebaseActivity(previous, incoming, activityRebase)) {
         activityDecisionReason = 'activity-rebase'
       } else {
         acceptPhase = false
@@ -2506,6 +2521,10 @@ function createCompanionTaskKernel(dependencies = {}) {
       && incoming.turnStartedAt === previous.turnStartedAt
     const sameCodexVerdict = sameCodexTurn && incoming.turnKind === previous.turnKind
       && incoming.causalSequence === previous.causalSequence
+    if (!acceptPhase && sameCodexVerdict && incoming.turnPredecessorKey && !previous.turnPredecessorKey
+      && draftProducer(draft.producer) !== 'renderer' && incomingLanes[provider].activity >= currentLanes[provider].activity) {
+      next.turnPredecessorKey = incoming.turnPredecessorKey
+    }
     if (provider === 'codex' && incoming.role === 'child' && incoming.codexState && !activityUnobserved
       && draftProducer(draft.producer) !== 'renderer'
       && (acceptPhase || sameCodexVerdict && incomingLanes[provider].activity >= currentLanes[provider].activity)) {
@@ -2848,20 +2867,18 @@ function createCompanionTaskKernel(dependencies = {}) {
     return nodesChanged || relationsChanged || interactionsChanged
   }
 
-  /** 吃证据的唯一入口：schema/revision 失败则整批丢掉，且不消耗 producer revision。 */
-  function commitDraft(draft, hostEvidence = false, cacheProvider = '') {
+  function commitDraft(draft, hostEvidence = false, cacheProvider = '', sourceProviders = null) {
     const freezeSpan = freezeTrace.begin('companion.commit-draft')
     try {
     if (disposed || !draft || draft.schema !== COMPANION_TASK_DRAFT_REVISION) return null
     const producer = draftProducer(draft.producer)
     const draftRevision = finiteInteger(draft.draftRevision)
     if (!draftRevision) return null
-    const lastProducerRevision = lastDraftRevisionByProducer.get(producer) || 0
-    if (draftRevision <= lastProducerRevision) return currentPackage
+    if (!hostEvidence && draftRevision <= (lastDraftRevisionByProducer.get(producer) || 0)) return currentPackage
     const draftProviders = providerShape(draft.providers)
     const draftEnabled = draft.enabled === true
     const enabledProviders = providerSet(draftProviders)
-    const batches = Object.fromEntries(PROVIDERS.map((provider) => [provider, normalizeEvidenceBatch(
+    const normalizedBatches = Object.fromEntries(PROVIDERS.map((provider) => [provider, normalizeEvidenceBatch(
       draft.evidenceBatches?.[provider],
       provider,
       draft,
@@ -2870,7 +2887,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     // Validate the complete cross-Provider transaction before consuming its
     // producer revision or applying configuration. A corrected retry with the
     // same revision must remain admissible after an invalid batch.
-    if (draftEnabled && PROVIDERS.some((provider) => enabledProviders.has(provider) && batches[provider].valid !== true)) {
+    if (draftEnabled && PROVIDERS.some((provider) => enabledProviders.has(provider) && normalizedBatches[provider].valid !== true)) {
       record({
         level: 'error',
         scope: 'task-kernel',
@@ -2881,8 +2898,30 @@ function createCompanionTaskKernel(dependencies = {}) {
       })
       return null
     }
-    const pending = hostEvidence ? dependencies.preparePendingEvidence?.(draft) : null
-    if (pending === false || hostEvidence && (!sameProviders(providers, draftProviders) || draftEnabled !== enabled)) return null
+    if (hostEvidence && (!sameProviders(providers, draftProviders) || draftEnabled !== enabled)) return null
+    const observedProviders = hostEvidence ? [...providerSet(sourceProviders || draftProviders)]
+      .filter(provider => enabledProviders.has(provider)) : PROVIDERS
+    const revisionKey = provider => `${producer}:${provider}`
+    const currentProviders = hostEvidence ? observedProviders.filter(provider => (
+      draftRevision > (lastDraftRevisionByProducer.get(revisionKey(provider)) || 0)
+    )) : observedProviders
+    if (hostEvidence && !currentProviders.length) return currentPackage
+    const pending = hostEvidence && currentProviders.includes('codex') ? dependencies.preparePendingEvidence?.(draft) : null
+    const admittedProviders = pending === false ? currentProviders.filter(provider => provider !== 'codex') : currentProviders
+    if (pending === false) {
+      record({
+        level: 'info',
+        scope: 'task-kernel',
+        event: 'provider-evidence-batch',
+        outcome: 'rejected',
+        provider: 'codex',
+        code: 'source-scope-changed',
+        details: { producer }
+      })
+      if (!admittedProviders.length) return null
+    }
+    const admitted = new Set(admittedProviders)
+    const batches = Object.fromEntries(admittedProviders.map(provider => [provider, normalizedBatches[provider]]))
     const normalizePending = batch => normalizeEvidenceBatch(batch, 'codex', draft, 'host-evidence')
     const before = (pending?.before || []).map(normalizePending)
     const after = (pending?.after || []).map(normalizePending)
@@ -2896,6 +2935,7 @@ function createCompanionTaskKernel(dependencies = {}) {
 
     const lanes = normalizeSourceLaneGenerations(currentPackage.sourceLaneGenerations)
     const incomingLanes = normalizeSourceLaneGenerations(draft.sourceLaneGenerations)
+    for (const provider of PROVIDERS) if (!admitted.has(provider)) incomingLanes[provider] = { ...lanes[provider] }
     const replayKey = `${producer}:${cacheProvider}`
     const equivalentEvidence = hostEvidence && !refreshPauses && !before.length && !after.length
       && lastReducedEvidence?.key === replayKey && lastReducedEvidence.package === currentPackage
@@ -2980,16 +3020,18 @@ function createCompanionTaskKernel(dependencies = {}) {
       publishedAt: finiteInteger(draft.acceptedAt, now()),
       enabled,
       providers: { ...providers },
-      complete: cacheProvider ? cacheComplete() : draft.complete === true,
+      complete: cacheProvider ? cacheComplete() : draft.complete === true
+        && (currentPackage.complete || pending !== false && observedProviders.length === enabledProviders.size),
       freshness,
       focusedKey,
       sourceGenerations: Object.fromEntries(PROVIDERS.map((provider) => [
         provider,
-        Math.max(finiteInteger(currentPackage.sourceGenerations?.[provider]), finiteInteger(draft.sourceGenerations?.[provider]))
+        Math.max(finiteInteger(currentPackage.sourceGenerations?.[provider]),
+          admitted.has(provider) ? finiteInteger(draft.sourceGenerations?.[provider]) : 0)
       ])),
       sourceLaneGenerations: lanes,
       providerHealth: Object.fromEntries(PROVIDERS.map((provider) => {
-        const incoming = draft.providerHealth?.[provider]
+        const incoming = admitted.has(provider) ? draft.providerHealth?.[provider] : null
         const previous = currentPackage.providerHealth?.[provider]
         const status = providers[provider] !== true
           ? 'disabled'
@@ -3009,8 +3051,10 @@ function createCompanionTaskKernel(dependencies = {}) {
       tasks: nextTasks,
       views: reuseTaskViews ? currentPackage.views : buildViews(nextTasks)
     }
-    lastDraftRevisionByProducer.set(producer, draftRevision)
-    pending?.acknowledge()
+    if (hostEvidence) {
+      for (const provider of admittedProviders) lastDraftRevisionByProducer.set(revisionKey(provider), draftRevision)
+    } else lastDraftRevisionByProducer.set(producer, draftRevision)
+    pending?.acknowledge?.()
     const result = publishTaskPackage(next, { evidenceDraft: draft, reorder, reusedProjection })
     if (result === currentPackage) {
       lastReducedEvidence = hostEvidence && !retryMigration && !before.length && !after.length
@@ -3232,7 +3276,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (provider && (providers[provider] !== true || cache.epoch !== providerEpochs[provider])) return null
     const startedAt = now()
     const beforeRevision = currentPackage.packageRevision
-    const result = commitDraft(draft, true, provider)
+    const result = commitDraft(draft, true, provider, provider ? [provider] : cache.sourceProviders)
     const published = Boolean(result && currentPackage.packageRevision > beforeRevision)
     record({
       level: published ? 'info' : 'debug',

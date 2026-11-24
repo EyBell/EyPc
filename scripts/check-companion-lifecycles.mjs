@@ -770,15 +770,29 @@ async function checkColdUnreadRefresh(require, source) {
     ({${source.slice(refreshStart, refreshEnd)}, ${source.slice(latestStart, latestEnd)}})`)
   const threadId = 'cold-root'
   const unreadIds = new Set([threadId])
-  for (const scenario of ['baseline', 'weak-interruption', 'exact-interruption', 'idle-interruption']) {
+  const completion = { id: 'same-turn', status: 'completed', startedAt: 300_000, completedAt: 350_000 }
+  const scenarios = [
+    { name: 'baseline' },
+    { name: 'weak-interruption' },
+    { name: 'exact-interruption', expected: 'interrupted', interruptedAt: 350 },
+    { name: 'idle-interruption', expected: 'interrupted' },
+    { name: 'same Turn at second precision', expected: 'completed', turn: completion },
+    { name: 'same Turn completes within its first second', expected: 'completed',
+      turn: { ...completion, completedAt: completion.startedAt }, expectedCompletedAt: 300_420 },
+    { name: 'older start in a different second', turn: { ...completion, startedAt: 299_000 } },
+    { name: 'older precise start', turn: { ...completion, startedAt: 300_100 } },
+    { name: 'different Turn in the same second', turn: { ...completion, id: 'older-turn' } }
+  ]
+  for (const { name: scenario, expected = 'inProgress', turn: completedTurn, interruptedAt,
+    expectedCompletedAt = completion.completedAt } of scenarios) {
     const idle = scenario === 'idle-interruption'
+    const startedAt = completedTurn ? 300_420 : 300
     const thread = {
       key: threadId, status: idle ? 'idle' : 'active', connectorStatus: idle ? 'idle' : 'notLoaded',
-      lastTurnStartedAt: 300, lastTurnStatus: 'inProgress', lastTurnId: 'same-turn',
+      lastTurnStartedAt: startedAt, lastTurnStatus: 'inProgress', lastTurnId: 'same-turn',
       unreadAuthority: 'desktop-persisted'
     }
-    const turn = { id: 'same-turn', status: 'interrupted', startedAt: 300,
-      ...(scenario === 'exact-interruption' ? { interruptedAt: 350 } : {}) }
+    const turn = completedTurn || { id: 'same-turn', status: 'interrupted', startedAt, interruptedAt }
     let turnReads = 0
     let published = 0
     const methods = entry.runInNewContext({
@@ -807,9 +821,12 @@ async function checkColdUnreadRefresh(require, source) {
       codexDesktopRequestCorrelation: () => '',
       codexApplyCachedCompletedTurnEvidence: () => false,
       codexThreadPersistedInputEvidence: () => null,
+      markCodexThreadTurnStatusDirty() {},
       codexClearAppServerLiveActive() {}, codexPrivateBranchIdleConfirmed: () => idle,
       codexMarkConfirmedTerminalEvidence: () => 350, codexRememberPrivateBranchTerminal() {},
-      emitCodexActivityDelta() { published += 1 }
+      emitCodexActivityDelta(_entries, inventoryChanged) {
+        if (!inventoryChanged) published += 1
+      }
     })
     const bridge = {
       ...methods,
@@ -824,6 +841,12 @@ async function checkColdUnreadRefresh(require, source) {
       },
       parentLiveEvidenceSequence: () => idle ? 0 : 330,
       streamWriteContext: () => null, streamWriteCurrent: () => true,
+      publishTargetedCompletion(known, _threadId, confirmed) {
+        assert.equal(known, thread)
+        assert.equal(confirmed.startedAt, startedAt, 'retain the live Turn start')
+        assert.equal(confirmed.completedAt, expectedCompletedAt)
+        published += 1
+      },
       reconcileLateUnread(id, _unread, queryThreadId, { forceTerminalCheck }) {
         this.scheduleLatestTurnRefresh(id, { queryThreadId, forceQuery: forceTerminalCheck, verifyStaleActive: !idle })
       }
@@ -832,11 +855,10 @@ async function checkColdUnreadRefresh(require, source) {
     await new Promise(setImmediate)
     assert.equal(turnReads, scenario === 'baseline' ? 0 : 1, `${scenario}: use the accepted inventory history only for the initial read baseline`)
     assert.equal(bridge.persistedUnread.get(threadId), true, `${scenario}: record native unread`)
-    const terminal = idle || scenario === 'exact-interruption'
-    assert.equal(thread.lastTurnStatus, terminal ? 'interrupted' : 'inProgress', `${scenario}: stay running until a verified terminal`)
-    assert.equal(published, terminal ? 1 : 0, `${scenario}: publish only a verified phase change`)
+    assert.equal(thread.lastTurnStatus, expected, `${scenario}: stay running until a verified terminal`)
+    assert.equal(published, expected === 'inProgress' ? 0 : 1, `${scenario}: publish only a verified phase change`)
   }
-  return 4
+  return scenarios.length
 }
 
 async function checkVerifiedInventorySharing(source) {
@@ -1426,6 +1448,7 @@ function checkRolloutInputResume(require, source, fixture, codexBranchObservatio
 function checkRolloutSideCompletion(require, source, fixture) {
   const { createCodexRolloutRuntimeState } = require('./codex/rollout-runtime-state.cjs')
   const { createCodexDesktopActivityResolution } = require('./codex/desktop-activity-resolution.cjs')
+  const { createCodexInventoryTurnFields } = require('./codex/inventory-turn-fields.cjs')
   const parentThreadId = 'main'
   const threadId = 'side'
   const domain = 'source'
@@ -1464,6 +1487,7 @@ function checkRolloutSideCompletion(require, source, fixture) {
       codexEnsureDesktopBridge: () => bridge, codexThreadTurnStatusCache: turnCache, codexAppServerSideActivities: new Map(),
       codexAppServerSideActivity: () => null, codexPrivateBranchTerminals: terminals, CODEX_PRIVATE_BRANCH_TERMINAL_LIMIT: 10,
       codexIsConfirmedTurnEvidence: confirmed, sanitizeCodexTurnStatus: value => value,
+      codexInventoryTurnFieldsModule: createCodexInventoryTurnFields(utilities),
       codexDesktopRequestCorrelation: value => value.id, codexDesktopActivityResolution: resolution,
       codexDesktopHasStickyPendingRequest: () => false, codexNextLiveEvidenceSequence: () => ++evidenceSequence,
       codexPrivateBranchIdleConfirmed: () => false, codexClearStalePreCompletionLiveUnread() {},
@@ -1523,6 +1547,178 @@ function checkRolloutSideCompletion(require, source, fixture) {
     assert.deepEqual(published, [parentThreadId], 'cold Side completion joins the inventory package')
     publish('completed')
   } finally { scenario.kernel.close() }
+}
+
+function checkProviderSourceIsolation(require) {
+  const { createCompanionTaskKernel } = require('./companion/task-kernel.cjs')
+  const { registry } = require('./companion/provider-registry.cjs')
+  const { createEvidenceNodeV7, createEvidenceBatchV7, claudeSessionObservationV7,
+    cursorSessionObservationV7, orcaSessionObservationV7 } = require('./companion/evidence-adapter-v7.cjs')
+  const providers = { codex: true, claude: true, cursor: true, orca: true }
+  const sourceOrder = Object.keys(providers)
+  let staleCodex = false
+  const kernel = createCompanionTaskKernel({ initialConfiguration: { enabled: true, providers }, now: () => 1000,
+    preparePendingEvidence: () => staleCodex ? false : null })
+  const lanes = generation => ({ membership: generation, activity: generation, interaction: generation,
+    unread: generation, planArtifact: generation, metadata: generation, topology: generation })
+  function publish(revision, generation, observations, sourceProviders) {
+    const sourceLaneGenerations = Object.fromEntries(sourceOrder.map(provider => [provider, lanes(generation)]))
+    const providerHealth = Object.fromEntries(sourceOrder.map(provider => [provider, { status: 'ready', generation }]))
+    const evidenceBatches = Object.fromEntries(sourceOrder.map(provider => {
+      const key = `${provider}:main`
+      const node = createEvidenceNodeV7({ provider, key, observation: observations[provider],
+        metadata: { kind: registry.providers[provider].taskKind, revisionAt: generation,
+          lastQuestionAt: 1000, actionAlias: key }, capabilities: ['open'] })
+      return [provider, createEvidenceBatchV7({ provider, nodes: [node], laneGenerations: lanes(generation),
+        snapshotLanes: ['membership'], completeLanes: ['membership'], health: 'ready' })]
+    }))
+    return kernel.publishEvidence({ schema: 'companion-task-evidence-draft-v7', producer: 'host-preflight',
+      draftRevision: revision, acceptedAt: 1000, enabled: true, complete: true, providers,
+      sourceGenerations: Object.fromEntries(sourceOrder.map(provider => [provider, generation])),
+      sourceLaneGenerations, providerHealth, evidenceBatches }, { sourceProviders })
+  }
+  const observations = {
+    codex: { kind: 'turn-running', authority: 'live-turn', exact: true, sequence: 10 },
+    claude: claudeSessionObservationV7({ phase: 'running', turnStartedAt: 10, lastActivityAt: 10 }, false),
+    cursor: cursorSessionObservationV7({ diskStatus: 'completed', lastUpdatedAt: 10 }),
+    orca: orcaSessionObservationV7({ state: 'working', lastUpdatedAt: 10 })
+  }
+  const task = (value, provider) => value.tasks.find(row => row.provider === provider)
+  try {
+    const baseline = publish(1, 10, observations)
+    assert.equal(baseline.complete, true)
+    assert.equal(baseline.tasks.length, 4)
+    const cursor = publish(4, 40, {
+      ...observations,
+      cursor: cursorSessionObservationV7({ diskStatus: 'completed', lastUpdatedAt: 10 },
+        { turnOpen: true, turnStartedAt: 40, lastEventAt: 40 })
+    }, ['cursor'])
+    assert.equal(task(cursor, 'cursor').phase, 'running', 'Cursor Hook retains precedence over its older disk phase')
+    assert.equal(cursor.providerHealth.orca.generation, 10)
+    staleCodex = true
+    const completed = {
+      ...observations,
+      codex: { kind: 'turn-completed', authority: 'terminal', exact: true, sequence: 30 },
+      claude: claudeSessionObservationV7({ phase: 'completed', turnStartedAt: 10, lastStopAt: 30 }, true),
+      orca: orcaSessionObservationV7({ state: 'done', lastUpdatedAt: 30, unread: true })
+    }
+    const mixed = publish(3, 30, completed)
+    assert.equal(task(mixed, 'codex').phase, 'running', 'stale Codex scope never publishes its terminal')
+    assert.equal(mixed.sourceLaneGenerations.codex.activity, 10)
+    assert.equal(mixed.providerHealth.codex.generation, 10)
+    assert.equal(task(mixed, 'cursor').phase, 'running', 'an earlier mixed draft cannot replace the accepted Cursor Hook result')
+    assert.equal(mixed.sourceLaneGenerations.cursor.activity, 40)
+    for (const provider of ['claude', 'orca']) {
+      assert.equal(task(mixed, provider).phase, 'completed', `${provider} settles despite a stale Codex scope`)
+      assert.equal(task(mixed, provider).unread, true, `${provider} retains its own unread evidence`)
+      assert.equal(mixed.sourceLaneGenerations[provider].activity, 30)
+    }
+    assert.equal(publish(3, 30, completed, ['codex']), null, 'a stale single-source publication is rejected')
+    staleCodex = false
+    const retried = publish(3, 30, completed, ['codex'])
+    assert.equal(task(retried, 'codex').phase, 'completed', 'retrying the rejected scope does not need a new draft revision')
+    assert.equal(retried.tasks.length, 4)
+    assert.equal(retried.sourceLaneGenerations.cursor.activity, 40)
+    return 5
+  } finally { kernel.close() }
+}
+
+async function checkProviderPreflightIsolation(require, source) {
+  const { createEvidenceBatchV7 } = require('./companion/evidence-adapter-v7.cjs')
+  const providers = { codex: true, claude: true, cursor: true, orca: true }
+  const sourceOrder = Object.keys(providers)
+  const lanes = Object.keys(createEvidenceBatchV7({ provider: 'codex' }).channels)
+  const start = source.indexOf('async function preflightCompanionTaskPackageV7(')
+  const end = source.indexOf('\n// Open readiness:', start)
+  assert(start >= 0 && end > start)
+  const threads = [{ key: 'main' }]
+  const sessions = [{ sessionId: 'synthetic-session', composerId: 'synthetic-composer', paneKey: 'synthetic-pane' }]
+  const evidence = provider => ({ nodes: [{ key: `${provider}:main`, role: 'root' }], interactions: [], interactionSets: [], relations: [] })
+  let brokenOrca = false
+  let recorded
+  const preflight = new Script(`${source.slice(start, end)}
+    preflightCompanionTaskPackageV7`).runInNewContext({
+    codexRecord: value => value || {}, companionTaskConfiguration: () => ({ enabled: true, providers, dynamicTaskWindowHours: 24 }),
+    readCompanionCodexPreflightSnapshotV7: async () => ({ provider: 'codex', status: 'ready',
+      value: { threads, sourceFingerprint: 'current-source', activityGeneration: 30 } }),
+    codexErrorResult: () => null, codexActivitySourceFingerprint: 'current-source',
+    codexSnapshotScopes: new WeakMap([[threads, { sampledAt: 1000 }]]), codexSnapshotScopeCurrent: Boolean,
+    codexEvidenceScopes: new WeakMap(), codexDesktopBridge: null, companionPreflightDraftSequence: 0,
+    companionTaskKernel: { isProviderCached: provider => provider === 'codex' },
+    codexRuntimeDiagnostics: { preflightRead: value => value, coldPreflight: value => { recorded = value } },
+    claudeBridge: { readCodeSnapshot: () => ({ sessions, generation: 50 }), readCodeUnread: () => ({ ids: [], generation: 40 }) },
+    cursorBridge: { readInventory: async () => ({ available: true, sessions }), readHookState: () => [] },
+    orcaBridge: { readInventory() {
+      if (brokenOrca) throw new Error('synthetic-read-error')
+      return { available: true, sessions }
+    } },
+    companionPersistedTaskState: () => ({}), companionClaudeUnreadSnapshot: { available: false },
+    companionEvidenceSequenceV7: (...values) => Math.max(0, ...values.map(value => Number(value) || 0)),
+    companionProviderOrder: sourceOrder, companionEvidenceChannelsV7: lanes, createCompanionEvidenceBatchV7: createEvidenceBatchV7,
+    companionCounterAggregate: generations => generations.activity,
+    companionV7Revisions: { draft: 'companion-task-evidence-draft-v7', taskState: 'task-state-v12' },
+    companionCodexEvidenceV7() { throw new Error('synthetic-projection-error') },
+    companionClaudeEvidenceV7: () => evidence('claude'), companionCursorEvidenceV7: () => evidence('cursor'),
+    companionOrcaEvidenceV7: () => evidence('orca')
+  })
+  const mixed = await preflight({ providers })
+  assert.equal(mixed.providerHealth.codex.status, 'degraded')
+  assert.equal(mixed.evidenceBatches.codex.channels.membership.complete, false, 'a failed Codex projection cannot clear its cached membership')
+  assert.equal(mixed.sourceLaneGenerations.codex.activity, 0, 'a failed Codex projection cannot advance its activity lane')
+  assert.equal(recorded.taskCount, 3)
+  for (const provider of ['claude', 'cursor', 'orca']) {
+    assert.equal(mixed.providerHealth[provider].status, 'ready')
+    assert.equal(mixed.evidenceBatches[provider].channels.membership.complete, true)
+  }
+  brokenOrca = true
+  const degraded = await preflight({ providers })
+  assert.equal(degraded.providerHealth.orca.status, 'unavailable', 'a synchronous Orca read error stays local')
+  assert.equal(degraded.providerHealth.claude.status, 'ready')
+  assert.equal(degraded.providerHealth.cursor.status, 'ready')
+  assert.equal(recorded.taskCount, 2)
+  return 2
+}
+
+function checkMemberTurnCompetition(require, fixture) {
+  const { createCodexDesktopActivityResolution } = require('./codex/desktop-activity-resolution.cjs')
+  const resolution = createCodexDesktopActivityResolution({ timestampMs: value => Number(value) || 0,
+    validThreadId: Boolean, isConfirmedTurnEvidence: () => true, waitingEvidenceVisible: () => true,
+    desktopRequestFlag: () => '', desktopIsPlanImplementationRequest: () => false })
+  const startedAt = 300_420
+  const activeSequence = 200
+  const terminal = { turnRef: 'current', turnStartedAt: 300_000, terminalAt: 330_000,
+    lastTurnStatus: 'completed', lastTurnEvidence: 'turn-completed', terminalEvidenceSequence: 210 }
+  const sourceRow = { lane: 'app-server', appServerActivity: { turn: { status: 'inProgress' } } }
+  const baseline = { live: true, main: true, turnRef: 'current', liveTurnStartedAt: startedAt,
+    activeSequence, idleConfirmed: false, causalDomain: 'native-domain' }
+  for (const [label, witness, expected, explicitPredecessor, expectedStart = startedAt] of [
+    ['the same Turn at second precision', terminal, 'completed'],
+    ['a complete event from an earlier Turn with a higher sequence', { ...terminal, turnRef: 'earlier', turnStartedAt: 200_000 }, 'running'],
+    ['a contradictory precise start with the same identity', { ...terminal, turnStartedAt: 300_100 }, 'running'],
+    ['the verified predecessor even when its clock appears later', { ...terminal, turnRef: 'earlier', turnStartedAt: 300_500 },
+      'running', 'earlier'],
+    ['a successor with a coarse time in the same second', { ...terminal, turnRef: 'next', turnPredecessorRef: 'current' },
+      'completed', '', 300_000]
+  ]) {
+    const snapshot = fixture()
+    try {
+      const fields = resolution.codexDesktopBranchTurnFields(sourceRow, {}, {
+        ...baseline, terminal: witness, latestTurnRef: 'current', latestTurnPredecessorRef: explicitPredecessor
+      })
+      assert(fields.competingTurn, `${label}: the independent observations reach the evidence boundary`)
+      const candidate = version => ({ ...version, causalKey: version.turnRef,
+        causalDomain: baseline.causalDomain, turnPredecessorKey: version.turnPredecessorRef })
+      snapshot.publish([{ key: 'main', epoch: startedAt, branch: {
+        status: 'active', statusAuthority: 'app-server-live', activityEvidence: 'activity-event',
+        lastTurnStatus: 'inProgress', turnRef: 'current', causalKey: 'current', activeEvidenceSequence: activeSequence
+      } }], 1, { complete: true, hostEvidence: true })
+      snapshot.publish([{ key: 'main', epoch: startedAt, branch: {
+        ...candidate(fields), competingTurn: candidate(fields.competingTurn),
+        status: 'active', statusAuthority: 'app-server-live', activityEvidence: 'activity-event'
+      } }], 2, { hostEvidence: true })
+      assert.equal(snapshot.expectRoot(expected, false, 1).turnStartedAt, expectedStart, label)
+    } finally { snapshot.kernel.close() }
+  }
 }
 
 async function checkAttentionSettlement(fixture) {
@@ -1870,6 +2066,22 @@ export async function checkCompanionLifecycles(assetRoot) {
   }
   const clearedPlan = { idleConfirmed: true, planLifecycleState: 'cleared', planClearReason: 'cancel' }
   const settledRoot = { ...completedMain, epoch: 30_000, requestCoverage: true, unread: true, branch: clearedPlan }
+  const groupStatus = fixture()
+  try {
+    const rootWithHint = { ...settledRoot, branch: { ...clearedPlan, groupActivityConfirmed: true } }
+    const member = { ...side, epoch: 32_000, requestCoverage: true, branch: clearedPlan }
+    groupStatus.publish([rootWithHint], 1, { hostEvidence: true })
+    assert.equal(groupStatus.expectRoot('running', true, 1).codexStatus.groupActivity, true,
+      'a current group signal covers members not seen yet')
+    groupStatus.publish([rootWithHint, { ...member, branch: { ...clearedPlan, status: 'active',
+      statusAuthority: 'app-server-live', activityEvidence: 'activity-event',
+      lastTurnStatus: 'inProgress', activeEvidenceSequence: 32_005 } }], 2, { hostEvidence: true })
+    assert.equal(groupStatus.expectRoot('running', true, 2).capabilities.archive, false)
+    groupStatus.publish([rootWithHint, { ...member, branch: { ...clearedPlan, terminalEvidenceSequence: 32_010 } }],
+      3, { hostEvidence: true })
+    assert.equal(groupStatus.expectRoot('completed', true, 2).codexStatus.groupActivity, false,
+      'a settled family retires the coarse group signal')
+  } finally { groupStatus.kernel.close() }
   const oldMachine = { ...endedSide, epoch: 10_000, requestCoverage: true, closedMachineRun: false,
     machineRunCoverageCurrent: true, machineRunInterruptedAt: 20_000, branch: { ...clearedPlan, terminalAt: 20_000 } }
   for (const [label, machine, phase] of [
@@ -2177,6 +2389,9 @@ export async function checkCompanionLifecycles(assetRoot) {
   checked += checkMemberRequestWatermarks(source, fixture)
   checkRolloutInputResume(require, source, fixture, codexBranchObservationV7)
   checkRolloutSideCompletion(require, source, fixture)
+  checked += checkProviderSourceIsolation(require)
+  checked += await checkProviderPreflightIsolation(require, source)
+  checkMemberTurnCompetition(require, fixture)
   checked += await checkAttentionSettlement(fixture)
   checked += await checkInFlightShortcutRetention(fixture)
   checked += await checkStableShortcutRing(fixture)

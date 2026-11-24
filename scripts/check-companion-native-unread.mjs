@@ -259,14 +259,18 @@ export function checkCompanionNativeUnread(assetRoot) {
   vm.runInContext(source.slice(projectionStart, projectionEnd), projectionContext)
   let branches = projectionContext.codexPrivateBranchEvidence(main, known).branches
   assert.equal(branches.find(value => value.branchKind === 'side').turnStartedAt, 0, 'unknown Side epoch cannot borrow the parent epoch')
-  terminals.set(side, { lastTurnStatus: 'completed', lastTurnEvidence: 'snapshot-corroborated', turnStartedAt: 100, terminalAt: 120, terminalEvidenceSequence: 30 })
+  terminals.set(side, { lastTurnStatus: 'completed', lastTurnEvidence: 'snapshot-corroborated', turnStartedAt: 100,
+    terminalAt: 120, terminalEvidenceSequence: 30, causalDomain: 'synthetic-source-domain' })
   member.suppressUncorroboratedActive = true
   branches = projectionContext.codexPrivateBranchEvidence(main, known).branches
   assert.equal(branches.find(value => value.branchKind === 'main').turnStartedAt, 500, 'Side completion preserves the newer parent epoch')
   assert.equal(branches.find(value => value.branchKind === 'side').turnStartedAt, 100, 'Side completion keeps its own exact epoch')
+  terminals.get(side).causalDomain = 'retired-source-domain'
+  assert.equal(projectionContext.codexPrivateBranchEvidence(main, known).branches.find(value => value.branchKind === 'side').lastTurnStatus,
+    undefined, 'a retired source cannot contribute a Side terminal')
   projectionContext.codexInventorySideBranchEvidence.set(side, { parentThreadId: main, spawnEdgeStatus: 'open' })
   terminals.set(side, { lastTurnStatus: 'interrupted', lastTurnEvidence: 'turn-completed', turnRef: 'machine-turn',
-    turnStartedAt: 100, terminalAt: 100, sideInterruptedAt: 200, terminalEvidenceSequence: 30 })
+    turnStartedAt: 100, terminalAt: 100, sideInterruptedAt: 200, terminalEvidenceSequence: 30, causalDomain: 'synthetic-source-domain' })
   const machine = projectionContext.codexPrivateBranchEvidence(main, known).branches.find(value => value.branchKind === 'side')
   assert.equal(machine.closedMachineRun, false, 'an exact open spawn edge is retained as its own fact')
   assert.equal(machine.terminalAt, 200, 'an exact machine interruption provides its actual end rather than a start-time fallback')
@@ -304,7 +308,7 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(queries[0].options.settleSnapshotTerminal, true)
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 0, '', false, true), true, 'exact inactive member terminal can settle at first successful read')
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 200, 'inProgress', true, true), false, 'idle cannot authorize an older member epoch')
-  return 44
+  return 45
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -229,8 +229,9 @@ function createCodexRuntimeDiagnostics(dependencies) {
     const health = (provider) => ['ready', 'degraded', 'unavailable', 'disabled'].includes(input.providerHealth?.[provider]?.status)
       ? input.providerHealth[provider].status : 'unavailable'
     const diagnostic = error ? diagnosticFor(captureFailure(error, { stage: 'task-projection', category: 'projection-failed' })) : null
-    const outcome = error || input.rows.some((row) => row.projection === 'failed')
-      || !enabled.some((provider) => ['ready', 'degraded'].includes(health(provider))) ? 'failed'
+    const usable = enabled.some((provider) => ['ready', 'degraded'].includes(health(provider))
+      && input.rows.some((row) => row.provider === provider && row.projection !== 'failed'))
+    const outcome = !usable ? 'failed'
       : enabled.every((provider) => health(provider) === 'ready'
         && input.rows.some((row) => row.provider === provider && row.projection === 'completed')) ? 'accepted' : 'degraded'
     runtimeDiagnostics.record({

@@ -54,6 +54,12 @@ function sameTurnEvidenceDecision(previous, incoming) {
     return previousStartedAt > 0 && incomingStartedAt > 0 && previousStartedAt !== incomingStartedAt
       ? null : { accepted: false, reason: 'identity-incomparable' }
   }
+  if (previous.liveCurrent === true && incoming.exactTerminal === true && incoming.kind === 'turn-completed') {
+    const aligned = alignCodexCompletedTurn(previous, incoming)
+    if (aligned.turnStartedAt > 0 && aligned.turnStartedAt < previous.turnStartedAt) {
+      return { accepted: false, reason: 'older-turn-start' }
+    }
+  }
   const previousSequence = Object.prototype.hasOwnProperty.call(previous, 'causalSequence') ? previous.causalSequence
     : previous.liveCurrent === true ? previous.activeEvidenceSequence
     : previous.exactTerminal === true ? previous.terminalEvidenceSequence : 0
@@ -87,6 +93,21 @@ function compareCodexTurnOrder(previous, incoming) {
     return incomingStartedAt > previousStartedAt ? 'newer' : 'older'
   }
   return 'unknown'
+}
+
+function alignCodexCompletedTurn(previous, incoming) {
+  if (compareCodexTurnOrder(previous, incoming) !== 'same') return incoming
+  const retainedStart = finiteInteger(previous.turnStartedAt)
+  const incomingStart = finiteInteger(incoming.turnStartedAt)
+  const terminalAt = finiteInteger(incoming.terminalAt)
+  if (!incomingStart || incomingStart >= retainedStart
+    || incomingStart !== Math.floor(retainedStart / 1000) * 1000
+    || terminalAt && terminalAt < retainedStart && terminalAt !== incomingStart) return incoming
+  return {
+    ...incoming,
+    turnStartedAt: retainedStart,
+    terminalAt: terminalAt === incomingStart ? retainedStart : terminalAt
+  }
 }
 
 /**
@@ -209,6 +230,7 @@ module.exports = {
   finiteInteger,
   noAttentionRank,
   compareCodexTurnOrder,
+  alignCodexCompletedTurn,
   sameTurnEvidenceDecision,
   phaseEvidenceSupersedes,
   mergeEvidenceLanes
