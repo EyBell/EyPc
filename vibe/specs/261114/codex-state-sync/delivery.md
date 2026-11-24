@@ -17,7 +17,7 @@
 
 <a id="state-navigation-release-261123"></a>
 
-本主题 `SPEC-261114-CODEX-STATE-SYNC` 的源码提交为 `9438660225dcb11d50ace8b46d9a9ab0eddffa5d`。本地构建已通过，发布保持待发布，用户验收开放。交付组件为 EyPc uTools Host、Renderer 及随包镜像。Git 交付只表示该提交进入 `origin/main`，不代表插件已实载或验收通过。现场仍加载 15:39:49.879 版；四来源、Main／Float 与快捷实机待 B13，快捷按键双端配对继续暂停。目标先接入本地开发插件，按同版手测补齐现场证据后，才结算发布与验收。[产物身份](../../PROJECT_STATUS.md#state-navigation-build-261123) · [同版手测](#state-navigation-acceptance-261123)
+本主题 `SPEC-261114-CODEX-STATE-SYNC` 的源码提交为 `9438660225dcb11d50ace8b46d9a9ab0eddffa5d`。本地构建已通过，发布保持待发布，用户验收开放。交付组件为 EyPc uTools Host、Renderer 及随包镜像。2026-11-24 回读确认 `origin/main` 已包含该源码提交。Git 交付不等于插件实载或验收。现场仍加载 15:39:49.879 版；四来源、Main／Float 与快捷实机待 B13，快捷按键双端配对继续暂停。目标先接入本地开发插件，按同版手测补齐现场证据后，才结算发布与验收。[产物身份](../../PROJECT_STATUS.md#state-navigation-build-261123) · [同版手测](#state-navigation-acceptance-261123)
 
 <a id="state-recurrence-review-261123"></a>
 

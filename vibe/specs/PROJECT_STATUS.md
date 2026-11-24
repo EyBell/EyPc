@@ -10,7 +10,7 @@
 
 | 主题 | 实现 | 发布 | 验收 |
 | --- | --- | --- | --- |
-| [Codex 状态与快捷导航重构](261114/codex-state-sync/delivery.md#state-navigation-release-261123) | 源码 `9438660225dcb11d50ace8b46d9a9ab0eddffa5d`，20:20:52.644 构建通过 | 待发布。Git 交付与实载分开，以 `origin/main` 回读该提交为准 | 实载仍为 15:39:49.879；四来源、主浮窗和快捷实机未完成，配对暂停 |
+| [Codex 状态与快捷导航重构](261114/codex-state-sync/delivery.md#state-navigation-release-261123) | 源码 `9438660225dcb11d50ace8b46d9a9ab0eddffa5d`，20:20:52.644 构建通过 | 待发布。2026-11-24 已回读 `origin/main` 包含该源码提交；Git 交付不等于实载或验收 | 实载仍为 15:39:49.879；四来源、主浮窗和快捷实机未完成，配对暂停 |
 
 <a id="shortcut-pair-pause-261123"></a>
 
