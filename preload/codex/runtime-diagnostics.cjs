@@ -218,6 +218,9 @@ function createCodexRuntimeDiagnostics(dependencies) {
     if (result?.ok && Array.isArray(result.value?.threads) && result.value.completeness === 'verified') {
       return { provider: 'codex', status: result.value.inventoryDegraded === true ? 'degraded' : 'ready', value: result.value }
     }
+    if (result?.ok && Array.isArray(result.value?.threads) && result.value.completeness === 'partial') {
+      return { provider: 'codex', status: 'degraded', value: result.value }
+    }
     const diagnostic = diagnosticFor(result?.error)
       || safeDiagnostic({ stage: 'task-projection', category: 'invalid-data' })
     return { provider: 'codex', status: 'unavailable', errorCode: 'codex-task-preflight-failed', diagnostic }
@@ -294,13 +297,13 @@ function createCodexRuntimeDiagnostics(dependencies) {
     })
   }
 
-  async function request(method, params, timeoutMs, isCurrent) {
+  async function request(method, params, timeoutMs, isCurrent, observation) {
     let phase = 'startup'
     try {
       await startCodexServer()
       if (isCurrent?.() === false) return null
       phase = 'thread-list'
-      return await sendCodexRpc(method, params, timeoutMs)
+      return await sendCodexRpc(method, params, timeoutMs, observation)
     } catch (error) {
       const failure = captureFailure(error, { stage: 'app-server', category: 'request-failed' })
       if (['thread/resume', 'turn/start', 'thread/goal/set'].includes(method)) {

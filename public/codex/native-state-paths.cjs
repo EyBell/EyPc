@@ -66,12 +66,32 @@ function createCodexNativeStatePaths(dependencies = {}) {
     }
   }
 
+  function codexCompressedSideHistoryCandidate(thread) {
+    const logicalPath = thread?.path
+    if (typeof logicalPath !== 'string' || !path.isAbsolute(logicalPath) || !logicalPath.endsWith('.jsonl')) return null
+    try {
+      fs.lstatSync(logicalPath)
+      return null
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return null
+    }
+    const compressed = codexThreadRolloutCandidate({ path: `${logicalPath}.zst` })
+    if (!compressed) return null
+    try {
+      const sibling = path.join(fs.realpathSync(path.dirname(logicalPath)), `${path.basename(logicalPath)}.zst`)
+      return compressed.candidate === sibling ? { ...compressed, logicalPath } : null
+    } catch {
+      return null
+    }
+  }
+
   return {
     revision: CODEX_NATIVE_STATE_PATHS_REVISION,
     codexNativeStatePaths,
     codexInventoryMembershipRoots,
     codexPathInside,
-    codexThreadRolloutCandidate
+    codexThreadRolloutCandidate,
+    codexCompressedSideHistoryCandidate
   }
 }
 

@@ -36,7 +36,7 @@ export type { CompanionTaskKind }
 export const COMPANION_TASK_KERNEL_REVISION = COMPANION_V7_REVISIONS.kernel
 export const COMPANION_TASK_PACKAGE_REVISION = COMPANION_V7_REVISIONS.snapshot
 
-export type CompanionProviderPinAuthority = 'app-server' | 'codexhost' | 'claude-metadata' | 'cursor-workspace' | 'orca-tab'
+export type CompanionProviderPinAuthority = 'app-server' | 'codexhost' | 'claude-metadata' | 'cursor-workspace' | 'orca-tab' | 'legacy-mirror'
 export type CompanionTaskPhase = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
 export type CompanionTaskEvidencePhaseV4 = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'interrupted' | 'failed' | 'unknown'
 export type CompanionTaskFreshnessV4 = 'fresh' | 'verifying'
@@ -149,6 +149,7 @@ export interface CompanionCanonicalTaskV4 {
   providerPin?: boolean | null
   providerPinOrder?: number
   providerPinAuthority?: CompanionProviderPinAuthority | ''
+  providerPinFreshness?: 'fresh' | 'verifying'
   manualPhase?: string
   dynamicEligible: boolean
   capabilities: {
@@ -439,6 +440,7 @@ function projectCanonicalCard(
     planPaused: task.paused,
     companionCapabilities: { ...task.capabilities },
     companionTopology: task.topology ? { ...task.topology } : undefined,
+    providerPinFreshness: task.providerPinFreshness,
     codexStatus: task.codexStatus,
     hasCurrentActivity: live,
     canArchive: archiveCapability === 'allowed'
@@ -449,7 +451,7 @@ function projectCanonicalCard(
   else delete next.providerPinned
   if (task.localPin) next.pinSource = 'local'
   else if (task.providerPin === true) next.pinSource = 'native'
-  else if (task.providerPin === false) delete next.pinSource
+  else if (task.providerPin === false || task.providerPinFreshness) delete next.pinSource
   // Provider pin unknown (a Host without the lane): keep the legacy inventory
   // native marker, only never a stale local one.
   else if (next.pinSource === 'local') delete next.pinSource

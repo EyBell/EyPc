@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const http = require('node:http')
 const os = require('node:os')
 const path = require('node:path')
-const { isKnownTaskPhase } = require('../task-phase.cjs')
+const { isKnownTaskPhase, isManualTaskPhase } = require('../task-phase.cjs')
 
 const SCHEMA = 'eypc-task-state-v1'
 const HOST = '127.0.0.1'
@@ -23,6 +23,13 @@ const RECEIPT_EVENTS = {
   'task-package-ack': ['float', 'delivery'],
   'float-task-presented': ['float', 'row']
 }
+const PIN_AUTHORITIES = new Set(['app-server', 'codexhost', 'claude-metadata', 'cursor-workspace', 'orca-tab', 'legacy-mirror'])
+const PIN_SOURCES = new Set(['none', 'local', 'native'])
+const ROW_GROUPS = new Set(['pinned', 'input', 'active', 'unknown', 'stopped', 'unread', 'completed'])
+const MEMBER_TURNS = new Set(['not-started', 'turn-running', 'turn-completed', 'turn-interrupted', 'turn-failed', 'unknown'])
+const MEMBER_GOALS = new Set(['', 'unknown', 'none', 'active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'])
+const MEMBER_THREADS = new Set(['unknown', 'active', 'idle', 'notLoaded', 'systemError'])
+const ANONYMOUS_REF = /^h:[a-f0-9]{16}$/
 
 const taskStateDirectory = () => path.join(os.homedir(), '.eypc', 'task-state')
 const isPrivate = (stat) => typeof process.getuid !== 'function'
@@ -30,6 +37,43 @@ const isPrivate = (stat) => typeof process.getuid !== 'function'
 const revision = (value) => Number.isSafeInteger(value) && value >= 0 ? value : 0
 const phase = (value) => isKnownTaskPhase(value) ? value : null
 const freshness = (value) => value === 'fresh' ? 'fresh' : 'verifying'
+const pinAuthority = (value) => PIN_AUTHORITIES.has(value) ? value : ''
+const pinSourceValue = (value) => PIN_SOURCES.has(value) ? value : null
+const BADGE_COUNTS = ['active', 'input', 'unread']
+const badgeCounts = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const result = {}
+  for (const key of BADGE_COUNTS) {
+    if (!Object.hasOwn(value, key)) continue
+    const count = value[key]
+    if (Number.isSafeInteger(count) && count >= 0) result[key] = count
+  }
+  return Object.keys(result).length ? result : null
+}
+const memberStatus = (value) => {
+  if (!value || typeof value !== 'object') return null
+  return {
+    phase: phase(value.phase),
+    turn: MEMBER_TURNS.has(value.turn) ? value.turn : 'unknown',
+    goal: MEMBER_GOALS.has(value.goal) ? value.goal : '',
+    threadStatus: MEMBER_THREADS.has(value.threadStatus) ? value.threadStatus : 'unknown'
+  }
+}
+const codexEnums = (value) => {
+  const main = memberStatus(value?.main)
+  if (!main) return null
+  const sides = Array.isArray(value.sides) ? value.sides.map(memberStatus).filter(Boolean).slice(0, 8) : []
+  return sides.length ? { main, sides } : { main }
+}
+const pinTotals = (tasks, pinnedKeys) => {
+  const totals = { native: 0, local: 0, group: Array.isArray(pinnedKeys) ? pinnedKeys.length : 0 }
+  for (const task of tasks) {
+    if (task?.role === 'child') continue
+    if (task?.localPin === true) totals.local += 1
+    if (task?.providerPin === true) totals.native += 1
+  }
+  return totals
+}
 
 function readTaskStateEndpoint(directory = taskStateDirectory()) {
   let descriptor
@@ -51,15 +95,22 @@ function readTaskStateEndpoint(directory = taskStateDirectory()) {
   }
 }
 
-function projectPackage(value, taskRef) {
+function projectPackage(value, taskRef, membersByRoot) {
   const refs = new Map()
   const tasks = value.tasks.map((task) => {
     const ref = taskRef(task.provider, task.key)
     refs.set(task.key, ref)
+    const codex = codexEnums(task.codexStatus)
+    const members = membersByRoot?.get(task.key)
+    const providerPinFreshness = task.providerPinFreshness === 'fresh' || task.providerPinFreshness === 'verifying'
+      ? task.providerPinFreshness : ''
+    const manualPhase = isManualTaskPhase(task.manualPhase) ? task.manualPhase : ''
     return {
       taskRef: ref,
       provider: task.provider,
       phase: phase(task.phase),
+      ...(manualPhase ? { manualPhase } : {}),
+      ...(typeof task.capabilities?.continueTask === 'boolean' ? { continueTask: task.capabilities.continueTask } : {}),
       semanticRevision: revision(task.semanticRevision),
       turnStartedAt: revision(task.turnStartedAt),
       terminalAt: revision(task.terminalAt),
@@ -68,7 +119,23 @@ function projectPackage(value, taskRef) {
       completedUnread: typeof task.completedUnread === 'boolean' ? task.completedUnread : null,
       planReady: task.planReady === true,
       hidden: task.hidden === true,
-      paused: task.paused === true
+      paused: task.paused === true,
+      localPin: task.localPin === true,
+      providerPin: task.providerPin === true ? true : task.providerPin === false ? false : null,
+      providerPinOrder: revision(task.providerPinOrder),
+      providerPinAuthority: pinAuthority(task.providerPinAuthority),
+      ...(providerPinFreshness ? { providerPinFreshness } : {}),
+      ...(codex ? { codex } : {}),
+      ...(members ? { codexMembers: members.filter(member => ANONYMOUS_REF.test(member.memberRef)).map(member => ({
+        memberRef: member.memberRef,
+        ...(ANONYMOUS_REF.test(member.turnRef) ? { turnRef: member.turnRef } : {}),
+        root: member.root === true,
+        phase: phase(member.phase),
+        turn: MEMBER_TURNS.has(member.turn) ? member.turn : 'unknown',
+        turnStartedAt: revision(member.turnStartedAt),
+        terminalAt: revision(member.terminalAt),
+        unread: typeof member.unread === 'boolean' ? member.unread : null
+      })) } : {})
     }
   })
   const references = (keys) => keys.map((key) => refs.get(key)).filter(Boolean)
@@ -84,7 +151,7 @@ function projectPackage(value, taskRef) {
     ])),
     tasks,
     views: {
-      counts: { ...value.views.counts },
+      counts: { ...value.views.counts, ...pinTotals(value.tasks, value.views?.groups?.pinned) },
       groups: Object.fromEntries(Object.entries(value.views.groups).map(([group, keys]) => [group, references(keys)])),
       cycleKeys: references(value.views.cycleKeys),
       attentionKeys: {
@@ -107,10 +174,19 @@ function presentationReceipt(event, taskRef, observedAt) {
   const receipt = { surface, kind, packageRevision, windowGeneration, observedAt }
   if (kind === 'row') {
     if (!REF.test(taskRef) || !['visible', 'mismatch'].includes(event.outcome)) return null
+    const observedPin = pinSourceValue(details.pinSource)
+    const expectedPin = pinSourceValue(details.expectedPinSource)
     return {
-      ...receipt, taskRef, outcome: event.outcome, phase: phase(event.phase),
+      ...receipt, taskRef, outcome: event.outcome,
+      phase: phase(event.phase) || phase(details.phase),
       expectedPhase: phase(details.expectedPhase),
-      semanticRevision: revision(details.semanticRevision)
+      semanticRevision: revision(details.semanticRevision),
+      ...(ROW_GROUPS.has(details.group) ? { group: details.group } : {}),
+      ...(ROW_GROUPS.has(details.expectedGroup) ? { expectedGroup: details.expectedGroup } : {}),
+      ...(observedPin ? { pinSource: observedPin } : {}),
+      ...(expectedPin ? { expectedPinSource: expectedPin } : {}),
+      ...(typeof details.pinned === 'boolean' ? { pinned: details.pinned } : {}),
+      ...(typeof details.expectedPinned === 'boolean' ? { expectedPinned: details.expectedPinned } : {})
     }
   }
   if (kind === 'delivery') receipt.outcome = event.outcome
@@ -119,8 +195,12 @@ function presentationReceipt(event, taskRef, observedAt) {
   if (kind === 'presentation') {
     receipt.outcome = ['mismatch', 'unconfirmed'].includes(event.outcome)
       ? event.outcome : receipt.presentation || 'unconfirmed'
-    receipt.activeCount = Number.isSafeInteger(details.activeCount) ? details.activeCount : null
+    receipt.activeCount = Number.isSafeInteger(details.activeCount) && details.activeCount >= 0 ? details.activeCount : null
     receipt.expectedActiveCount = revision(details.expected)
+    const counts = badgeCounts(details.counts)
+    const expectedCounts = badgeCounts(details.expectedCounts)
+    if (counts) receipt.counts = counts
+    if (expectedCounts) receipt.expectedCounts = expectedCounts
   }
   return receipt
 }
@@ -155,13 +235,14 @@ function startCompanionTaskStateBridge({
     builtAt: artifact?.builtAt || ''
   }
 
-  function snapshot(packageValue, runtime, first, includeReceipts = false) {
+  function snapshot(packageValue, runtime, first, includeReceipts = false, members) {
     const projected = projection?.packageRevision === packageValue.packageRevision
-      ? projection : projectPackage(packageValue, taskRef)
+      ? projection : projectPackage(packageValue, taskRef, members ?? kernel.getCodexDiagnosticMembers?.(packageValue))
     if (!projection || packageValue.packageRevision > projection.packageRevision) projection = projected
     return {
       type: 'snapshot', host: runtime, firstComplete: first, package: projected,
-      ...(includeReceipts ? { consumerReceipts: [...recent.values(), ...recentRows.values()] } : {})
+      ...(includeReceipts ? { consumerWindowGenerations: { ...windowGenerations },
+        consumerReceipts: [...recent.values(), ...recentRows.values()] } : {})
     }
   }
 
@@ -196,7 +277,9 @@ function startCompanionTaskStateBridge({
   function publish(packageValue) {
     const runtime = host
     const first = firstComplete
-    enqueue(() => snapshot(packageValue, runtime, first))
+    const members = watchers.size && projection?.packageRevision !== packageValue.packageRevision
+      ? kernel.getCodexDiagnosticMembers?.(packageValue) : null
+    enqueue(() => snapshot(packageValue, runtime, first, false, members))
   }
 
   function recordReceipt(event, ref) {
@@ -208,7 +291,7 @@ function startCompanionTaskStateBridge({
     if (windowGeneration > windowGenerations[surface]) {
       windowGenerations[surface] = windowGeneration
       for (const [key, value] of recent) if (value.surface === surface) recent.delete(key)
-      if (surface === 'float') recentRows.clear()
+      for (const [key, value] of recentRows) if (value.surface === surface) recentRows.delete(key)
     }
     const suffix = kind === 'delivery' ? receipt.outcome : receipt.taskRef || ''
     const key = `${surface}:${kind}:${suffix}`

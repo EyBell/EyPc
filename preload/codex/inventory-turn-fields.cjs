@@ -2,6 +2,39 @@
 
 const { alignCodexCompletedTurn, compareCodexTurnOrder } = require('../companion/branch-causality.cjs')
 
+function codexExplicitTimestampPrecision(value) {
+  const precision = Number(value)
+  return precision === 1 || precision === 1000 ? precision : 0
+}
+
+function codexEpochMilliseconds(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > Number.MAX_SAFE_INTEGER) return 0
+  return Math.trunc(parsed)
+}
+
+function codexAuxiliaryTurnFields(source) {
+  const fields = {}
+  const startedPrecision = codexExplicitTimestampPrecision(source?.turnStartedAtPrecisionMs)
+  const terminalPrecision = codexExplicitTimestampPrecision(source?.terminalAtPrecisionMs)
+  const requestedAt = codexEpochMilliseconds(source?.statusRequestedAt)
+  const receivedAt = codexEpochMilliseconds(source?.statusReceivedAt)
+  if (startedPrecision) fields.turnStartedAtPrecisionMs = startedPrecision
+  if (terminalPrecision) fields.terminalAtPrecisionMs = terminalPrecision
+  if (requestedAt) fields.statusRequestedAt = requestedAt
+  if (receivedAt) fields.statusReceivedAt = receivedAt
+  return fields
+}
+
+function codexTurnReadIsCurrent(turn, liveObservedAt) {
+  const requestedAt = codexEpochMilliseconds(turn?.statusRequestedAt)
+  const receivedAt = codexEpochMilliseconds(turn?.statusReceivedAt)
+  if (!requestedAt || !receivedAt || receivedAt < requestedAt) return false
+  const live = codexEpochMilliseconds(liveObservedAt)
+  if (!live) return true
+  return requestedAt >= live
+}
+
 /**
  * Merges a freshly read inventory turn projection with the previously known
  * activity for the same thread, so a lower-fidelity inventory snapshot never
@@ -42,21 +75,52 @@ function createCodexInventoryTurnFields(dependencies = {}) {
       causalDomain: id ? 'codex-turn' : '',
       causalKey: id,
       turnPredecessorKey: value?.turnPredecessorId || value?.predecessorId,
-      turnStartedAt: timestampMs(value?.lastTurnStartedAt || value?.startedAt)
+      turnStartedAt: normalizedStamp(value, value?.lastTurnStartedAt || value?.startedAt, 'turnStartedAtPrecisionMs'),
+      ...codexAuxiliaryTurnFields(value)
     }
+  }
+
+  function alreadyMilliseconds(raw) {
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0
+  }
+
+  function normalizedStamp(source, raw, precisionField) {
+    if (codexExplicitTimestampPrecision(source?.[precisionField])) return alreadyMilliseconds(raw)
+    const parsed = Number(timestampMs(raw))
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+  }
+
+  function sourcePrecision(raw) {
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed) || parsed <= 0) return 0
+    const converted = Number(timestampMs(raw))
+    if (!Number.isFinite(converted) || converted <= 0) return 0
+    if (converted === parsed) return 1
+    if (parsed < 10_000_000_000 && converted === parsed * 1000) return 1000
+    return 0
+  }
+
+  function selectedPrecision(field, turn, observation, derived) {
+    for (const source of [observation, turn]) {
+      if (source && typeof source === 'object' && Object.prototype.hasOwnProperty.call(source, field)) {
+        return codexExplicitTimestampPrecision(source[field])
+      }
+    }
+    return codexExplicitTimestampPrecision(derived)
   }
 
   function compareInventoryTurns(previous, incoming) {
     return compareCodexTurnOrder(turnOrderShape(previous), turnOrderShape(incoming))
   }
 
-  function codexOrderedTurnPair(previous, incoming, page) {
+  function codexOrderedTurnPair(previous, incoming, page, observation) {
     const previousId = turnOrderShape(previous).causalKey
     const incomingId = turnOrderShape(incoming).causalKey
     const rows = record(page).data
     if (!previousId || !incomingId || previousId === incomingId || !Array.isArray(rows) || rows.length !== 2) return null
-    const latest = sanitizeCodexTurnStatus(rows[0])
-    const predecessor = sanitizeCodexTurnStatus(rows[1])
+    const latest = sanitizeCodexTurnStatus(rows[0], observation)
+    const predecessor = sanitizeCodexTurnStatus(rows[1], observation)
     if (latest?.id === previousId && predecessor?.id === incomingId) return { order: 'older' }
     if (latest?.id !== incomingId || predecessor?.id !== previousId) return null
     return { order: 'newer', turn: { ...latest, predecessorId: previousId } }
@@ -69,18 +133,26 @@ function createCodexInventoryTurnFields(dependencies = {}) {
 
   function codexAlignCompletedTurnStart(known, turn) {
     if (turn?.status !== 'completed' || (known?.lastTurnStatus || known?.status) !== 'inProgress') return turn
-    const incoming = { ...turnOrderShape(turn), terminalAt: timestampMs(turn.completedAt) }
+    const incoming = { ...turnOrderShape(turn), terminalAt: normalizedStamp(turn, turn.completedAt, 'terminalAtPrecisionMs') }
     const aligned = alignCodexCompletedTurn(turnOrderShape(known), incoming)
     if (aligned === incoming) return turn
-    return {
+    const next = {
       ...turn,
       startedAt: aligned.turnStartedAt,
       ...(aligned.terminalAt ? { completedAt: aligned.terminalAt } : {})
     }
+    if (codexExplicitTimestampPrecision(aligned.turnStartedAtPrecisionMs)) {
+      next.turnStartedAtPrecisionMs = aligned.turnStartedAtPrecisionMs
+    } else delete next.turnStartedAtPrecisionMs
+    if (codexExplicitTimestampPrecision(aligned.terminalAtPrecisionMs)) {
+      next.terminalAtPrecisionMs = aligned.terminalAtPrecisionMs
+    } else delete next.terminalAtPrecisionMs
+    return next
   }
 
   function codexTerminalTurnTransition(known, value, predecessorId) {
-    if (!['completed', 'interrupted', 'failed'].includes(value?.status) || !timestampMs(value.startedAt)) return null
+    if (!['completed', 'interrupted', 'failed'].includes(value?.status)
+      || !normalizedStamp(value, value.startedAt, 'turnStartedAtPrecisionMs')) return null
     const candidate = predecessorId && value.id ? { ...value, predecessorId } : value
     const turn = codexAlignCompletedTurnStart(known, candidate)
     const order = compareInventoryTurns(known, turn)
@@ -96,27 +168,29 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     if (!projection?.lastTurnStatus) return {}
     const next = {
       lastTurnStatus: projection.lastTurnStatus,
-      ...(timestampMs(projection.lastTurnStartedAt)
-        ? { lastTurnStartedAt: timestampMs(projection.lastTurnStartedAt) } : {}),
-      ...(projection.lastTurnStatus === 'completed' && timestampMs(projection.lastTurnCompletedAt)
-        ? { lastTurnCompletedAt: timestampMs(projection.lastTurnCompletedAt) }
+      ...(normalizedStamp(projection, projection.lastTurnStartedAt, 'turnStartedAtPrecisionMs')
+        ? { lastTurnStartedAt: normalizedStamp(projection, projection.lastTurnStartedAt, 'turnStartedAtPrecisionMs') } : {}),
+      ...(projection.lastTurnStatus === 'completed' && normalizedStamp(projection, projection.lastTurnCompletedAt, 'terminalAtPrecisionMs')
+        ? { lastTurnCompletedAt: normalizedStamp(projection, projection.lastTurnCompletedAt, 'terminalAtPrecisionMs') }
         : {}),
       ...(projection.lastTurnId ? { lastTurnId: projection.lastTurnId } : {}),
       ...(projection.turnPredecessorId ? { turnPredecessorId: projection.turnPredecessorId } : {}),
-      lastTurnEvidence: projection.lastTurnEvidence || 'inventory'
+      lastTurnEvidence: projection.lastTurnEvidence || 'inventory',
+      ...codexAuxiliaryTurnFields(projection)
     }
-    const previousStartedAt = timestampMs(previousActivity?.lastTurnStartedAt)
+    const previousStartedAt = normalizedStamp(previousActivity, previousActivity?.lastTurnStartedAt, 'turnStartedAtPrecisionMs')
     if (!previousActivity?.lastTurnStatus || !previousStartedAt) return next
 
     const previous = {
       lastTurnStatus: previousActivity.lastTurnStatus,
       lastTurnStartedAt: previousStartedAt,
-      ...(previousActivity.lastTurnStatus === 'completed' && timestampMs(previousActivity.lastTurnCompletedAt)
-        ? { lastTurnCompletedAt: timestampMs(previousActivity.lastTurnCompletedAt) }
+      ...(previousActivity.lastTurnStatus === 'completed' && normalizedStamp(previousActivity, previousActivity.lastTurnCompletedAt, 'terminalAtPrecisionMs')
+        ? { lastTurnCompletedAt: normalizedStamp(previousActivity, previousActivity.lastTurnCompletedAt, 'terminalAtPrecisionMs') }
         : {}),
       ...(previousActivity.lastTurnId ? { lastTurnId: previousActivity.lastTurnId } : {}),
       ...(previousActivity.turnPredecessorId ? { turnPredecessorId: previousActivity.turnPredecessorId } : {}),
-      ...(previousActivity.lastTurnEvidence ? { lastTurnEvidence: previousActivity.lastTurnEvidence } : {})
+      ...(previousActivity.lastTurnEvidence ? { lastTurnEvidence: previousActivity.lastTurnEvidence } : {}),
+      ...codexAuxiliaryTurnFields(previousActivity)
     }
     const previousDirectLive = previousActivity.status === 'active'
       && (previousActivity.statusAuthority === 'desktop-live' || previousActivity.statusAuthority === 'app-server-live')
@@ -145,11 +219,21 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     if (sameOutcome && previousActivity.lastTurnEvidence && previousActivity.lastTurnEvidence !== 'inventory') {
       next.lastTurnEvidence = previousActivity.lastTurnEvidence
       if (next.lastTurnStatus === 'completed') {
-        const completedAt = Math.max(
-          timestampMs(next.lastTurnCompletedAt),
-          timestampMs(previousActivity.lastTurnCompletedAt)
-        )
-        if (completedAt) next.lastTurnCompletedAt = completedAt
+        const incomingCompletedAt = normalizedStamp(next, next.lastTurnCompletedAt, 'terminalAtPrecisionMs')
+        const previousCompletedAt = normalizedStamp(previousActivity, previousActivity.lastTurnCompletedAt, 'terminalAtPrecisionMs')
+        const completedAt = Math.max(incomingCompletedAt, previousCompletedAt)
+        if (completedAt) {
+          next.lastTurnCompletedAt = completedAt
+          const incomingPrecision = codexExplicitTimestampPrecision(projection.terminalAtPrecisionMs)
+          const previousPrecision = codexExplicitTimestampPrecision(previousActivity.terminalAtPrecisionMs)
+          const chosen = completedAt === previousCompletedAt && completedAt !== incomingCompletedAt
+            ? previousPrecision
+            : completedAt === incomingCompletedAt && completedAt !== previousCompletedAt
+              ? incomingPrecision
+              : incomingPrecision && incomingPrecision === previousPrecision ? incomingPrecision : 0
+          if (chosen) next.terminalAtPrecisionMs = chosen
+          else delete next.terminalAtPrecisionMs
+        }
       }
     }
     return next
@@ -160,11 +244,11 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     const transition = codexTerminalTurnTransition(known, candidate)
     if (!transition) return null
     const { turn, order } = transition
-    const baselineStartedAt = timestampMs(known.lastTurnStartedAt)
+    const baselineStartedAt = normalizedStamp(known, known.lastTurnStartedAt, 'turnStartedAtPrecisionMs')
     const fresh = order === 'newer' || turn.startedAt > baselineStartedAt
       || turn.startedAt === baselineStartedAt && known.lastTurnStatus !== 'completed'
       || turn.startedAt === baselineStartedAt && known.lastTurnStatus === 'completed'
-        && turn.completedAt > timestampMs(known.lastTurnCompletedAt)
+        && turn.completedAt > normalizedStamp(known, known.lastTurnCompletedAt, 'terminalAtPrecisionMs')
     if (requireFresh && !fresh) return null
     const fields = { lastTurnStatus: 'completed', lastTurnStartedAt: turn.startedAt }
     const remove = []
@@ -174,30 +258,69 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     else if (order === 'newer') remove.push('turnPredecessorId')
     if (turn.completedAt) fields.lastTurnCompletedAt = turn.completedAt
     else remove.push('lastTurnCompletedAt')
+    const startedPrecision = codexExplicitTimestampPrecision(turn.turnStartedAtPrecisionMs)
+    if (startedPrecision) fields.turnStartedAtPrecisionMs = startedPrecision
+    else remove.push('turnStartedAtPrecisionMs')
+    const terminalPrecision = codexExplicitTimestampPrecision(turn.terminalAtPrecisionMs)
+    if (turn.completedAt && terminalPrecision) fields.terminalAtPrecisionMs = terminalPrecision
+    else remove.push('terminalAtPrecisionMs')
+    const requestedAt = codexEpochMilliseconds(turn.statusRequestedAt)
+    const receivedAt = codexEpochMilliseconds(turn.statusReceivedAt)
+    if (requestedAt) fields.statusRequestedAt = requestedAt
+    if (receivedAt) fields.statusReceivedAt = receivedAt
     return { fields, remove, turn: { ...turn } }
   }
 
-  function sanitizeCodexTurnStatus(value) {
+  function sanitizeCodexTurnStatus(value, observation) {
     const turn = record(value)
     const status = ['completed', 'interrupted', 'failed', 'inProgress'].includes(turn.status) ? turn.status : ''
     if (!status) return null
     const id = typeof turn.id === 'string' && turn.id.length > 0 && turn.id.length <= 200 ? turn.id : ''
-    const completedAt = status === 'completed' ? timestampMs(turn.completedAt) : 0
-    const startedAt = timestampMs(turn.startedAt)
-    const interruptedAt = status === 'interrupted' && id && startedAt ? timestampMs(turn.completedAt) : 0
+    const predecessorId = typeof turn.predecessorId === 'string' && turn.predecessorId
+      ? turn.predecessorId
+      : typeof turn.turnPredecessorId === 'string' && turn.turnPredecessorId ? turn.turnPredecessorId : ''
+    const storedStartPrecision = codexExplicitTimestampPrecision(turn.turnStartedAtPrecisionMs)
+    const storedTerminalPrecision = codexExplicitTimestampPrecision(turn.terminalAtPrecisionMs)
+    const startedAt = storedStartPrecision ? alreadyMilliseconds(turn.startedAt) : timestampMs(turn.startedAt)
+    const completedSource = storedTerminalPrecision ? alreadyMilliseconds(turn.completedAt) : timestampMs(turn.completedAt)
+    const completedAt = status === 'completed' ? completedSource : 0
+    let interruptedAt = 0
+    if (status === 'interrupted' && id && startedAt) {
+      if (Object.prototype.hasOwnProperty.call(turn, 'completedAt')) {
+        interruptedAt = completedSource >= startedAt ? completedSource : 0
+      } else {
+        const retained = alreadyMilliseconds(turn.interruptedAt)
+        interruptedAt = retained >= startedAt ? retained : 0
+      }
+    }
+    const hasTerminal = Boolean(completedAt || interruptedAt)
+    const startedPrecision = startedAt
+      ? selectedPrecision('turnStartedAtPrecisionMs', turn, observation, sourcePrecision(turn.startedAt))
+      : 0
+    const terminalPrecision = hasTerminal
+      ? selectedPrecision('terminalAtPrecisionMs', turn, observation, sourcePrecision(turn.completedAt))
+      : 0
+    const timed = observation && typeof observation === 'object'
+    const requestedAt = codexEpochMilliseconds(timed ? observation.statusRequestedAt : turn.statusRequestedAt)
+    const receivedAt = codexEpochMilliseconds(timed ? observation.statusReceivedAt : turn.statusReceivedAt)
     return {
       status,
       ...(id ? { id } : {}),
       ...(startedAt ? { startedAt } : {}),
       ...(completedAt ? { completedAt } : {}),
-      ...(interruptedAt > 0 && interruptedAt >= startedAt ? { interruptedAt } : {})
+      ...(interruptedAt > 0 && interruptedAt >= startedAt ? { interruptedAt } : {}),
+      ...(predecessorId ? { predecessorId } : {}),
+      ...(startedPrecision ? { turnStartedAtPrecisionMs: startedPrecision } : {}),
+      ...(terminalPrecision ? { terminalAtPrecisionMs: terminalPrecision } : {}),
+      ...(requestedAt ? { statusRequestedAt: requestedAt } : {}),
+      ...(receivedAt ? { statusReceivedAt: receivedAt } : {})
     }
   }
 
-  function sanitizeCodexTurnStatusPage(value) {
+  function sanitizeCodexTurnStatusPage(value, observation) {
     const source = record(value)
     const turns = Array.isArray(source.data) ? source.data : []
-    return sanitizeCodexTurnStatus(turns[0])
+    return sanitizeCodexTurnStatus(turns[0], observation)
   }
 
   function codexNativeConnectorLiveTurn(thread) {
@@ -218,11 +341,13 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     codexCompletedTurnUpdate,
     sanitizeCodexTurnStatus,
     sanitizeCodexTurnStatusPage,
-    codexNativeConnectorLiveTurn
+    codexNativeConnectorLiveTurn,
+    codexTurnReadIsCurrent
   }
 }
 
 module.exports = {
   CODEX_INVENTORY_TURN_FIELDS_REVISION,
-  createCodexInventoryTurnFields
+  createCodexInventoryTurnFields,
+  codexTurnReadIsCurrent
 }

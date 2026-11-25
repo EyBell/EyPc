@@ -482,7 +482,7 @@ function loadFloatRendererPreloadHarness(platform = 'darwin', renderOptions: { x
       observeInteraction(event: string, details: Record<string, unknown>): boolean
       getHealth(): { heartbeatSequence: number; lastHeartbeatAckAt: number }
       getSnapshot(): Record<string, any> | null
-      ackTaskSnapshot(stage: 'applied' | 'rejected' | 'visible', revision: number, details?: string | { keys: string[]; rows?: Array<{ key: string; phase?: string; semanticRevision?: number | null }> }): boolean
+      ackTaskSnapshot(stage: 'applied' | 'rejected' | 'visible', revision: number, details?: string | { keys: string[]; rows?: Array<{ key: string; phase?: string; semanticRevision?: number | null; group?: string; pinSource?: string; pinned?: boolean }> }): boolean
       onSnapshot(listener: (value: Record<string, any>) => void): () => void
     },
     ipcHandlers,
@@ -591,7 +591,7 @@ describe('Codex float preload sizing', () => {
     const host = loadPreloadHarness({ captureDiagnostics: true, runtimeIdentity: true })
     const renderer = loadFloatRendererPreloadHarness()
     const key = 'a'.repeat(32)
-    host.taskKernel.publishEvidence(companionDraft(1, { key }))
+    host.taskKernel.publishEvidence(companionDraft(1, { key, providerPin: true, providerPinAuthority: 'app-server' }))
     host.bridge.sync({ visible: true, snapshot: { ...snapshot({ baseRevision: 1 }), version: 2 } })
     host.windowLoadedCallbacks[0]?.()
     const initial = host.sent.find(item => item.channel === 'eypc-float:snapshot')
@@ -600,7 +600,8 @@ describe('Codex float preload sizing', () => {
     const semanticRevision = host.taskKernel.getLatest().tasks[0].semanticRevision
     expect(renderer.bridge.ackTaskSnapshot('visible', revision, {
       keys: [key, 'invalid'],
-      rows: [{ key, phase: 'running', semanticRevision }, { key: 'invalid', phase: 'running', semanticRevision }]
+      rows: [{ key, phase: 'running', semanticRevision, group: 'active', pinSource: 'native', pinned: true },
+        { key: 'invalid', phase: 'running', semanticRevision }]
     })).toBe(true)
     const ack = renderer.sent.at(-1)!
     expect(ack.payload).toMatchObject({
@@ -631,6 +632,10 @@ describe('Codex float preload sizing', () => {
       outcome: 'mismatch', phase: 'stopped',
       details: expect.objectContaining({ expectedPhase: 'running', semanticRevision: observed, expectedSemanticRevision: semanticRevision })
     })))
+    deliver({ rows: [{ key, phase: 'running', semanticRevision, group: 'pinned', pinSource: 'none', pinned: false }] })
+    expect(records().at(-1)).toMatchObject({
+      outcome: 'mismatch', details: { group: 'pinned', expectedGroup: 'active', expectedPinSource: 'native', pinned: false }
+    })
 
     host.taskKernel.publishEvidence(companionDraft(2, { key, phase: 'waiting-input' }))
     deliver()
@@ -639,7 +644,8 @@ describe('Codex float preload sizing', () => {
     expect(visible).toHaveLength(1)
     expect(visible[0]).toMatchObject({
       outcome: 'visible', packageRevision: revision, taskRef: expect.stringMatching(/^h:/), phase: 'running',
-      details: { windowGeneration: ack.payload.windowGeneration, builtAt: TEST_RUNTIME_IDENTITY.builtAt, semanticRevision }
+      details: { windowGeneration: ack.payload.windowGeneration, builtAt: TEST_RUNTIME_IDENTITY.builtAt, semanticRevision,
+        group: 'active', pinSource: 'native', pinned: true }
     })
   })
 

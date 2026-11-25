@@ -18,6 +18,24 @@ const { isSubAgentThreadSource } = require('./subagent-discovery.cjs')
 
 const CODEX_INVENTORY_THREAD_TOPOLOGY_REVISION = 'codex-inventory-thread-topology-v1'
 
+function codexAttachedSideParentsForRoots(parents, rootIds) {
+  const pending = new Map(parents)
+  const admitted = new Set([...rootIds].filter(id => !pending.has(id)))
+  const relevant = new Map()
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [child, parent] of pending) {
+      if (!admitted.has(parent)) continue
+      admitted.add(child)
+      relevant.set(child, parent)
+      pending.delete(child)
+      changed = true
+    }
+  }
+  return relevant
+}
+
 /** Pure anonymous diagnostic projection; the entry owns publication and deduplication. */
 function codexSideTopologyDiagnosticRecords(sourceCount, relations, depths, orphanCount, recoveredLiveByParent = new Map(), threadKey) {
   const byParent = new Map()
@@ -69,7 +87,13 @@ function createCodexInventoryThreadTopology(dependencies = {}) {
   }
   function codexResetSideTopologyDiagnostics() { diagnosticFingerprints.clear() }
 
-  function codexInventoryThreadTopology(rows, recoveredSideParents = new Map()) {
+  function codexInventoryDirectParent(row) {
+    if (row.threadSource === 'user' && row.attachedToThreadId) return row.attachedToThreadId
+    if (isSubAgentThreadSource(row.threadSource) && row.parentThreadId) return row.parentThreadId
+    return validThreadId(row.forkedFromId) ? row.forkedFromId : row.parentThreadId
+  }
+
+  function codexInventoryThreadTopology(rows, recoveredSideParents = new Map(), attachedSideParents = new Map()) {
     const rowById = new Map()
     for (const value of Array.isArray(rows) ? rows : []) {
       const row = record(value)
@@ -78,6 +102,14 @@ function createCodexInventoryThreadTopology(dependencies = {}) {
     const directParents = new Map()
     const isolated = new Set()
     for (const [threadId, row] of rowById) {
+      const attached = attachedSideParents.get(threadId) || row.attachedToThreadId
+      if (row.threadSource === 'user' && attached) {
+        if (!validThreadId(attached) || attached === threadId || !rowById.has(attached)
+          || row.attachedToThreadId && attached !== row.attachedToThreadId) {
+          isolated.add(threadId)
+        } else directParents.set(threadId, attached)
+        continue
+      }
       // Full-history machine runs also inherit forkedFromId. Their native RPC
       // sessionId is their own id, so ordinary fork-session checks would
       // strand them as unnamed roots despite an exact parent claim.
@@ -151,6 +183,8 @@ function createCodexInventoryThreadTopology(dependencies = {}) {
 
   return {
     revision: CODEX_INVENTORY_THREAD_TOPOLOGY_REVISION,
+    codexAttachedSideParentsForRoots,
+    codexInventoryDirectParent,
     codexInventoryThreadTopology,
     codexRecordSideTopologyDecision,
     codexResetSideTopologyDiagnostics,
@@ -160,6 +194,7 @@ function createCodexInventoryThreadTopology(dependencies = {}) {
 
 module.exports = {
   CODEX_INVENTORY_THREAD_TOPOLOGY_REVISION,
+  codexAttachedSideParentsForRoots,
   createCodexInventoryThreadTopology,
   codexSideTopologyDiagnosticRecords
 }

@@ -90,7 +90,7 @@ type RenderRow =
   | { kind: 'hidden-project-section'; key: string; groupKey?: string; title: string; collapsible?: boolean; collapsed?: boolean }
   | { kind: 'status-section'; key: string; groupKey?: string; title: string; count: number; tone: 'pinned' | 'input' | 'active' | 'unknown' | 'stopped' | 'unread' | 'completed'; collapsible?: boolean; collapsed?: boolean }
   | { kind: 'project'; key: string; project: CodexProjectCard; marker: CompanionProjectMarker; sectionId: string; hiddenProject?: boolean }
-  | { kind: 'task'; key: string; task: CodexTaskCard; marker: CompanionRowMarker; sectionId?: string; parentProjectKey?: string; nested?: boolean }
+  | { kind: 'task'; key: string; task: CodexTaskCard; marker: CompanionRowMarker; sectionId?: string; parentProjectKey?: string; nested?: boolean; dynamicGroup?: string }
   | { kind: 'empty-project'; key: string; projectKey: string }
 
 type SectionRow = Extract<RenderRow, { kind: 'section' | 'status-section' | 'hidden-project-section' }>
@@ -591,7 +591,7 @@ const renderRows = computed<RenderRow[]>(() => {
       const collapsed = collapsible && collapsedStatusGroups.value[group.key] === true
       return [
         { kind: 'status-section', key: `status:${group.key}`, groupKey: group.key, title: group.title, count: tasks.length, tone: group.tone, collapsible, collapsed },
-        ...(collapsed ? [] : tasks.map((task) => addTaskRow(task)))
+        ...(collapsed ? [] : tasks.map((task): RenderRow => ({ ...taskFocusItem(task), dynamicGroup: group.key })))
       ]
     })
   }
@@ -1812,6 +1812,10 @@ function pinSourceHint(item: FocusItem) {
   if (item.kind === 'project' && item.marker.claudeOnly) return projectActionBlockedReason(item.marker, '项目置顶')
   const source = item.kind === 'task' ? item.task.pinSource : item.project.pinSource
   const nativeLabel = pinProviderLabel(item)
+  if (item.kind === 'task' && item.task.providerPinFreshness === 'verifying') {
+    const prefix = source === 'local' ? 'EyPc 本地置顶 · ' : ''
+    return `${prefix}${nativeLabel}核验中`
+  }
   if (source === 'native') {
     if (pinProviderWritable(item)) return `来源：${nativeLabel} · 点击取消并同步`
     // The plugin cannot write this app's pin: a click layers a local pin so
@@ -3427,6 +3431,16 @@ watch(() => {
 let visibleTaskReceipt = ''
 let visibleTaskFrame = 0
 let visibleTaskScroller: HTMLElement | null = null
+function sampleVisiblePin(row: HTMLElement, viewport: { left: number; top: number; right: number; bottom: number }) {
+  const button = row.querySelector<HTMLButtonElement>('button.action-pin')
+  const glyph = button?.querySelector<HTMLElement>('.action-pin-glyph')
+  const rect = glyph?.getBoundingClientRect()
+  if (!button || !glyph || !rect || rect.width <= 0 || rect.height <= 0 || rect.bottom <= viewport.top
+    || rect.top >= viewport.bottom || rect.right <= viewport.left || rect.left >= viewport.right) return {}
+  const raw = button.dataset.pinSource || ''
+  const pinSource: 'local' | 'native' | 'none' = raw === 'local' ? 'local' : raw === 'native' ? 'native' : 'none'
+  return { pinSource, pinned: glyph.classList.contains('is-pinned') }
+}
 function visibleViewportTaskRows() {
   if (!expanded.value || runtimeReloadRequired.value || floatState.value.nativeVisible === false) return null
   if (floatState.value.transition?.phase === 'expanding' || floatState.value.transition?.phase === 'collapsing') return null
@@ -3443,14 +3457,20 @@ function visibleViewportTaskRows() {
     const shown = key && rect.width > 0 && rect.height > 0
       && rect.bottom > viewport.top && rect.top < viewport.bottom
       && rect.right > viewport.left && rect.left < viewport.right
-    return shown ? [{ key, phase: row.dataset.companionPhase || '', semanticRevision: Number.isInteger(semanticRevision) ? semanticRevision : null }] : []
-  })
+    return shown ? [{
+      key,
+      phase: row.dataset.companionPhase || '',
+      semanticRevision: Number.isInteger(semanticRevision) ? semanticRevision : null,
+      group: row.dataset.companionGroup,
+      ...sampleVisiblePin(row, viewport)
+    }] : []
+  }).slice(0, 40)
 }
 function acknowledgeVisibleTasks() {
   const revision = renderedTaskRevision.value
   const rows = visibleViewportTaskRows()
   if (!revision || !rows?.length) return
-  const receipt = `${floatState.value.windowGeneration || 0}:${revision}:${rows.map((row) => `${row.key}:${row.phase}:${row.semanticRevision}`).join('|')}`
+  const receipt = `${floatState.value.windowGeneration || 0}:${revision}:${rows.map((row) => `${row.key}:${row.phase}:${row.semanticRevision}:${row.group}:${row.pinSource}:${row.pinned}`).join('|')}`
   if (receipt === visibleTaskReceipt) return
   if (window.eypcFloat?.ackTaskSnapshot?.('visible', revision, { keys: rows.map((row) => row.key), rows })) visibleTaskReceipt = receipt
 }
@@ -3962,6 +3982,7 @@ onUnmounted(() => {
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
               :data-companion-phase="row.task.companionPhase || undefined"
+              :data-companion-group="row.dynamicGroup"
               :data-semantic-revision="row.task.semanticRevision"
               data-context-menu-target
               data-quick-jump-target

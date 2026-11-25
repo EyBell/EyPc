@@ -41,6 +41,13 @@ const CODEX_FLOAT_BRIDGE_REVISION = 'codex-float-bridge-v1'
 const CODEX_FLOAT_WINDOW_TITLE = 'EyPc Codex'
 const CODEX_FLOAT_WINDOW_SLOT = '__eypcCodexFloatWindow'
 const CODEX_FLOAT_TASK_PHASES = new Set(['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown'])
+const CODEX_FLOAT_TASK_GROUPS = new Set(['pinned', 'input', 'active', 'unknown', 'stopped', 'unread', 'completed'])
+function expectedVisiblePin(task) {
+  if (task?.localPin === true) return { pinSource: 'local', pinned: true }
+  if (task?.providerPin === true) return { pinSource: 'native', pinned: true }
+  if (task?.providerPin === false || task?.providerPinFreshness === 'verifying') return { pinSource: 'none', pinned: false }
+  return null
+}
 
 const CODEX_FLOAT_CHANNELS = {
   snapshot: 'eypc-float:snapshot',
@@ -1892,7 +1899,7 @@ function createCodexFloatBridge(dependencies = {}) {
         if (codexFloatVisibleRevision !== sentRevision) {
           codexFloatVisibleRevision = sentRevision
           codexFloatSemanticMismatches.clear()
-          codexFloatUnreportedRows = new Map(taskPackage.tasks.filter(task => task.provider === 'codex').map(task => [task.key, task]))
+          codexFloatUnreportedRows = new Map(taskPackage.tasks.map(task => [task.key, { task, partial: false }]))
         }
         const reportedRows = Array.isArray(source.rows) && source.rows.length
           ? source.rows
@@ -1900,34 +1907,56 @@ function createCodexFloatBridge(dependencies = {}) {
         const reportedKeys = new Set(source.keys)
         for (const row of reportedRows.slice(0, 40)) {
           const key = typeof row?.key === 'string' ? row.key : ''
-          const task = reportedKeys.has(key) ? codexFloatUnreportedRows.get(key) : undefined
-          if (!task) continue
+          const pending = reportedKeys.has(key) ? codexFloatUnreportedRows.get(key) : undefined
+          if (!pending) continue
+          const { task } = pending
           const observedRevision = Number.isInteger(row.semanticRevision) ? row.semanticRevision : null
           const observedPhase = CODEX_FLOAT_TASK_PHASES.has(row.phase) ? row.phase : ''
-          if (observedRevision !== task.semanticRevision || observedPhase !== task.phase) {
-            const signature = `${observedPhase}:${observedRevision}`
+          const observedGroup = CODEX_FLOAT_TASK_GROUPS.has(row.group) ? row.group : ''
+          const expectedGroup = CODEX_FLOAT_TASK_GROUPS.has(task.dynamicGroup) ? task.dynamicGroup : ''
+          const observedPinSource = row.pinSource === 'none' || row.pinSource === 'local' || row.pinSource === 'native' ? row.pinSource : null
+          const observedPinned = typeof row.pinned === 'boolean' ? row.pinned : null
+          const expectedPin = expectedVisiblePin(task)
+          const pinMismatch = Boolean(expectedPin) && (observedPinSource !== null || observedPinned !== null) && (
+            (observedPinSource !== null && observedPinSource !== expectedPin.pinSource)
+            || (observedPinned !== null && observedPinned !== expectedPin.pinned)
+          )
+          const rowDetails = {
+            ...(observedGroup ? { group: observedGroup, expectedGroup } : {}),
+            ...(observedPinSource === null ? {} : { pinSource: observedPinSource }),
+            ...(expectedPin ? { expectedPinSource: expectedPin.pinSource, expectedPinned: expectedPin.pinned } : {}),
+            ...(observedPinned === null ? {} : { pinned: observedPinned })
+          }
+          if (observedRevision !== task.semanticRevision || observedPhase !== task.phase || pinMismatch
+            || observedGroup && observedGroup !== expectedGroup) {
+            const signature = `${observedPhase}:${observedRevision}:${observedGroup}:${observedPinSource}:${observedPinned}`
             if (codexFloatSemanticMismatches.get(key) === signature) continue
             codexFloatSemanticMismatches.set(key, signature)
             recordTaskPresentation({
               level: 'error', scope: 'float-bridge', event: 'float-task-presented', outcome: 'mismatch',
-              provider: 'codex', taskRef: task.key, phase: observedPhase,
+              provider: typeof task.provider === 'string' && task.provider ? task.provider : 'codex', taskRef: task.key, phase: observedPhase,
               packageRevision: sentRevision, details: {
                 windowGeneration: codexFloatWindowGeneration, hostAssetId: runtimeBuild.hostAssetId,
                 rendererAssetId: runtimeBuild.rendererAssetId, builtAt: runtimeBuild.builtAt,
-                expectedPhase: task.phase, semanticRevision: observedRevision, expectedSemanticRevision: task.semanticRevision
+                expectedPhase: task.phase, semanticRevision: observedRevision, expectedSemanticRevision: task.semanticRevision,
+                ...rowDetails
               }
             })
             continue
           }
-          codexFloatUnreportedRows.delete(key)
+          if (expectedPin && (observedPinSource === null || observedPinned === null)) {
+            if (pending.partial) continue
+            pending.partial = true
+          } else codexFloatUnreportedRows.delete(key)
           recordTaskPresentation({
             level: 'info', scope: 'float-bridge', event: 'float-task-presented', outcome: 'visible',
-            provider: 'codex', taskRef: task.key, phase: observedPhase, turnStartedAt: task.turnStartedAt,
+            provider: typeof task.provider === 'string' && task.provider ? task.provider : 'codex', taskRef: task.key, phase: observedPhase, turnStartedAt: task.turnStartedAt,
             packageRevision: sentRevision, details: {
               windowGeneration: codexFloatWindowGeneration, hostAssetId: runtimeBuild.hostAssetId,
               rendererAssetId: runtimeBuild.rendererAssetId, builtAt: runtimeBuild.builtAt,
               complete: taskPackage.complete, codexHealth: taskPackage.providerHealth?.codex?.status,
-              group: task.dynamicGroup, semanticRevision: task.semanticRevision
+              semanticRevision: task.semanticRevision,
+              ...rowDetails
             }
           })
         }

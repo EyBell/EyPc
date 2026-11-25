@@ -369,14 +369,20 @@ window.eypcFloat = {
     if (!Number.isInteger(revision) || revision <= 0 || revision > lastTaskPackageRevision) return false
     if (stage === 'visible') {
       if (revision !== lastTaskPackageRevision || !taskWindowGeneration || !Array.isArray(details?.keys)) return false
-      const keys = details.keys.slice(0, 40).filter(key => typeof key === 'string' && /^[a-f0-9]{32}$/.test(key))
+      const visibleTaskKey = (value) => typeof value === 'string' && /^(?:[a-f0-9]{32}|(?:claude|cursor|orca):[A-Za-z0-9._:-]{1,160})$/.test(value) ? value : ''
+      const keys = details.keys.slice(0, 40).filter(visibleTaskKey)
       const rows = (Array.isArray(details.rows) ? details.rows : []).flatMap((row) => {
-        const key = typeof row?.key === 'string' && /^[a-f0-9]{32}$/.test(row.key) ? row.key : ''
+        const key = visibleTaskKey(row?.key)
         if (!key) return []
+        const pinSource = row.pinSource === 'none' || row.pinSource === 'local' || row.pinSource === 'native' ? row.pinSource : ''
+        const pinned = row.pinned === true || row.pinned === false ? row.pinned : undefined
         return [{
           key,
           phase: typeof row.phase === 'string' ? row.phase.slice(0, 40) : '',
-          semanticRevision: Number.isInteger(row.semanticRevision) ? row.semanticRevision : null
+          semanticRevision: Number.isInteger(row.semanticRevision) ? row.semanticRevision : null,
+          group: typeof row.group === 'string' ? row.group.slice(0, 20) : '',
+          ...(pinSource ? { pinSource } : {}),
+          ...(pinned === undefined ? {} : { pinned })
         }]
       }).slice(0, 40)
       return keys.length > 0 && sendTaskPackageAck(stage, revision, undefined, keys, rows)

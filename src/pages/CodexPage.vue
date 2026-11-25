@@ -57,7 +57,10 @@ const codexPageRoot = ref<HTMLElement | null>(null)
 let renderedTaskRevision = 0
 
 type MainTaskPresentation = 'visible' | 'hidden' | 'not-in-viewport' | 'not-displayed' | 'empty'
-type MainTaskObservation = { presentation: MainTaskPresentation; activeCount?: number; countStatus?: 'mismatch' }
+type MainBadgeKey = 'active' | 'input' | 'unread'
+type MainBadgeCounts = Partial<Record<MainBadgeKey, number>>
+type MainTaskObservation = { presentation: MainTaskPresentation; activeCount?: number; countStatus?: 'mismatch'; counts?: MainBadgeCounts }
+const MAIN_BADGE_KEYS = ['active', 'input', 'unread'] as const
 let visibleReceipt = ''
 let visibleFrame = 0
 function intersectsViewport(rect: DOMRect, boundary?: DOMRect) {
@@ -83,25 +86,46 @@ function mainTaskObservation(measureViewport: boolean): MainTaskObservation | nu
   const preview = element.querySelector<HTMLElement>('.appearance-studio .appearance-complete')
   const previewRect = preview?.getBoundingClientRect()
   if (!preview || !previewRect || !intersectsViewport(previewRect, element.getBoundingClientRect())) return { presentation: 'not-in-viewport' }
-  const counter = element.querySelector<HTMLElement>('.appearance-studio .appearance-counter.active')
-  if (!counter) return { presentation: 'visible', activeCount: 0 }
-  const counterRect = counter.getBoundingClientRect()
-  if (!intersectsViewport(counterRect, previewRect)) return { presentation: 'not-in-viewport' }
-  const text = counter.textContent?.trim() || ''
-  if (!/^\d+$/.test(text)) return { presentation: 'visible', countStatus: 'mismatch' }
-  return { presentation: 'visible', activeCount: Number(text) }
+  const counts: MainBadgeCounts = {}
+  let invalid = false
+  for (const key of MAIN_BADGE_KEYS) {
+    const counter = element.querySelector<HTMLElement>(`.appearance-studio .appearance-counter.${key}`)
+    if (!counter) {
+      counts[key] = 0
+      continue
+    }
+    if (!intersectsViewport(counter.getBoundingClientRect(), previewRect)) {
+      if (key === 'active') return { presentation: 'not-in-viewport' }
+      continue
+    }
+    const text = counter.textContent?.trim() || ''
+    if (!/^\d+$/.test(text)) {
+      invalid = true
+      continue
+    }
+    counts[key] = Number(text)
+  }
+  const activeCount = counts.active
+  return {
+    presentation: 'visible',
+    ...(invalid ? { countStatus: 'mismatch' as const } : {}),
+    ...(activeCount === undefined ? {} : { activeCount }),
+    ...(Object.keys(counts).length ? { counts } : {})
+  }
 }
 function acknowledgeTaskPresentation(observed: MainTaskObservation | null) {
   if (!observed) return
   const revision = props.snapshot.taskSnapshot.packageRevision
-  const receipt = `${revision}:${observed.presentation}:${observed.countStatus ?? ''}:${observed.activeCount ?? ''}`
+  const countMark = MAIN_BADGE_KEYS.map((key) => observed.counts?.[key] ?? '').join(',')
+  const receipt = `${revision}:${observed.presentation}:${observed.countStatus ?? ''}:${observed.activeCount ?? ''}:${countMark}`
   if (receipt === visibleReceipt) return
   const accepted = window.eypcPlatform?.companionKernel?.acknowledge({
     consumer: 'main-visible',
     revision,
     presentation: observed.presentation,
     ...(observed.countStatus ? { countStatus: observed.countStatus } : {}),
-    ...(observed.activeCount === undefined ? {} : { activeCount: observed.activeCount })
+    ...(observed.activeCount === undefined ? {} : { activeCount: observed.activeCount }),
+    ...(observed.counts ? { counts: observed.counts } : {})
   })
   if (accepted) visibleReceipt = receipt
 }

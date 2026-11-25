@@ -4,8 +4,8 @@ module.exports = Object.freeze({
   "revision": "runtime-identity-v2",
   "coreVersion": "V7",
   "coreVersionLabel": "EyPc V7",
-  "hostAssetId": "host-965a292eb51c05c24c4a",
-  "rendererAssetId": "renderer-5633387d2636d50becb4",
+  "hostAssetId": "host-e06adec5e3e825edfb09",
+  "rendererAssetId": "renderer-107230e5cadb7aaaa831",
   "kernelRevision": "companion-task-kernel-v7",
   "registryRevision": "companion-provider-registry-v1",
   "topologyRevision": "companion-task-topology-v2",
@@ -14,7 +14,7 @@ module.exports = Object.freeze({
   "subscribeRevision": "companion-task-subscribe-v1",
   "ackRevision": "companion-task-ack-v2",
   "artifactState": "artifact-ready",
-  "builtAt": "2026-11-23T12:20:52.644Z",
-  "builtAtLocal": "2026/11/23 20:20:52",
+  "builtAt": "2026-11-25T09:04:35.543Z",
+  "builtAtLocal": "2026/11/25 17:04:35",
   "packageVersion": "0.1.0"
 })

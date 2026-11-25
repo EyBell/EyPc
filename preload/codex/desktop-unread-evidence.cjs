@@ -1,5 +1,7 @@
 'use strict'
 
+const { resolveSqliteBin, querySqliteCli } = require('../sqlite-readonly.cjs')
+
 /**
  * Exact Desktop read/unread evidence for one thread.
  *
@@ -16,6 +18,11 @@
  */
 
 const CODEX_DESKTOP_UNREAD_EVIDENCE_REVISION = 'codex-desktop-unread-evidence-v1'
+const CODEX_DESKTOP_UNREAD_SETTING = 'electron-thread-read-state-v1'
+const DESKTOP_UNREAD_SETTINGS = [
+  CODEX_DESKTOP_UNREAD_SETTING, 'electron-persisted-atom-state', 'electron-renderer-content-owner',
+  'environment-catalog-cache-v2', 'environment-catalog-cache-v1', 'pinned-thread-ids'
+]
 const CODEX_DESKTOP_CONVERSATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const CODEX_DESKTOP_UNREAD_READ_FAILURE_REASON = {
   'native-schema-invalid': true,
@@ -43,12 +50,80 @@ function nativeDecoded(value) {
   return typeof value === 'string' ? JSON.parse(value) : value
 }
 
+function createCodexDesktopUnreadStorage({ fs, execFile, sqliteBin, DatabaseSync, maximumStateBytes } = {}) {
+  let active = null
+  const databasePath = primary => typeof primary === 'string' && primary.endsWith('.json')
+    ? `${primary.slice(0, -5)}.sqlite` : ''
+  const limit = Number.isSafeInteger(maximumStateBytes) && maximumStateBytes > 0 ? maximumStateBytes : 4 * 1024 * 1024
+
+  function current(primary) {
+    const file = databasePath(primary)
+    if (active?.file !== file) active = null
+    if (!file || typeof fs?.statSync !== 'function') return active
+    let identity = ''
+    let missing = false
+    try {
+      const stat = fs.statSync(file)
+      if (stat?.isFile?.()) identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`
+      else missing = true
+    } catch (error) {
+      missing = !error?.code || ['ENOENT', 'ENOTDIR'].includes(error.code)
+    }
+    if (!active && missing) return null
+    if (active?.identity === identity) return active
+    active = { file, identity, value: null, sequence: 0 }
+    return active
+  }
+
+  function refresh(primary, isCurrent = () => true) {
+    const source = current(primary)
+    if (!source) return null
+    if (!source.identity) return Promise.resolve(null)
+    const sequence = ++source.sequence
+    const accepts = () => active === source && source.sequence === sequence && current(primary) === source && isCurrent()
+    const keys = DESKTOP_UNREAD_SETTINGS.map(key => `'${key}'`).join(',')
+    const sql = `SELECT key, CASE WHEN length(value) <= ${limit} THEN value END AS value
+      FROM settings WHERE scope = 'global' AND key IN (${keys})`
+    return Promise.resolve().then(async () => {
+      if (!accepts()) return null
+      const bin = resolveSqliteBin(fs, sqliteBin)
+      let rows
+      if (bin && typeof execFile === 'function') {
+        rows = await querySqliteCli({ execFile }, bin, source.file, sql, { timeout: 1500, maxBuffer: limit })
+      } else {
+        const Database = DatabaseSync || require('node:sqlite').DatabaseSync
+        const database = new Database(source.file, { readOnly: true })
+        try { rows = database.prepare(sql).all() } finally { database.close() }
+      }
+      const parsed = Object.create(null)
+      for (const { key, value } of rows) {
+        if (!DESKTOP_UNREAD_SETTINGS.includes(key) || typeof value !== 'string' || Object.hasOwn(parsed, key)) return null
+        parsed[key] = JSON.parse(value)
+      }
+      return parsed
+    }).catch(() => null).then(value => {
+      if (!accepts()) return null
+      source.value = value
+      return value
+    })
+  }
+
+  return {
+    refresh,
+    snapshot(primary) { return current(primary)?.value },
+    watchPaths(primary) {
+      const file = databasePath(primary)
+      return file ? [primary, file, `${file}-wal`] : primary ? [primary] : []
+    }
+  }
+}
+
 /** Select exactly one native identity and execution-host bucket, never a union. */
 function parseCodexDesktopUnreadState(value, binding = null) {
   const root = nativeRecord(value)
   if (!root) throw new Error('invalid native unread state')
-  if (Object.prototype.hasOwnProperty.call(root, 'electron-thread-read-state-v1')) {
-    const state = nativeRecord(nativeDecoded(root['electron-thread-read-state-v1']))
+  if (Object.prototype.hasOwnProperty.call(root, CODEX_DESKTOP_UNREAD_SETTING)) {
+    const state = nativeRecord(nativeDecoded(root[CODEX_DESKTOP_UNREAD_SETTING]))
     const identities = nativeRecord(state?.unreadByIdentity)
     if (state?.version !== 1 || !identities) throw new Error('invalid native identity unread state')
     let identityKey = binding?.identityKey
@@ -168,7 +243,7 @@ function codexDesktopStartupReadBinding(rootValue) {
   try {
     const root = nativeRecord(rootValue)
     const owner = codexDesktopOwnerDigest(root?.['electron-renderer-content-owner'])
-    const state = nativeRecord(nativeDecoded(root?.['electron-thread-read-state-v1']))
+    const state = nativeRecord(nativeDecoded(root?.[CODEX_DESKTOP_UNREAD_SETTING]))
     const identities = nativeRecord(state?.unreadByIdentity)
     const migration = nativeRecord(state?.legacyMigration)
     const nativeLocalKey = `local:${require('node:crypto').createHash('sha256')
@@ -194,6 +269,20 @@ function codexDesktopStartupReadBinding(rootValue) {
   } catch {
     return null
   }
+}
+
+function codexDesktopPersistedReadBinding(rootValue, binding, requireOwner = false) {
+  const current = codexDesktopStartupReadBinding(rootValue)
+  const retained = codexDesktopBindingFields(binding)
+  const conflict = current && retained && (
+    current.identityKey !== retained.identityKey || current.executionHostKey !== retained.executionHostKey
+  )
+  if (conflict || requireOwner && (!current || !retained)) {
+    const error = new Error('native unread identity or local host is unavailable')
+    error.unreadBindingConflict = conflict === true
+    throw error
+  }
+  return current || retained
 }
 
 function createCodexDesktopUnreadRecovery(dependencies = {}) {
@@ -370,6 +459,7 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
     for (const threadId of connectorThreadIds(bridge)) {
       if (typeof threadId !== 'string' || excluded(threadId)) continue
       if (bridge.persistedUnread instanceof Map) bridge.persistedUnread.delete(threadId)
+      bridge.persistedUnreadCompletions?.delete(threadId)
       forgetConnectorCache(threadId)
     }
     bridge.unreadLine = undefined
@@ -665,6 +755,7 @@ function createCodexDesktopUnreadRecovery(dependencies = {}) {
     fingerprint,
     bindingChanged,
     bootstrapBinding,
+    clearPersistedBaseline,
     persistenceFailed,
     notificationAccepted,
     snapshotAllowed,
@@ -690,6 +781,41 @@ function desktopReadEvidence(input = {}) {
   return null
 }
 
+function codexDesktopReadRevisionToken(value) {
+  if (typeof value === 'string') {
+    const text = value.trim()
+    if (!text || text.length > 256 || /[\u0000-\u001f]/.test(text)) return ''
+    return text
+  }
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return `n:${value}`
+  return ''
+}
+
+/** Supported read-state revisions compare as opaque tokens. Missing support stays null. */
+function codexDesktopReadRevisionsEqual(left, right) {
+  const eventToken = codexDesktopReadRevisionToken(left)
+  const currentToken = codexDesktopReadRevisionToken(right)
+  if (!eventToken || !currentToken) return null
+  return eventToken === currentToken
+}
+
+/**
+ * `apply` only for a truthy event, or a falsy event tied to the exact current
+ * completion and a verified v3 binding. Legacy/unversioned falsy, a changed
+ * completion, a mismatched turn and unequal revisions only wake a reread.
+ * Revisions are never ordered. `drop` means an open already superseded it.
+ */
+function codexDesktopFalsyReadAction(input = {}) {
+  if (input.hasUnreadTurn !== false) return 'apply'
+  if (input.openVerdict === false) return 'drop'
+  if (input.openVerdict === 'reread') return 'reread'
+  if (input.version !== 3 || !input.binding || !input.currentCompletion) return 'reread'
+  if (input.eventTurn && input.currentTurn && input.eventTurn !== input.currentTurn) return 'reread'
+  const revisionEqual = codexDesktopReadRevisionsEqual(input.eventRevision, input.currentRevision)
+  if (revisionEqual === false) return 'reread'
+  return input.eventTurn && input.eventTurn === input.currentTurn || revisionEqual === true ? 'apply' : 'reread'
+}
+
 /** The last Desktop-persisted connector value, or `unavailable` when none was ever recorded. */
 function persistedConnectorUnread(known) {
   const unreadAuthority = known?.connectorUnreadAuthority === 'desktop-persisted'
@@ -703,12 +829,16 @@ function persistedConnectorUnread(known) {
 
 module.exports = {
   CODEX_DESKTOP_UNREAD_EVIDENCE_REVISION,
+  createCodexDesktopUnreadStorage,
   parseCodexDesktopUnreadState,
   codexReadStateContextBinding,
   codexDesktopReadNotificationDecision,
   codexDesktopUnreadReadFailureReason,
   codexDesktopStartupReadBinding,
+  codexDesktopPersistedReadBinding,
   createCodexDesktopUnreadRecovery,
   desktopReadEvidence,
-  persistedConnectorUnread
+  persistedConnectorUnread,
+  codexDesktopReadRevisionsEqual,
+  codexDesktopFalsyReadAction
 }

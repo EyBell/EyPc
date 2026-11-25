@@ -1,6 +1,7 @@
 'use strict'
 
 const { COMPANION_V7_REVISIONS } = require('../companion/contracts-v7.cjs')
+const { compareCodexTurnOrder } = require('../companion/branch-causality.cjs')
 
 /**
  * Reads a Codex rollout JSONL tail and answers two questions about the thread:
@@ -33,6 +34,20 @@ const PLAN_EXECUTION_ITEM_TYPES = new Set(['filechange'])
 const PLAN_EXECUTION_EVENT_TYPES = new Set(['patch_apply_begin', 'patch_apply_end'])
 const PLAN_CLEAR_REASONS = new Set(['cancel', 'execution-start', 'archive', 'removal'])
 
+function codexRolloutTurnStart(timestampMs, ...values) {
+  for (const value of values) {
+    const at = timestampMs(value)
+    if (!at) continue
+    const numeric = ['number', 'string'].includes(typeof value) ? Number(value) : NaN
+    let precision = 0
+    if (numeric === at || Number.isFinite(numeric) && !Number.isInteger(numeric)) precision = 1
+    else if (numeric * 1000 === at) precision = 1000
+    else if (typeof value === 'string' && /T\d\d:\d\d:\d\d/.test(value)) precision = /\d\d\.\d+/.test(value) ? 1 : 1000
+    return { at, precision }
+  }
+  return { at: 0, precision: 0 }
+}
+
 function createCodexRolloutEvidence(dependencies = {}) {
   const record = dependencies.record
   const timestampMs = dependencies.timestampMs
@@ -56,33 +71,75 @@ function createCodexRolloutEvidence(dependencies = {}) {
     return 0
   }
 
+  function codexReliableTurnId(payload) {
+    const turnId = payload?.turn_id
+    return typeof turnId === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(turnId) ? turnId : ''
+  }
+
   function codexRolloutPendingUserInputStateText(text, initialCorrelations) {
-    const pendingCallIds = new Set(
-      initialCorrelations instanceof Set
-        ? [...initialCorrelations].filter((callId) => typeof callId === 'string' && callId.length <= MAX_CALL_ID_LENGTH)
-        : []
-    )
-    if (typeof text !== 'string' || !text) {
-      return { known: pendingCallIds.size > 0, pending: pendingCallIds.size > 0, correlations: pendingCallIds, edge: 'none', waitingSince: 0 }
+    const calls = new Map()
+    if (initialCorrelations instanceof Set) {
+      for (const callId of initialCorrelations) {
+        if (typeof callId === 'string' && callId.length <= MAX_CALL_ID_LENGTH) calls.set(callId, { turnId: '', since: 0 })
+      }
     }
-    let known = pendingCallIds.size > 0
+    const empty = { known: calls.size > 0, pending: calls.size > 0, correlations: new Set(calls.keys()), edge: 'none', waitingSince: 0 }
+    if (typeof text !== 'string' || !text) return empty
+    let known = calls.size > 0
     let edge = 'none'
     let waitingSince = 0
+    let currentTurnId = ''
+    let currentStart = null
+    const recomputeSince = () => {
+      waitingSince = 0
+      for (const owner of calls.values()) {
+        if (owner.since && (!waitingSince || owner.since < waitingSince)) waitingSince = owner.since
+      }
+    }
+    const clearOwned = (turnId, includeUnscoped) => {
+      for (const [callId, owner] of calls) {
+        if (owner.turnId === turnId || (includeUnscoped && !owner.turnId)) calls.delete(callId)
+      }
+      recomputeSince()
+    }
     for (const line of text.split(/\r?\n/)) {
       if (!line || line.length > MAX_ROLLOUT_LINE_BYTES) continue
       let parsed
       try { parsed = JSON.parse(line) } catch { continue }
       const source = record(parsed)
       const payload = record(source.payload)
+      const eventTurnId = codexReliableTurnId(payload)
       const isUserContinuation = (source.type === 'event_msg' && payload.type === 'user_message')
         || (source.type === 'response_item' && payload.type === 'message' && payload.role === 'user')
       const isTurnStart = source.type === 'event_msg' && payload.type === 'task_started'
       const isTurnEnd = source.type === 'event_msg' && (payload.type === 'task_complete' || payload.type === 'turn_aborted')
-      if (isUserContinuation || isTurnStart || isTurnEnd) {
-        pendingCallIds.clear()
+      if (isTurnStart) {
+        const { at, precision } = codexRolloutTurnStart(codexRolloutTimestampMs, source.timestamp, payload.started_at)
+        const start = { causalDomain: 'codex-rollout-turn', causalKey: eventTurnId,
+          turnStartedAt: at, turnStartedAtPrecisionMs: precision }
+        if (currentStart?.turnStartedAt && at && currentTurnId && eventTurnId && currentTurnId !== eventTurnId
+          && compareCodexTurnOrder(currentStart, start) !== 'newer') continue
+        if (eventTurnId) {
+          currentTurnId = eventTurnId
+          currentStart = start
+        }
+        calls.clear()
         waitingSince = 0
         known = true
-        edge = isTurnEnd ? 'terminal' : 'resume'
+        edge = 'resume'
+        continue
+      }
+      if (isUserContinuation || isTurnEnd) {
+        // A terminal or continuation of A must not retire B's pending tool.
+        // Missing identity only clears the open undifferentiated stream.
+        if (!(eventTurnId && currentTurnId && eventTurnId !== currentTurnId)) {
+          const target = eventTurnId || currentTurnId
+          if (!target) calls.clear()
+          else clearOwned(target, target === currentTurnId)
+          if (!calls.size) waitingSince = 0
+          known = true
+          edge = isTurnEnd ? 'terminal' : 'resume'
+        }
         continue
       }
       if (source.type !== 'response_item') continue
@@ -91,17 +148,23 @@ function createCodexRolloutEvidence(dependencies = {}) {
         : ''
       if (!callId) continue
       if (payload.type === 'function_call' && payload.name === 'request_user_input') {
-        if (!pendingCallIds.size || !waitingSince) waitingSince = codexRolloutTimestampMs(source.timestamp)
-        pendingCallIds.add(callId)
+        const since = codexRolloutTimestampMs(source.timestamp)
+        calls.set(callId, { turnId: eventTurnId || currentTurnId, since })
+        if (!waitingSince) waitingSince = since
         known = true
         edge = 'waiting'
       } else if (payload.type === 'function_call_output') {
-        if (pendingCallIds.delete(callId)) edge = 'resume'
-        if (!pendingCallIds.size) waitingSince = 0
+        const owner = calls.get(callId)
+        if (owner && (!eventTurnId || !owner.turnId || owner.turnId === eventTurnId)) {
+          calls.delete(callId)
+          edge = 'resume'
+        }
+        if (!calls.size) waitingSince = 0
+        else recomputeSince()
         known = true
       }
     }
-    return { known, pending: pendingCallIds.size > 0, correlations: pendingCallIds, edge, waitingSince }
+    return { known, pending: calls.size > 0, correlations: new Set(calls.keys()), edge, waitingSince }
   }
 
   function codexRolloutHasPendingUserInputText(text) {
@@ -179,7 +242,7 @@ function createCodexRolloutEvidence(dependencies = {}) {
         continue
       }
       if (PLAN_EXECUTION_EVENT_TYPES.has(payload.type)) {
-        clearExecutedPlan(source, payload)
+        if (!turnId || !currentTurnId || turnId === currentTurnId) clearExecutedPlan(source, payload)
         continue
       }
       if (payload.type !== 'item_completed') continue
@@ -204,7 +267,7 @@ function createCodexRolloutEvidence(dependencies = {}) {
           currentTurnStartedAt || planEstablishedAt
         )
       } else if (PLAN_EXECUTION_ITEM_TYPES.has(itemType)) {
-        clearExecutedPlan(source, payload)
+        if (!turnId || !currentTurnId || turnId === currentTurnId) clearExecutedPlan(source, payload)
       }
     }
     return {
@@ -299,5 +362,6 @@ module.exports = {
   CODEX_ROLLOUT_EVIDENCE_REVISION,
   MAX_ROLLOUT_LINE_BYTES,
   MAX_CALL_ID_LENGTH,
+  codexRolloutTurnStart,
   createCodexRolloutEvidence
 }

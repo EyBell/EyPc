@@ -8,16 +8,18 @@ const BENCHMARK_TRIAL_LIMIT = 20
 const BENCHMARK_OPEN_TIMEOUT_MS = 2_000
 const BENCHMARK_ARM_WINDOW_MS = 60_000
 
-const { codexDesktopStartupReadBinding, parseCodexDesktopUnreadState } = require('./desktop-unread-evidence.cjs')
+const { codexDesktopPersistedReadBinding, parseCodexDesktopUnreadState, createCodexDesktopUnreadStorage } = require('./desktop-unread-evidence.cjs')
 
 function boundNativeUnreadIds(parsed, expectedBinding) {
-  const binding = codexDesktopStartupReadBinding(parsed)
-  if (!binding || binding.identityKey !== expectedBinding?.identityKey
-    || binding.executionHostKey !== expectedBinding?.executionHostKey) return null
-  const ids = parseCodexDesktopUnreadState(parsed, binding)
-  if (ids.length > MAX_NATIVE_UNREAD_IDS
-    || ids.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id))) return null
-  return new Set(ids)
+  try {
+    const binding = codexDesktopPersistedReadBinding(parsed, expectedBinding, true)
+    const ids = parseCodexDesktopUnreadState(parsed, binding)
+    if (ids.length > MAX_NATIVE_UNREAD_IDS
+      || ids.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id))) return null
+    return new Set(ids)
+  } catch {
+    return null
+  }
 }
 
 const MAC_CODEX_APP_SCRIPT = String.raw`
@@ -57,10 +59,11 @@ function readMacCodexApp(execFile) {
 }
 
 function createCodexDesktopOpenObservation({
-  record, fs, maximumStateBytes, execFile, platform, pairedBenchmark,
+  record, fs, maximumStateBytes, execFile, sqliteBin, DatabaseSync, platform, pairedBenchmark,
   readMacApp = platform === 'darwin' && execFile ? () => readMacCodexApp(execFile) : null,
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout
 }) {
+  const unreadStorage = createCodexDesktopUnreadStorage({ fs, execFile, sqliteBin, DatabaseSync, maximumStateBytes })
   const reads = new Map()
   let foreground = null
   let benchmarkAttempt = 0
@@ -191,15 +194,16 @@ function createCodexDesktopOpenObservation({
     const open = reads.get(threadId)
     if (!open || !open.readScope.acceptsLive(binding)) return true
     if (now() >= open.readDeadlineAt) {
+      const stillCurrent = open.readScope.current() === true
       finishRead(open, 'unconfirmed', 'window-expired')
-      return true
+      return stillCurrent ? true : 'reread'
     }
     if (open.readSuperseded || !open.readScope.current()) {
       if (!open.readSuperseded) note(open, 'native-read', 'superseded')
       open.readSuperseded = true
       return false
     }
-    if (!binding) return true
+    if (!binding) return 'reread'
     if (open.dispatched) finishRead(open, 'confirmed', 'desktop-live')
     else open.earlyRead = true
     return true
@@ -213,7 +217,13 @@ function createCodexDesktopOpenObservation({
     invalidateBenchmark()
   }
 
-  async function readBoundUnread(primary, binding) {
+  async function readBoundUnread(primary, binding, isCurrent = () => true) {
+    if (!isCurrent()) return null
+    const native = unreadStorage.refresh(primary, isCurrent)
+    if (native) {
+      const parsed = await native
+      return parsed && isCurrent() ? boundNativeUnreadIds(parsed, binding) : null
+    }
     if (!primary || !fs?.promises?.open) return null
     const file = await fs.promises.open(primary, 'r')
     try {
@@ -226,7 +236,7 @@ function createCodexDesktopOpenObservation({
         if (bytesRead === 0) break
         offset += bytesRead
       }
-      if (offset !== stat.size) return null
+      if (offset !== stat.size || !isCurrent()) return null
       return boundNativeUnreadIds(JSON.parse(buffer.toString('utf8', 0, offset)), binding)
     } finally {
       await file.close()
@@ -400,7 +410,7 @@ function createCodexDesktopOpenObservation({
     }
   } : null
 
-  return { begin, nativeRead, readBoundUnread, controlBenchmark, selectBenchmarkTarget, prepareBenchmarkTrial, clear }
+  return { begin, nativeRead, readBoundUnread, unreadStorage, controlBenchmark, selectBenchmarkTarget, prepareBenchmarkTrial, clear }
 }
 
 module.exports = { boundNativeUnreadIds, createCodexDesktopOpenObservation, readMacCodexApp }

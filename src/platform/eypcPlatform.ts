@@ -451,6 +451,7 @@ export interface CompanionTaskKernelBridge {
     presentation: 'visible' | 'hidden' | 'not-in-viewport' | 'not-displayed' | 'empty'
     activeCount?: number
     countStatus?: 'mismatch'
+    counts?: Partial<Record<'active' | 'input' | 'unread', number>>
   }): boolean
   diagnostics(): {
     revision: string

@@ -5,9 +5,8 @@ const require = createRequire(import.meta.url)
 const pinModule = require('../../preload/codex/pin-bridge.cjs') as {
   CODEX_PINNED_SECTION_ID: string
   codexThreadSectionPinned(row: unknown): boolean | null
-  codexThreadNativePinFields(row: unknown, mirror?: Map<string, number>): Record<string, unknown>
+  codexhostPinFields(row: unknown): Record<string, unknown>
   createCodexPinBridge(dependencies: Record<string, unknown>): {
-    setCodexThreadPin(input: Record<string, unknown>): Promise<Record<string, any>>
     setCompanionPin(actionAlias: string, request?: Record<string, unknown>): Promise<Record<string, any>>
   }
 }
@@ -25,21 +24,12 @@ describe('codex pin lane · reading the Pinned section', () => {
     expect(pinModule.codexThreadSectionPinned({ id: NATIVE_ID })).toBeNull()
   })
 
-  it('prefers the section, then the Host field, and falls back to the global-state mirror only without a section', () => {
-    const mirror = new Map([[NATIVE_ID, 3]])
-    expect(pinModule.codexThreadNativePinFields({ id: NATIVE_ID, section: { id: PINNED } }, mirror))
-      .toEqual({ nativePinned: true, nativePinLane: 'app-server', nativePinnedOrder: 3 })
-    // The section outranks a stale mirror entry: the mirror drops archived pins and lags Desktop.
-    expect(pinModule.codexThreadNativePinFields({ id: NATIVE_ID, section: null }, mirror))
-      .toEqual({ nativePinned: false, nativePinLane: 'app-server' })
-    expect(pinModule.codexThreadNativePinFields({ id: NATIVE_ID }, mirror))
-      .toEqual({ nativePinned: true, nativePinLane: 'mirror', nativePinnedOrder: 3 })
-    expect(pinModule.codexThreadNativePinFields({ id: NATIVE_ID }, new Map()))
-      .toEqual({ nativePinned: false, nativePinLane: 'mirror' })
-    expect(pinModule.codexThreadNativePinFields({ id: EXT_ID, codexhostExternal: true, codexhostPinned: true }))
+  it('projects only the extra-process provider field through the inventory lane', () => {
+    expect(pinModule.codexhostPinFields({ id: NATIVE_ID, section: { id: PINNED } }))
+      .toEqual({ nativePinned: false, nativePinLane: '' })
+    expect(pinModule.codexhostPinFields({ id: EXT_ID, codexhostExternal: true, codexhostPinned: true }))
       .toEqual({ nativePinned: true, nativePinLane: 'codexhost' })
-    // A Host without the field means "no pin lane", never "unpinned".
-    expect(pinModule.codexThreadNativePinFields({ id: EXT_ID, codexhostExternal: true }))
+    expect(pinModule.codexhostPinFields({ id: EXT_ID, codexhostExternal: true }))
       .toEqual({ nativePinned: false, nativePinLane: '' })
   })
 })
@@ -48,6 +38,7 @@ describe('codex pin lane · outbound write', () => {
   function harness(options: {
     sectionAfterWrite?: string | null | 'absent'
     moveError?: unknown
+    readDelay?: () => Promise<void>
     codexhost?: Record<string, unknown>
   } = {}) {
     const rpc: Array<{ method: string; params: Record<string, any> }> = []
@@ -65,6 +56,7 @@ describe('codex pin lane · outbound write', () => {
         return { thread: { id: params.threadId } }
       }
       if (method === 'thread/read') {
+        await options.readDelay?.()
         const section = options.sectionAfterWrite === undefined ? current : options.sectionAfterWrite
         return section === 'absent'
           ? { thread: { id: params.threadId } }
@@ -79,19 +71,25 @@ describe('codex pin lane · outbound write', () => {
       ['ct_stale_alias_00000000001', { threadId: NATIVE_ID, key: 'codex:stale', expiresAt: 1 }]
     ])
     const verified: Array<[string, boolean, string]> = []
+    const refresh = vi.fn()
     const bridge = pinModule.createCodexPinBridge({
       requestCodexRpc,
       record: (entry: Record<string, any>) => diagnostics.push(entry),
       threadActions,
+      captureNativeTarget: (threadId: string) => ({
+        isCurrent: () => true,
+        commit: (pinned: boolean) => verified.push([threadId, pinned, 'app-server']),
+        refresh
+      }),
       codexhostDiscovery: {
         isExternalThreadId: (id: string) => id === EXT_ID,
         codexhostPinThread: vi.fn(async (id: string, pinned: boolean) => ({ ok: true, threadId: id, pinned })),
         codexhostPinState: vi.fn(async () => ({ ok: true, pinned: true })),
         ...(options.codexhost || {})
       },
-      onProviderPinVerified: (threadId: string, pinned: boolean, lane: string) => verified.push([threadId, pinned, lane])
+      onCodexHostPinVerified: (threadId: string, pinned: boolean) => verified.push([threadId, pinned, 'codexhost'])
     })
-    return { bridge, rpc, diagnostics, verified, requestCodexRpc }
+    return { bridge, rpc, diagnostics, verified, requestCodexRpc, refresh }
   }
 
   it('moves the thread into the Pinned section, reads it back and reports the verified value', async () => {
@@ -115,6 +113,21 @@ describe('codex pin lane · outbound write', () => {
     expect(rpc[2].params).toEqual({ threadId: NATIVE_ID, sectionId: null, beforeThreadId: null })
   })
 
+  it('finishes the first read-back before dispatching the opposite intent', async () => {
+    let releaseRead!: () => void
+    const readPending = new Promise<void>((resolve) => { releaseRead = resolve })
+    const { bridge, rpc, verified } = harness({ readDelay: () => readPending })
+    const alias = 'ct_native_alias_000000001'
+    const pin = bridge.setCompanionPin(alias, { pinned: true })
+    const unpin = bridge.setCompanionPin(alias, { pinned: false })
+    await new Promise(setImmediate)
+    expect(rpc.map((call) => call.method)).toEqual(['thread/section/move', 'thread/read'])
+    releaseRead()
+    await expect(pin).resolves.toMatchObject({ outcome: 'completed', providerPin: true })
+    await expect(unpin).resolves.toMatchObject({ outcome: 'completed', providerPin: false })
+    expect(verified).toEqual([[NATIVE_ID, true, 'app-server'], [NATIVE_ID, false, 'app-server']])
+  })
+
   it('falls back to thread/metadata/update when the section method is unknown to this app-server', async () => {
     const { bridge, rpc } = harness({ moveError: Object.assign(new Error('Method not found'), { rpcCode: -32601 }) })
     await expect(bridge.setCompanionPin('ct_native_alias_000000001', { pinned: true })).resolves.toMatchObject({
@@ -132,7 +145,7 @@ describe('codex pin lane · outbound write', () => {
       errorCode: 'section-mismatch',
       providerPin: false
     })
-    expect(mismatch.verified).toEqual([])
+    expect(mismatch.verified).toEqual([[NATIVE_ID, false, 'app-server']])
 
     const silent = harness({ sectionAfterWrite: 'absent' })
     await expect(silent.bridge.setCompanionPin('ct_native_alias_000000001', { pinned: true })).resolves.toMatchObject({
@@ -140,6 +153,7 @@ describe('codex pin lane · outbound write', () => {
       errorCode: 'section-unavailable'
     })
     expect(silent.verified).toEqual([])
+    expect(silent.refresh).toHaveBeenCalledOnce()
 
     const failing = harness({ moveError: Object.assign(new Error('boom'), { rpcCode: -32000 }) })
     await expect(failing.bridge.setCompanionPin('ct_native_alias_000000001', { pinned: true })).resolves.toMatchObject({

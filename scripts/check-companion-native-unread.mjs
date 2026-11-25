@@ -96,7 +96,7 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(observation.nativeRead(main, binding), true, 'an independent read on the new connection may apply')
   currentGeneration = 1
   clock += 4000
-  assert.equal(observation.nativeRead(main, binding), true, 'the old open cannot block native read events after its observation window')
+  assert.equal(observation.nativeRead(main, binding), 'reread', 'a timed-out receipt cannot clear a newer completion')
   assert(!openEvents.some(event => event.operationId === 'open-second' && event.outcome === 'confirmed'), 'the repeated open has no attributable receipt')
   assert(openEvents.some(event => event.event === 'codex-open-target-visible' && event.outcome === 'unconfirmed'),
     'dispatch does not establish target visibility')
@@ -111,7 +111,7 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert(openEvents.some(event => event.operationId === 'open-timeout' && event.event === 'codex-open-native-read'
     && event.outcome === 'superseded'))
   clock += 4_000
-  assert.equal(observation.nativeRead(main, binding), true, 'a subsequent independent read remains eligible')
+  assert.equal(observation.nativeRead(main, binding), 'reread', 'a timed-out dispatch cannot clear the next completion')
   const { codexDesktopIpcVersionAccepted } = require('./codex/desktop-protocol.cjs')
   const file = resolve(assetRoot, assetRoot.endsWith('preload') ? 'index.js' : 'preload.js')
   const source = readFileSync(file, 'utf8')

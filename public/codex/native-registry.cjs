@@ -85,7 +85,7 @@ function createCodexNativeRegistry(dependencies = {}) {
     return Object.fromEntries(Object.keys(value).sort().map((key) => [key, codexStableNativeProjection(value[key])]))
   }
 
-  function parseCodexNativeRegistryText(text) {
+  function parseCodexNativeRegistryText(text, { includeThreadPins = true } = {}) {
     let parsed
     try { parsed = JSON.parse(text) } catch { throw invalid() }
     const source = codexRecord(parsed)
@@ -108,11 +108,11 @@ function createCodexNativeRegistry(dependencies = {}) {
         : ''
     // Present but unreadable is an error; absent is simply "nothing selected".
     if (selectedProjectSource !== undefined && selectedProjectSource !== null && !selectedProjectId) throw invalid('selected-project', 'Codex selected project state is invalid')
-    const pinnedThreadIds = codexNativeStringList(
+    const pinnedThreadIds = includeThreadPins ? codexNativeStringList(
       Object.prototype.hasOwnProperty.call(source, 'pinned-thread-ids') ? source['pinned-thread-ids'] : [],
       CODEX_NATIVE_MAX_ASSIGNMENTS,
       'pinned-thread-ids'
-    ).filter(validCodexThreadId)
+    ).filter(validCodexThreadId) : []
     const projectlessThreadIds = codexNativeStringList(source['projectless-thread-ids'], CODEX_NATIVE_MAX_ASSIGNMENTS, 'projectless-thread-ids').filter(validCodexThreadId)
     const projects = []
     const projectById = new Map()
@@ -149,7 +149,6 @@ function createCodexNativeRegistry(dependencies = {}) {
       projectOrder,
       pinnedProjectIds,
       selectedProjectId,
-      pinnedThreadIds,
       assignments: [...assignments.entries()].sort(([left], [right]) => left.localeCompare(right)),
       projectlessThreadIds: [...projectlessThreadIds].sort()
     }

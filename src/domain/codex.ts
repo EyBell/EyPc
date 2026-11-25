@@ -376,7 +376,7 @@ export interface CodexHostSnapshotV2 {
   activityGeneration?: number
   /** Hash of the allowlisted native project registry projection. */
   sourceFingerprint?: string
-  completeness?: 'verified'
+  completeness?: 'verified' | 'partial'
   /** Host sample identity reused by a verified metadata fill; absent on a fresh scan. */
   inventoryRevision?: string
   rawSourceCount?: number
@@ -942,6 +942,7 @@ export interface CodexTaskCard {
   pinSource?: 'native' | 'local'
   /** The provider's own pin is set, even while a local pin owns `pinSource`. */
   providerPinned?: boolean
+  providerPinFreshness?: 'fresh' | 'verifying'
   /**
    * Owning companion provider. Absent on every legacy Codex card, which is why
    * readers must go through `companionTaskProvider()` instead of reading it

@@ -1894,7 +1894,11 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function inventorySampleStamp(host: CodexHostSnapshot) {
-    if (host.version !== 2 || host.completeness !== 'verified') return ''
+    if (host.version !== 2
+      || host.completeness !== 'verified' && host.completeness !== 'partial'
+      || !/^[a-f0-9]{64}$/.test(host.sourceFingerprint || '')
+      || !Array.isArray(host.projects)) return ''
+    if (host.completeness === 'partial' && lastSourceFingerprint && host.sourceFingerprint !== lastSourceFingerprint) return ''
     return host.inventoryRevision?.trim() || `${host.sourceFingerprint}:${host.receivedAt}`
   }
 
@@ -2002,15 +2006,17 @@ export function createCodexController(options: CodexControllerOptions) {
     } else {
       lastProjects = []
     }
-    lastThreadsPartial = host.threadsPartial === true
-    lastTaskAuthority = host.taskAuthority || 'mixed'
-    lastSourceCount = input.retainMissing ? threads.length : host.version === 2 ? host.eligibleSourceCount ?? threads.length : threads.length
-    lastSourceFingerprint = host.version === 2 ? host.sourceFingerprint || '' : ''
-    lastCompleteness = host.version === 2 ? host.completeness : undefined
-    lastRawSourceCount = host.version === 2 ? host.rawSourceCount ?? threads.length : threads.length
-    lastEligibleSourceCount = host.version === 2 ? host.eligibleSourceCount ?? threads.length : threads.length
-    lastExcludedSourceCount = host.version === 2 ? host.excludedSourceCount ?? 0 : 0
-    lastNonConversationCount = host.version === 2 ? host.nonConversationCount ?? 0 : 0
+    if (host.version !== 2 || host.completeness !== 'partial') {
+      lastThreadsPartial = host.threadsPartial === true
+      lastTaskAuthority = host.taskAuthority || 'mixed'
+      lastSourceCount = input.retainMissing ? threads.length : host.version === 2 ? host.eligibleSourceCount ?? threads.length : threads.length
+      lastSourceFingerprint = host.version === 2 ? host.sourceFingerprint || '' : ''
+      lastCompleteness = host.version === 2 && host.completeness === 'verified' ? 'verified' : undefined
+      lastRawSourceCount = host.version === 2 ? host.rawSourceCount ?? threads.length : threads.length
+      lastEligibleSourceCount = host.version === 2 ? host.eligibleSourceCount ?? threads.length : threads.length
+      lastExcludedSourceCount = host.version === 2 ? host.excludedSourceCount ?? 0 : 0
+      lastNonConversationCount = host.version === 2 ? host.nonConversationCount ?? 0 : 0
+    } else if (!lastSourceFingerprint) lastSourceFingerprint = host.sourceFingerprint || ''
     const incomingActivityGeneration = host.version === 2
       && Number.isInteger(host.activityGeneration)
       && host.activityGeneration! > 0
@@ -2290,6 +2296,11 @@ export function createCodexController(options: CodexControllerOptions) {
                 metadataReuseFailed = [...requestedMetadataKeys].some((key) => missing.has(key))
                 return
               }
+              if (threadResult.value.version === 2 && threadResult.value.completeness === 'partial') {
+                mergeReusedThreadMetadata(threadResult.value, receivedAt)
+                lastTaskReadAt = receivedAt
+                return
+              }
               const prepared = prepareVerifiedThreadInventory(threadResult.value, receivedAt)
               if (!prepared) return
               publishPreparedThreadInventory(prepared)
@@ -2465,7 +2476,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function mergeReusedThreadMetadata(host: CodexHostSnapshot, receivedAt: number) {
-    if (!Array.isArray(host.threads) || host.version === 2 && host.completeness !== 'verified') return
+    if (!Array.isArray(host.threads) || !inventorySampleStamp(host)) return
     const incoming = new Map(host.threads.map((thread) => [thread.key, thread]))
     const known = new Set(lastThreads.map((thread) => thread.key))
     const admitted = new Set(taskSnapshot.tasks.filter((task) => task.provider === 'codex').map((task) => task.key))

@@ -1113,7 +1113,7 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('hydrates a newly published member after an ordinary inventory read settles without it', async () => {
+  it.each(['verified', 'partial'] as const)('hydrates a newly published member through %s metadata without replacing the baseline', async (completeness) => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
     const now = Date.now()
@@ -1134,7 +1134,7 @@ describe('Codex controller', () => {
           return { ok: true as const, receivedAt: now, value: {
             version: 2 as const, receivedAt: now, threads: reuse ? [thread] : [],
             projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
-            sourceFingerprint: 'd'.repeat(64), completeness: 'verified' as const,
+            sourceFingerprint: 'd'.repeat(64), completeness: reuse ? completeness : 'verified' as const,
             inventoryRevision: reuse ? 'new-sample' : 'old-sample'
           } }
         },

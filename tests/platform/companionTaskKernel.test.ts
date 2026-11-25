@@ -12,7 +12,9 @@ const { createCompanionTaskKernel: createCompanionTaskKernelRaw } = require('../
 const {
   codexBranchObservationV7,
   createEvidenceNodeV7,
-  createEvidenceBatchV7
+  createEvidenceBatchV7,
+  createInteractionEvidenceV7,
+  createInteractionSetV7
 } = require('../../preload/companion/evidence-adapter-v7.cjs') as Record<string, (...args: any[]) => any>
 const {
   createCompanionHostRegistry,
@@ -3032,6 +3034,27 @@ describe('CompanionTaskKernel', () => {
     kernel.close()
   })
 
+  it('requires verified membership coverage before completing the first provider cache', () => {
+    const configuration = { enabled: true, providers: { codex: true, claude: false, cursor: false, orca: false } }
+    const kernel = createCompanionTaskKernel({ initialConfiguration: configuration })
+    const read = (revision: number, rows: unknown[], complete: boolean, failed = false) => {
+      const value = draft(rows, revision, { producer: 'host-preflight', providers: configuration.providers })
+      Object.assign(value.evidenceBatches.codex.channels.membership, { complete })
+      if (failed) Object.assign(value.providerHealth.codex, { status: 'unavailable', errorCode: 'timeout' })
+      return kernel.publishEvidence(value, { provider: 'codex', epoch: kernel.providerEpoch('codex') })
+    }
+    try {
+      expect(read(1, [task({ key: 'root', phase: 'running' })], false)).toMatchObject({ complete: false })
+      expect(kernel.isProviderCached('codex')).toBe(false)
+      expect(read(2, [task({ key: 'root', phase: 'running' })], true)).toMatchObject({ complete: true })
+      expect(read(3, [], true, true)).toMatchObject({
+        complete: true, providerHealth: { codex: { status: 'degraded', errorCode: 'timeout' } },
+        tasks: [expect.objectContaining({ key: 'root', phase: 'running' })]
+      })
+      expect(kernel.isProviderCached('codex')).toBe(true)
+    } finally { kernel.close() }
+  })
+
   it('keeps a new unread completion selectable after an older open receives its receipt', async () => {
     const opened: string[] = []
     let releaseFirst!: () => void
@@ -5698,6 +5721,10 @@ describe('attention tail and paired cycle contracts', () => {
     })).toBe(true)
     expect(kernel.acknowledge({
       consumer: 'main-visible', presentation: 'visible', revision: current.packageRevision,
+      counts: { active: 0, input: 2, unread: 0 }
+    })).toBe(true)
+    expect(kernel.acknowledge({
+      consumer: 'main-visible', presentation: 'visible', revision: current.packageRevision,
       countStatus: 'mismatch', activeCount: 'bad'
     })).toBe(true)
     expect(kernel.acknowledge({
@@ -5719,6 +5746,10 @@ describe('attention tail and paired cycle contracts', () => {
       expect.objectContaining({
         event: 'main-task-presented', outcome: 'mismatch', packageRevision: current.packageRevision,
         details: expect.objectContaining({ countStatus: 'mismatch', activeCount: 2, expected: 0 })
+      }),
+      expect.objectContaining({
+        event: 'main-task-presented', outcome: 'mismatch', packageRevision: current.packageRevision,
+        details: expect.objectContaining({ counts: { active: 0, input: 2, unread: 0 }, expectedCounts: { active: 0, input: 1, unread: 0 } })
       }),
       expect.objectContaining({
         event: 'main-task-presented', outcome: 'mismatch',
@@ -5781,6 +5812,285 @@ describe('continue-task backend command', () => {
     expect(root.capabilities.continueTask).toBe(false)
     await expect(kernel.dispatch({ action: 'continue-task', key: 'root', revisionAt: root.revisionAt })).resolves.toMatchObject({ outcome: 'failed' })
     expect(continueTask).not.toHaveBeenCalled()
+    kernel.close()
+  })
+})
+
+describe('Codex verified continuation and closed-machine history', () => {
+  function goalState(status: string, freshness = 'fresh') {
+    return {
+      threadStatus: status === 'none' ? 'idle' : 'idle',
+      groupActivityConfirmed: false,
+      submissionPending: false,
+      orderedTurnStart: false,
+      goal: { status, freshness, observed: true, updatedAt: 0, sequence: 0 }
+    }
+  }
+  function codexNode(input: Record<string, any>) {
+    const sequence = Number(input.sequence) || 4
+    const candidate = {
+      kind: input.kind,
+      authority: input.authority || 'terminal',
+      exact: input.exact !== false,
+      causalKey: input.causalKey ?? 'turn-current',
+      causalDomain: input.causalDomain ?? 'scope-a',
+      causalSequence: input.causalSequence ?? sequence,
+      sequence,
+      observedAt: sequence,
+      statusEnteredAt: Number(input.statusEnteredAt) || 0,
+      turnStartedAt: Number(input.turnStartedAt) || 0,
+      terminalAt: Number(input.terminalAt) || 0
+    }
+    const node = createEvidenceNodeV7({
+      provider: 'codex',
+      key: input.key || 'codex-a',
+      family: input.family || `codex:${input.key || 'codex-a'}`,
+      role: input.role === 'child' ? 'child' : 'root',
+      causalKey: candidate.causalKey,
+      causalDomain: candidate.causalDomain,
+      observation: {
+        ...candidate,
+        candidates: [candidate],
+        codexState: input.codexState,
+        unreadKnown: true,
+        unread: false,
+        ...(input.planReady ? { planState: 'available', planSequence: Number(input.planSequence) || 50, planActionable: true, planReason: '' } : {})
+      },
+      metadata: {
+        kind: input.role === 'child' ? 'topology-child' : 'codex-thread',
+        actionAlias: input.role === 'child' ? '' : 'ct_codex_a_1234567890',
+        revisionAt: sequence,
+        membershipRevision: sequence,
+        visibilityRevision: sequence,
+        metadataRevision: sequence,
+        lastQuestionAt: 1_000,
+        createdAt: 1_000,
+        displayOrder: 0,
+        cycleOrder: 0,
+        attentionOrder: 0,
+        hidden: false,
+        idleConfirmed: true,
+        localPin: false,
+        dynamicEligible: true,
+        displayName: 'Kernel task',
+        originalTitle: 'Kernel task',
+        ...(input.closedMachineRun === true ? { closedMachineRun: true } : {})
+      },
+      capabilities: input.role === 'child' ? [] : ['open', 'continue-task'],
+      standaloneEligible: input.role !== 'child'
+    })
+    for (const precision of ['turnStartedAtPrecisionMs', 'terminalAtPrecisionMs'] as const) {
+      if (input[precision] === 1 || input[precision] === 1000) {
+        node.activity[precision] = input[precision]
+        for (const item of node.activity.candidates || []) item[precision] = input[precision]
+      }
+    }
+    return node
+  }
+  function publish(kernel: Record<string, any>, generation: number, nodes: Record<string, any>[], extras: Record<string, any> = {}) {
+    const lanes = { membership: generation, activity: generation, interaction: generation, unread: generation, planArtifact: generation, metadata: generation, topology: generation }
+    const base = draft([], generation, {
+      providers: { codex: true, claude: false },
+      sourceGenerations: { codex: generation, claude: 0 },
+      sourceLaneGenerations: {
+        codex: lanes,
+        claude: { membership: 0, activity: 0, interaction: 0, unread: 0, planArtifact: 0, metadata: 0, topology: 0 }
+      }
+    }) as Record<string, any>
+    return kernel.publishEvidence({
+      ...base,
+      evidenceBatches: {
+        ...base.evidenceBatches,
+        codex: createEvidenceBatchV7({
+          provider: 'codex',
+          nodes,
+          relations: extras.relations || [],
+          interactions: extras.interactions || [],
+          interactionSets: extras.interactionSets || [],
+          laneGenerations: lanes,
+          snapshotLanes: Object.keys(lanes),
+          completeLanes: Object.keys(lanes),
+          relationsComplete: true,
+          health: 'ready'
+        })
+      }
+    })
+  }
+  function openKernel() {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    return kernel
+  }
+
+  it.each(['paused', 'blocked'])('continues a %s goal from the same exact completion, including a missing start', (status) => {
+    const kernel = openKernel()
+    publish(kernel, 1, [codexNode({ kind: 'turn-completed', codexState: goalState(status), turnStartedAt: 0, terminalAt: 0 })])
+    expect(kernel.getLatest().tasks[0]).toMatchObject({
+      phase: 'stopped', dynamicGroup: 'stopped', capabilities: { continueTask: true }
+    })
+    expect(JSON.stringify(kernel.getLatest())).not.toContain('PrecisionMs')
+    kernel.close()
+  })
+
+  it('keeps a confirmed stopped goal without continuing from stale or old proof', () => {
+    const kernel = openKernel()
+    const withheld = [
+      { authority: 'inventory', exact: false, causalKey: '', causalDomain: '', causalSequence: 0 },
+      { causalDomain: '' },
+      { causalSequence: 0 }
+    ]
+    withheld.forEach((proof, index) => {
+      publish(kernel, index + 1, [codexNode({ kind: 'turn-completed', codexState: goalState('paused'), ...proof })])
+      expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'stopped', capabilities: { continueTask: false } })
+    })
+    kernel.close()
+    const verifying = openKernel()
+    publish(verifying, 1, [codexNode({ kind: 'turn-completed', codexState: goalState('paused', 'verifying') })])
+    expect(verifying.getLatest().tasks[0].capabilities.continueTask).not.toBe(true)
+    expect(verifying.getLatest().tasks[0].phase).not.toBe('stopped')
+    verifying.close()
+    const limited = openKernel()
+    publish(limited, 1, [codexNode({ kind: 'turn-completed', codexState: goalState('usageLimited') })])
+    expect(limited.getLatest().tasks[0]).toMatchObject({ phase: 'stopped', capabilities: { continueTask: false } })
+    limited.close()
+  })
+
+  it.each(['turn-interrupted', 'turn-failed'])('still continues a restored %s root', (kind) => {
+    const kernel = openKernel()
+    publish(kernel, 1, [codexNode({ kind, codexState: goalState('none') })])
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'stopped', capabilities: { continueTask: true } })
+    kernel.close()
+  })
+
+  it('shows the current Plan when a closed exact machine interruption lags a completed main', () => {
+    const kernel = openKernel()
+    const family = 'codex:root-a'
+    const relation = [{ childKey: 'codex-child:side', parentKey: 'root-a', provider: 'codex', family, relation: 'side-thread', authority: 'test-provider-fixture', exact: true, generation: 1 }]
+    publish(kernel, 1, [
+      codexNode({ key: 'root-a', family, kind: 'turn-completed', causalKey: 'root-turn', planReady: true, codexState: goalState('none') }),
+      codexNode({ key: 'codex-child:side', family, role: 'child', kind: 'turn-interrupted', causalKey: 'side-turn', closedMachineRun: true, codexState: goalState('none') })
+    ], { relations: relation })
+    expect(kernel.getLatest().tasks).toHaveLength(1)
+    expect(kernel.getLatest().tasks[0]).toMatchObject({
+      phase: 'waiting-input', planReady: true, topology: { memberCount: 2, liveCount: 0 }
+    })
+    kernel.close()
+
+    const running = openKernel()
+    publish(running, 1, [
+      codexNode({ key: 'root-a', family, kind: 'turn-completed', causalKey: 'root-turn', planReady: true, codexState: goalState('none') }),
+      codexNode({ key: 'codex-child:side', family, role: 'child', kind: 'turn-running', authority: 'live-turn', causalKey: 'side-live', closedMachineRun: true, codexState: { ...goalState('none'), threadStatus: 'active' } })
+    ], { relations: relation })
+    expect(running.getLatest().tasks[0]).toMatchObject({ phase: 'running', topology: { liveCount: 1 } })
+    running.close()
+  })
+
+  it('keeps a cold inventory completion ahead of a confirmed closed machine', () => {
+    const kernel = openKernel()
+    const family = 'codex:root-a'
+    publish(kernel, 1, [
+      codexNode({ key: 'root-a', family, kind: 'turn-completed', authority: 'inventory', exact: true, causalKey: 'root-turn', codexState: goalState('none') }),
+      codexNode({ key: 'codex-child:side', family, role: 'child', kind: 'turn-interrupted', causalKey: 'side-turn', closedMachineRun: true, codexState: goalState('none') })
+    ], {
+      relations: [{ childKey: 'codex-child:side', parentKey: 'root-a', provider: 'codex', family, relation: 'side-thread', authority: 'test-provider-fixture', exact: true, generation: 1 }]
+    })
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'completed', topology: { memberCount: 2 } })
+    kernel.close()
+  })
+
+  it('keeps an exact closed-machine interruption historical without blocking a verified completion', () => {
+    const kernel = openKernel()
+    const family = 'codex:root-a'
+    publish(kernel, 1, [
+      codexNode({ key: 'root-a', family, kind: 'turn-completed', causalKey: 'root-turn', codexState: goalState('none') }),
+      codexNode({ key: 'codex-child:side', family, role: 'child', kind: 'turn-interrupted', causalKey: 'side-turn', closedMachineRun: true, codexState: goalState('none') })
+    ], {
+      relations: [{ childKey: 'codex-child:side', parentKey: 'root-a', provider: 'codex', family, relation: 'side-thread', authority: 'test-provider-fixture', exact: true, generation: 1 }]
+    })
+    expect(kernel.getLatest().tasks).toHaveLength(1)
+    expect(kernel.getLatest().tasks[0]).toMatchObject({
+      phase: 'completed', capabilities: { continueTask: false }, topology: { memberCount: 2, liveCount: 0 }
+    })
+    kernel.close()
+  })
+
+  it('does not let a closed flag hide live work, requests, or invent completion', () => {
+    const family = 'codex:root-a'
+    const relation = [{ childKey: 'codex-child:side', parentKey: 'root-a', provider: 'codex', family, relation: 'side-thread', authority: 'test-provider-fixture', exact: true, generation: 1 }]
+    const live = openKernel()
+    publish(live, 1, [
+      codexNode({ key: 'root-a', family, kind: 'turn-running', authority: 'live-turn', codexState: { ...goalState('none'), threadStatus: 'active' } }),
+      codexNode({ key: 'codex-child:side', family, role: 'child', kind: 'unknown', authority: 'unknown', exact: false, causalKey: '', causalDomain: '', causalSequence: 0, closedMachineRun: true, codexState: goalState('none') })
+    ], { relations: relation })
+    expect(live.getLatest().tasks[0]).toMatchObject({ phase: 'running', topology: { memberCount: 2, liveCount: 1 } })
+    live.close()
+
+    const mismatched = openKernel()
+    publish(mismatched, 1, [
+      codexNode({ key: 'root-a', family, kind: 'turn-completed', causalKey: 'root-turn', codexState: goalState('none') }),
+      codexNode({ key: 'codex-child:side', family, role: 'child', kind: 'turn-failed', causalKey: 'side-turn', closedMachineRun: true, codexState: goalState('none') })
+    ], { relations: relation })
+    expect(mismatched.getLatest().tasks[0].phase).toBe('stopped')
+    mismatched.close()
+
+    const requested = openKernel()
+    const interaction = createInteractionEvidenceV7({
+      provider: 'codex', taskKey: 'codex-child:side', branchRef: 'child', interactionRef: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      kind: 'user-input', state: 'opened', sequence: 4, turnEpoch: 0, requestSetRevision: 4, authority: 'provider-live', exact: true
+    })
+    publish(requested, 1, [
+      codexNode({ key: 'root-a', family, kind: 'turn-completed', causalKey: 'root-turn', codexState: goalState('none') }),
+      codexNode({ key: 'codex-child:side', family, role: 'child', kind: 'turn-interrupted', causalKey: 'side-turn', closedMachineRun: true, codexState: goalState('none') })
+    ], {
+      relations: relation,
+      interactions: [interaction],
+      interactionSets: [createInteractionSetV7({ provider: 'codex', taskKey: 'codex-child:side', requestSetRevision: 4, complete: true })]
+    })
+    expect(requested.getLatest().tasks[0].phase).toBe('waiting-input')
+    requested.close()
+  })
+
+  it('uses explicit 1ms and 1000ms precision when ordering private turns', () => {
+    const kernel = openKernel()
+    const coarse = codexNode({
+      kind: 'turn-completed', causalKey: 'turn-a', sequence: 2, turnStartedAt: 5_000_000, terminalAt: 5_000_000,
+      turnStartedAtPrecisionMs: 1000, terminalAtPrecisionMs: 1000, codexState: goalState('none')
+    })
+    const insideSecond = codexNode({
+      kind: 'turn-completed', causalKey: 'turn-b', sequence: 3, turnStartedAt: 5_000_500, terminalAt: 5_000_500,
+      turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1, codexState: goalState('none')
+    })
+    coarse.activity.candidates.push(insideSecond.activity.candidates[0])
+    publish(kernel, 1, [coarse])
+    expect(kernel.getLatest().tasks[0].turnStartedAt).toBe(5_000_000)
+    publish(kernel, 2, [insideSecond])
+    expect(kernel.getLatest().tasks[0].turnStartedAt).toBe(5_000_000)
+    publish(kernel, 3, [codexNode({
+      kind: 'turn-completed', causalKey: 'turn-c', sequence: 4, turnStartedAt: 5_001_000, terminalAt: 5_001_000,
+      turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1, codexState: goalState('none')
+    })])
+    expect(kernel.getLatest().tasks[0].turnStartedAt).toBe(5_001_000)
+
+    const point = openKernel()
+    const unlabeled = codexNode({
+      kind: 'turn-completed', causalKey: 'turn-a', sequence: 2, turnStartedAt: 5_000_000, terminalAt: 5_000_000,
+      codexState: goalState('none')
+    })
+    unlabeled.activity.turnStartedAtPrecisionMs = 500
+    unlabeled.activity.terminalAtPrecisionMs = 500
+    unlabeled.activity.candidates[0].turnStartedAtPrecisionMs = 500
+    unlabeled.activity.candidates[0].terminalAtPrecisionMs = 500
+    publish(point, 1, [unlabeled])
+    publish(point, 2, [codexNode({
+      kind: 'turn-completed', causalKey: 'turn-b', sequence: 3, turnStartedAt: 5_000_500, terminalAt: 5_000_500,
+      turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1, codexState: goalState('none')
+    })])
+    expect(point.getLatest().tasks[0].turnStartedAt).toBe(5_000_500)
+    expect(JSON.stringify(kernel.getLatest())).not.toContain('PrecisionMs')
+    expect(JSON.stringify(point.getLatest())).not.toContain('PrecisionMs')
+    point.close()
     kernel.close()
   })
 })

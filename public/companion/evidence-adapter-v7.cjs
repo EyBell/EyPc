@@ -84,6 +84,8 @@ function codexTurnCandidateV7(branch, turn, live, flags) {
     statusEnteredAt: transitionAt || (running ? integer(branch.waitingSince) : terminalAt) || startedAt,
     turnStartedAt: startedAt,
     terminalAt,
+    turnStartedAtPrecisionMs: turn.turnStartedAtPrecisionMs,
+    terminalAtPrecisionMs: turn.terminalAtPrecisionMs,
     ...(turn === branch && branch.ordinarySideInterruptedAt > 0 && branch.branchKind === 'side'
       && terminalKind === 'turn-interrupted' && exactTerminal && !flags.length && !branch.planReady && !branch.planImplementationOnly
       && branch.goalFreshness === 'fresh' && ['none', 'complete'].includes(branch.goalStatus)
@@ -410,6 +412,10 @@ function createEvidenceNodeV7(input = {}) {
         statusEnteredAt: integer(value.statusEnteredAt),
         turnStartedAt: integer(value.turnStartedAt),
         terminalAt: integer(value.terminalAt),
+        ...(provider === 'codex' && [1, 1000].includes(value.turnStartedAtPrecisionMs)
+          ? { turnStartedAtPrecisionMs: value.turnStartedAtPrecisionMs } : {}),
+        ...(provider === 'codex' && [1, 1000].includes(value.terminalAtPrecisionMs)
+          ? { terminalAtPrecisionMs: value.terminalAtPrecisionMs } : {}),
         ...(typeof value.turnPredecessorKey === 'string' && value.turnPredecessorKey
           ? { turnPredecessorKey: value.turnPredecessorKey.slice(0, 160) } : {}),
         ...(value.inventoryRootCompletion === true ? { inventoryRootCompletion: true } : {}),

@@ -32,6 +32,13 @@ const PACKAGE_EVIDENCE_EVENTS = new Set([
   'task-package-send',
   'task-package-ack'
 ])
+const PRESENTATION_DETAIL_KEYS = new Set([
+  'windowGeneration', 'hostAssetId', 'rendererAssetId', 'builtAt',
+  'complete', 'freshness', 'codex', 'codexHealth', 'group', 'expectedGroup', 'presentation',
+  'semanticRevision', 'expectedSemanticRevision', 'expectedPhase', 'phase',
+  'pinSource', 'expectedPinSource', 'pinned', 'expectedPinned',
+  'countStatus', 'activeCount', 'expected', 'revision', 'consumer'
+])
 
 function diagnosticWritePriority(event) {
   if (event.level === 'error' || PACKAGE_EVIDENCE_EVENTS.has(event.event) && event.outcome !== 'no-op'
@@ -80,6 +87,21 @@ function explicitLevel(value) {
 function forbiddenKey(key) {
   const normalized = String(key || '').replace(/[^a-z0-9]/gi, '').toLowerCase()
   return FORBIDDEN_KEY_PARTS.some((part) => normalized.includes(part))
+}
+
+function sanitizePresentationDetails(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const result = {}
+  for (const key of PRESENTATION_DETAIL_KEYS) {
+    if (!Object.hasOwn(value, key)) continue
+    const item = value[key]
+    if (typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)) {
+      result[key] = item
+      continue
+    }
+    if (typeof item === 'string' && item.length <= 120 && !/[\r\n]/.test(item)) result[key] = item
+  }
+  return Object.keys(result).length ? result : undefined
 }
 
 function sanitizeDetails(value, depth = 0, seen = new Set()) {
@@ -328,7 +350,9 @@ function createRuntimeDiagnostics(dependencies = {}) {
       return null
     }
     const durationMs = finite(input.durationMs)
-    const details = sanitizeDetails(input.details)
+    const details = input.event === 'float-task-presented'
+      ? sanitizePresentationDetails(input.details)
+      : sanitizeDetails(input.details)
     const errorCode = input.errorCode || input.code
     return {
       v: 3,

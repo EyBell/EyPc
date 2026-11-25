@@ -1763,7 +1763,7 @@ describe('Codex Companion V4 UI contract', () => {
     spy.mockRestore()
   })
 
-  it('acks the visible Main appearance active count once', async () => {
+  it('acks the visible Main appearance badge counts', async () => {
     const acknowledge = vi.fn<(input: unknown) => boolean>(() => true)
     const platform = window.eypcPlatform
     window.eypcPlatform = { companionKernel: { acknowledge } } as unknown as NonNullable<Window['eypcPlatform']>
@@ -1780,18 +1780,26 @@ describe('Codex Companion V4 UI contract', () => {
       await wrapper.vm.$nextTick()
       expect(wrapper.find('.appearance-counter.active').exists()).toBe(true)
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-      expect(acknowledge).toHaveBeenCalledWith({ consumer: 'main-visible', revision: 7, presentation: 'visible', activeCount: 2 })
+      expect(acknowledge).toHaveBeenCalledWith({
+        consumer: 'main-visible', revision: 7, presentation: 'visible', activeCount: 2,
+        counts: { input: 1, active: 2, unread: 4 }
+      })
       acknowledge.mockClear()
       wrapper.get('.appearance-counter.active').element.textContent = '2\u4e2a'
       window.dispatchEvent(new Event('scroll'))
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-      expect(acknowledge).toHaveBeenCalledWith({ consumer: 'main-visible', revision: 7, presentation: 'visible', countStatus: 'mismatch' })
+      expect(acknowledge).toHaveBeenCalledWith({
+        consumer: 'main-visible', revision: 7, presentation: 'visible', countStatus: 'mismatch', counts: { input: 1, unread: 4 }
+      })
       expect(acknowledge.mock.calls.at(-1)?.[0]).not.toHaveProperty('activeCount')
       wrapper.get('.appearance-counter.active').element.remove()
       snapshot.taskState.dynamic.compactCounts.active = 9
       await wrapper.setProps({ snapshot: { ...snapshot } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-      expect(acknowledge).toHaveBeenCalledWith({ consumer: 'main-visible', revision: 7, presentation: 'visible', activeCount: 0 })
+      expect(acknowledge).toHaveBeenCalledWith({
+        consumer: 'main-visible', revision: 7, presentation: 'visible', activeCount: 0,
+        counts: { input: 1, active: 0, unread: 4 }
+      })
       await wrapper.get('#codex-config-tab-shortcuts').trigger('click')
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       expect(acknowledge).toHaveBeenCalledWith({ consumer: 'main-visible', revision: 7, presentation: 'not-displayed' })

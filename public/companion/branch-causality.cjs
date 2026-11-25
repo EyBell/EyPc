@@ -24,6 +24,28 @@ function finiteInteger(value, fallback = 0) {
   return Number.isFinite(Number(value)) ? Math.max(0, Math.trunc(Number(value))) : fallback
 }
 
+function explicitTimestampPrecision(value) {
+  const precision = Number(value)
+  return precision === 1 || precision === 1000 ? precision : 0
+}
+
+// Absent precision stays a point, matching unlabeled millisecond history.
+// Explicit 1000 is the half-open source second. Overlap is not an order.
+function codexBoundedOrder(previousAt, previousPrecision, incomingAt, incomingPrecision) {
+  const previousValue = finiteInteger(previousAt)
+  const incomingValue = finiteInteger(incomingAt)
+  if (previousValue <= 0 || incomingValue <= 0) return 'missing'
+  if (previousValue === incomingValue) return 'equal'
+  const previousWidth = explicitTimestampPrecision(previousPrecision)
+  const incomingWidth = explicitTimestampPrecision(incomingPrecision)
+  if (!previousWidth && !incomingWidth) return incomingValue > previousValue ? 'newer' : 'older'
+  const left = previousWidth || 1
+  const right = incomingWidth || 1
+  if (incomingValue + right <= previousValue) return 'older'
+  if (previousValue + left <= incomingValue) return 'newer'
+  return 'overlap'
+}
+
 /** Providers without an attention concept rank every observation equally. */
 function noAttentionRank() {
   return 0
@@ -51,8 +73,10 @@ function sameTurnEvidenceDecision(previous, incoming) {
     if (order === 'older') return { accepted: false, reason: 'older-turn' }
     const previousStartedAt = finiteInteger(previous.turnStartedAt)
     const incomingStartedAt = finiteInteger(incoming.turnStartedAt)
-    return previousStartedAt > 0 && incomingStartedAt > 0 && previousStartedAt !== incomingStartedAt
-      ? null : { accepted: false, reason: 'identity-incomparable' }
+    if (previousStartedAt > 0 && incomingStartedAt > 0 && previousStartedAt !== incomingStartedAt) {
+      return { accepted: false, reason: 'time-unorderable' }
+    }
+    return { accepted: false, reason: 'identity-incomparable' }
   }
   if (previous.liveCurrent === true && incoming.exactTerminal === true && incoming.kind === 'turn-completed') {
     const aligned = alignCodexCompletedTurn(previous, incoming)
@@ -87,12 +111,11 @@ function compareCodexTurnOrder(previous, incoming) {
   const previousPredecessor = typeof previous?.turnPredecessorKey === 'string' ? previous.turnPredecessorKey : ''
   if (previousKey && incomingPredecessor === previousKey) return 'newer'
   if (incomingKey && previousPredecessor === incomingKey) return 'older'
-  const previousStartedAt = finiteInteger(previous?.turnStartedAt)
-  const incomingStartedAt = finiteInteger(incoming?.turnStartedAt)
-  if (previousStartedAt > 0 && incomingStartedAt > 0 && previousStartedAt !== incomingStartedAt) {
-    return incomingStartedAt > previousStartedAt ? 'newer' : 'older'
-  }
-  return 'unknown'
+  const started = codexBoundedOrder(
+    previous?.turnStartedAt, previous?.turnStartedAtPrecisionMs,
+    incoming?.turnStartedAt, incoming?.turnStartedAtPrecisionMs
+  )
+  return started === 'newer' || started === 'older' ? started : 'unknown'
 }
 
 function alignCodexCompletedTurn(previous, incoming) {
@@ -101,13 +124,28 @@ function alignCodexCompletedTurn(previous, incoming) {
   const incomingStart = finiteInteger(incoming.turnStartedAt)
   const terminalAt = finiteInteger(incoming.terminalAt)
   if (!incomingStart || incomingStart >= retainedStart
-    || incomingStart !== Math.floor(retainedStart / 1000) * 1000
     || terminalAt && terminalAt < retainedStart && terminalAt !== incomingStart) return incoming
-  return {
+  const incomingPrecision = explicitTimestampPrecision(incoming.turnStartedAtPrecisionMs)
+  const retainedPrecision = explicitTimestampPrecision(previous.turnStartedAtPrecisionMs)
+  // A millisecond that merely lands on a second boundary is not coarse.
+  const sameSourceSecond = incomingPrecision === 1000
+    ? retainedStart < incomingStart + incomingPrecision
+    : !incomingPrecision && incomingStart === Math.floor(retainedStart / 1000) * 1000
+  if (!sameSourceSecond) return incoming
+  const next = {
     ...incoming,
     turnStartedAt: retainedStart,
     terminalAt: terminalAt === incomingStart ? retainedStart : terminalAt
   }
+  if (incomingPrecision === 1000) {
+    if (retainedPrecision) next.turnStartedAtPrecisionMs = retainedPrecision
+    else delete next.turnStartedAtPrecisionMs
+    if (terminalAt === incomingStart) {
+      if (retainedPrecision) next.terminalAtPrecisionMs = retainedPrecision
+      else delete next.terminalAtPrecisionMs
+    }
+  }
+  return next
 }
 
 /**
@@ -130,10 +168,12 @@ function phaseEvidenceSupersedes(previous, incoming, attentionRank = noAttention
   const incomingTurnStartedAt = finiteInteger(incoming?.turnStartedAt)
 
   if (previousLive && incomingLive) {
-    if (previousTurnStartedAt > 0 && incomingTurnStartedAt > 0
-      && previousTurnStartedAt !== incomingTurnStartedAt) {
-      return incomingTurnStartedAt > previousTurnStartedAt
-    }
+    const started = codexBoundedOrder(
+      previousTurnStartedAt, previous.turnStartedAtPrecisionMs,
+      incomingTurnStartedAt, incoming?.turnStartedAtPrecisionMs
+    )
+    if (started === 'newer') return true
+    if (started === 'older' || started === 'overlap') return false
     const previousSequence = finiteInteger(previous.activeEvidenceSequence)
     const incomingSequence = finiteInteger(incoming.activeEvidenceSequence)
     if (previousSequence > 0 && incomingSequence > 0 && previousSequence !== incomingSequence) {
@@ -149,10 +189,12 @@ function phaseEvidenceSupersedes(previous, incoming, attentionRank = noAttention
     const terminalAt = finiteInteger(incoming.terminalAt)
     const previousSequence = finiteInteger(previous.activeEvidenceSequence)
     const incomingSequence = finiteInteger(incoming.terminalEvidenceSequence)
-    if (previousTurnStartedAt > 0 && incomingTurnStartedAt > 0
-      && previousTurnStartedAt !== incomingTurnStartedAt) {
-      return incomingTurnStartedAt > previousTurnStartedAt
-    }
+    const started = codexBoundedOrder(
+      previousTurnStartedAt, previous.turnStartedAtPrecisionMs,
+      incomingTurnStartedAt, incoming.turnStartedAtPrecisionMs
+    )
+    if (started === 'newer') return true
+    if (started === 'older' || started === 'overlap') return false
     if (previousSequence > 0 && incomingSequence > 0 && previousSequence !== incomingSequence) {
       return incomingSequence > previousSequence
     }
@@ -162,30 +204,39 @@ function phaseEvidenceSupersedes(previous, incoming, attentionRank = noAttention
   }
 
   if (previousTerminal && incomingLive) {
-    if (previousTurnStartedAt > 0 && incomingTurnStartedAt > 0
-      && previousTurnStartedAt !== incomingTurnStartedAt) {
-      return incomingTurnStartedAt > previousTurnStartedAt
-    }
+    const started = codexBoundedOrder(
+      previousTurnStartedAt, previous.turnStartedAtPrecisionMs,
+      incomingTurnStartedAt, incoming.turnStartedAtPrecisionMs
+    )
+    if (started === 'newer') return true
+    if (started === 'older' || started === 'overlap') return false
     const previousSequence = finiteInteger(previous.terminalEvidenceSequence)
     const incomingSequence = finiteInteger(incoming.activeEvidenceSequence)
     if (previousSequence > 0 && incomingSequence > 0 && previousSequence !== incomingSequence) {
       return incomingSequence > previousSequence
     }
     const previousTerminalAt = finiteInteger(previous.terminalAt)
-    return incomingTurnStartedAt > 0 && previousTerminalAt > 0
-      && incomingTurnStartedAt > previousTerminalAt
+    return codexBoundedOrder(
+      previousTerminalAt, previous.terminalAtPrecisionMs,
+      incomingTurnStartedAt, incoming.turnStartedAtPrecisionMs
+    ) === 'newer'
   }
 
   if (previousTerminal && incomingTerminal) {
-    if (previousTurnStartedAt > 0 && incomingTurnStartedAt > 0
-      && previousTurnStartedAt !== incomingTurnStartedAt) {
-      return incomingTurnStartedAt > previousTurnStartedAt
-    }
+    const started = codexBoundedOrder(
+      previousTurnStartedAt, previous.turnStartedAtPrecisionMs,
+      incomingTurnStartedAt, incoming.turnStartedAtPrecisionMs
+    )
+    if (started === 'newer') return true
+    if (started === 'older' || started === 'overlap') return false
     const previousTerminalAt = finiteInteger(previous.terminalAt)
     const incomingTerminalAt = finiteInteger(incoming.terminalAt)
-    if (previousTerminalAt > 0 && incomingTerminalAt > 0 && previousTerminalAt !== incomingTerminalAt) {
-      return incomingTerminalAt > previousTerminalAt
-    }
+    const ended = codexBoundedOrder(
+      previousTerminalAt, previous.terminalAtPrecisionMs,
+      incomingTerminalAt, incoming.terminalAtPrecisionMs
+    )
+    if (ended === 'newer') return true
+    if (ended === 'older' || ended === 'overlap') return false
     const previousSequence = finiteInteger(previous.terminalEvidenceSequence)
     const incomingSequence = finiteInteger(incoming.terminalEvidenceSequence)
     return !previousSequence || !incomingSequence || incomingSequence >= previousSequence

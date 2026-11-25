@@ -9,3 +9,5 @@
 - [2026-11-19 空 Side 状态修复换包](sessions/2026-11-19-empty-side-reload.md)记录开发项目入口的再次核验。
 - [2026-11-20 V7 同版浮窗核验](sessions/2026-11-20-native-parity-live.md)记录本轮窗口入口。应用回执归 [V7 现场记录](../../specs/261114/codex-state-sync/status-read-investigation-261116.md#v7-live-acceptance-261120)。
 - [2026-11-23 快捷键目标窗口取证](sessions/2026-11-23-shortcut-target-visibility.md)记录 Codex 主内容区可见性的取证能力。
+- [2026-11-24 置顶图钉现场核验](sessions/2026-11-24-native-pin-live.md)记录新版 Float 可见往返、Main 显示和 Codex 落点的取证范围。
+- [2026-11-25 V7 重载后双窗可见核验](sessions/2026-11-25-v7-reload-visibility.md)记录 Main 和 Float 的展示入口。

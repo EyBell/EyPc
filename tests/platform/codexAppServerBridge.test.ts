@@ -1116,7 +1116,7 @@ function loadCodexBridge(
       __codexNativeTest: {
         requestCodexRpc(method: string, params: Record<string, unknown>): Promise<unknown>
         parseCodexNativeRegistryText(text: string): Record<string, any>
-        readCodexNativeRegistry(): Record<string, any>
+        readCodexNativeRegistry(options?: { includeThreadPins: boolean }): Record<string, any>
         readCodexNativePrimaryState(): Record<string, any>
         removeCodexProject(actionAlias: string, request: Record<string, unknown>): Promise<Record<string, any>>
         codexProjectActionAlias(project: Record<string, unknown>, fingerprint: string, now: number): string
@@ -6598,7 +6598,7 @@ draft: v7EvidenceDraft({
     bridge.close()
   })
 
-  it('keeps exact live unread when the persisted unread set is absent', async () => {
+  it('keeps exact live unread when the persisted unread set is absent and a legacy clear arrives', async () => {
     const desktopSocket = new FakeCodexDesktopSocket()
     const threadId = FIXED_THREAD_IDS[3]
     desktopSocket.unreadSnapshotThreadIds.add(threadId)
@@ -6621,7 +6621,7 @@ draft: v7EvidenceDraft({
         params: { hostId: 'local', conversationId: threadId, hasUnreadTurn: false }
       })
       await new Promise(resolve => setTimeout(resolve, 0))
-      expect(await activity()).toMatchObject({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' })
+      expect(await activity()).toMatchObject({ hasUnreadTurn: true, unreadAuthority: 'desktop-live' })
     } finally { context.bridge.close() }
   })
 
@@ -10925,6 +10925,7 @@ draft: v7EvidenceDraft({
     const sideThreadId = 'a2345678-1234-4234-8234-123456789abc'
     const child = new FakeCodexProcess()
     child.turnOverrides.set(parentThreadId, { id: 'synthetic-parent-newer', status: 'completed', startedAt: 1_950_000_000, completedAt: 2_000_000_071 })
+    child.turnOverrides.set(sideThreadId, { id: 'synthetic-side-completed', status: 'completed', startedAt: 1_900_000_000, completedAt: 2_000_000_072 })
     const socket = new FakeCodexDesktopSocket()
     const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), socket)
     try {
@@ -10941,9 +10942,9 @@ draft: v7EvidenceDraft({
           } }
         } } } })
       await vi.waitFor(() => expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.topology.memberCount).toBe(2))
-      const send = (hasUnreadTurn: boolean, version = 3, hostId = 'local') => socket.push({ type: 'broadcast',
+      const send = (hasUnreadTurn: boolean, version = 3, hostId = 'local', turnId = 'synthetic-side-completed') => socket.push({ type: 'broadcast',
         method: 'thread-read-state-changed', sourceClientId: 'codex-desktop-owner', version,
-        params: { hostId, conversationId: sideThreadId, hasUnreadTurn,
+        params: { hostId, conversationId: sideThreadId, hasUnreadTurn, turnId,
           context: { identity: { kind: 'chatgpt', accountId: 'synthetic-account', userId: 'synthetic-user' }, executionHostKey: 'synthetic-local-host' } }
       })
       for (const threadId of [parentThreadId, sideThreadId]) child.stdout.emit('data', `${JSON.stringify({ method: 'turn/completed', params: {
@@ -10955,6 +10956,9 @@ draft: v7EvidenceDraft({
       expect(child.writes.some(frame => frame.method === 'thread/turns/list' && frame.params?.threadId === sideThreadId)).toBe(true)
       expect(context.native.privateBranchEvidence(parentThreadId)?.branches.find((branch: Record<string, any>) => branch.branchKind === 'main')?.turnStartedAt).toBe(1_950_000_000_000)
       send(false, 3, 'remote')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.unread).toBe(true)
+      send(false, 3, 'local', 'synthetic-side-older')
       await new Promise(resolve => setTimeout(resolve, 0))
       expect(kernel.getLatest().tasks.find((row: Record<string, any>) => row.key === parent.key)?.unread).toBe(true)
       send(false)
@@ -13519,14 +13523,25 @@ describe('Windows native registry missing pin fields', () => {
       if (kind === 'unreadable') throw Object.assign(new Error('synthetic inaccessible'), { code: 'EACCES' })
       return kind === 'malformed' ? '{' : JSON.stringify({ ...fixture(), 'pinned-thread-ids': null })
     })
-    expect([...context.native.readCodexNativeRegistry().pinnedThreadOrder]).toEqual([])
+    expect([...context.native.readCodexNativeRegistry({ includeThreadPins: true }).pinnedThreadOrder]).toEqual([])
     expect(context.registryReads).toEqual([primaryPath, backupPath])
   })
 
   it('throws when both copies fail and never substitutes an empty registry', () => {
     const context = load((candidate) => JSON.stringify({ ...fixture(), [candidate === primaryPath ? 'pinned-project-ids' : 'pinned-thread-ids']: null }))
-    expectInvalid(() => context.native.readCodexNativeRegistry(), 'pinned-thread-ids')
+    expectInvalid(() => context.native.readCodexNativeRegistry({ includeThreadPins: true }), 'pinned-thread-ids')
     expect(context.registryReads).toEqual([primaryPath, backupPath])
+  })
+
+  it('keeps project reads and action identity independent of the thread pin mirror', () => {
+    const valid = fixture()
+    const changed = { ...valid, 'pinned-thread-ids': [FIXED_THREAD_IDS[1]] }
+    const invalid = { ...valid, 'pinned-thread-ids': null }
+    const context = load((candidate) => JSON.stringify(candidate === primaryPath ? invalid : valid))
+    const read = context.native.readCodexNativeRegistry()
+    expect(read.fingerprint).toBe(context.native.parseCodexNativeRegistryText(JSON.stringify(changed)).fingerprint)
+    expect([...read.pinnedThreadOrder]).toEqual([])
+    expect(context.registryReads).toEqual([primaryPath])
   })
 
   it('keeps primary-state reads strict and never takes a valid backup', () => {

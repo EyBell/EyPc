@@ -1,5 +1,8 @@
 'use strict'
 
+const { compareCodexTurnOrder } = require('../companion/branch-causality.cjs')
+const { codexRolloutTurnStart } = require('./rollout-evidence.cjs')
+
 /**
  * Reads a Codex rollout JSONL tail and answers whether the thread's live
  * runtime (as opposed to persisted Turn status) is active, completed, or
@@ -63,6 +66,37 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
     let startEnd = -1
     let sawTurnBoundary = false
     let identifiedItemAt = 0
+    let retainedTerminal = null
+    const noteAmbiguous = (turnId) => {
+      if (!turnId || !state.turnId || turnId === state.turnId) return
+      state.turnOrderUnclear = true
+    }
+    // Ids and start times decide. A late older terminal must not become current,
+    // and a same-second pair without precision or predecessor stays unresolved.
+    const foreignTurnOrder = (turnId, eventStart, previousEnd) => {
+      if (turnId && state.turnId && turnId === state.turnId) return 'current'
+      if (!turnId || !state.turnId) {
+        if (state.known && Boolean(turnId) !== Boolean(state.turnId)) return 'unknown'
+        return 'current'
+      }
+      if (!state.known) return 'newer'
+      const usePreviousEnd = !state.startedAt && previousEnd?.precision && eventStart.precision
+      const order = compareCodexTurnOrder(
+        {
+          causalDomain: 'codex-rollout-turn',
+          causalKey: state.turnId,
+          turnStartedAt: usePreviousEnd ? previousEnd.at : state.startedAt,
+          turnStartedAtPrecisionMs: usePreviousEnd ? previousEnd.precision : state.turnStartedAtPrecisionMs
+        },
+        {
+          causalDomain: 'codex-rollout-turn',
+          causalKey: turnId,
+          turnStartedAt: eventStart.at,
+          turnStartedAtPrecisionMs: eventStart.precision
+        }
+      )
+      return order === 'newer' || (order === 'older' && !usePreviousEnd) ? order : 'unknown'
+    }
     for (const line of text.split('\n')) {
       lineEnd += line.length + 1
       if (!line || line.length > MAX_ROLLOUT_RUNTIME_LINE_BYTES) continue
@@ -79,6 +113,13 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         payload.completed_at
       )
       if (source.type === 'event_msg' && payload.type === 'task_started') {
+        const start = codexRolloutTurnStart(rolloutTimestampMs, source.timestamp, payload.timestamp, payload.started_at)
+        const startedRelation = foreignTurnOrder(turnId, start, retainedTerminal)
+        if (startedRelation === 'older' || startedRelation === 'unknown') {
+          if (startedRelation === 'unknown') noteAmbiguous(turnId)
+          continue
+        }
+        retainedTerminal = null
         sawTurnBoundary = true
         edgeEnd = lineEnd
         startEnd = lineEnd
@@ -86,26 +127,49 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         state.phase = 'active'
         state.edge = 'task-started'
         state.turnId = turnId
-        state.startedAt = observedAt
+        state.startedAt = start.at
+        state.turnStartedAtPrecisionMs = start.precision
         state.edgeAt = observedAt
+        if (startedRelation === 'newer') delete state.turnOrderUnclear
         continue
       }
       if (source.type === 'event_msg' && payload.type === 'task_complete') {
-        if (state.phase === 'active' && state.startedAt && turnId && state.turnId && turnId !== state.turnId) continue
+        const completeStart = codexRolloutTurnStart(rolloutTimestampMs, payload.started_at)
+        const completeRelation = foreignTurnOrder(turnId, completeStart)
+        if (completeRelation === 'older' || completeRelation === 'unknown') {
+          if (completeRelation === 'unknown') noteAmbiguous(turnId)
+          continue
+        }
+        retainedTerminal = turnId
+          ? codexRolloutTurnStart(rolloutTimestampMs, source.timestamp, payload.timestamp, payload.completed_at)
+          : null
         sawTurnBoundary = true
         edgeEnd = lineEnd
         state.known = true
         state.phase = 'completed'
         state.edge = 'task-complete'
         if (turnId) {
-          if (state.turnId && state.turnId !== turnId) state.startedAt = 0
+          if (state.turnId !== turnId) {
+            state.startedAt = completeStart.at
+            state.turnStartedAtPrecisionMs = completeStart.precision
+          }
           state.turnId = turnId
         }
         state.edgeAt = observedAt
+        if (completeRelation === 'newer') delete state.turnOrderUnclear
         continue
       }
       if (source.type === 'event_msg' && payload.type === 'turn_aborted') {
-        if (state.phase === 'active' && state.startedAt && turnId && state.turnId && turnId !== state.turnId) continue
+        const explicitStart = codexRolloutTurnStart(rolloutTimestampMs, payload.started_at)
+        if (!state.known && !turnId) continue
+        const abortRelation = foreignTurnOrder(turnId, explicitStart)
+        if (abortRelation === 'older' || abortRelation === 'unknown') {
+          if (abortRelation === 'unknown') noteAmbiguous(turnId)
+          continue
+        }
+        retainedTerminal = turnId
+          ? codexRolloutTurnStart(rolloutTimestampMs, source.timestamp, payload.timestamp, payload.completed_at)
+          : null
         sawTurnBoundary = true
         edgeEnd = lineEnd
         state.known = true
@@ -113,12 +177,17 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         state.edge = 'turn-aborted'
         interruptedAt = turnId ? rolloutTimestampMs(source.timestamp, payload.timestamp, payload.completed_at) : 0
         if (turnId) {
-          const explicitStart = rolloutTimestampMs(payload.started_at)
-          const sameTurnStart = state.turnId === turnId ? state.startedAt : 0
-          state.startedAt = explicitStart > 0 && explicitStart <= observedAt ? explicitStart : sameTurnStart
+          if (explicitStart.at && explicitStart.at <= observedAt) {
+            state.startedAt = explicitStart.at
+            state.turnStartedAtPrecisionMs = explicitStart.precision
+          } else if (state.turnId !== turnId) {
+            state.startedAt = 0
+            state.turnStartedAtPrecisionMs = 0
+          }
           state.turnId = turnId
         }
         state.edgeAt = observedAt
+        if (abortRelation === 'newer') delete state.turnOrderUnclear
         continue
       }
       const identifiedItem = source.type === 'event_msg' && payload.type === 'item_completed'

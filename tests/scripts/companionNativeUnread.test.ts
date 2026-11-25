@@ -6,7 +6,7 @@ import { checkCompanionNativeUnread } from '../../scripts/check-companion-native
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
-const { createCodexDesktopUnreadRecovery } = require('../../preload/codex/desktop-unread-evidence.cjs')
+const { createCodexDesktopUnreadRecovery, codexDesktopFalsyReadAction, codexDesktopReadRevisionsEqual } = require('../../preload/codex/desktop-unread-evidence.cjs')
 const { createCodexDesktopOpenObservation } = require('../../preload/codex/desktop-open-observation.cjs')
 
 function recoveryHarness() {
@@ -93,6 +93,68 @@ describe('Codex unread recovery isolation', () => {
   })
 })
 
+describe('native read disposition', () => {
+  const binding = { identityKey: 'a'.repeat(64), executionHostKey: 'local' }
+  it('keeps a verified falsy read only for the exact completion', () => {
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: false, version: 3, binding, currentCompletion: 't2',
+      eventTurn: 't2', currentTurn: 't2', openVerdict: true
+    })).toBe('apply')
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: true, version: 1, currentCompletion: '', openVerdict: true
+    })).toBe('apply')
+  })
+  it('rereads legacy, unversioned, mismatched and timed-out falsy reads', () => {
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: false, version: 1, currentCompletion: 't2', openVerdict: true
+    })).toBe('reread')
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: false, version: undefined, currentCompletion: 't2', openVerdict: true
+    })).toBe('reread')
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: false, version: 3, binding, currentCompletion: '', openVerdict: true
+    })).toBe('reread')
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: false, version: 3, binding, currentCompletion: 't2', openVerdict: true
+    })).toBe('reread')
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: false, version: 3, binding, currentCompletion: 't2',
+      eventTurn: 't1', currentTurn: 't2', openVerdict: true
+    })).toBe('reread')
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: false, version: 3, binding, currentCompletion: 't2', openVerdict: 'reread'
+    })).toBe('reread')
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: false, version: 3, binding, currentCompletion: 't2', openVerdict: false
+    })).toBe('drop')
+  })
+  it('compares supported read revisions by opaque equality only', () => {
+    expect(codexDesktopReadRevisionsEqual(2, 10)).toBe(false)
+    expect(codexDesktopReadRevisionsEqual('rev-a', 'rev-a')).toBe(true)
+    expect(codexDesktopReadRevisionsEqual('2', 2)).toBe(false)
+    expect(codexDesktopReadRevisionsEqual(undefined, 'rev-a')).toBeNull()
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: false, version: 3, binding, currentCompletion: 't2',
+      eventRevision: 2, currentRevision: 10, openVerdict: true
+    })).toBe('reread')
+    expect(codexDesktopFalsyReadAction({
+      hasUnreadTurn: false, version: 3, binding, currentCompletion: 't2',
+      eventRevision: 'rev-b', currentRevision: 'rev-b'
+    })).toBe('apply')
+  })
+  it('does not confirm a legacy falsy event or a timed-out previous completion', () => {
+    let now = 1_000
+    const observation = createCodexDesktopOpenObservation({
+      record() {}, now: () => now, setTimer: () => 1, clearTimer() {}
+    })
+    const scope = { current: () => true, acceptsLive: () => true }
+    observation.begin({ threadId: 'root', key: 'root', operationId: 'open', route: 'test', readScope: scope })(true)
+    expect(observation.nativeRead('root', null)).toBe('reread')
+    now += 4_000
+    expect(observation.nativeRead('root', binding)).toBe(true)
+  })
+})
+
 describe('Native Codex identity-scoped unread gate', () => {
   it('executes native/legacy source selection, identity isolation and live protocol acceptance', () => {
     expect(checkCompanionNativeUnread(resolve('preload'))).toBe(45)
@@ -101,10 +163,17 @@ describe('Native Codex identity-scoped unread gate', () => {
     const temporary = mkdtempSync(join(tmpdir(), 'eypc-native-unread-'))
     try {
       for (const name of readdirSync(resolve('preload'))) {
-        if (name !== 'index.js') symlinkSync(resolve('preload', name), join(temporary, name))
+        if (name !== 'index.js' && name !== 'codex') symlinkSync(resolve('preload', name), join(temporary, name))
       }
-      const source = readFileSync(resolve('preload/index.js'), 'utf8')
-      writeFileSync(join(temporary, 'preload.js'), source.replace("'thread-read-state-changed': 3", "'thread-read-state-changed': 2"))
+      mkdirSync(join(temporary, 'codex'))
+      for (const name of readdirSync(resolve('preload/codex'))) {
+        if (name !== 'desktop-protocol.cjs') symlinkSync(resolve('preload/codex', name), join(temporary, 'codex', name))
+      }
+      const source = readFileSync(resolve('preload/codex/desktop-protocol.cjs'), 'utf8')
+      const currentVersion = "'thread-read-state-changed': 3"
+      expect(source.includes(currentVersion)).toBe(true)
+      writeFileSync(join(temporary, 'codex/desktop-protocol.cjs'), source.replace(currentVersion, "'thread-read-state-changed': 2"))
+      writeFileSync(join(temporary, 'preload.js'), readFileSync(resolve('preload/index.js'), 'utf8'))
       expect(() => checkCompanionNativeUnread(temporary)).toThrow()
     } finally { rmSync(temporary, { recursive: true, force: true }) }
   })

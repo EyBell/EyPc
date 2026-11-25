@@ -1,10 +1,52 @@
 # EyPc Project Status Hub
 
+<a id="astra-state-convergence-build-261125"></a>
+
+- 2026-11-25 17:04:35.543，Astra 状态同步五项实施通过 `closeout`。当前候选为 `V7` / `host-e06adec5e3e825edfb09` / `renderer-107230e5cadb7aaaa831`，builtAt `2026-11-25T09:04:35.543Z`。构建输入、成功回执和 107 组预加载镜像一致。统一脚本仍确认 uTools 实载 13:56:02.662 版。[交付与实机核验](261114/codex-state-sync/delivery.md#astra-state-convergence-261125)
+
+<a id="native-startup-latency-build-261125"></a>
+
+- 2026-11-25 15:18:19.049，新会话库存提速、定向补读与压缩 Side 历史兼容通过 `closeout`。该候选为 `V7` / `host-ad45aeb46ffbb5f11bf9` / `renderer-4663d84460bac406f110`，builtAt `2026-11-25T07:18:19.049Z`。输入、成功回执和随包镜像相符，由 17:04 版接替。[延迟与验收](261114/codex-state-sync/delivery.md#native-startup-latency-261125)
+
+<a id="astra-p1-rollout-tail-build-261125"></a>
+
+- 2026-11-25 13:56:02.662，主轮日志截断后的活动识别续修已通过 `closeout`。当前候选为 `V7` / `host-d436ddd37ed339b0c143` / `renderer-96fa3d22f82d710cdcae`，builtAt `2026-11-25T05:56:02.662Z`。源码、预加载镜像和随包模块一致。uTools 实载与现场回执待统一脚本验证。[主轮证据与续验](261114/codex-state-sync/delivery.md#astra-p1-rollout-tail-261125)
+
+- 14:06:53.985 已确认实载 13:56:02.662 版。统一实时脚本 #9 确认两个目标主轮恢复进行中，CT 归组、模型路由 Plan 和待继续资格一致。Float 可见回执通过，Main 可见及实际快捷清读待验。[实载核验](261114/codex-state-sync/delivery.md#astra-p1-rollout-tail-live-261125)
+
+<a id="astra-p1-build-261125"></a>
+
+- 2026-11-25 13:41:25.394，Astra 评审的 P1 修复通过 `closeout` 及源码与随包校验。当前候选为 `V7` / `host-f2d0285b04319163330d` / `renderer-a3ca6197d5f65af1eb04`，builtAt `2026-11-25T05:41:25.394Z`。统一脚本开始监听时仍读到 10:26 版。新版 uTools 实载和双端同包展示待验。[修复、回放与验收](261114/codex-state-sync/delivery.md#astra-p1-followup-261125)
+
+- 13:47:01.010 实载已核对。#11 确认 CT 主子归组、模型路由 Plan 和 73/74 继续资格，实际快捷清读及双端同包可见仍待实测。[重载回执](261114/codex-state-sync/delivery.md#astra-p1-followup-261125)
+
+<a id="native-spawn-and-unread-build-261125"></a>
+
+- 2026-11-25 11:13:43.279，Codex 机器成员补收、人工 Side 历史中断恢复、Desktop SQLite 未读同步通过 `closeout`。该候选为 `V7` / `host-3abb36759263923607ac` / `renderer-8dae0df3d835172ce48a`，builtAt `2026-11-25T03:13:43.279Z`。本轮四组改动的源码、`public` 和 `dist` 镜像相同。此版由 13:41 版替代。[现场证据与回放](261114/codex-state-sync/delivery.md#native-spawn-and-unread-recovery-261125)
+
+<a id="machine-side-live-build-261125"></a>
+
+- 2026-11-25 10:26:53.679，Codex 新机器子轮发现与运行恢复通过 `closeout`。当前产物 `V7` / `host-1081d5709ed0667c5f40` / `renderer-9ad17aebefd620c18779`，builtAt `2026-11-25T02:26:53.679Z`。107 组预加载镜像与随包一致。10:27 实时脚本确认宿主仍实载 11 月 24 日 18:58 版，新版实载与双端同包可见待验。[开发插件入口](../../dist/plugin.json#L1) · [CT 续修与核验](261114/codex-state-sync/delivery.md#machine-side-live-recovery-261125)
+
+<a id="attached-side-build-261124"></a>
+
+- 2026-11-24 18:58:19.148，Codex 原生人工 SideChat、已关闭机器子轮和「待继续」核验修复通过 `closeout`。产物 `V7` / `host-b96346c8beacbfb581a3` / `renderer-abb1931c4f571b4718db`，builtAt `2026-11-24T10:58:19.148Z`。源码与随包各通过 368 项生命周期检查，107 组镜像一致。11 月 25 日 08:57:45.402 实载。双端同包可见待验。[现场根因和修复](261114/codex-state-sync/delivery.md#attached-side-and-continue-261124) · [重载回执](261114/codex-state-sync/delivery.md#attached-side-live-261125)
+
+<a id="native-pin-file-watch-build-261124"></a>
+
+- 2026-11-24 16:23:20.442，B14 数据库文件监听续修通过 `closeout`。产物 `V7` / `host-65d580844322a9027046` / `renderer-41950f6422b090ebc752`。源码、`public` 镜像和随包置顶 Bridge 一致。隔离 App Server 通过 WAL 独立唤醒与 29 条批量恢复对照。[隔离复验](261114/codex-state-sync/status-read-investigation-261116.md#native-pin-file-watch-261124)
+- 2026-11-24 16:43:05.967，uTools 实载同一产物。原生置顶及移回 `Tep` 至展开 Float 行可见分别在 3.671 秒和 5.783 秒内，符合 20 秒宽限。Main 展示回执为隐藏。源码在工作区，实键、双端可见和四来源活动验收继续，正式发布待办。[重载实测](261114/codex-state-sync/status-read-investigation-261116.md#native-pin-file-watch-live-261124)
 - 2026-11-24 17:39:58.279，F1 同包对账通过。脚本读出的 #92 角标与 Main 实际回执一致，展开 Float 同包的 3 条进行中行和 2 条原生图钉已逐条核对。F1 复测和快捷键实触测试按用户决定收口。[验收规则](../rules/project-runtime.md#companion-task-count-acceptance) · [F1 凭证](261114/codex-state-sync/status-read-investigation-261116.md#script-display-f1-261124)
+
+<a id="native-pin-build-261124"></a>
+
+- 2026-11-24 15:49:34.562，B14–B16 的 Codex 原生置顶独立同步与双端对账通过前置 `closeout`。当前候选 `V7` / `host-027c7b326c5bf93f7173` / `renderer-2b426bfcc137a622ad22`，builtAt `2026-11-24T07:49:34.562Z`。107 组源码与随包镜像一致。源码在工作区，发布待办。[开发插件入口](../../dist/plugin.json#L1) · [分批和回退](261114/codex-state-sync/delivery.md#native-pin-batches-261124)
+- 2026-11-24 15:54:08.231，uTools 握手确认新版实载。原生置顶与移回 `Tep` 到 Float 行可见均在 4.81 秒内，符合 20 秒宽限。Main 回执为隐藏。慢库存并发、批量恢复、双端可见、实键及四来源活动仍待现场结算。旧整包已备份，Orca 空库存健康恢复单独登记。[现场对账](261114/codex-state-sync/status-read-investigation-261116.md#native-pin-live-261124)
 
 <a id="state-navigation-build-261123"></a>
 
-- 2026-11-23 20:20:52.644，Codex 轮次、主子归组、来源隔离和快捷导航重构通过本地 `closeout`。产物 `V7` / `host-965a292eb51c05c24c4a` / `renderer-5633387d2636d50becb4`，builtAt `2026-11-23T12:20:52.644Z`。源码与随包各通过 40 个主子状态场景、314 个生命周期和 45 个原生未读检查点。实载回读为 15:39:49.879 版。待从开发插件入口重新接入后，逐项核原生轮次、四来源、Main／Float 与快捷操作。[开发插件入口](../../dist/plugin.json#L1) · [分批记录与手测](261114/codex-state-sync/delivery.md#state-navigation-batches-261123)
+- 2026-11-23 20:20:52.644，Codex 轮次、主子归组、来源隔离和快捷导航重构通过本地 `closeout`。产物 `V7` / `host-965a292eb51c05c24c4a` / `renderer-5633387d2636d50becb4`，builtAt `2026-11-23T12:20:52.644Z`。源码与随包各通过 40 个主子状态场景、314 个生命周期和 45 个原生未读检查点。[开发插件入口](../../dist/plugin.json#L1) · [分批记录与手测](261114/codex-state-sync/delivery.md#state-navigation-batches-261123)
+- 2026-11-24 08:05:12.204，确认实载 20:20:52.644 候选包。B13 核到 Codex 同轮恢复和主轮自然完成。Orca 空库存恢复后 EyPc 未更新来源健康，双端可见、主子交叉场景和其余来源继续验收。[现场回读](261114/codex-state-sync/status-read-investigation-261116.md#state-navigation-live-261124)
 
 <a id="theme-release-index"></a>
 
@@ -12,7 +54,7 @@
 
 | 主题 | 实现 | 发布 | 验收 |
 | --- | --- | --- | --- |
-| [Codex 状态与快捷导航重构](261114/codex-state-sync/delivery.md#state-navigation-release-261123) | 源码 `9438660225dcb11d50ace8b46d9a9ab0eddffa5d`，20:20:52.644 构建通过 | 待发布。2026-11-24 已回读 `origin/main` 包含该源码提交；Git 交付不等于实载或验收 | 实载仍为 15:39:49.879；四来源、主浮窗和快捷实机未完成，配对暂停 |
+| [Codex 状态与快捷导航重构](261114/codex-state-sync/delivery.md#native-pin-batches-261124) | B14–B16 源码在工作区，16:23 构建已核 | 待发布。`origin/main` 已回读包含上一批源码 `9438660` | 16:43 实载及 Float 置顶往返通过。WAL 慢库存和批量恢复隔离验证通过。F1 双端同包对账通过。F1 复测和快捷键实触按用户决定收口，后续按反馈处理。四来源实测待验 |
 
 <a id="shortcut-pair-pause-261123"></a>
 
