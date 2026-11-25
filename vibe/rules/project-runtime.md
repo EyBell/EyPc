@@ -8,13 +8,17 @@
 
 | 操作 | 能力 | 入口与证据 |
 | --- | --- | --- |
-| status | 不支持宿主状态判断 | 用户可在 uTools 内核对实际加载的版本；文件存在不等于运行。 |
+| status | 只读 CLI | 检出根运行 `node scripts/read-eypc-task-state.mjs --check-version`，可选 `--dir=<端点目录>`。[实载核对](#loaded-core-version-check) |
 | build | 支持 | 开发收尾走上方构建主本的前置 `closeout` 与同步 Stop，按同一检查器回执核对构建及产物身份。 |
 | 隔离构建 | 支持，按明确需要选择 | `sh scripts/build-isolated-utools.sh` 使用临时目录，不改写检出的 `public/` 或 `dist/`；输出 `ARTIFACT` / `ASAR`。不作为自动 Hook 默认入口。 |
 | 本地替换 | 支持，须单次授权 | [替换入口](../../scripts/apply-local-utools.mjs#L1)要求明确提供候选包、已安装包及两者 SHA-256；身份和原生模块一致、旧包无人占用后才备份并原子替换。`--check` 只读，`--apply` 写入；不关闭宿主。 |
 | start | 仅 macOS 宿主 | 用户明确要求加载本地插件时，可用 `open -a /Applications/uTools.app` 启动已安装的 uTools；无项目端口。进程与实际插件加载需另行核对，启动命令成功不等于插件可用。 |
 | stop / restart / debug | 不支持 | 不终止现有进程或管理端口。 |
 | release | 不支持 | 本地产物不构成发布。 |
+
+<a id="loaded-core-version-check"></a>
+
+实载核对复用同一次本地只读快照和握手，不触发构建或任务刷新。`sourceCoreVersion` 是当前源码代际。`host` 含握手和实载 identity。`artifact` 读本检出 `dist/runtime-identity.cjs`。`lastSuccessfulBuild` 读构建状态缓存。`artifactVsLastSuccessfulBuild` 比较后两者。退出码只看 `status`。`match` 是代际、Host、Renderer 和生成时间一致。`same-content` 是前三项一致而生成时间不同。二者均退出 0。`mismatch` 是源码代际或资产不符。`unverified` 是端点、握手或身份缺失。二者均退出 1。参数误用退出 2。CLI 只比较标识。源码输入和完整产物仍走[构建主本](documentation.md#build-and-core-version-sync-required)。[核对实现](../../scripts/read-eypc-task-state.mjs#L204)
 
 构建包含当前检出中相关源文件的未提交改动。加载前须区分开发插件目录和已安装包；不覆盖正在运行的 asar，也不把构建成功当作宿主验收。回退需退出宿主后人工核对并恢复输出的备份。
 

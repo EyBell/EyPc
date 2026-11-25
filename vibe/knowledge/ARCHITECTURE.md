@@ -360,6 +360,8 @@ Orca状态感知（2026-10-22）：[orca/index.cjs](../../preload/orca/index.cjs
 
 ### Codex 已读联动固定通路
 
+- 2026-11-25，原生读态持久在 SQLite 时，证据模块只读查询已登记的全局设置，并按文件身份和查询代次接纳结果。持久读回须核对账号与执行宿主。直接应用 `hasUnreadTurn=false` 需要匹配绑定和当前完成实例的 v3 证据。缺少可匹配证据的通知触发受保护的持久回读。主会话和 Side 以各自的完成实例核对。[基线与验证记录](../specs/261105/codex-unread-linkage/task-card.md#native-read-baseline-261125)
+
 - 2026-11-20：原生持久集合读态按成员变化发布，通过原 V7 unread lane 更新主界面、浮窗和快捷候选。同组仍有未读时，已清读的成员也有独立更新。Codex Desktop 断线时，快捷打开可向同一个已绑定账号和本机的持久文件做有界异步补读。同线程、同连接代次、同完成实例仍有效且原生集合明确移除该线程时，才发布目标成员的已读。随后出现的新轮或绑定换代会使补读失效。[实现与同版验证](../specs/261114/codex-state-sync/delivery.md#shortcut-read-reconciliation-261120)。
 
 - 2026-11-23：定向 owner 快照补读记录发起时的完成实例。即使原生流修订相同，实例已变化的 `read=false` 回读也只丢弃读态字段，保留其余有效快照内容。同实例、同代次且证据未推进时仍可结算原读态。静态基线校验唯一 owner、摘要和完成实例接线。[回放与验收](../specs/261105/codex-unread-linkage/task-card.md#completed-instance-recovery-261123)。

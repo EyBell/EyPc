@@ -170,3 +170,10 @@
 
 1. 定向快照发起后，同一成员可以完成新 Turn。同修订回读仍可携带旧轮的已读值。恢复器现按发起时的完成实例和成员读证据判断，实例变化时移除该次快照的读态字段，再走原证据通路。[恢复器](../../../../preload/codex/desktop-unread-evidence.cjs#L596)
 2. 原生未读门禁和定向用例已核旧快照无法清掉新完成，快照的其它字段可继续应用。同实例的同修订读态、精确事件优先及尾随补查也通过。保持原摘要、镜像和接线校验，在审查账号绑定和本轮完成实例保护后更新已审摘要，并新增完成实例接线检查。实机仍待匹配握手和同一成员读态对照。[门禁](../../../../scripts/check-companion-native-unread.mjs#L53) · [静态通路](../../../../scripts/check-codex-unread-route.mjs#L8)
+
+<a id="native-read-baseline-261125"></a>
+
+## 2026-11-25 原生读态基线核对
+
+1. `0264b56` 加入 SQLite 原生读态读取、持久账号和执行宿主核对、v3 已读事件的完成实例保护。固定摘要仍指向 `2a94c44`，在 `0857c9d` 与本次工作树用同一证据模块均可复现失败。[读态证据](../../../../preload/codex/desktop-unread-evidence.cjs#L53) · [架构](../../../knowledge/ARCHITECTURE.md#codex-已读联动固定通路)
+2. 逐项核对既有读态变更后，同步当前模块摘要。静态门禁继续核对字节镜像和既有接线，并检查持久绑定核验与直接清读判定的调用点。22:28 构建的 107 组源码、public 与 dist 字节一致。快捷键同一完成实例的实机清读依原专题验收。[门禁](../../../../scripts/check-codex-unread-route.mjs#L8) · [状态同步交付](../261114/codex-state-sync/delivery.md#native-question-card-261125)

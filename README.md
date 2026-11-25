@@ -26,6 +26,16 @@ pnpm run serve
 
 Use [public/plugin.json](public/plugin.json#L1) in uTools Developer Tools during development. The build emits runtime files under `dist/`.
 
+## Loaded core version
+
+From the checkout root:
+
+```bash
+node scripts/read-eypc-task-state.mjs --check-version
+```
+
+Optional `--dir=<endpoint-directory>`. The command reads a local snapshot and confirms the loaded identity from its handshake. See [runtime adapter](vibe/rules/project-runtime.md#loaded-core-version-check).
+
 ## Windows 安装包桌面传送
 
 固定入口为 [send-latest-upxs-to-windows.py](scripts/send-latest-upxs-to-windows.py#L1)：

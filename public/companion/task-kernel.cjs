@@ -880,10 +880,6 @@ function finalizeTask(task, pauseStorageReady = true) {
     if (!COMPANION_PLAN_ARTIFACT_STATES_V1.includes(next.planArtifactState)) next.planArtifactState = 'unknown'
     next.planArtifactActionable = false
   }
-  // A completed Plan remains user-actionable even when Codex does not expose
-  // the dedicated Implement Plan request. `planImplementation` controls cycle
-  // priority only; it must not disable the row/menu controls. The Host still
-  // performs an exact latest-Turn/activity/request preflight before execution.
   const planActionable = providerTraits(next.provider).planLifecycle
     && next.planReady && next.planArtifactActionable && next.stateWriteBlocked !== true
     && (isSettledTaskPhase(next.phase) || isAttentionTaskPhase(next.phase))
@@ -1450,12 +1446,9 @@ function createCompanionTaskKernel(dependencies = {}) {
     const goal = codexGoalForTurn(task)
     const goalStopped = CODEX_STOPPED_GOALS.has(goal)
     const planReady = hasCurrentPlanArtifact(task)
-    const artifactWaiting = task.provider === 'codex' && task.role === 'child' && planReady
-      && turnPhase === 'completed'
-      && goal !== 'active' && !goalStopped
     const verifiesGoal = task.codexState?.goal?.observed === true && task.codexState.goal.freshness === 'verifying'
     const basePhase = goal === 'active' || task.goalVerificationRunning ? 'running' : goalStopped ? 'stopped'
-      : verifiesGoal && isTerminalTaskPhase(turnPhase) ? 'unknown' : artifactWaiting ? 'waiting-input' : turnPhase
+      : verifiesGoal && isTerminalTaskPhase(turnPhase) ? 'unknown' : turnPhase
     const approval = interactions.some((interaction) => interaction.kind === 'approval')
     const phase = approval ? 'waiting-approval' : interactions.length ? 'waiting-input' : basePhase
     const planImplementation = interactions.length > 0 && !approval
@@ -1552,11 +1545,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         requests.add(JSON.stringify([interactionStoreKey(interaction), finiteInteger(interaction.turnEpoch)]))
       }
     }
-    const root = nodes.find((node) => node.key === key)
-    const planRevision = hasCurrentPlanArtifact(root) && (!waiting.size || root.planImplementation === true)
-      ? finiteInteger(root.planLifecycleRevision)
-      : 0
-    return { requests, waiting, planRevision }
+    return { requests, waiting }
   }
 
   function syncInputAttentionStates(packageValue = currentPackage) {
@@ -1570,11 +1559,10 @@ function createCompanionTaskKernel(dependencies = {}) {
         continue
       }
       const addedRequest = [...signals.requests].some((signal) => !previous.requests.has(signal))
-      const addedPlan = signals.planRevision > 0 && signals.planRevision !== previous.planRevision
       const addedWaiting = [...signals.waiting].some(([memberKey, waiting]) => (
         !waiting.exact && (!previous.waiting.has(memberKey) || waiting.anchor > previous.waiting.get(memberKey).anchor)
       ))
-      const generation = previous.generation + (addedRequest || addedPlan || addedWaiting ? 1 : 0)
+      const generation = previous.generation + (addedRequest || addedWaiting ? 1 : 0)
       inputAttentionStates.set(key, { generation, ...signals })
     }
   }
@@ -2119,13 +2107,12 @@ function createCompanionTaskKernel(dependencies = {}) {
           && relation?.exact === true && relation.relation === 'side-thread' && relation.parentKey === root.key
         if (!verifiedRoot || exactLaggingInterruption) return false
       }
-      if (planReady) return true
       const interruptedAt = member.ordinarySideInterruptedAt
       const latestEnd = interruptedAt % 1000 === 0 ? interruptedAt + 999 : interruptedAt
       const earlierOrdinaryInterruption = interruptedAt > 0 && latestEnd < root.turnStartedAt
         && root.activityPhase === 'completed' && root.rootCompletionForSideOrder === true
         && (root.causalAuthority === 'inventory' || root.freshness === 'fresh')
-        && member.freshness === 'fresh' && !member.memberStatus?.planReady
+        && member.freshness === 'fresh'
         && root.causalDomain && member.causalDomain === root.causalDomain
         && relation?.relation === 'side-thread' && relation.parentKey === root.key
       return !earlierOrdinaryInterruption
@@ -2138,7 +2125,6 @@ function createCompanionTaskKernel(dependencies = {}) {
       return member.freshness === 'fresh' && completeCodexRequestSets.has(member.key)
         && !taskOpenInteractions(member).length && !member.memberStatus?.submissionPending
         && goal?.observed === true && goal.freshness === 'fresh' && ['none', 'complete'].includes(goal.status)
-        && member.planArtifactState !== 'unknown' && !hasCurrentPlanArtifact(member)
     }
     const rootTurnSettled = completedCodexRoot && root.activityPhase === 'completed'
       && root.freshness === 'fresh' && root.causalAuthority === 'terminal' && root.causalReliable === true
@@ -2178,16 +2164,10 @@ function createCompanionTaskKernel(dependencies = {}) {
     const planInteractionWaiting = phaseMembers.some((node) => (
       isAttentionTaskPhase(node.phase) && node.planImplementation === true
     ))
-    // An available Plan on a completed family asks for the next decision without
-    // fabricating an interaction. Running, exact input/approval and a genuine
-    // interrupted member retain their activity phase. Unread remains independent.
-    const artifactWaiting = codexRoot && planReady && activityPhase === 'completed'
-    const phase = artifactWaiting ? 'waiting-input'
-      : confirmedMainStop ? 'stopped'
+    const phase = confirmedMainStop ? 'stopped'
       : !codexRoot && unread.value && isAttentionTaskPhase(activityPhase) && !currentInteractionWaiting
         ? 'completed' : activityPhase
-    const statusEnteredAt = artifactWaiting ? Math.max(root.planLifecycleRevision, root.statusEnteredAt)
-      : confirmedMainStop ? root.statusEnteredAt
+    const statusEnteredAt = confirmedMainStop ? root.statusEnteredAt
       : Math.max(0, ...machineFilteredMembers.filter((node) => node.phase === activityPhase)
         .map((node) => finiteInteger(node.statusEnteredAt)))
     const writeMembers = codexRoot ? members : phaseMembers
@@ -2200,7 +2180,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       && (isLiveTaskPhase(member.phase) || taskOpenInteractions(member).length > 0
         || CODEX_STOPPED_GOALS.has(member.memberStatus?.goal) || hasCurrentPlanArtifact(member)))
     const rootRequestBlocksPlan = codexRoot && taskOpenInteractions(root)
-      .some((request) => request.kind === 'approval' || request.kind === 'user-input')
+      .some((request) => request.kind !== 'plan-implementation')
     const goalLimited = ['usageLimited', 'budgetLimited'].includes(main?.goal)
     const verifiedGoalCompletion = ['paused', 'blocked'].includes(main?.goal)
       && main?.turn === 'turn-completed'
@@ -2882,8 +2862,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       const previous = nodeStore.get(incoming.key)
       // A partial lane observation may update an existing task, but it cannot
       // establish membership or public metadata on its own.
-      if (!previous && incoming.metadataPartial === true && !admission?.has(incoming.key)) continue
-      if (!previous && staleMembershipProviders.has(incoming.provider)) continue
+      if (!previous && !admission?.has(incoming.key)
+        && (incoming.metadataPartial === true || staleMembershipProviders.has(incoming.provider))) continue
       const reconciled = reconcileTask(
         previous,
         incoming,
@@ -3089,6 +3069,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     const cacheWasVerified = Boolean(cacheProvider && providerCacheStates.get(cacheProvider) === 'cached')
     if (cacheProvider && !cacheAdmitted) disarmUnverifiedProviderBatch(batches[cacheProvider])
     const replayPending = !cacheProvider || cacheAdmitted
+      || cacheProvider === 'codex' && (cacheHealth === 'ready' || cacheHealth === 'degraded')
     const observedKeys = new Set()
     const previousPauseKeys = new Set([...pauseReceipts.keys()].filter(key => nodeStore.has(key)))
     const admission = before.length ? new Map(batches.codex.nodes.map(node => [node.key, node])) : null
@@ -3876,7 +3857,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         outcome: pausing ? 'paused' : 'resumed',
         provider: task.provider,
         key: task.key,
-        message: pausing ? 'Plan 已暂停并移入已隐藏区' : 'Plan 已恢复到待输入列表'
+        message: pausing ? 'Plan 已暂停并移入已隐藏区' : 'Plan 已恢复显示'
       }
     }
     if (input.action === 'continue-task') {

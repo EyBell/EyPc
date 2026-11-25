@@ -6,6 +6,7 @@ const {
   normalizeCompanionInteractionEvidenceV1,
   normalizeCompanionInteractionSetEvidenceV1
 } = require('../companion/contracts-v7.cjs')
+const { compareCodexTurnOrder } = require('../companion/branch-causality.cjs')
 
 /**
  * How the desktop plan bridge classifies a live Codex request: a stable
@@ -40,6 +41,8 @@ const OWNER_BACKGROUND_QUEUE_MS = 1_000
 const OWNER_RESPONSE_MS = 5_000
 const OWNER_BACKGROUND_BACKOFF_MS = 30_000
 const OWNER_ATTEMPTS_PER_SIGNATURE = 2
+const PLAN_IMPLEMENTATION_METHOD = 'item/plan/requestImplementation'
+const PLAN_ITEM_HISTORY_LIMIT = 400
 
 function createCodexDesktopRequestProjection(dependencies = {}) {
   const record = dependencies.record
@@ -57,6 +60,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       : crypto.randomBytes(16)
   const ownerRefreshes = new WeakMap()
   const streamObservations = new WeakMap()
+  const planItemMembers = new WeakMap()
   const fallbackMembers = new Map()
   const now = typeof dependencies.now === 'function' ? dependencies.now : () => Date.now()
   const startTimer = dependencies.setTimeout || setTimeout
@@ -494,6 +498,38 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     fallbackMembers.clear()
   }
 
+  function projectQuestionCard(member, value, requestSet, interactions) {
+    if (value.turnRef && (member.questionTurn || value.questionCardRef)) {
+      const turn = { causalDomain: 'codex-member-question', causalKey: value.turnRef,
+        turnPredecessorKey: value.turnPredecessorRef, turnStartedAt: value.turnEpoch,
+        turnStartedAtPrecisionMs: value.turnStartedAtPrecisionMs }
+      const order = member.questionTurn ? compareCodexTurnOrder(member.questionTurn, turn) : 'newer'
+      if (order === 'newer') {
+        if (member.question) {
+          const sequence = nextLiveEvidenceSequence()
+          interactions.push({ ...member.question, state: 'resolved', sequence, requestSetRevision: sequence,
+            authority: 'provider-live' })
+          member.question = null
+        }
+        member.questionTurn = turn
+      }
+      if ((order === 'newer' || order === 'same') && value.questionCardRef && !member.question) {
+        const sequence = nextLiveEvidenceSequence()
+        member.question = {
+          revision: COMPANION_V7_REVISIONS.interaction, provider: 'codex',
+          taskKey: value.taskKey, branchRef: value.branchRef,
+          interactionRef: anonymousInteractionRef('question-card', value.taskKey, value.turnRef, value.questionCardRef),
+          kind: 'user-input', state: 'opened', sequence, turnEpoch: value.turnEpoch, requestSetRevision: sequence,
+          authority: 'provider-snapshot', exact: true
+        }
+      }
+    }
+    if (member.question) {
+      interactions.push({ ...member.question, requestSetRevision: requestSet?.requestSetRevision
+        || Math.max(member.nativeRevision, member.question.requestSetRevision) })
+    }
+  }
+
   function codexDesktopProjectFallbackInteractions(input = {}) {
     const source = record(input)
     const parentTaskKey = typeof source.parentTaskKey === 'string' ? source.parentTaskKey : ''
@@ -559,6 +595,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     for (const value of members) {
       const member = fallbackMember(value.taskKey, parentTaskKey)
       if (member.parentTaskKey !== parentTaskKey) continue
+      projectQuestionCard(member, value, completeSets.get(value.taskKey), interactions)
       if (!value.kind && Number.isSafeInteger(value.clearSequence) && value.clearSequence > 0) {
         const branch = member.branches.get(value.branchRef)
         if (branch && value.turnEpoch >= branch.turnEpoch) retire(branch, value.clearSequence)
@@ -690,6 +727,13 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       identityExact: Boolean(suppliedCorrelation)
     }
     if (correlation) projection.correlation = correlation
+    if (method === PLAN_IMPLEMENTATION_METHOD && typeof source.params?.turnId === 'string'
+      && source.params.turnId && source.id === `implement-plan:${source.params.turnId}`
+      && suppliedCorrelation && (source.requestId == null || source.requestId === source.id)
+      && typeof source.params.threadId === 'string' && source.params.threadId) {
+      projection.planTurnRef = codexDesktopRequestCorrelation({ id: source.params.turnId })
+      projection.planMemberRef = codexDesktopRequestCorrelation({ id: source.params.threadId })
+    }
     const startedAt = suppliedStartedAt || (sameInstance ? timestampMs(previous?.startedAt) : 0)
     if (startedAt) projection.startedAt = startedAt
     if (sameInstance
@@ -790,7 +834,178 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       .filter((request) => !currentSequences.has(request?.observedSequence))
   }
 
-  function codexDesktopRetainCausallyOpenRequests(shadow, previousState, completedPlanContext = false) {
+  function canonicalPlanTurn(history, key) {
+    const turn = history.entities[key]
+    return turn?.turnRef && turn.entityTurnRef === turn.turnRef ? turn : null
+  }
+
+  function comparePlanTurns(left, right, overlays, history, memberRef) {
+    if (!left.turnRef || !right.turnRef) return 0
+    function order(turns) {
+      const refs = turns.map(turn => turn?.memberRef && turn.memberRef !== memberRef ? '' : turn?.turnRef)
+      const leftIndex = refs.indexOf(left.turnRef)
+      const rightIndex = refs.indexOf(right.turnRef)
+      if (leftIndex < 0 || rightIndex < 0) return 0
+      if (refs.lastIndexOf(left.turnRef) < rightIndex) return -1
+      if (refs.lastIndexOf(right.turnRef) < leftIndex) return 1
+      return null
+    }
+    const live = order(overlays)
+    const canonical = history ? order(history.order.map(key => canonicalPlanTurn(history, key))) : 0
+    if (live === null || canonical === null || live && canonical && live !== canonical) return 0
+    return live || canonical || (left.startedAt > 0 && right.startedAt > 0 ? Math.sign(left.startedAt - right.startedAt) : 0)
+  }
+
+  function currentPlanItemMember(shadow, bridge) {
+    const member = planItemMembers.get(shadow?.waitingState)
+    if (!member || member.shadow !== shadow || member.bridge !== bridge || shadow.ownerDisconnectedAt) return null
+    const profile = bridge.streamProtocolFor(member.threadId)
+    return profile?.available === true && member.owner === shadow.ownerClientId && member.owner === profile.ownerClientId
+      && member.generation === bridge.streamGeneration && member.generation === profile.generation ? member : null
+  }
+
+  function codexDesktopOpenPlanItemRequests(shadow, bridge) {
+    const member = currentPlanItemMember(shadow, bridge)
+    const request = member?.open
+    if (!request || !member.confirmedOpen || request.interactionState || shadow.requestSetComplete !== true
+      || (shadow.requests || []).some(value => value.interactionRef === request.interactionRef)
+      || (shadow.interactionTerminals || []).some(value => value.interactionRef === request.interactionRef)
+      || shadow.waitingState?.resolvedRequestSequences?.has(request.observedSequence)
+      || dependencies.waitingEvidenceVisible?.(shadow.waitingState, 'waitingOnUserInput', request.observedSequence) === false) return []
+    return [{ ...request }]
+  }
+
+  function reconcilePlanItems(shadow, previousState, bridge, threadId) {
+    const profile = bridge?.streamProtocolFor?.(threadId)
+    if (!profile?.ownerClientId || profile.available !== true || profile.generation !== bridge.streamGeneration
+      || shadow.ownerDisconnectedAt || shadow.ownerClientId && shadow.ownerClientId !== profile.ownerClientId) return
+    const state = shadow.waitingState
+    const memberRef = codexDesktopRequestCorrelation({ id: threadId })
+    if (!state || !memberRef || shadow.memberRef && shadow.memberRef !== memberRef) return
+    let member = planItemMembers.get(state)
+    const sameOwner = member?.bridge === bridge && member.owner === profile.ownerClientId
+      && member.generation === profile.generation && member.memberRef === memberRef
+    if (!sameOwner) {
+      member = { bridge, threadId, owner: profile.ownerClientId, generation: profile.generation, memberRef,
+        latest: member?.memberRef === memberRef ? member.latest : null, open: null,
+        entries: new Map(member?.memberRef === memberRef
+          ? [...member.entries].filter(([, entry]) => entry.interactionState) : []) }
+      planItemMembers.set(state, member)
+    }
+    member.shadow = shadow
+    member.projected = []
+    member.confirmedOpen = false
+    const history = shadow.asyncCanonical
+    const currentGeneration = member.historyGeneration == null || history?.generation != null && history.generation >= member.historyGeneration
+    if (currentGeneration && history?.generation != null) member.historyGeneration = history.generation
+    const canonical = currentGeneration && history?.latestComplete ? canonicalPlanTurn(history, history.islands.at(-1)?.entries.at(-1)) : null
+    const overlays = shadow.asyncTurns || []
+    const live = overlays.at(-1)
+    const orderedHistory = canonical ? history : null
+    let current = live || canonical
+    if (live && canonical && live.turnRef !== canonical.turnRef) {
+      const order = comparePlanTurns(live, canonical, overlays, orderedHistory, memberRef)
+      current = order > 0 ? live : order < 0 ? canonical : null
+    }
+    if (current?.memberRef && current.memberRef !== memberRef) current = null
+    const signals = new Map()
+    if (current?.turnRef && current.status) {
+      if (member.latest && member.latest.turnRef !== current.turnRef
+        && comparePlanTurns(current, member.latest, overlays, orderedHistory, memberRef) <= 0) current = null
+      if (current) {
+        const old = member.open
+        if (old && old.planTurnRef !== current.turnRef) {
+          signals.set(old.interactionRef, { turn: { turnRef: old.planTurnRef, startedAt: old.turnEpoch }, completed: true })
+        }
+        member.latest = { turnRef: current.turnRef, startedAt: current.startedAt || (member.latest?.turnRef === current.turnRef ? member.latest.startedAt : 0) }
+      }
+    }
+    const native = (shadow.requests || []).filter(request => !request.asyncQuestion)
+    const bound = request => request.method === PLAN_IMPLEMENTATION_METHOD && request.planMemberRef === memberRef
+    const previous = (previousState?.requests || []).filter(bound)
+    const tracked = new Set([...previous, ...native.filter(bound)].map(request => request.planTurnRef))
+    for (const entry of member.entries.values()) if (!entry.interactionState) tracked.add(entry.planTurnRef)
+    function observe(turn, latest) {
+      if (!turn?.turnRef || !latest && !tracked.has(turn.turnRef)
+        || turn.memberRef && turn.memberRef !== memberRef || turn.partialItems || turn.itemsView === 'partial') return
+      const item = turn.items.findLast(value => value.type === 'planImplementation')
+      if (!item?.itemRef || item.itemRef !== item.expectedRef || item.turnRef !== turn.turnRef || typeof item.isCompleted !== 'boolean') return
+      if (!item.isCompleted && (!latest || turn.status !== 'completed' || current?.status !== 'completed'
+        || shadow.nativeTurnSubmissions?.some(terminal => terminal !== true)
+        || live?.turnRef === turn.turnRef && live.status !== 'completed'
+        || canonical?.turnRef === turn.turnRef && canonical.status !== 'completed')) return
+      if (item.isCompleted || !signals.has(item.itemRef)) signals.set(item.itemRef, { turn, completed: item.isCompleted })
+    }
+    observe(canonical, Boolean(current?.turnRef && current.turnRef === canonical?.turnRef))
+    observe(live, Boolean(current?.turnRef && current.turnRef === live?.turnRef))
+    tracked.delete(canonical?.turnRef)
+    tracked.delete(live?.turnRef)
+    if (tracked.size) {
+      for (const turn of shadow.asyncTurns || []) if (tracked.has(turn.turnRef)) observe(turn, false)
+      for (const key of canonical ? history.order : []) {
+        const turn = canonicalPlanTurn(history, key)
+        if (tracked.has(turn?.turnRef)) observe(turn, false)
+      }
+    }
+    for (const request of native.filter(bound)) {
+      const entry = member.entries.get(request.interactionRef)
+      if (entry?.planTurnRef === request.planTurnRef && !signals.has(request.interactionRef)) {
+        signals.set(request.interactionRef, { turn: { turnRef: request.planTurnRef, startedAt: entry.turnEpoch }, nativeOnly: true })
+      }
+    }
+    for (const [ref, signal] of signals) {
+      const { turn } = signal
+      const matches = native.filter(request => request.interactionRef === ref)
+      if (matches.some(request => !bound(request) || request.planTurnRef !== turn.turnRef)) continue
+      const remembered = [...previous, ...(state.requestHistory || [])].filter(request =>
+        bound(request) && request.interactionRef === ref && request.planTurnRef === turn.turnRef)
+      const prior = remembered.find(request => request.interactionState || state.resolvedRequestSequences?.has(request.observedSequence))
+        || member.entries.get(ref) || remembered[0]
+      const knownTerminal = (shadow.interactionTerminals || []).find(request =>
+        request.method === PLAN_IMPLEMENTATION_METHOD && request.interactionRef === ref && request.interactionState)
+      const request = matches[0] || prior || {
+        type: '', method: PLAN_IMPLEMENTATION_METHOD, interactionRef: ref, correlation: ref, identityExact: true,
+        observedAt: now(), observedSequence: nextLiveEvidenceSequence()
+      }
+      const first = prior && prior.observedSequence < request.observedSequence ? prior : request
+      for (const match of matches) {
+        match.observedAt = first.observedAt
+        match.observedSequence = first.observedSequence
+        match.turnEpoch = turn.startedAt || prior?.turnEpoch || 0
+      }
+      const entry = { ...request, observedAt: first.observedAt, observedSequence: first.observedSequence,
+        planMemberRef: memberRef, planTurnRef: turn.turnRef, turnEpoch: turn.startedAt || prior?.turnEpoch || 0 }
+      const terminal = knownTerminal || (prior?.interactionState ? prior : request)
+      const resolution = terminal.resolutionSequence || state.resolvedRequestSequences?.get(first.observedSequence)
+      if (signal.completed || terminal.interactionState || resolution) {
+        const sequence = resolution || nextLiveEvidenceSequence()
+        entry.interactionState = terminal.interactionState || 'resolved'
+        entry.resolutionSequence = sequence
+        if (!state.resolvedRequestSequences?.has(first.observedSequence)) {
+          bridge.resolveWaitingRequestObservations(threadId, [entry], sequence, shadow)
+        }
+        for (const match of matches) {
+          match.interactionState = entry.interactionState
+          match.resolutionSequence = sequence
+        }
+        if (member.open?.interactionRef === ref) member.open = null
+        member.projected.push(entry)
+      } else if (!signal.nativeOnly) {
+        member.open = entry
+        member.confirmedOpen = true
+      }
+      member.entries.delete(ref)
+      member.entries.set(ref, entry)
+    }
+    while (member.entries.size > PLAN_ITEM_HISTORY_LIMIT) member.entries.delete(member.entries.keys().next().value)
+    if (member.open && !native.some(request => request.interactionRef === member.open.interactionRef)) member.projected.push(member.open)
+    for (const entry of member.projected) {
+      shadow.requestSetRevision = Math.max(shadow.requestSetRevision || 0, entry.resolutionSequence || entry.observedSequence)
+    }
+  }
+
+  function codexDesktopRetainCausallyOpenRequests(shadow, previousState, completedPlanContext = false, bridge, threadId) {
+    if (shadow && bridge) reconcilePlanItems(shadow, previousState, bridge, threadId)
     if (!shadow || !previousState) return false
     if (codexDesktopRuntimeBecamePlainActive(previousState.runtime, shadow.runtime)) {
       // An omitted Plan carried across an idle frame expires on execution.
@@ -800,7 +1015,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     }
     const retained = codexDesktopRemovedWaitingRequests(previousState.requests, shadow.requests)
       .filter((request) => {
-        if (request?.asyncQuestion === true
+        if (request?.asyncQuestion === true || request?.planTurnRef && shadow.waitingState?.resolvedRequestSequences?.has(request.observedSequence)
           || ['resolved', 'cancelled', 'execution-started'].includes(request?.interactionState)
           || !codexDesktopRequestFlag(request)) return false
         const kind = codexDesktopRequestKind(request)
@@ -809,17 +1024,22 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
       })
     if (!retained.length) return false
     shadow.requests = [...(shadow.requests || []), ...retained.map(request => ({ ...request, retainedWhileIdle: true }))]
-    shadow.requestSetRevision = previousState.requestSetRevision
+    const planItems = planItemMembers.get(shadow.waitingState)?.projected || []
+    shadow.requestSetRevision = planItems.length
+      ? Math.max(previousState.requestSetRevision || 0, ...planItems.map(entry => entry.resolutionSequence || entry.observedSequence))
+      : previousState.requestSetRevision
     shadow.requestSetComplete = previousState.requestSetComplete
     shadow.requestSetAuthority = previousState.requestSetAuthority
     return true
   }
 
   function codexDesktopResolveWaitingRequestObservations(bridge, threadId, requests, sequence, shadow, resolvedLimit, visible) {
-    const observations = (Array.isArray(requests) ? requests : [])
+    const candidates = (Array.isArray(requests) ? requests : [])
       .filter((request) => codexDesktopRequestFlag(request) && Number.isInteger(request?.observedSequence))
-    if (!observations.length) return 0
+    if (!candidates.length) return 0
     const state = bridge.waitingStateFor(threadId)
+    const observations = candidates.filter(request => !request.planTurnRef || !state.resolvedRequestSequences.has(request.observedSequence))
+    if (!observations.length) return 0
     const resolvedSequence = Number.isInteger(sequence) && sequence > 0
       ? sequence
       : nextLiveEvidenceSequence()
@@ -914,6 +1134,8 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
         ...(Array.isArray(shadow.requests) ? shadow.requests : []),
         ...(Array.isArray(shadow.interactionTerminals) ? shadow.interactionTerminals : [])
       ]
+      const planMember = currentPlanItemMember(shadow, bridge)
+      if (planMember) candidates.push(...planMember.projected)
       const visibleRequestFlags = new Set()
       for (const request of candidates) {
         const kind = codexDesktopRequestKind(request)
@@ -1004,6 +1226,7 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
     codexDesktopClearFallbackInteractions,
     codexDesktopResetFallbackInteractions,
     codexDesktopCompanionInteractionsForParent,
+    codexDesktopOpenPlanItemRequests,
     codexDesktopRequestTimestamp,
     codexDesktopRequestCorrelation,
     codexDesktopProjectedRequest,

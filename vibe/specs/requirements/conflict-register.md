@@ -201,6 +201,10 @@ Environment Action 的 39 条有序来源条款继续由其来源/spec/PRD 承�
 
 用户明确新增[任务继续与计划实施](task-recovery-actions-raw-001.md#L1)。最新未实施Plan显示待输入，局部精化RAW-179#1旧artifact-only stopped展示；独立证据车道保留。Plan执行单击发起，取代产品现行段落的五秒二次确认；归档确认未改变。真实中断与未实施Plan分别处理，不自动恢复任何业务Goal。decision_status=explicit-current-request。
 
+## 2026-11-25 Codex Plan 原生待办
+
+[Codex 原生 Plan 状态对齐](task-recovery-actions-raw-001.md#codex-native-plan-request-261125)更新 11 月 6 日规则中的 Codex 待输入条件。当前未解决的 Plan 请求进入待输入，仅有产物按轮次、整组活动及原生读态展示。
+
 ## 2026-11-06：待继续时间豁免及搜索提示
 
 [RAW-002](task-recovery-visibility-raw-002.md#L1)为本轮最新用户决定：撤回统一30天方案，保留独立可调动态范围；默认一周，待继续不受动态窗口限制。截图确认现有两个配置入口已存在，修复搜索右侧误用总体范围/数量。局部精化RAW-134旧默认与普通中断过窗退出规则；隐藏/暂停、完整库存范围、真实状态证据不变。decision_status=explicit-current-request。

@@ -82,7 +82,8 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     let hasPlanImplementationRequest = false
     let hasOtherWaitingRequest = false
     let requestWaitingSince = 0
-    for (const request of shadow.requests || []) {
+    const planRequests = dependencies.desktopOpenPlanItemRequests?.(shadow) || []
+    for (const request of [...(shadow.requests || []), ...planRequests]) {
       const flag = desktopRequestFlag(request)
       const visible = flag && waitingEvidenceVisible(waitingState, flag, request.observedSequence)
       if (visible) activeFlags.add(flag)

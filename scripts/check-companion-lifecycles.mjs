@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Script } from 'node:vm'
 import * as zlib from 'node:zlib'
@@ -256,7 +256,7 @@ async function checkDesktopOwnerDiscovery(require, assetRoot, { helpers, activit
         thread.terminalEvidenceSequence = sequence
       },
       runtimeDiagnostics: { record: event => events.push(event) },
-      codexThreadHasPersistedPendingPlan: () => false, codexThreadPersistedInputEvidence: () => null, emitCodexActivityDelta() {}
+      codexThreadPersistedInputEvidence: () => null, emitCodexActivityDelta() {}
     })
     const bridge = Object.assign(Object.create(prototype), {
       state: 'connected', socket: {}, streamGeneration: 1, inventory: new Set(), sideRecoveryPending: new Set(),
@@ -1013,7 +1013,25 @@ function checkRolloutTurnOwnership(require) {
   assert.equal(rollout.codexRolloutPendingPlanStateText([...plan, discussion,
     line(5300, { type: 'task_started', turn_id: 'execute', collaboration_mode_kind: 'default',
       turn_attribution: { turn_trigger: 'plan_implementation' } })].join('\n')).planClearReason, 'execution-start')
-  return 16
+  const questionText = ':::question_for_user{recommend=1}\n\n### Start the pilot?\n\n1. Start\n2. Wait\n\n:::'
+  const questionItem = (text, phase = 'final_answer') => line(2200, {
+    type: 'item_completed', turn_id: 'new-turn',
+    item: { type: 'AgentMessage', id: 'question-card', phase, content: [{ type: 'Text', text }] }
+  })
+  const readQuestion = (...events) => rollout.codexRolloutPendingPlanStateText(events.join('\n')).questionCard
+  assert.deepEqual(readQuestion(questionItem(questionText), newerComplete), { turnId: 'new-turn', itemId: 'question-card' },
+    'the native final card survives completion even if the beginning of the Turn is outside the sample')
+  assert.equal(readQuestion(newerStart, questionItem(questionText)), undefined, 'a running Turn has no final Question card')
+  assert.equal(readQuestion(newerStart, questionItem(questionText), newerComplete, nextStart), undefined)
+  for (const text of ['Could you decide?', `\`\`\`md\n${questionText}\n\`\`\``, `${questionText}\n${questionText}`,
+    questionText.replace('recommend=1', 'recommend=3')]) {
+    assert.equal(readQuestion(questionItem(text), newerComplete), undefined)
+  }
+  assert.equal(readQuestion(questionItem(questionText, 'commentary'), newerComplete), undefined)
+  assert.equal(readQuestion(questionItem(questionText), questionItem('A later final answer.'), newerComplete), undefined)
+  assert.deepEqual(readQuestion(newerStart, questionItem(questionText), newerComplete, delayedAbort),
+    { turnId: 'new-turn', itemId: 'question-card' }, 'an old interruption does not close the latest card')
+  return 26
 }
 
 async function checkNestedSpawnEdgeAdmission(require, source) {
@@ -1111,7 +1129,7 @@ async function checkColdRolloutAdmission(require, source, fixture) {
   const { createCodexRolloutRuntimeState } = require('./codex/rollout-runtime-state.cjs')
   const rollout = createCodexRolloutRuntimeState({ record: value => value ?? {}, rolloutTimestampMs: value => Number(value) || 0 })
   const probeStart = source.indexOf('function codexRefreshRolloutDecisionTracker(')
-  const probeEnd = source.indexOf('\nfunction codexArmRolloutDecisionWatcher(', probeStart)
+  const probeEnd = source.indexOf('\nfunction codexArmRolloutFileWatcher(', probeStart)
   const syncStart = source.indexOf('function codexSyncRolloutDecisionTrackers(')
   const syncEnd = source.indexOf('\nfunction readCodexNativePrimaryState(', syncStart)
   assert(probeStart >= 0 && probeEnd > probeStart && syncStart >= 0 && syncEnd > syncStart)
@@ -1206,7 +1224,10 @@ async function checkColdRolloutAdmission(require, source, fixture) {
           appServerLiveActive: true, activeEvidenceSequence: 330, statusAuthority: 'app-server-live', activityEvidence: 'activity-event' })
         return true
       },
-      codexArmRolloutDecisionWatcher() {}, codexRestoreRolloutFallback() {}, recordCodexTaskSync() {}
+      codexRolloutFileWatchers: new Map(), CODEX_ROLLOUT_FILE_WATCH_LIMIT: 64,
+      CODEX_MISSING_ACTIVITY_MAPPING_RETENTION_MS: 120_000,
+      codexArmRolloutDecisionWatcher() {}, codexArmRolloutFileWatcher() {},
+      codexRestoreRolloutFallback() {}, recordCodexTaskSync() {}
     })
     const latest = new Map([[threadId, turn]])
     const listed = [...earlier, thread]
@@ -1271,7 +1292,7 @@ async function checkColdUnreadRefresh(require, source) {
   const latestStart = source.indexOf('  scheduleLatestTurnRefresh(')
   const latestEnd = source.indexOf('\n  setState(', latestStart)
   const terminalStart = source.indexOf('function codexInventoryTerminalEvidence(')
-  const terminalEnd = source.indexOf('\nfunction codexThreadHasPersistedPendingPlan(', terminalStart)
+  const terminalEnd = source.indexOf('\nfunction codexThreadPersistedPlanLifecycle(', terminalStart)
   assert(refreshStart >= 0 && refreshEnd > refreshStart && latestStart >= 0 && latestEnd > latestStart
     && terminalStart >= 0 && terminalEnd > terminalStart)
   const entry = new Script(`${source.slice(terminalStart, terminalEnd)}
@@ -1372,11 +1393,12 @@ async function checkColdUnreadRefresh(require, source) {
 async function checkVerifiedInventorySharing(require, source) {
   const readStart = source.indexOf('function readVerifiedCodexInventory(')
   const readEnd = source.indexOf('\nasync function readCodexActivitySnapshot(', readStart)
+  const snapshotStart = source.indexOf('function rememberCodexSnapshotScope(')
   const scopeStart = source.indexOf('function codexSnapshotScopeCurrent(')
   const scopeEnd = source.indexOf('\nfunction scheduleCodexPendingRecovery(', scopeStart)
   const captureStart = source.indexOf('function currentCodexInventoryScope(')
   const captureEnd = source.indexOf('\nfunction invalidateCodexThreadList(', captureStart)
-  assert(readStart >= 0 && readEnd > readStart && scopeStart >= 0 && scopeEnd > scopeStart
+  assert(readStart >= 0 && readEnd > readStart && snapshotStart >= 0 && scopeStart > snapshotStart && scopeEnd > scopeStart
     && captureStart >= 0 && captureEnd > captureStart)
   const pending = []
   const supersededRead = Object.assign(new Error('inventory superseded'), { code: 'inventory-superseded' })
@@ -1444,7 +1466,7 @@ async function checkVerifiedInventorySharing(require, source) {
   let nativeActiveRows = [{ id: 'root-1' }, { id: 'root-2' }]
   let nativeArchivedRows = [{ id: 'archived' }]
   const endOfRoster = new Error('roster verified')
-  const { reconcile, scan, rotate, knownNewerMembership, readPinned, readActive } = new Script(`${source.slice(scopeStart, scopeEnd)}
+  const { reconcile, scan, rotate, setMembershipPending, advanceArchive, trackSnapshot, readPinned, readActive } = new Script(`${source.slice(snapshotStart, scopeEnd)}
     ${source.slice(captureStart, captureEnd)}
     ${source.slice(membershipStart, membershipEnd)}
     ${source.slice(listStart, listEnd)}
@@ -1458,13 +1480,20 @@ async function checkVerifiedInventorySharing(require, source) {
       },
       readPinned: () => readCodexPinnedSection(() => true, Date.now() + 1000),
       rotate: () => { codexDesktopBridge.streamGeneration += 1 },
-      knownNewerMembership: () => { codexInventoryMembershipReconcilePending = true }
+      setMembershipPending: value => { codexInventoryMembershipReconcilePending = value },
+      advanceArchive: () => { codexInventoryArchiveRevision += 1 },
+      trackSnapshot: () => {
+        const threads = []
+        rememberCodexSnapshotScope(threads)
+        return () => codexSnapshotScopeCurrent(codexSnapshotScopes.get(threads))
+      }
     })`).runInNewContext({
     codexDesktopBridge: { streamGeneration: 1 }, codexInventoryMembershipGeneration: 1, codexCausalDomain: 'source',
     codexInventoryMembershipEnabled: () => true,
     codexActivityInventory: new Map(), codexLocalArchiveRecoverySuppressions: new Set(),
     codexVerifiedOfficialThreadIds: new Set(['root-1']), codexRosterForPreflight: null, codexDesktopSideRelations: new Map(),
-    codexIndexedInventoryRows: new WeakSet(), codexInventoryRelationRevision: 0, codexSideParentThreadId: () => '',
+    codexIndexedInventoryRows: new WeakSet(), codexInventoryRelationRevision: 0, codexInventoryArchiveRevision: 0,
+    codexSnapshotScopes: new WeakMap(), codexSideParentThreadId: () => '',
     codexVerifiedInventoryInFlight: null,
     codexInventoryRefreshPending: false, codexInventoryMembershipReconcilePending: false, codexInventoryMembershipForcePending: false,
     codexInventoryMembershipCoveragePending: false,
@@ -1525,9 +1554,21 @@ async function checkVerifiedInventorySharing(require, source) {
   assert.deepEqual(listReads, [false, true, 'pinned', false, true], 'a new stream reads its own active and archived lists')
   const queuesBefore = queued
   const superseded = reconcile()
-  knownNewerMembership()
+  setMembershipPending(true)
   assert.equal(await superseded, false, 'a newer membership signal prevents publishing the older sample')
   assert.equal(queued, queuesBefore)
+  setMembershipPending(false)
+  const snapshotCurrent = trackSnapshot()
+  assert.equal(snapshotCurrent(), true)
+  const preArchive = reconcile()
+  advanceArchive()
+  assert.equal(await preArchive, false, 'an archive during membership reconciliation discards the old roster')
+  assert.equal(queued, queuesBefore, 'a superseded roster cannot queue a stale preflight')
+  assert.equal(snapshotCurrent(), false, 'an archive invalidates an older inventory between projection and publication')
+  setMembershipPending(false)
+  const readsBefore = listReads.length
+  await assert.rejects(scan(), error => error === endOfRoster)
+  assert.deepEqual(listReads.slice(readsBefore), [false, true], 'a new archive revision cannot join older list samples')
   pinPages = [{ data: [{ id: 'second' }], nextCursor: 'next' }, { data: [{ id: 'first' }], nextCursor: null }]
   assert.deepEqual(Array.from(await readPinned(), row => row.id), ['second', 'first'], 'the partition retains native page order')
   pinPages = [{ data: [] }]
@@ -1656,7 +1697,120 @@ async function checkVerifiedInventorySharing(require, source) {
   runNextTimer()
   assert.deepEqual(fallbackReads, [{ reason: 'state-file', forceTasksOnly: true, verifyCoverage: true, preserveCurrentList: true }],
     'the retained coverage request runs once even after the WAL goes quiet')
-  return 33
+  return 39
+}
+
+async function checkColdInventoryTopologyFence(require, source) {
+  const { createCodexInventoryThreadTopology } = require('./codex/inventory-thread-topology.cjs')
+  const topology = createCodexInventoryThreadTopology({ validThreadId: Boolean, record: value => value ?? {}, nativeString: String })
+  const start = source.indexOf('async function scanVerifiedCodexInventory(')
+  const end = source.indexOf('    let unreadIds = null', start)
+  assert(start >= 0 && end > start)
+  const scanScript = new Script(`${source.slice(start, end)}
+    return { listedRows, attached, memberRows }
+  }
+}
+scanVerifiedCodexInventory`)
+  const run = async ({ listChange = false, turnChanges = 0, projectChange = false, archiveAt = '', restoredSide = false } = {}) => {
+    const scope = { listVersion: 1 }
+    const retiring = { id: 'retiring' }
+    const restored = { id: 'restored', threadSource: 'user', attachedToThreadId: 'root' }
+    let active = [{ id: 'root' }, retiring]
+    const archived = [{ id: 'archived' }]
+    const retired = new Map([['archived', 'thread-archived']])
+    if (restoredSide) retired.set(restored.id, 'archive-inventory-confirmed')
+    const context = {
+      codexInventoryRelationRevision: 1, codexInventoryArchiveRevision: 1, codexInventoryRefreshPending: false,
+      codexRosterForPreflight: null, codexVerifiedInventoryInFlight: null,
+      codexDesktopBridge: null, runtimeDiagnostics: { record() {} },
+      codexThreadTurnStatusDirty: new Map(), codexIndexedInventoryRows: new WeakSet(),
+      codexWatchedRolloutCandidates: new Map(), codexDesktopSideRelations: new Map(),
+      codexRetiredThreadIds: retired,
+      codexVerifiedOfficialThreadIds: new Set(['root']), codexActivityInventory: new Map(),
+      codexStateSqliteDirectory: () => '/synthetic', codexRestoreDesktopSideRelationHints() {},
+      codexSnapshotScopeCurrent: sample => sample?.listVersion === scope.listVersion,
+      currentCodexInventoryScope: () => ({ ...scope }),
+      noteCodexInventorySample() {},
+      codexPinObserver: null, codexSubagentDiscovery: null, codexhostDiscovery: null,
+      codexChatgptProjectIndex: null, codexDesktopOpenObservation: null,
+      codexNativeStatePaths: () => ({}), codexDesktopUnreadReadGuard: () => () => true,
+      codexRecord: value => value ?? {}, validCodexThreadId: Boolean, codexThreadKey: value => value,
+      codexInventoryThreadTopologyModule: topology, codexObserveThreadMembership() {},
+      codexInventoryProjectAssignments: () => ({ assignments: new Map(), sideRelations: new Map() }),
+      recoverCodexThreadsMissingFromInventory: (rows, targets) => targets.has(restored.id) ? [...rows, restored] : rows,
+      readCodexThreadGoals: async () => ({}),
+      codexError: (code, message) => Object.assign(new Error(message), { code }),
+      invalidateCodexThreadList() { scope.listVersion += 1 },
+      codexSideParentThreadId: () => '',
+      scheduleCodexNativeInventoryCoverage() { coverage += 1 }
+    }
+    const retire = () => {
+      active = active.filter(row => row !== retiring)
+      archived.push(retiring)
+      retired.set(retiring.id, 'thread-archived')
+      context.codexInventoryArchiveRevision += 1
+      context.codexInventoryRelationRevision += 1
+    }
+    const lists = []
+    const samples = []
+    const archiveProofs = []
+    let coverage = 0
+    let fingerprint = 'current'
+    let turnReads = 0
+    context.readCodexNativeRegistry = () => ({ fingerprint })
+    context.listAllCodexThreads = async isArchived => {
+      const rows = isArchived ? archived : active
+      lists.push(isArchived)
+      if (listChange && lists.length === 1) context.codexInventoryRelationRevision += 1
+      if (archiveAt === 'list' && lists.length === 1) retire()
+      return rows
+    }
+    context.readCodexAttachedSides = () => {
+      samples.push(context.codexInventoryRelationRevision)
+      return { parents: new Map(restoredSide ? [[restored.id, restored.attachedToThreadId]] : []),
+        retired: new Set(), topologyRevision: samples.at(-1) }
+    }
+    context.readCodexThreadTurnStatuses = async () => {
+      turnReads += 1
+      archiveProofs.push(retired.get('archived'))
+      if (archiveAt === 'projection' && turnReads === 1) retire()
+      if (turnReads <= turnChanges) context.codexInventoryRelationRevision += 1
+      if (projectChange && turnReads === 1) fingerprint = 'changed'
+      return { latest: new Map(), readSucceededIds: new Set() }
+    }
+    const result = await scanScript.runInNewContext(context)().catch(error => error.code || error.name)
+    return { result, lists, samples, coverage, retired, archiveProofs, version: scope.listVersion }
+  }
+  const duringList = await run({ listChange: true })
+  assert.deepEqual(duringList.samples, [2], 'the relation fence begins after the slow active list')
+  assert.equal(duringList.result.attached?.topologyRevision, 2)
+  const duringProjection = await run({ turnChanges: 1 })
+  assert.deepEqual(duringProjection.lists, [false, true], 'retrying topology reuses both current roster pages')
+  assert.deepEqual(duringProjection.samples, [1, 2], 'the retry fetches a fresh relation sample')
+  assert.equal(duringProjection.version, 1, 'same-source relation churn does not invalidate the roster')
+  assert.deepEqual(duringProjection.archiveProofs, ['thread-archived', 'thread-archived'],
+    'a topology retry cannot promote archive evidence during projection')
+  assert.equal(duringProjection.retired.get('archived'), 'archive-inventory-confirmed', 'a committed read can confirm archive evidence')
+  const busy = await run({ turnChanges: 2, restoredSide: true })
+  assert.equal(busy.result, 'protocol-error', 'a second conflict cannot publish an ambiguous topology')
+  assert.equal(busy.coverage, 1, 'a second conflict schedules bounded background recovery')
+  assert.equal(busy.retired.get('archived'), 'thread-archived', 'an aborted projection leaves archive proof untouched')
+  assert.equal(busy.retired.get('restored'), 'archive-inventory-confirmed', 'an aborted attachment cannot clear a retirement marker')
+  const restored = await run({ restoredSide: true })
+  assert(restored.result.memberRows.some(row => row.id === 'restored'), 'a verified attachment enters the committed roster')
+  assert.equal(restored.retired.has('restored'), false, 'commit releases the restored Side retirement marker')
+  const newProject = await run({ projectChange: true })
+  assert.equal(newProject.version, 2, 'a changed project still invalidates roster provenance')
+  assert.deepEqual(newProject.lists, [false, true, false, true], 'project changes resample both rosters')
+  const archivedDuringList = await run({ archiveAt: 'list' })
+  assert.deepEqual(archivedDuringList.lists, [false, false, true], 'an archive in flight invalidates the active list before projection')
+  assert.deepEqual(archivedDuringList.samples, [2], 'the obsolete roster never projects topology')
+  assert.deepEqual(Array.from(archivedDuringList.result.memberRows, row => row.id), ['root'], 'the late active row cannot revive the archive')
+  const archivedDuringProjection = await run({ archiveAt: 'projection' })
+  assert.deepEqual(archivedDuringProjection.lists, [false, true, false, true], 'an archive during projection cannot reuse those rosters')
+  assert.deepEqual(Array.from(archivedDuringProjection.result.memberRows, row => row.id), ['root'])
+  assert.equal(archivedDuringProjection.retired.get('retiring'), 'archive-inventory-confirmed')
+  return 21
 }
 
 async function checkHotTargetedInventory(require, source) {
@@ -1709,6 +1863,8 @@ async function checkHotTargetedInventory(require, source) {
       for (const [id, parent] of relations) sideRelations.set(id, parent)
     },
     codexSyncRolloutDecisionTrackers() {}, emitCodexActivityDelta(...args) { emissions.push(args) },
+    companionTaskKernel: { getActivityCheckpoint: key => emissions.at(-1)?.[4]?.targetedMembership.parents.has(key),
+      getPackage: () => ({ packageRevision: emissions.length }) },
     recordCodexTaskSync() {}, codexThreadGoalCache: new Map(), codexThreadGoalRpcAvailable: false,
     scheduleCodexNativeInventoryCoverage() { coverage += 1 }
   })
@@ -1730,7 +1886,14 @@ async function checkHotTargetedInventory(require, source) {
   assert.equal(sideRelations.get('unrelated'), 'old-root', 'a partial result keeps an unrelated active member')
   assert.equal(emissions.length, priorEmissions + 1, 'the old edge and new attachment publish in the same delta')
   assert.deepEqual(Array.from(emissions.at(-1)[4].removedMemberKeys).sort(), ['codex-child:old-root/nested', 'codex-child:old-root/side'])
-  return 9
+  const membership = emissions.at(-1)[4].targetedMembership
+  assert.deepEqual(Array.from(membership.parents, ([key, parent]) => [key, parent]).sort(), [
+    ['codex-child:new-root/nested', 'new-root'], ['codex-child:new-root/side', 'new-root'], ['new-root', '']
+  ], 'only the verified root and its verified Side chain establish membership')
+  assert.deepEqual(Array.from(membership.replacements, ([key, replacement]) => [key, replacement]).sort(), [
+    ['codex-child:old-root/nested', 'codex-child:new-root/nested'], ['codex-child:old-root/side', 'codex-child:new-root/side']
+  ])
+  return 11
 }
 
 async function checkCompressedSideHistory(require, source) {
@@ -1807,6 +1970,80 @@ async function checkCompressedSideHistory(require, source) {
   assert.equal(await inspect(), false, 'a persisted first Turn contradicts the old empty page')
   assert.equal(cache.size, 0)
   return 8
+}
+
+function checkRolloutFileWatcher(source) {
+  const closeStart = source.indexOf('function codexCloseRolloutFileWatcher(')
+  const closeEnd = source.indexOf('\nfunction codexClearRolloutDecisionTrackers(', closeStart)
+  const watchStart = source.indexOf('function codexArmRolloutFileWatcher(')
+  const watchEnd = source.indexOf('\nfunction codexSyncRolloutDecisionTrackers(', watchStart)
+  assert(closeStart >= 0 && closeEnd > closeStart && watchStart >= 0 && watchEnd > watchStart)
+
+  const trackers = new Map(['first', 'second', 'third'].map(threadId => [
+    threadId, { threadId, candidate: `/synthetic/${threadId}.jsonl`, watcherRetryAvailable: true }
+  ]))
+  const files = new Map()
+  const polls = new Map()
+  const refreshes = []
+  const { arm, armFile, close } = new Script(`${source.slice(closeStart, closeEnd)}
+    ${source.slice(watchStart, watchEnd)}
+    ({ arm: codexArmRolloutDecisionWatcher, armFile: codexArmRolloutFileWatcher, close: codexCloseRolloutDecisionTracker })`)
+    .runInNewContext({
+      path: { dirname, basename }, process: { platform: 'darwin' }, queueMicrotask,
+      codexRolloutDecisionTrackers: trackers, codexRolloutFileWatchers: files,
+      CODEX_ROLLOUT_FILE_WATCH_LIMIT: 2, CODEX_NATIVE_STATE_RECOVERY_INTERVAL_MS: 1_000,
+      codexRefreshRolloutDecisionTracker(id) { refreshes.push(id); return true },
+      fs: {
+        watch(target, _options, notify) {
+          return { target, notify, closed: false, on(_event, listener) { this.fail = listener },
+            close() { this.closed = true } }
+        },
+        watchFile(target, options, listener) { polls.set(target, { interval: options.interval, listener }) },
+        unwatchFile(target, listener) {
+          assert.equal(listener, polls.get(target)?.listener)
+          polls.delete(target)
+        }
+      }
+    })
+  const [first, second, third] = trackers.values()
+  for (const tracker of trackers.values()) arm(tracker)
+  armFile(first)
+  armFile(second)
+  const initialFileWatch = files.get(first)
+  assert.equal(initialFileWatch.target, first.candidate, 'the live listener watches the exact rollout')
+  assert.equal(first.watcher.target, dirname(first.candidate), 'the directory listener stays available')
+  assert.equal(polls.get(first.candidate).interval, 1_000, 'the original stat fallback remains bounded')
+  initialFileWatch.notify('change')
+  assert.deepEqual(refreshes, [first.threadId], 'an exact-file change refreshes immediately without a stat tick')
+  const displacedFileWatch = files.get(second)
+  armFile(third)
+  assert.equal(files.size, 2, 'direct watchers cannot grow with the whole inventory')
+  assert.equal(displacedFileWatch.closed, true, 'the least recently active file releases its descriptor')
+  assert.equal(second.watcher.closed, false, 'displacement preserves the older task’s fallback')
+  initialFileWatch.notify('rename')
+  const replacement = files.get(first)
+  assert.equal(initialFileWatch.closed, true)
+  assert.notEqual(replacement, initialFileWatch, 'a replacement binds a fresh watcher to the same path')
+  const beforeStaleCallback = refreshes.length
+  initialFileWatch.notify('change')
+  assert.equal(refreshes.length, beforeStaleCallback, 'late callbacks from an old file identity are ignored')
+  const poll = polls.get(first.candidate).listener
+  poll({ dev: 1, ino: 2, size: 25 }, { dev: 1, ino: 1, size: 15 })
+  assert.equal(replacement.closed, true, 'the stat fallback detects a replacement even without a rename event')
+  const errored = files.get(first)
+  errored.fail()
+  assert.equal(files.has(first), false)
+  poll({ dev: 1, ino: 2, size: 30 }, { dev: 1, ino: 2, size: 25 })
+  assert.equal(files.has(first), true, 'the next append recovers direct watching after an error')
+  const active = files.get(first)
+  close(first)
+  assert.equal(active.closed, true)
+  assert.equal(polls.has(first.candidate), false)
+  const beforeCloseCallback = refreshes.length
+  active.notify('change')
+  poll({ dev: 1, ino: 2, size: 35 }, { dev: 1, ino: 2, size: 30 })
+  assert.equal(refreshes.length, beforeCloseCallback, 'a retired tracker cannot refresh or rearm')
+  return 16
 }
 
 function checkNativePinStateWatcher(require) {
@@ -2626,6 +2863,127 @@ function checkRolloutSideCompletion(require, source, fixture) {
   return 24
 }
 
+function checkCodexPartialInventoryUpdates(require, source) {
+  const { createCompanionTaskKernel } = require('./companion/task-kernel.cjs')
+  const { createEvidenceNodeV7, createEvidenceBatchV7, createInteractionEvidenceV7,
+    createInteractionSetV7 } = require('./companion/evidence-adapter-v7.cjs')
+  const providers = { codex: true, claude: false, cursor: false, orca: false }
+  const channels = Object.keys(createEvidenceBatchV7({ provider: 'codex' }).channels)
+  const scopes = new WeakMap()
+  const pending = []
+  const membershipStart = source.indexOf('function codexInventoryMembershipEnabled(')
+  const membershipEnd = source.indexOf('\nfunction codexPinScope(', membershipStart)
+  const replayStart = source.indexOf('function selectCodexEvidenceMembers(')
+  const replayEnd = source.indexOf('\nlet companionPreflightDraftSequence', replayStart)
+  const applyStart = source.indexOf('function publishCompanionEvidenceBatchesV3(')
+  const applyEnd = source.indexOf('\nfunction applyClaudeStateToCompanionKernel(', applyStart)
+  const kernel = createCompanionTaskKernel({ initialConfiguration: { enabled: true, providers }, now: () => 1000,
+    preparePendingEvidence: draft => host.preparePendingCodexEvidence(draft) })
+  const configuration = { enabled: true, providers, dynamicTaskWindowHours: 24 }
+  const host = new Script(`${source.slice(membershipStart, membershipEnd)}
+    ${source.slice(replayStart, replayEnd)}
+    ${source.slice(applyStart, applyEnd)}
+    ({ applyCodexActivityToCompanionKernel, preparePendingCodexEvidence, codexInventoryMembershipEnabled })`).runInNewContext({
+    companionTaskKernel: kernel, companionTaskConfiguration: () => configuration,
+    companionHostReconcileInFlight: new Map(), companionHostDraftSequence: 0,
+    companionProviderOrder: Object.keys(providers), companionEvidenceChannelsV7: channels,
+    companionEvidenceSequenceV7: (value, fallback = 0) => Number.isSafeInteger(value) && value >= 0 ? value : fallback,
+    companionCounterAggregate: value => value.activity,
+    companionV7Revisions: { draft: 'companion-task-evidence-draft-v7',
+      providerEvidenceBatch: createEvidenceBatchV7({ provider: 'codex' }).revision },
+    createCompanionEvidenceBatchV7: createEvidenceBatchV7,
+    createCompanionInteractionEvidenceV7: createInteractionEvidenceV7,
+    createCompanionInteractionSetV7: createInteractionSetV7,
+    companionPersistedTaskState: () => ({}),
+    companionCodexEvidenceV7: entry => ({ nodes: [entry.node], relations: entry.relations || [], interactions: [], interactionSets: [] }),
+    codexRecord: value => value || {}, codexDesktopBridge: null, codexCausalDomain: 'source',
+    codexInventoryMembershipGeneration: 1,
+    codexActivitySourceFingerprint: 'source', codexEvidenceScopes: scopes, codexSnapshotScopeCurrent: Boolean,
+    codexPendingActivity: pending, codexPendingGaps: new Map(), codexPendingRecoveryAttempts: 0,
+    CODEX_PENDING_ACTIVITY_LIMIT: 128, scheduleCodexPendingRecovery() {}, recordCompanionProbeGate() {},
+    runtimeDiagnostics: { record() {} }
+  })
+  const node = (key, turnStartedAt, status, sequence, unread, parent) => createEvidenceNodeV7({
+    provider: 'codex', key, family: `codex:${parent || key}`, role: parent ? 'child' : 'root',
+    causalKey: `${key}:${turnStartedAt}`, causalDomain: 'source', standaloneEligible: !parent,
+    capabilities: ['open'],
+    metadata: { kind: 'codex-thread', actionAlias: `ct_${key}_1234567890`, revisionAt: 100, lastQuestionAt: 100 },
+    observation: { kind: status, authority: status === 'turn-running' ? 'live-turn' : 'terminal',
+      exact: true, sequence, observedAt: sequence, turnStartedAt, terminalAt: status === 'turn-completed' ? sequence : 0,
+      unreadKnown: typeof unread === 'boolean', unread, unreadSequence: sequence }
+  })
+  const cache = (revision, generation, nodes, status = 'degraded') => {
+    const lanes = Object.fromEntries(channels.map(lane => [lane, lane === 'membership' ? 100 + revision : generation]))
+    const batch = createEvidenceBatchV7({ provider: 'codex', nodes, laneGenerations: lanes, health: status })
+    scopes.set(batch, { domain: 'source', bridge: null, fingerprint: 'source' })
+    return kernel.publishEvidence({ schema: 'companion-task-evidence-draft-v7', producer: 'host-preflight',
+      draftRevision: revision, acceptedAt: 1000, enabled: true, complete: false, providers,
+      sourceLaneGenerations: { codex: lanes }, sourceGenerations: { codex: generation },
+      providerHealth: { codex: { status, generation } }, evidenceBatches: { codex: batch } },
+    { provider: 'codex', epoch: kernel.providerEpoch('codex') })
+  }
+  const send = (generation, ...nodes) => host.applyCodexActivityToCompanionKernel({
+    generation, receivedAt: 1000, sourceFingerprint: 'source', entries: nodes.map(value => ({ key: value.key, node: value }))
+  })
+  const current = key => kernel.getPackage().tasks.find(task => task.key === key)
+  try {
+    assert.equal(host.codexInventoryMembershipEnabled(), false)
+    assert.equal(cache(1, 10, [node('known', 10, 'turn-running', 10)]).complete, false)
+    assert.equal(kernel.isProviderCached('codex'), false)
+    assert.equal(host.codexInventoryMembershipEnabled(), true, 'native recovery stays active after a partial inventory')
+    assert.equal(send(20, node('known', 10, 'turn-completed', 20, true), node('cold', 15, 'turn-completed', 20, true)), 'buffered')
+    assert.equal(current('known')?.phase, 'completed', 'a known member publishes while inventory coverage remains partial')
+    assert.equal(current('known')?.completedUnread, true, 'the matching completion and unread evidence arrive in the same package')
+    assert.equal(current('cold'), undefined, 'another member waits for its own scoped inventory evidence')
+    cache(2, 18, [], 'unavailable')
+    assert.equal(pending.length, 1, 'a failed inventory cannot consume held member evidence')
+    cache(3, 18, [node('cold', 15, 'turn-running', 15)])
+    assert.equal(current('cold')?.completedUnread, true, 'a partial sample replays evidence for the member it admitted')
+    assert.equal(pending.length, 0)
+    assert.equal(current('known')?.completedUnread, true, 'absence from a partial sample preserves the other member')
+    assert.equal(send(21, node('known', 10, 'turn-running', 10)), true)
+    assert.equal(current('known')?.completedUnread, true, 'late activity for the completed Turn cannot restore its running state')
+    const read = createEvidenceNodeV7({ provider: 'codex', key: 'known', metadataPartial: true,
+      metadata: { kind: 'codex-thread', revisionAt: 22 },
+      observation: { unreadKnown: true, unread: false, unreadSequence: 22 } })
+    assert.equal(host.applyCodexActivityToCompanionKernel({ generation: 22, receivedAt: 1000, sourceFingerprint: 'source',
+      entries: [{ key: 'known', readStateOnly: true, node: read }] }), true)
+    assert.equal(current('known')?.completedUnread, false, 'the known member accepts a read-only update without inventory completion')
+    assert.equal(current('known')?.phase, 'completed')
+    assert.equal(send(23, node('known', 23, 'turn-running', 23)), true)
+    assert.equal(current('known')?.phase, 'running', 'the next Turn can start before the first complete package')
+    assert.equal(kernel.getPackage().complete, false)
+    assert.equal(send(24, node('target', 24, 'turn-completed', 24, true)), 'buffered')
+    cache(4, 24, [node('other', 24, 'turn-running', 24)])
+    assert.equal(current('target'), undefined, 'a newer partial sample of another member does not admit the target')
+    const side = (key, parent, sequence) => ({
+      node: node(key, 25, 'turn-running', sequence, undefined, parent),
+      relations: [{ provider: 'codex', childKey: key, parentKey: parent, family: `codex:${parent}`,
+        relation: 'side-thread', authority: 'codex-app-server-inventory', exact: true, generation: sequence }]
+    })
+    const submit = (generation, entries, parents, replacements = [], removedKeys = []) => (
+      host.applyCodexActivityToCompanionKernel({ generation, receivedAt: 1000, sourceFingerprint: 'source', entries },
+        removedKeys, { targetedMembership: { parents: new Map(parents), replacements: new Map(replacements) } })
+    )
+    const root = (key, sequence) => ({ node: node(key, 24, 'turn-completed', sequence) })
+    assert.equal(submit(25, [root('target', 24), side('old-side', 'known', 25), side('unverified', 'target', 25)],
+      [['target', ''], ['old-side', 'known'], ['unverified', 'wrong-parent']]), 'buffered')
+    assert.equal(current('target')?.completedUnread, true, 'an exact target publishes and replays its held unread evidence')
+    assert.equal(kernel.getActivityCheckpoint('old-side')?.phase, 'running', 'an exact child edge can enter during partial coverage')
+    assert.equal(kernel.getActivityCheckpoint('unverified'), null, 'unproven sibling membership stays deferred')
+    assert.equal(submit(26, [side('unverified', 'target', 26)], [['unverified', 'wrong-parent']],
+      [['old-side', 'unverified']], ['old-side']), 'buffered')
+    assert.equal(kernel.getActivityCheckpoint('old-side')?.phase, 'running', 'an unverified replacement cannot remove the old member')
+    assert.equal(submit(27, [side('new-side', 'target', 27)], [['new-side', 'target']], [['old-side', 'new-side']], ['old-side']), true)
+    assert.equal(kernel.getActivityCheckpoint('old-side'), null, 'a verified change of parent removes the previous member in the same transaction')
+    assert.equal(kernel.getActivityCheckpoint('new-side')?.phase, 'running')
+    assert.equal(submit(26, [side('old-side', 'known', 26)], [['old-side', 'known']], [['new-side', 'old-side']], ['new-side']), false)
+    assert.equal(kernel.getActivityCheckpoint('old-side'), null, 'a late scoped result cannot reintroduce the retired member')
+    assert.equal(kernel.isProviderCached('codex'), false, 'targeted admission does not assert whole inventory coverage')
+  } finally { kernel.close() }
+  return 21
+}
+
 function checkProviderSourceIsolation(require) {
   const { createCompanionTaskKernel } = require('./companion/task-kernel.cjs')
   const { registry } = require('./companion/provider-registry.cjs')
@@ -3109,20 +3467,81 @@ export async function checkCompanionLifecycles(assetRoot) {
     sameSecond.expectRoot('completed', false, 1)
   } finally { sameSecond.kernel.close() }
   const mainWithPlan = { ...completedMain, branch: { planReady: true, planLifecycleRevision: 300 } }
+  const finalQuestion = fixture()
+  try {
+    const { createCodexDesktopRequestProjection } = require('./codex/desktop-request-projection.cjs')
+    let sequence = 40_000
+    const projection = createCodexDesktopRequestProjection({ record: value => value || {}, timestampMs: Number,
+      nextLiveEvidenceSequence: () => ++sequence })
+    const member = { taskKey: 'main', branchRef: 'root', turnRef: 'completed-question-turn', turnEpoch: 20_000,
+      turnStartedAtPrecisionMs: 1000, questionCardRef: 'final-question-item' }
+    const read = (value, nativeEvidence) => projection.codexDesktopProjectFallbackInteractions({
+      parentTaskKey: 'main', members: [value], nativeEvidence
+    })
+    const publish = (result, generation) => finalQuestion.publishRequests(result.interactions, result.interactionSets, generation)
+    const completed = { ...completedMain, unread: true, epoch: 20_000,
+      branch: { causalKey: member.turnRef, turnStartedAtPrecisionMs: 1000 } }
+    finalQuestion.publish([completed], 1, { hostEvidence: true })
+    const opened = read(member)
+    publish(opened, 2)
+    const waiting = finalQuestion.expectRoot('waiting-input', true, 1)
+    assert.equal(waiting.codexStatus.main.turn, 'turn-completed')
+    assert.equal(waiting.planImplementation, false)
+    assert.deepEqual(finalQuestion.kernel.getLatest().views.attentionKeys.input, ['main'])
+    const nativeEmptySet = { interactions: [], interactionSets: [{
+      revision: 'companion-interaction-evidence-v1', provider: 'codex', taskKey: 'main',
+      requestSetRevision: 50_000, complete: true
+    }] }
+    publish(read(member, nativeEmptySet), 3)
+    finalQuestion.expectRoot('waiting-input', true, 1)
+    const nextTurn = { ...member, turnRef: 'following-turn', turnEpoch: 20_003,
+      turnStartedAtPrecisionMs: 1, questionCardRef: '' }
+    publish(read(nextTurn), 4)
+    finalQuestion.expectRoot('waiting-input', true, 1)
+    const successor = { ...nextTurn, turnPredecessorRef: member.turnRef }
+    const closed = read(successor)
+    assert.equal(closed.interactions[0].interactionRef, opened.interactions[0].interactionRef)
+    assert.equal(closed.interactions[0].state, 'resolved')
+    finalQuestion.publish([{ ...completed, phase: 'running', epoch: 20_003, branch: {
+      causalKey: successor.turnRef, turnPredecessorKey: member.turnRef, turnStartedAtPrecisionMs: 1,
+      status: 'active', statusAuthority: 'app-server-live', activityEvidence: 'activity-event',
+      lastTurnStatus: 'inProgress', lastTurnEvidence: 'turn-started', activeEvidenceSequence: 40_010
+    } }], 5, { hostEvidence: true })
+    publish(closed, 6)
+    finalQuestion.expectRoot('running', true, 1)
+    assert.deepEqual(read(member).interactions, [], 'a replay of the older card cannot re-open it')
+    publish(opened, 7)
+    finalQuestion.expectRoot('running', true, 1)
+  } finally { finalQuestion.kernel.close() }
   const plannedWithSide = fixture()
   try {
-    const planned = { ...mainWithPlan, capabilities: ['open', 'archive', 'execute-plan'] }
+    const planned = { ...mainWithPlan, unread: true, capabilities: ['open', 'archive', 'execute-plan'] }
     const quietSide = { ...side, branch: {} }
     plannedWithSide.publish([planned, quietSide], 1, { hostEvidence: true })
-    assert.equal(plannedWithSide.expectRoot('waiting-input', false, 2).capabilities.executePlan, true)
-    plannedWithSide.publishRequests([{
+    const artifactOnly = plannedWithSide.expectRoot('completed', true, 2)
+    assert.equal(artifactOnly.planReady, true)
+    assert.equal(artifactOnly.capabilities.executePlan, true)
+    assert.deepEqual(plannedWithSide.kernel.getLatest().views.attentionKeys.input, [])
+    const implementationRequest = {
       revision: 'companion-interaction-evidence-v1', provider: 'codex', taskKey: 'main', branchRef: 'main',
       interactionRef: 'f'.repeat(32), kind: 'plan-implementation', state: 'opened', sequence: 400,
       turnEpoch: 300, requestSetRevision: 2, authority: 'provider-live', exact: true
-    }], [], 2)
+    }
+    plannedWithSide.publishRequests([implementationRequest], [], 2)
+    assert.equal(plannedWithSide.expectRoot('waiting-input', true, 2).planImplementation, true)
     plannedWithSide.publish([{ ...quietSide, branch: { submissionPending: true } }], 3, { hostEvidence: true })
-    assert.equal(plannedWithSide.expectRoot('waiting-input', false, 2).capabilities.executePlan, false,
+    assert.equal(plannedWithSide.expectRoot('waiting-input', true, 2).capabilities.executePlan, false,
       'the main Plan still displays but cannot bypass a current Side submission')
+    plannedWithSide.publishRequests([{ ...implementationRequest, state: 'resolved', sequence: 401, requestSetRevision: 4 }], [], 4)
+    assert.equal(plannedWithSide.expectRoot('completed', true, 2).planReady, true)
+    plannedWithSide.publishRequests([implementationRequest], [], 5)
+    plannedWithSide.expectRoot('completed', true, 2)
+    plannedWithSide.publish([{ ...planned, epoch: 2_000, branch: {
+      status: 'active', statusAuthority: 'app-server-live', activityEvidence: 'activity-event',
+      lastTurnStatus: 'inProgress', lastTurnEvidence: 'turn-started', activeEvidenceSequence: 2_010,
+      planLifecycleState: 'cleared', planLifecycleRevision: 2_000, planClearReason: 'execution-start'
+    } }], 6, { hostEvidence: true })
+    assert.equal(plannedWithSide.expectRoot('running', true, 2).planReady, false)
   } finally { plannedWithSide.kernel.close() }
   for (const [name, rootRow, childRow, phase, trusted = true] of [
     ['old ordinary interruption, read', completedMain, endedSide, 'completed'],
@@ -3142,8 +3561,10 @@ export async function checkCompanionLifecycles(assetRoot) {
     ['failed is not interrupted', completedMain, { ...endedSide, branch: { ...endedSide.branch, lastTurnStatus: 'failed' } }, 'stopped'],
     ['current Goal', completedMain, { ...endedSide, branch: { ...endedSide.branch, goalStatus: 'active' } }, 'running'],
     ['paused Goal', completedMain, { ...endedSide, branch: { ...endedSide.branch, goalStatus: 'paused' } }, 'stopped'],
-    ['root Plan with an interrupted ordinary Side', mainWithPlan, endedSide, 'stopped'],
-    ['root Plan with a closed machine interruption', mainWithPlan, { ...endedSide, closedMachineRun: true, branch: {} }, 'waiting-input'],
+    ['root Plan with an older ordinary Side interruption', mainWithPlan, endedSide, 'completed'],
+    ['root Plan with a current ordinary Side interruption', mainWithPlan,
+      { ...endedSide, branch: { ordinarySideInterruptedAt: 310 } }, 'stopped'],
+    ['root Plan with a closed machine interruption', mainWithPlan, { ...endedSide, closedMachineRun: true, branch: {} }, 'completed'],
     ['root Plan with a closed machine and a paused Goal', mainWithPlan,
       { ...endedSide, closedMachineRun: true, branch: { goalStatus: 'paused' } }, 'stopped'],
     ['current interaction', completedMain, { ...endedSide, phase: 'waiting-input', branch: { ...endedSide.branch, lastTurnStatus: 'interrupted' } }, 'waiting-input']
@@ -3161,19 +3582,30 @@ export async function checkCompanionLifecycles(assetRoot) {
   const settledRoot = { ...completedMain, epoch: 30_000, requestCoverage: true, unread: true, branch: clearedPlan }
   const groupStatus = fixture()
   try {
-    const rootWithHint = { ...settledRoot, branch: { ...clearedPlan, groupActivityConfirmed: true } }
-    const member = { ...side, epoch: 32_000, requestCoverage: true, branch: clearedPlan }
+    const rootWithHint = { ...settledRoot, branch: { idleConfirmed: true, groupActivityConfirmed: true } }
+    const member = { ...side, epoch: 32_000, requestCoverage: true, branch: { ...clearedPlan, planLifecycleRevision: 31_900 } }
     groupStatus.publish([rootWithHint], 1, { hostEvidence: true })
     assert.equal(groupStatus.expectRoot('running', true, 1).codexStatus.groupActivity, true,
       'a current group signal covers members not seen yet')
-    groupStatus.publish([rootWithHint, { ...member, branch: { ...clearedPlan, status: 'active',
+    groupStatus.publish([rootWithHint, { ...member, branch: { ...member.branch, status: 'active',
       statusAuthority: 'app-server-live', activityEvidence: 'activity-event',
       lastTurnStatus: 'inProgress', activeEvidenceSequence: 32_005 } }], 2, { hostEvidence: true })
     assert.equal(groupStatus.expectRoot('running', true, 2).capabilities.archive, false)
-    groupStatus.publish([rootWithHint, { ...member, branch: { ...clearedPlan, terminalEvidenceSequence: 32_010 } }],
+    groupStatus.publish([rootWithHint, { ...member, branch: {
+      idleConfirmed: true, planReady: true, planLifecycleRevision: 32_000, terminalEvidenceSequence: 32_010
+    } }],
       3, { hostEvidence: true })
-    assert.equal(groupStatus.expectRoot('completed', true, 2).codexStatus.groupActivity, false,
+    const completedWithSidePlan = groupStatus.expectRoot('completed', true, 2)
+    assert.equal(completedWithSidePlan.codexStatus.groupActivity, false,
       'a settled family retires the coarse group signal')
+    assert.deepEqual([completedWithSidePlan.codexStatus.sides[0].phase, completedWithSidePlan.codexStatus.sides[0].planReady],
+      ['completed', true])
+    groupStatus.publishRequests([{
+      revision: 'companion-interaction-evidence-v1', provider: 'codex', taskKey: 'side', branchRef: 'side',
+      interactionRef: 'e'.repeat(32), kind: 'plan-choice', state: 'opened', sequence: 32_011,
+      turnEpoch: 32_000, requestSetRevision: 4, authority: 'provider-live', exact: true
+    }], [], 4)
+    assert.equal(groupStatus.expectRoot('waiting-input', true, 2).codexStatus.sides[0].phase, 'waiting-input')
   } finally { groupStatus.kernel.close() }
   const oldMachine = { ...endedSide, epoch: 10_000, requestCoverage: true, closedMachineRun: false,
     machineRunCoverageCurrent: true, machineRunInterruptedAt: 20_000, branch: { ...clearedPlan, terminalAt: 20_000 } }
@@ -3242,7 +3674,7 @@ export async function checkCompanionLifecycles(assetRoot) {
   try {
     const planned = { ...completedMain, branch: { planReady: true, planLifecycleRevision: 300 } }
     supersededPlan.publish([planned], 1, { hostEvidence: true })
-    assert.equal(supersededPlan.expectRoot('waiting-input', false, 1).planReady, true)
+    assert.equal(supersededPlan.expectRoot('completed', false, 1).planReady, true)
     const interrupted = { ...completedMain, phase: 'stopped', epoch: 400 }
     supersededPlan.publish([interrupted], 2, { hostEvidence: true })
     const stopped = supersededPlan.expectRoot('stopped', false, 1)
@@ -3254,7 +3686,7 @@ export async function checkCompanionLifecycles(assetRoot) {
     assert.equal(supersededPlan.expectRoot('stopped', false, 1).planReady, false)
     const newPlan = { ...completedMain, epoch: 500, branch: { planReady: true, planLifecycleRevision: 500 } }
     supersededPlan.publish([newPlan], 4, { hostEvidence: true })
-    assert.equal(supersededPlan.expectRoot('waiting-input', false, 1).planLifecycleRevision, 500)
+    assert.equal(supersededPlan.expectRoot('completed', false, 1).planLifecycleRevision, 500)
   } finally { supersededPlan.kernel.close() }
   const coldMainStart = Date.parse('2026-11-18T19:24:58+08:00')
   const coldSideStart = Date.parse('2026-11-18T18:43:48+08:00')
@@ -3297,7 +3729,7 @@ export async function checkCompanionLifecycles(assetRoot) {
     [{ turnStartedAt: 0 }, {}, 'stopped'],
     [{ goalStatus: 'paused' }, {}, 'stopped'],
     [{ goalStatus: 'active' }, {}, 'running'],
-    [{ planReady: true }, {}, 'stopped']
+    [{ planReady: true }, {}, 'completed']
   ]) {
     const boundary = fixture()
     try {
@@ -3475,7 +3907,9 @@ export async function checkCompanionLifecycles(assetRoot) {
   checked += await checkColdRolloutAdmission(require, source, fixture)
   checked += await checkColdUnreadRefresh(require, source)
   checked += await checkVerifiedInventorySharing(require, source)
+  checked += await checkColdInventoryTopologyFence(require, source)
   checked += await checkHotTargetedInventory(require, source)
+  checked += checkRolloutFileWatcher(source)
   checked += checkNativePinStateWatcher(require)
   checked += await checkNativePinLifecycle(require, fixture)
   checked += checkPersistedTaskPreferences(require, source)
@@ -3486,6 +3920,7 @@ export async function checkCompanionLifecycles(assetRoot) {
   checked += checkMemberRequestWatermarks(source, fixture)
   checkRolloutInputResume(require, source, fixture, codexBranchObservationV7)
   checked += checkRolloutSideCompletion(require, source, fixture)
+  checked += checkCodexPartialInventoryUpdates(require, source)
   checked += checkProviderSourceIsolation(require)
   checked += await checkProviderPreflightIsolation(require, source)
   checkMemberTurnCompetition(require, fixture)
@@ -3516,7 +3951,7 @@ export async function checkCompanionLifecycles(assetRoot) {
       companionCodexOpenEntries: openEntries, codexActivityInventory: inventory, codexActivityThreadIds: new Map([[key, threadId]]),
       codexCausalDomain: 'source-identity', codexActivitySourceFingerprint: 'source-fingerprint',
       codexInventoryMembershipGeneration: 1, codexRetiredThreadIds: new Map(), codexThreadActions: new Map(),
-      codexTargetedInventoryFences: new Map(), codexInventoryRelationRevision: 0,
+      codexTargetedInventoryFences: new Map(), codexInventoryRelationRevision: 0, codexInventoryArchiveRevision: 0,
       codexWatchedRolloutCandidates: new Map(),
       codexDesktopBridge: null, codexThreadTurnStatusCache: new Map(), codexThreadGoalCache: new Map(), codexThreadGoalRefreshes: new Map(),
       codexClearDesktopOpenedRead() {}, invalidateCodexThreadList() {}, requestCodexPinReconciliation() {},

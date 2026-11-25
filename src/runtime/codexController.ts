@@ -3669,7 +3669,7 @@ export function createCodexController(options: CodexControllerOptions) {
     if (disposed) return result.outcome === (paused ? 'paused' : 'resumed')
     const succeeded = result.outcome === (paused ? 'paused' : 'resumed')
     options.setMessage(result.message || (succeeded
-      ? paused ? 'Plan 已暂停并移入已隐藏区' : 'Plan 已恢复到待输入列表'
+      ? paused ? 'Plan 已暂停并移入已隐藏区' : 'Plan 已恢复显示'
       : 'Plan 状态更新失败'))
     options.notify()
     return succeeded

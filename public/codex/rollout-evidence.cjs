@@ -33,6 +33,69 @@ const MAX_CALL_ID_LENGTH = 200
 const PLAN_EXECUTION_ITEM_TYPES = new Set(['filechange'])
 const PLAN_EXECUTION_EVENT_TYPES = new Set(['patch_apply_begin', 'patch_apply_end'])
 const PLAN_CLEAR_REASONS = new Set(['cancel', 'execution-start', 'archive', 'removal'])
+const QUESTION_CARD_MARKER = ':::question_for_user'
+const QUESTION_CARD_OPEN = /^ {0,3}:::question_for_user(?:\{(?:recommend=([1-9]\d*))?\})?[ \t]*$/
+const QUESTION_CARD_CLOSE = /^ {0,3}:::[ \t]*$/
+const MARKDOWN_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
+
+function hasCodexQuestionCard(value) {
+  if (typeof value !== 'string' || !value.includes(QUESTION_CARD_MARKER)) return false
+  let fence = ''
+  let card = null
+  let valid = false
+  for (const line of value.split(/\r?\n/)) {
+    const code = MARKDOWN_FENCE.exec(line)
+    if (fence) {
+      if (code?.[1][0] === fence[0] && code[1].length >= fence.length && !code[2].trim()) fence = ''
+      continue
+    }
+    if (code) {
+      if (card) return false
+      fence = code[1]
+      continue
+    }
+    if (/^ {0,3}:::question_for_user(?=[{\s]|$)/.test(line)) {
+      const opening = QUESTION_CARD_OPEN.exec(line)
+      if (!opening || card || valid) return false
+      card = { recommendation: Number(opening[1]) || 0, lines: [] }
+    } else if (card && QUESTION_CARD_CLOSE.test(line)) {
+      if (!validQuestionCardBody(card)) return false
+      valid = true
+      card = null
+    } else if (card) {
+      card.lines.push(line)
+    }
+  }
+  return valid && !card
+}
+
+function validQuestionCardBody({ recommendation, lines }) {
+  const body = lines.join('\n').trim()
+  if (!body) return false
+  const [prompt, ...rest] = body.split('\n')
+  const option = /^ {0,3}(\d{1,9})[.)][ \t]+\S/
+  const block = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|[-*+][ \t]+|:::)/
+  const heading = /^ {0,3}#{1,6}[ \t]+\S/.test(prompt)
+  if (!heading && (block.test(prompt) || option.test(prompt))) return false
+  let choices = 0
+  let paragraph = false
+  let needsParagraph = false
+  for (const line of rest) {
+    if (!line.trim()) {
+      if (paragraph) needsParagraph = true
+      continue
+    }
+    const match = option.exec(line)
+    if (match) {
+      if (!choices && Number(match[1]) !== 1) return false
+      choices++
+      continue
+    }
+    if (block.test(line) || choices && !/^(?: {3,}|\t)/.test(line) || needsParagraph) return false
+    paragraph = true
+  }
+  return recommendation <= choices
+}
 
 function codexRolloutTurnStart(timestampMs, ...values) {
   for (const value of values) {
@@ -195,6 +258,8 @@ function createCodexRolloutEvidence(dependencies = {}) {
     let turnOrdinal = 0
     let planTurnOrdinal = 0
     let planEstablishedAt = 0
+    let finalQuestion = null
+    let questionCard = null
     const completedPlanIds = new Set()
     const clearExecutedPlan = (source, payload) => {
       const executionAt = codexRolloutTimestampMs(source.timestamp, payload.started_at, payload.completed_at)
@@ -221,6 +286,8 @@ function createCodexRolloutEvidence(dependencies = {}) {
       if (source.type !== 'event_msg') continue
       const turnId = typeof payload.turn_id === 'string' && payload.turn_id.length <= MAX_CALL_ID_LENGTH ? payload.turn_id : ''
       if (payload.type === 'task_started') {
+        finalQuestion = null
+        questionCard = null
         turnOrdinal += 1
         currentTurnId = turnId
         const mode = String(payload.collaboration_mode_kind || payload.collaborationModeKind || '').toLowerCase()
@@ -235,11 +302,16 @@ function createCodexRolloutEvidence(dependencies = {}) {
         continue
       }
       if (payload.type === 'turn_aborted') {
+        if (turnId === finalQuestion?.turnId) finalQuestion = null
+        if (turnId === questionCard?.turnId) questionCard = null
         // Interruption is activity evidence only. It does not say whether the
         // native Plan card was cancelled, retained for later, or is about to
         // be executed. Keep an already-established lifecycle intact.
         turnMode = 'unknown'
         continue
+      }
+      if (payload.type === 'task_complete' && turnId === finalQuestion?.turnId) {
+        questionCard = finalQuestion
       }
       if (PLAN_EXECUTION_EVENT_TYPES.has(payload.type)) {
         if (!turnId || !currentTurnId || turnId === currentTurnId) clearExecutedPlan(source, payload)
@@ -248,7 +320,15 @@ function createCodexRolloutEvidence(dependencies = {}) {
       if (payload.type !== 'item_completed') continue
       const item = record(payload.item)
       const itemType = String(item.type || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-      if (itemType === 'plan') {
+      if (itemType === 'agentmessage' && turnId && (!currentTurnId || turnId === currentTurnId)) {
+        if (item.phase != null && item.phase !== 'final_answer') continue
+        finalQuestion = line.includes(QUESTION_CARD_MARKER) && !item.external_delivery && !item.externalDelivery
+          && typeof item.id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(item.id)
+          && Array.isArray(item.content) && hasCodexQuestionCard(item.content
+            .filter((part) => part?.type === 'Text' && typeof part.text === 'string')
+            .map((part) => part.text).join('\n'))
+          ? { turnId, itemId: item.id } : null
+      } else if (itemType === 'plan') {
         if (turnId && currentTurnId && turnId !== currentTurnId) continue
         // Repeated completion of one exact artifact is not a new Plan, including
         // replay after execution. Do not inspect/hash Plan prose for identity.
@@ -284,6 +364,7 @@ function createCodexRolloutEvidence(dependencies = {}) {
       planLifecycleRevision,
       planClearReason,
       planTurnId,
+      ...(questionCard ? { questionCard } : {}),
       turnMode
     }
   }

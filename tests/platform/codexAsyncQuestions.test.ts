@@ -6,12 +6,14 @@ const { selectCodexGoalEvidenceV7 } = require('../../preload/companion/evidence-
 const { createCodexDesktopShadow } = require('../../preload/codex/desktop-shadow.cjs')
 const { createCodexDesktopActivityResolution } = require('../../preload/codex/desktop-activity-resolution.cjs')
 const { createCodexDesktopRequestProjection } = require('../../preload/codex/desktop-request-projection.cjs')
+const { codexWaitingEvidenceVisible } = require('../../preload/codex/waiting-evidence.cjs').createCodexWaitingEvidence()
 
 function harness(shadowFactory = createCodexDesktopShadow) {
   let sequence = 0
   const deps = {
     record: (value: any) => value && typeof value === 'object' ? value : {},
     timestampMs: (value: any) => typeof value === 'number' ? value : 0,
+    waitingEvidenceVisible: codexWaitingEvidenceVisible,
     nextLiveEvidenceSequence: () => ++sequence
   }
   const projection = createCodexDesktopRequestProjection(deps)
@@ -62,6 +64,287 @@ describe('Desktop Plan request classification', () => {
     const { projection } = harness()
     expect(projection.codexDesktopRequestFlag({ type: 'plan', method: 'item/plan/completed' })).toBe('')
     expect(projection.codexDesktopRequestKind({ type: 'plan', method: 'item/plan/completed' })).toBe('')
+  })
+})
+
+describe('Desktop planImplementation Item lifecycle', () => {
+  const thread = 'private-member'
+  const turnId = 'private-turn'
+  const item = (completed: any = false, id = turnId) => ({
+    type: 'planImplementation', id: `implement-plan:${id}`, turnId: id, isCompleted: completed,
+    get planContent(): string { throw Error('Plan body was read') }
+  })
+  const request = (id = turnId, member = thread) => ({
+    method: 'item/plan/requestImplementation', id: `implement-plan:${id}`, params: {
+      threadId: member, turnId: id, get planContent(): string { throw Error('request body was read') }
+    }
+  })
+  const turn = (items: any[], fields = {}) => ({ turnId, turnStartedAtMs: 100, status: 'completed', items, ...fields })
+  const history = (turns: any[], status = 'exhausted', generation = 1) => ({
+    kind: 'canonical', history: { generation, islands: [{ newerBoundary: { status },
+      entries: turns.map(value => ({ value: `turn:${value.turnId}` })) }],
+      entitiesByKey: Object.fromEntries(turns.map(value => [`turn:${value.turnId}`, value])) }
+  })
+  function replay() {
+    const { shadow, projection } = harness()
+    const states = new Map()
+    const profile = { available: true, ownerClientId: 'owner-a', generation: 1 }
+    const bridge = {
+      shadows: new Map(), sideShadows: new Map(), streamGeneration: 1, streamProtocolFor: () => profile,
+      waitingStateFor(member: string) {
+        if (!states.has(member)) states.set(member, { resolvedRequestSequences: new Map(), requestHistory: [] })
+        return states.get(member)
+      },
+      recordInteractionTerminalOnShadow(current: any, value: any, interactionState: string, resolutionSequence: number) {
+        Object.assign(value, { interactionState, resolutionSequence })
+        current.interactionTerminals = [...(current.interactionTerminals || []).filter((old: any) => old.interactionRef !== value.interactionRef), { ...value }]
+      },
+      recordWaitingResolutionOnShadow() {},
+      resolveWaitingRequestObservations(member: string, values: any[], sequence: number, current: any) {
+        return projection.codexDesktopResolveWaitingRequestObservations(bridge, member, values, sequence, current, 400, codexWaitingEvidenceVisible)
+      }
+    }
+    function accept(member: string, current: any, previous: any) {
+      projection.codexDesktopRetainCausallyOpenRequests(current, previous, false, bridge, member)
+      const removed = projection.codexDesktopRemovedWaitingRequests(previous?.requests, current.requests)
+      bridge.resolveWaitingRequestObservations(member, removed, 0, current)
+      shadow.codexRememberDesktopRequestObservations(current.waitingState, current.requests)
+      current.ownerClientId = profile.ownerClientId
+      if (member === thread) bridge.shadows.set(member, current)
+      else { current.parentThreadId = thread; bridge.sideShadows.set(member, current) }
+      return current
+    }
+    function snapshot(fields: any, member = thread) {
+      const previous = bridge.shadows.get(member) || bridge.sideShadows.get(member)
+      const state = bridge.waitingStateFor(member)
+      const current = shadow.codexDesktopShadowFromSnapshot({ revision: (previous?.revision || 0) + 1, conversationState: {
+        id: member, threadRuntimeStatus: { type: 'idle', activeFlags: [] }, requests: [], turns: [], ...fields
+      } }, previous, state)
+      return accept(member, current, previous)
+    }
+    function patch(list: any[], member = thread) {
+      const current = bridge.shadows.get(member) || bridge.sideShadows.get(member)
+      const candidate = shadow.cloneCodexDesktopValue(current)
+      for (const op of list) if (!shadow.codexApplyDesktopShadowPatch(candidate, op)) return false
+      const previous = { ...current }
+      shadow.commitCodexDesktopShadowCandidate(current, candidate)
+      return accept(member, current, previous)
+    }
+    const evidence = () => projection.codexDesktopCompanionInteractionsForParent(bridge, thread, { key: 'root-task' }, () => 'side-ref', codexWaitingEvidenceVisible)?.interactions || []
+    return { bridge, profile, snapshot, patch, evidence, projection }
+  }
+
+  it.each(['turns', 'canonical'])('keeps the native identity across %s field patches, raw request indexes and stale replays', mode => {
+    const { snapshot, patch, evidence, projection, bridge } = replay()
+    const fields = (items: any[], requests: any[] = []) => mode === 'turns'
+      ? { turns: [turn(items)], requests } : { turnHistory: history([turn(items)]), requests }
+    const prefix = mode === 'turns' ? ['turns', 0] : ['turnHistory', 'history', 'entitiesByKey', `turn:${turnId}`]
+    const input = { method: 'item/tool/requestUserInput', id: 'private-input' }
+    const approval = { method: 'item/fileChange/requestApproval', id: 'private-approval' }
+    const first = snapshot(fields([], [input, approval]))
+    patch([{ op: 'add', path: [...prefix, 'items', 0], value: item() }])
+    const opened = evidence().find((value: any) => value.kind === 'plan-implementation')
+    expect(opened).toMatchObject({ state: 'opened', exact: true, turnEpoch: 100,
+      interactionRef: projection.codexDesktopRequestCorrelation(request()) })
+    const [itemOnly] = projection.codexDesktopOpenPlanItemRequests(first, bridge)
+    expect(itemOnly).toMatchObject({ planTurnRef: projection.codexDesktopRequestCorrelation({ id: turnId }), observedSequence: opened.sequence })
+    itemOnly.interactionState = 'cancelled'
+    expect(projection.codexDesktopOpenPlanItemRequests(first, bridge)[0].interactionState).toBeUndefined()
+    expect(first.requests.map((value: any) => projection.codexDesktopRequestKind(value))).toEqual(['user-input', 'approval'])
+    const both = patch([{ op: 'add', path: ['requests', 1], value: request() }])
+    expect(both.requests.map((value: any) => projection.codexDesktopRequestKind(value))).toEqual(['user-input', 'plan-implementation', 'approval'])
+    expect(both.requests[1].observedSequence).toBe(opened.sequence)
+    expect(projection.codexDesktopOpenPlanItemRequests(both, bridge)).toEqual([])
+    expect(evidence().filter((value: any) => value.interactionRef === opened.interactionRef)).toHaveLength(1)
+    const closed = patch([{ op: 'replace', path: [...prefix, 'items', 0, 'isCompleted'], value: true }])
+    expect(closed.requests[1]).toMatchObject({ interactionState: 'resolved', observedSequence: opened.sequence })
+    expect(projection.codexDesktopOpenPlanItemRequests(closed, bridge)).toEqual([])
+    expect(codexWaitingEvidenceVisible(closed.waitingState, 'waitingOnUserInput', opened.sequence)).toBe(false)
+    expect(evidence().map((value: any) => [value.kind, value.state])).toEqual([
+      ['user-input', 'opened'], ['plan-implementation', 'resolved'], ['approval', 'opened']
+    ])
+    patch([{ op: 'remove', path: ['requests', 1] }])
+    expect(first.requests.map((value: any) => projection.codexDesktopRequestKind(value))).toEqual(['user-input', 'approval'])
+    const again = snapshot(fields([item()], [request()]))
+    expect(again.requests[0].interactionState).toBe('resolved')
+    expect(evidence().filter((value: any) => value.kind === 'plan-implementation')).toEqual([
+      expect.objectContaining({ state: 'resolved', interactionRef: opened.interactionRef })])
+    expect(JSON.stringify([again, evidence()])).not.toContain('private-')
+  })
+
+  it('reuses a native-first sequence and keeps an externally closed native request closed on an Item-only replay', () => {
+    const { snapshot, bridge, evidence } = replay()
+    const first = snapshot({ requests: [request()] })
+    const sequence = first.requests[0].observedSequence
+    const both = snapshot({ requests: [request()], turns: [turn([item()])] })
+    expect(evidence()).toEqual([expect.objectContaining({ kind: 'plan-implementation', state: 'opened', sequence })])
+    bridge.resolveWaitingRequestObservations(thread, both.requests, 0, both)
+    snapshot({ turns: [] })
+    snapshot({ turns: [turn([item()])] })
+    expect(evidence().filter((value: any) => value.state === 'opened')).toEqual([])
+  })
+
+  it('accepts a completed-first snapshot and leaves the other member and other Plan request actionable', () => {
+    const { snapshot, evidence, patch } = replay()
+    snapshot({ turnHistory: history([turn([item(true)])]) })
+    snapshot({ requests: [request(), request('other-turn')] })
+    snapshot({ sideConversation: true, turns: [turn([item()])] }, 'side')
+    expect(evidence().map((value: any) => [value.branchRef, value.state])).toEqual([
+      ['root', 'resolved'], ['root', 'opened'], ['side-ref', 'opened']
+    ])
+    patch([{ op: 'replace', path: ['turns', 0, 'items', 0, 'isCompleted'], value: true }], 'side')
+    expect(evidence().filter((value: any) => value.state === 'opened')).toEqual([expect.objectContaining({ branchRef: 'root' })])
+  })
+
+  it('accepts a full saved Item only on its own member and completed latest Turn', () => {
+    for (const fields of [
+      { turns: [turn([{ type: 'plan', id: 'artifact' }])] },
+      { turns: [turn([{ type: 'planImplementation', turnId, isCompleted: false, id: 'wrong' }])] },
+      { turns: [turn([item(false, 'wrong-turn')])] },
+      { turns: [turn([item('false')])] },
+      { turns: [turn([item()], { status: 'inProgress' })] },
+      { turns: [turn([item()], { params: { threadId: 'wrong-member' } })] },
+      { id: 'wrong-member', turns: [turn([item()])] },
+      { turns: [turn([item()], { itemsView: 'notLoaded' })] },
+      { turns: [turn([item()], { itemsPagination: { hasLoadedOldest: false } })] },
+      { turnHistory: history([turn([item()])], 'available') },
+      { turnHistory: history([turn([item()])]), turns: [turn([], { turnId: 'next', status: 'inProgress', turnStartedAtMs: 200 })] }
+    ]) {
+      const { snapshot, evidence } = replay()
+      snapshot(fields)
+      expect(evidence()).toEqual([])
+    }
+  })
+
+  it('preserves a known pending Item on partial reads and rejects older history generations and older Turns', () => {
+    const { snapshot, evidence, patch, bridge, projection } = replay()
+    snapshot({ turnHistory: history([turn([item()])], 'exhausted', 3) })
+    const opened = evidence()[0]
+    const partial = snapshot({ turnHistory: history([turn([])], 'available', 3) })
+    expect(evidence()[0]).toMatchObject({ state: 'opened', sequence: opened.sequence })
+    expect(projection.codexDesktopOpenPlanItemRequests(partial, bridge)).toEqual([])
+    snapshot({ turnHistory: history([turn([item(true)])], 'exhausted', 2) })
+    expect(evidence()[0]).toMatchObject({ state: 'opened', sequence: opened.sequence })
+    const newer = turn([], { turnId: 'next', status: 'inProgress', turnStartedAtMs: 200 })
+    patch([{ op: 'add', path: ['turns', 0], value: newer }])
+    expect(evidence().filter((value: any) => value.state === 'opened')).toEqual([])
+    snapshot({ turnHistory: history([turn([item()])], 'exhausted', 4) })
+    expect(evidence().filter((value: any) => value.state === 'opened')).toEqual([])
+  })
+
+  it.each([
+    ['turns', 200], ['turns', 100], ['canonical', 100], ['canonical', 90]
+  ] as const)('retires only the superseded instance in %s order at time %i and suppresses its late native replay', (source, startedAt) => {
+    const { snapshot, patch, evidence, bridge, projection } = replay()
+    const approval = { method: 'item/fileChange/requestApproval', id: 'approval' }
+    const prior = turn([item()])
+    const initial = snapshot({ ...(source === 'turns' ? { turns: [prior] } : { turnHistory: history([prior]) }), requests: [approval] })
+    const opened = evidence().find((value: any) => value.kind === 'plan-implementation')
+    const previousRevision = initial.requestSetRevision
+    const next = turn([], { turnId: 'new-turn', status: 'inProgress', turnStartedAtMs: startedAt })
+    const current = patch([source === 'turns' ? { op: 'add', path: ['turns', 1], value: next }
+      : { op: 'replace', path: ['turnHistory'], value: history([prior, next]) }])
+    const closed = evidence().find((value: any) => value.interactionRef === opened.interactionRef)
+    expect(closed.state).toBe('resolved')
+    expect(closed.sequence).toBeGreaterThan(opened.sequence)
+    expect(closed.requestSetRevision).toBeGreaterThan(previousRevision)
+    expect(projection.codexDesktopOpenPlanItemRequests(current, bridge)).toEqual([])
+    const stale = patch([{ op: 'add', path: ['requests', 0], value: request() }])
+    expect(stale.requests[0]).toMatchObject({ interactionState: 'resolved', resolutionSequence: closed.sequence })
+    expect(evidence().filter((value: any) => value.state === 'opened')).toEqual([expect.objectContaining({ kind: 'approval' })])
+  })
+
+  it.each(['unrelated', 'conflicting'])('keeps an open Plan visible and withholds execution on %s Turn order until confirmed', ambiguity => {
+    const { snapshot, evidence, bridge, projection } = replay()
+    const prior = turn([item()])
+    const next = turn([], { turnId: 'next', status: 'inProgress' })
+    snapshot({ turns: [prior] })
+    const opened = evidence()[0]
+    const ambiguous = snapshot(ambiguity === 'unrelated' ? { turns: [next] }
+      : { turns: [prior, next], turnHistory: history([next, prior]) })
+    expect(evidence()).toEqual([expect.objectContaining({ interactionRef: opened.interactionRef, state: 'opened', sequence: opened.sequence })])
+    expect(projection.codexDesktopOpenPlanItemRequests(ambiguous, bridge)).toEqual([])
+    expect(ambiguous.waitingState.resolvedRequestSequences.has(opened.sequence)).toBe(false)
+    const ordered = snapshot({ turns: [next], turnHistory: history([prior, next]) })
+    const closed = evidence()[0]
+    expect(evidence()).toEqual([expect.objectContaining({ interactionRef: opened.interactionRef, state: 'resolved' })])
+    expect(closed.sequence).toBeGreaterThan(opened.sequence)
+    expect(ordered.waitingState.resolvedRequestSequences.get(opened.sequence)).toBe(closed.sequence)
+  })
+
+  it.each(['turns', 'canonical'])('settles the exact same-Turn Item when %s is complete and the other source has a longer pending view', completedSource => {
+    const { snapshot, evidence, bridge, projection } = replay()
+    const pending = turn([item(), { type: 'plan' }])
+    const completed = turn([item(true)])
+    snapshot({ turns: [pending] })
+    const opened = evidence()[0]
+    const current = snapshot({ turns: [completedSource === 'turns' ? completed : pending],
+      turnHistory: history([completedSource === 'canonical' ? completed : pending]), requests: [request()] })
+    expect(current.requests[0]).toMatchObject({ observedSequence: opened.sequence, interactionState: 'resolved' })
+    expect(projection.codexDesktopOpenPlanItemRequests(current, bridge)).toEqual([])
+    expect(evidence()).toEqual([expect.objectContaining({ interactionRef: opened.interactionRef, state: 'resolved' })])
+  })
+
+  it('requires the canonical entity key, Turn and Item to identify the same Turn before opening or settling', () => {
+    const { snapshot, patch, evidence, bridge, projection } = replay()
+    const key = `turn:${turnId}`
+    const mismatched = history([turn([item()], { turnId: 'other' })])
+    mismatched.history.entitiesByKey['turn:other'] = turn([item()])
+    snapshot({ turnHistory: mismatched })
+    expect(evidence()).toEqual([])
+    snapshot({ turnHistory: history([turn([item()])]) })
+    const opened = evidence()[0]
+    const wrong = patch([{ op: 'replace', path: ['turnHistory', 'history', 'entitiesByKey', key], value: turn([item(true)], { turnId: 'other' }) }])
+    expect(evidence()).toEqual([expect.objectContaining({ state: 'opened', sequence: opened.sequence })])
+    expect(projection.codexDesktopOpenPlanItemRequests(wrong, bridge)).toEqual([])
+    patch([{ op: 'replace', path: ['turnHistory', 'history', 'entitiesByKey', key, 'turnId'], value: turnId }])
+    expect(evidence()).toEqual([expect.objectContaining({ interactionRef: opened.interactionRef, state: 'resolved' })])
+  })
+
+  it('does not settle an ordinary question or a request with contradictory member or Turn bindings', () => {
+    for (const other of [{ method: 'item/tool/requestUserInput', id: `implement-plan:${turnId}` },
+      request(turnId, 'another-member'), { ...request(), params: { threadId: thread, turnId: 'different' } }]) {
+      const { snapshot, evidence, bridge, projection } = replay()
+      const state = snapshot({ turns: [turn([item(true)])], requests: [other] })
+      expect(evidence()).toEqual([expect.objectContaining({ state: 'opened' })])
+      expect(state.requests[0].interactionState).toBeUndefined()
+      expect(projection.codexDesktopOpenPlanItemRequests(state, bridge)).toEqual([])
+    }
+  })
+
+  it('keeps native replacement and removal indexes stable after retaining a previously seen Plan', () => {
+    const { snapshot, patch, evidence } = replay()
+    snapshot({ turns: [turn([item()])], requests: [request()] })
+    const held = patch([{ op: 'replace', path: ['requests'], value: [] }])
+    expect(held.requests[0].retainedWhileIdle).toBe(true)
+    const current = patch([
+      { op: 'add', path: ['requests', 0], value: { method: 'item/fileChange/requestApproval', id: 'first' } },
+      { op: 'add', path: ['requests', 1], value: request() },
+      { op: 'remove', path: ['requests', 0] }
+    ])
+    expect(current.requests).toHaveLength(1)
+    expect(current.requests[0].retainedWhileIdle).toBeUndefined()
+    expect(evidence()).toEqual([expect.objectContaining({ kind: 'plan-implementation', state: 'opened' })])
+  })
+
+  it('isolates a rejected patch batch and drops Item-only evidence after disconnect or owner generation change', () => {
+    const { snapshot, patch, evidence, bridge, profile, projection } = replay()
+    const current = snapshot({ turns: [turn([item()])] })
+    const opened = evidence()[0]
+    const changed = { op: 'replace', path: ['turns', 0, 'items', 0, 'isCompleted'], value: true }
+    expect(patch([changed, { op: 'remove', path: ['turns', 999] }])).toBe(false)
+    expect(evidence()[0]).toMatchObject({ state: 'opened', sequence: opened.sequence })
+    current.ownerDisconnectedAt = 1
+    expect(evidence()).toEqual([])
+    expect(projection.codexDesktopOpenPlanItemRequests(current, bridge)).toEqual([])
+    delete current.ownerDisconnectedAt
+    bridge.streamGeneration = 2
+    expect(evidence()).toEqual([])
+    expect(projection.codexDesktopOpenPlanItemRequests(current, bridge)).toEqual([])
+    profile.generation = 2
+    profile.ownerClientId = 'owner-b'
+    snapshot({ turnHistory: history([turn([item()])], 'available') })
+    expect(evidence()).toEqual([])
   })
 })
 

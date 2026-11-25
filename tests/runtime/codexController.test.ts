@@ -244,7 +244,7 @@ describe('Codex controller', () => {
       task.companionCapabilities!.resume = true
       dispatch.mockResolvedValue({ outcome: 'resumed' })
       expect(await controller.resumePlan(key, task.revisionAt)).toBe(true)
-      expect(setMessage).toHaveBeenLastCalledWith('Plan 已恢复到待输入列表')
+      expect(setMessage).toHaveBeenLastCalledWith('Plan 已恢复显示')
       task.companionCapabilities!.continueTask = false
       dispatch.mockClear()
       expect(await controller.continueTask(key, task.revisionAt)).toBe(false)

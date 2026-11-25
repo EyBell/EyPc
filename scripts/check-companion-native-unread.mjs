@@ -233,6 +233,7 @@ export function checkCompanionNativeUnread(assetRoot) {
     Set, crypto: { createHash }, codexCausalDomain: 'synthetic-source-domain',
     codexSubagentDiscovery: discovery, codexRuntimeDiagnostics: null,
     codexActivityInventory: new Map([[main, known]]), codexThreadTurnStatusCache: new Map(),
+    codexRolloutDecisionTrackers: new Map(), codexThreadPendingPlanCache: new Map(),
     codexSourceIdentityPublishes: new Map(),
     codexDesktopActivityResolution: resolution, codexDesktopRequestCorrelation: projector.codexDesktopRequestCorrelation,
     validCodexThreadId: value => [main, side].includes(value),
@@ -259,6 +260,16 @@ export function checkCompanionNativeUnread(assetRoot) {
   vm.runInContext(source.slice(projectionStart, projectionEnd), projectionContext)
   let branches = projectionContext.codexPrivateBranchEvidence(main, known).branches
   assert.equal(branches.find(value => value.branchKind === 'side').turnStartedAt, 0, 'unknown Side epoch cannot borrow the parent epoch')
+  const question = { turnId: 'final-question-turn', itemId: 'final-question-item' }
+  projectionContext.codexRolloutDecisionTrackers.set(main, { candidate: 'synthetic-rollout' })
+  projectionContext.codexThreadPendingPlanCache.set('synthetic-rollout', { questionCard: question })
+  known.connectorLastTurnId = question.turnId
+  assert.equal(projectionContext.codexPrivateBranchEvidence(main, known).branches.find(value => value.branchKind === 'main').questionCardRef,
+    projector.codexDesktopRequestCorrelation({ id: question.itemId }), 'the completed member admits its matching rollout card')
+  known.connectorLastTurnId = 'another-turn'
+  assert.equal(projectionContext.codexPrivateBranchEvidence(main, known).branches.find(value => value.branchKind === 'main').questionCardRef,
+    undefined, 'a previous Turn cannot supply a Question card')
+  delete known.connectorLastTurnId
   terminals.set(side, { lastTurnStatus: 'completed', lastTurnEvidence: 'snapshot-corroborated', turnStartedAt: 100,
     terminalAt: 120, terminalEvidenceSequence: 30, causalDomain: 'synthetic-source-domain' })
   member.suppressUncorroboratedActive = true
@@ -308,7 +319,7 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(queries[0].options.settleSnapshotTerminal, true)
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 0, '', false, true), true, 'exact inactive member terminal can settle at first successful read')
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 200, 'inProgress', true, true), false, 'idle cannot authorize an older member epoch')
-  return 45
+  return 47
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

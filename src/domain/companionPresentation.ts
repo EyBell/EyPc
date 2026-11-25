@@ -615,7 +615,7 @@ export function codexNativeMemberStatusText(status: import('./companionTaskPacka
       approval: '待审批', 'user-input': '待答', 'plan-choice': '待选择', 'plan-implementation': '待实施'
     })[kind])
     return [turn, goal, ...pending,
-      member.planReady && !pending.includes('待实施') ? 'Plan 待实施' : '',
+      member.planReady && !member.pending.includes('plan-implementation') ? 'Plan 已生成' : '',
       member.submissionPending ? '待发送确认' : '',
       member.threadStatus === 'systemError' ? '原生系统错误' : '',
       member.verifying && turn !== '待核验' ? '核验中' : ''

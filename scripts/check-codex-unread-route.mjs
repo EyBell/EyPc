@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 // codex-unread-linkage task card and architecture owner, reviewed with the diff.
 export function checkCodexUnreadRoute(root = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
   const owner = readFileSync(resolve(root, 'preload/codex/desktop-unread-evidence.cjs'))
-  const expected = '147b4773cc50a77831940654b62c66a84861bc87d16f60cb1b84512229d6f4fb'
+  const expected = '7588ded5641453c364e261882109eb8c00bc04ca574af62238c335ec214d100e'
   if (createHash('sha256').update(owner).digest('hex') !== expected) {
     throw new Error('Codex 未读通路基线改变：须审查原因、更新架构与验证记录后显式更新基线')
   }
@@ -18,6 +18,7 @@ export function checkCodexUnreadRoute(root = resolve(fileURLToPath(new URL('..',
       'completedInstance: codexDesktopCompletedInstance',
       'this.unreadRecovery?.snapshotAccepted(', 'this.unreadRecovery?.notificationAccepted(',
       'this.unreadRecovery?.bindingChanged(', 'this.unreadRecovery?.persistenceFailed(', 'this.unreadRecovery?.clear(this)',
+      'codexDesktopFalsyReadAction({', 'codexDesktopPersistedReadBinding(parsed, retainedBinding, requireOwner)',
       "this.unreadRecovery?.clear(this, process.platform === 'win32')"]) {
       if (!entry.includes(hook)) throw new Error(`${name}: Codex 未读通路缺少 ${hook}`)
     }

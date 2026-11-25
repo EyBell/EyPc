@@ -1,8 +1,37 @@
 # EyPc Project Status Hub
 
+<a id="core-version-check-build-261125"></a>
+
+- 2026-11-25 22:33:53.864，实载核心版本核对与未读静态基线对齐通过 `closeout`。当前产物为 `V7` / `host-1cba7a032dd778b17e3d` / `renderer-d21ced80ac84d428030c`，builtAt `2026-11-25T14:33:53.864Z`。静态未读通路和提交基线 107 对通过。uTools 仍实载 22:16:18.380。[现场、门禁与宿主限度](261114/codex-state-sync/delivery.md#native-question-card-261125)
+
+<a id="native-question-card-build-261125"></a>
+
+- 2026-11-25 22:12:11.007，Codex 最终回复的 Question 卡适配通过 `closeout`。产物为 `V7` / `host-1cba7a032dd778b17e3d` / `renderer-d21ced80ac84d428030c`，builtAt `2026-11-25T14:12:11.007Z`。构建输入、成功回执和 107 组预加载镜像一致。该构建由 22:33:53.864 版接替。[现场与回放](261114/codex-state-sync/delivery.md#native-question-card-261125)
+- 22:16:38.788，uTools 实载相同内容的 22:16:18.380 版。#2 已发布样本待输入，原生开新轮后 #36 转为进行中，距开轮 981 毫秒。#43 的 Float 可见行相符，Main 隐藏。[实载与同包回执](261114/codex-state-sync/delivery.md#native-question-card-261125)
+
+<a id="rollout-file-watch-build-261125"></a>
+
+- 2026-11-25 21:39:47.623，macOS 热态轮次文件监听通过 `closeout` 及随包生命周期门禁。候选为 `V7` / `host-9bbb8bccdc1b00e76bd8` / `renderer-576bc5ce0df0e0c41747`，builtAt `2026-11-25T13:39:47.623Z`。已核对当前输入、预加载镜像与产物身份。实载与同轮发包时延待统一脚本复验。[现场与回放](261114/codex-state-sync/delivery.md#rollout-file-watch-latency-261125)
+
+<a id="cold-inventory-retry-build-261125"></a>
+
+- 2026-11-25 21:18:25.834，Codex 冷库存重投影与归档防护通过 `closeout` 及随包生命周期门禁。产物为 `V7` / `host-8ebc4c3cb365eefb3e9f` / `renderer-54ea2854cc7c5b66f59a`，builtAt `2026-11-25T13:18:25.834Z`。相同内容的 21:24:22.929 版于 21:25:18.851 实载，大包恢复至 1,312 个根，Codex 来源仍降级。[现场与回放](261114/codex-state-sync/delivery.md#cold-inventory-retry-261125)
+
+<a id="targeted-membership-build-261125"></a>
+
+- 2026-11-25 18:54:20.841，局部库存下定向成员入包和暂存重放通过 `closeout`。候选为 `V7` / `host-05d74714df224cfdf02f` / `renderer-c7b3f0cb2788b54078de`，builtAt `2026-11-25T10:54:20.841Z`。包含 18:33 版的原生 Plan 续修。相同内容的 20:57:50.668 版于 21:04:08.523 实载，现场确认定向入包，冷库存仍未完成。[实载回执](261114/codex-state-sync/delivery.md#cold-inventory-retry-261125)
+
+<a id="native-plan-request-build-261125"></a>
+
+- 2026-11-25 18:33:53.488，Codex Plan 原生待办对齐通过 `closeout`。产物为 `V7` / `host-397a28d0fcd23b28cacf` / `renderer-65398227eac8144db528`，builtAt `2026-11-25T10:33:53.488Z`。同时包含局部库存下已准入成员的活动和未读续修。该候选由 18:54 版接替。[交付与回放](261114/codex-state-sync/delivery.md#native-plan-request-parity-261125)
+
+<a id="partial-inventory-live-build-261125"></a>
+
+- 2026-11-25 18:02:39.520，Codex 局部库存下的活动及未读同步通过 `closeout`。产物为 `V7` / `host-97844c41ef5f8ccdc345` / `renderer-cd0579f9c059af36430c`，builtAt `2026-11-25T10:02:39.520Z`。已核成员状态可独立更新，完整库存继续按原条件确认。该候选由 18:33 版接替。[样本、根因和回放](261114/codex-state-sync/delivery.md#partial-inventory-live-member-261125)
+
 <a id="astra-state-convergence-build-261125"></a>
 
-- 2026-11-25 17:04:35.543，Astra 状态同步五项实施通过 `closeout`。当前候选为 `V7` / `host-e06adec5e3e825edfb09` / `renderer-107230e5cadb7aaaa831`，builtAt `2026-11-25T09:04:35.543Z`。构建输入、成功回执和 107 组预加载镜像一致。统一脚本仍确认 uTools 实载 13:56:02.662 版。[交付与实机核验](261114/codex-state-sync/delivery.md#astra-state-convergence-261125)
+- 2026-11-25 17:04:35.543，Astra 状态同步五项实施通过 `closeout`。产物为 `V7` / `host-e06adec5e3e825edfb09` / `renderer-107230e5cadb7aaaa831`，builtAt `2026-11-25T09:04:35.543Z`。构建输入、成功回执和 107 组预加载镜像一致。uTools 于 17:43:05.828 实载。该候选由 18:02 版接替。[交付与实机核验](261114/codex-state-sync/delivery.md#astra-state-convergence-261125)
 
 <a id="native-startup-latency-build-261125"></a>
 

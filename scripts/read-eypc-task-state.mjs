@@ -1,10 +1,13 @@
 import http from 'node:http'
 import { once } from 'node:events'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import bridge from '../preload/companion/task-state-bridge.cjs'
+import { EYPC_CORE_VERSION } from './eypc-core-version.mjs'
 
+const require = createRequire(import.meta.url)
 const { SCHEMA, HOST, SNAPSHOT_PATH, WATCH_PATH, readTaskStateEndpoint } = bridge
 const MAX_FRAME_LENGTH = 16 * 1024 * 1024
 const HOST_TIMEOUT_MS = 5_000
@@ -26,11 +29,12 @@ const PENDING_REASONS = new Set(['endpoint-unavailable', 'host-timeout', 'host-d
 const args = process.argv.slice(2)
 const watch = args.includes('--watch')
 const summary = args.includes('--summary')
+const checkVersion = args.includes('--check-version')
 const checkTransitions = args.includes('--check-transitions')
 const directory = args.find((arg) => arg.startsWith('--dir='))?.slice('--dir='.length)
 const expectFile = args.find((arg) => arg.startsWith('--expect='))?.slice('--expect='.length)
 const replayFile = args.find((arg) => arg.startsWith('--replay='))?.slice('--replay='.length)
-const knownArg = (arg) => arg === '--watch' || arg === '--summary' || arg === '--check-transitions'
+const knownArg = (arg) => arg === '--watch' || arg === '--summary' || arg === '--check-version' || arg === '--check-transitions'
   || /^--dir=.+$/.test(arg) || /^--expect=.+$/.test(arg) || /^--replay=.+$/.test(arg)
 
 function summarize(event) {
@@ -159,6 +163,65 @@ async function observe(endpoint, readEndpoint, accept, streaming) {
   } finally {
     clearTimeout(idleTimer)
     response.destroy()
+  }
+}
+
+async function readSnapshot(readEndpoint) {
+  const endpoint = readEndpoint()
+  if (!endpoint) return { reason: 'endpoint-unavailable' }
+  let event
+  let reason
+  try {
+    reason = await observe(endpoint, readEndpoint, (snapshot) => { event = snapshot }, false)
+  } catch (error) {
+    reason = error.message === 'host-timeout' ? 'host-timeout' : 'host-disconnected'
+  }
+  return { event, reason }
+}
+
+function versionIdentity(value) {
+  const { coreVersion, hostAssetId, rendererAssetId, builtAt } = value ?? {}
+  if (![coreVersion, hostAssetId, rendererAssetId, builtAt].every((field) => typeof field === 'string' && field.trim())
+    || !Number.isFinite(Date.parse(builtAt))) return null
+  return { coreVersion, hostAssetId, rendererAssetId, builtAt }
+}
+
+function readVersionIdentity(read) {
+  try { return versionIdentity(read()) } catch { return null }
+}
+
+function compareVersions(left, right) {
+  if (!left || !right) return 'unverified'
+  if (left.coreVersion !== right.coreVersion || left.hostAssetId !== right.hostAssetId
+    || left.rendererAssetId !== right.rendererAssetId) return 'mismatch'
+  return left.builtAt === right.builtAt ? 'match' : 'same-content'
+}
+
+async function checkLoadedVersion(readEndpoint) {
+  const { event, reason } = await readSnapshot(readEndpoint)
+  const { status: hostStatus, handshakeAt, windowGeneration } = event?.host ?? {}
+  const loaded = hostStatus === 'host-loaded' && Number.isSafeInteger(handshakeAt) && handshakeAt > 0
+    ? versionIdentity(event.host) : null
+  const artifact = readVersionIdentity(() => require('../dist/runtime-identity.cjs'))
+  const lastSuccessfulBuild = readVersionIdentity(() => {
+    const state = JSON.parse(readFileSync(new URL('../.codex/build-hook/state.json', import.meta.url), 'utf8'))
+    return state.version === 1 ? state.success?.identity : null
+  })
+  const comparison = compareVersions(loaded, artifact)
+  return {
+    schema: 'eypc-core-version-check-v1',
+    status: loaded && artifact && artifact.coreVersion !== EYPC_CORE_VERSION ? 'mismatch' : comparison,
+    sourceCoreVersion: EYPC_CORE_VERSION,
+    host: event ? {
+      status: loaded ? 'host-loaded' : 'unconfirmed',
+      hostGeneration: event.hostGeneration,
+      windowGeneration: windowGeneration ?? null,
+      handshakeAt: handshakeAt ?? null,
+      identity: loaded
+    } : { status: 'unavailable', reason },
+    artifact,
+    lastSuccessfulBuild,
+    artifactVsLastSuccessfulBuild: compareVersions(artifact, lastSuccessfulBuild)
   }
 }
 
@@ -595,6 +658,7 @@ function pendingCheck(manifest, reason) {
 async function main() {
   if (args.includes('--help')) {
     process.stdout.write('Usage: node scripts/read-eypc-task-state.mjs [--watch] [--summary] [--dir=<endpoint-directory>]\n'
+      + '       node scripts/read-eypc-task-state.mjs --check-version [--dir=<endpoint-directory>]\n'
       + '       node scripts/read-eypc-task-state.mjs --check-transitions --expect=<manifest.json> [--replay=<events.ndjson>] [--dir=<endpoint-directory>]\n')
     return
   }
@@ -603,8 +667,19 @@ async function main() {
     process.exitCode = 2
     return
   }
+  if (checkVersion && (watch || summary || checkTransitions || expectFile || replayFile)) {
+    usageError('Use --check-version with optional --dir only.')
+    return
+  }
   if (checkTransitions && (watch || summary) || checkTransitions !== Boolean(expectFile) || Boolean(replayFile) !== checkTransitions && Boolean(replayFile)) {
     usageError('Use --check-transitions only with --expect and optional --replay or --dir.')
+    return
+  }
+  const readEndpoint = () => readTaskStateEndpoint(directory ? resolve(directory) : undefined)
+  if (checkVersion) {
+    const result = await checkLoadedVersion(readEndpoint)
+    await write(result)
+    if (!['match', 'same-content'].includes(result.status)) process.exitCode = 1
     return
   }
   if (checkTransitions) {
@@ -625,26 +700,12 @@ async function main() {
       if (result.verdict !== 'pass') process.exitCode = 1
       return
     }
-    const readLiveEndpoint = () => readTaskStateEndpoint(directory ? resolve(directory) : undefined)
-    const endpoint = readLiveEndpoint()
-    if (!endpoint) {
-      await write(pendingCheck(manifest, 'endpoint-unavailable'))
-      process.exitCode = 1
-      return
-    }
-    const events = []
-    let reason = 'host-disconnected'
-    try {
-      reason = await observe(endpoint, readLiveEndpoint, async (event) => { events.push(event) }, false)
-    } catch (error) {
-      reason = error.message === 'host-timeout' ? 'host-timeout' : 'host-disconnected'
-    }
-    const result = events.length ? evaluateTransitions(manifest, events) : pendingCheck(manifest, reason)
+    const { event, reason } = await readSnapshot(readEndpoint)
+    const result = event ? evaluateTransitions(manifest, [event]) : pendingCheck(manifest, reason)
     await write(result)
     if (result.verdict !== 'pass') process.exitCode = 1
     return
   }
-  const readEndpoint = () => readTaskStateEndpoint(directory ? resolve(directory) : undefined)
   let lastFailure = ''
   let lastEvent
   do {

@@ -87,12 +87,12 @@ function codexTurnCandidateV7(branch, turn, live, flags) {
     turnStartedAtPrecisionMs: turn.turnStartedAtPrecisionMs,
     terminalAtPrecisionMs: turn.terminalAtPrecisionMs,
     ...(turn === branch && branch.ordinarySideInterruptedAt > 0 && branch.branchKind === 'side'
-      && terminalKind === 'turn-interrupted' && exactTerminal && !flags.length && !branch.planReady && !branch.planImplementationOnly
+      && terminalKind === 'turn-interrupted' && exactTerminal && !flags.length && !branch.planImplementationOnly
       && branch.goalFreshness === 'fresh' && ['none', 'complete'].includes(branch.goalStatus)
       ? { ordinarySideInterruptedAt: integer(branch.ordinarySideInterruptedAt) } : {}),
     ...(inventoryTerminal && branch.branchKind === 'main' && branch.hostExternal !== true && terminalKind === 'turn-completed'
       && turn.turnStartedAtSource === 'inventory' && turn.turnRef && startedAt > 0
-      && !flags.length && !branch.planReady && !branch.planImplementationOnly
+      && !flags.length && !branch.planImplementationOnly
       && branch.goalStatus === 'none' && branch.goalFreshness === 'fresh' ? { inventoryRootCompletion: true } : {})
   }
 }

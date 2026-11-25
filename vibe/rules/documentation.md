@@ -79,7 +79,7 @@ EyPc **核心版本**（当前架构代际，如 `EyPc V7` / `V7`）由 [eypc-co
 
 ### Agent 主动提醒
 
-每轮实现/修复/重构收尾须先完成上述前置检查。检查器尚未回传成功事实时，必须说明构建及版本真值未验或具体失败；不编造 `core / host / renderer / builtAt`。成功后才对照该四元组、同步真值并提醒 uTools 重载，最终回复如实区分 `source=closeout`、`manual` 与 `hook`；构建通过不写成宿主已加载。本条记录用户选定流程，不证明本轮 CLI、构建或宿主验收已通过。
+每轮实现/修复/重构收尾须先完成上述前置检查。检查器尚未回传成功事实时，必须说明构建及版本真值未验或具体失败；不编造 `core / host / renderer / builtAt`。成功后才对照该四元组、同步真值并提醒 uTools 重载，最终回复如实区分 `source=closeout`、`manual` 与 `hook`；构建通过不写成宿主已加载。实际是否加载见[运行适配器实载核对](project-runtime.md#loaded-core-version-check)。本条记录用户选定流程，不证明本轮 CLI、构建或宿主验收已通过。
 
 ## 文档关联 SQLite 试点
 

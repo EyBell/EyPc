@@ -134,6 +134,10 @@ function createCodexDesktopShadow(dependencies = {}) {
     const item = record(value)
     const itemRef = typeof item.id === 'string'
       ? projectedRequest({ id: item.id }).correlation : ''
+    if (item.type === 'planImplementation') return {
+      type: item.type, itemRef, ...planItemTurn(item.turnId),
+      isCompleted: typeof item.isCompleted === 'boolean' ? item.isCompleted : null
+    }
     const count = item.type === 'agentMessage' && Array.isArray(item.questions)
       ? Math.min(item.questions.length, 100) : 0
     const answered = []
@@ -172,6 +176,9 @@ function createCodexDesktopShadow(dependencies = {}) {
     const turn = record(value)
     return {
       turnRef: typeof turn.turnId === 'string' && turn.turnId.length > 0 ? projectedRequest({ id: turn.turnId }).correlation : '',
+      ...(turn.params?.threadId ? { memberRef: historyRef(turn.params.threadId) } : {}),
+      ...(turn.itemsView != null ? { itemsView: turn.itemsView === 'full' ? 'full' : 'partial' } : {}),
+      ...(turn.itemsPagination?.hasLoadedOldest === false ? { partialItems: true } : {}),
       status: ['inProgress', 'completed', 'failed', 'interrupted'].includes(turn.status) ? turn.status : '',
       startedAt: timestampMs(turn.turnStartedAtMs),
       items: Array.isArray(turn.items) ? turn.items.map(asyncItem) : []
@@ -180,6 +187,12 @@ function createCodexDesktopShadow(dependencies = {}) {
 
   function historyRef(value) {
     return typeof value === 'string' ? projectedRequest({ id: value }).correlation || '' : ''
+  }
+
+  function planItemTurn(turnId) {
+    return typeof turnId === 'string' && turnId.length > 0 && turnId.length <= 512
+      ? { turnRef: historyRef(turnId), expectedRef: historyRef(`implement-plan:${turnId}`) }
+      : { turnRef: '', expectedRef: '' }
   }
 
   function historyIslands(value) {
@@ -194,11 +207,18 @@ function createCodexDesktopShadow(dependencies = {}) {
     history.latestComplete = history.islands.at(-1)?.latestComplete === true
   }
 
+  function canonicalTurn(key, value) {
+    const turn = asyncTurn(value)
+    const entityId = key.startsWith('turn:') ? key.slice(5) : ''
+    turn.entityTurnRef = entityId && (entityId === value?.turnId ? turn.turnRef : historyRef(entityId))
+    return turn
+  }
+
   function historyEntities(value) {
     const entities = {}
     for (const [key, turn] of Object.entries(record(value))) {
       const ref = historyRef(key)
-      if (ref) entities[ref] = asyncTurn(turn)
+      if (ref) entities[ref] = canonicalTurn(key, turn)
     }
     return entities
   }
@@ -206,7 +226,8 @@ function createCodexDesktopShadow(dependencies = {}) {
   function asyncHistory(value) {
     if (value?.kind !== 'canonical') return null
     const history = record(value.history)
-    const projected = { islands: historyIslands(history.islands), entities: historyEntities(history.entitiesByKey) }
+    const projected = { islands: historyIslands(history.islands), entities: historyEntities(history.entitiesByKey),
+      generation: Number.isSafeInteger(history.generation) && history.generation >= 0 ? history.generation : null }
     refreshHistoryOrder(projected)
     return projected
   }
@@ -334,6 +355,20 @@ function createCodexDesktopShadow(dependencies = {}) {
       turns[ti].startedAt = op === 'remove' ? 0 : timestampMs(source.value)
       return true
     }
+    if (p[2] === 'itemsView' && p.length === 3) {
+      turns[ti].itemsView = op === 'remove' ? undefined : source.value === 'full' ? 'full' : 'partial'
+      return true
+    }
+    if (p[2] === 'itemsPagination') {
+      if (p.length === 3) turns[ti].partialItems = op !== 'remove' && source.value?.hasLoadedOldest === false
+      else if (p.length === 4 && p[3] === 'hasLoadedOldest') turns[ti].partialItems = op !== 'remove' && source.value === false
+      else return 'ignored'
+      return true
+    }
+    if (p[2] === 'params' && (p.length === 3 || p.length === 4 && p[3] === 'threadId')) {
+      turns[ti].memberRef = op === 'remove' ? '' : historyRef(p.length === 3 ? source.value?.threadId : source.value)
+      return true
+    }
     if (p[2] !== 'items') return 'ignored'
     if (p.length === 3) {
       if (op !== 'remove' && !Array.isArray(source.value)) return false
@@ -356,6 +391,13 @@ function createCodexDesktopShadow(dependencies = {}) {
       return true
     }
     if (field === 'type') return false
+    if (item.type === 'planImplementation') {
+      if (p.length !== 5) return 'ignored'
+      if (field === 'isCompleted') item.isCompleted = op !== 'remove' && typeof source.value === 'boolean' ? source.value : null
+      else if (field === 'turnId') Object.assign(item, planItemTurn(op === 'remove' ? null : source.value))
+      else return 'ignored'
+      return true
+    }
     if (field === 'questions' && item.type === 'agentMessage') {
       if (p.length === 5) {
         if (op !== 'remove' && !Array.isArray(source.value)) return false
@@ -399,6 +441,11 @@ function createCodexDesktopShadow(dependencies = {}) {
     if (p[1] !== 'history') return 'ignored'
     if (p.length === 2) {
       shadow.asyncCanonical = source.op === 'remove' ? null : asyncHistory({ kind: 'canonical', history: source.value })
+      return true
+    }
+    if (p[2] === 'generation' && p.length === 3 && shadow.asyncCanonical) {
+      if (source.op !== 'remove' && (!Number.isSafeInteger(source.value) || source.value < 0)) return false
+      shadow.asyncCanonical.generation = source.op === 'remove' ? null : source.value
       return true
     }
     if (!['entitiesByKey', 'islands'].includes(p[2])) return 'ignored'
@@ -451,7 +498,7 @@ function createCodexDesktopShadow(dependencies = {}) {
     if (!ref) return false
     if (p.length === 4) {
       if (source.op === 'remove') delete shadow.asyncCanonical.entities[ref]
-      else shadow.asyncCanonical.entities[ref] = asyncTurn(source.value)
+      else shadow.asyncCanonical.entities[ref] = canonicalTurn(p[3], source.value)
       return true
     }
     const turn = shadow.asyncCanonical.entities[ref]
@@ -500,6 +547,7 @@ function createCodexDesktopShadow(dependencies = {}) {
     )
     const shadow = {
       revision,
+      ...(state.id ? { memberRef: historyRef(state.id) } : {}),
       activityRevision: revision,
       activityEvidence: 'initial-snapshot',
       runtime,
@@ -579,7 +627,8 @@ function createCodexDesktopShadow(dependencies = {}) {
       return true
     }
     const asyncRequests = (shadow.requests || []).filter((request) => request.asyncQuestion)
-    shadow.requests = (shadow.requests || []).filter((request) => !request.asyncQuestion)
+    shadow.requests = (shadow.requests || []).filter((request) => !request.asyncQuestion
+      && !(source.path[0] === 'requests' && request.planTurnRef && request.retainedWhileIdle))
     const applied = applyNativePatch(shadow, patch)
     shadow.requests.push(...asyncRequests)
     return applied

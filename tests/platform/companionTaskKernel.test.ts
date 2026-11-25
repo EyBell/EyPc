@@ -747,16 +747,15 @@ describe('CompanionTaskKernel', () => {
       persistPlanPause: (value: Record<string, unknown>) => { persisted.push(value); return true },
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 }
     })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 })
-    const sync = (value: Record<string, unknown>, revision: number) => kernel.syncPackage({
-      lease: receipt.lease,
-      draft: draft([task(value)], revision, { providers: { codex: true, claude: false } })
-    })
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 })
+    const sync = (value: Record<string, unknown>, revision: number) => kernel.publishEvidence(
+      draft([task(value)], revision, { providers: { codex: true, claude: false } })
+    )
 
     expect(sync({ turnMode: 'plan', phase: 'running', planReady: false }, 1).tasks[0]).toMatchObject({ phase: 'running', planReady: false })
     const unreadPlan = sync({
       turnMode: 'plan',
-      phase: 'completed',
+      phase: 'waiting-input',
       planImplementation: true,
       planReady: true,
       planLifecycleRevision: 200,
@@ -769,7 +768,7 @@ describe('CompanionTaskKernel', () => {
 
     const ready = sync({
       turnMode: 'plan',
-      phase: 'completed',
+      phase: 'waiting-input',
       planImplementation: true,
       planReady: true,
       planLifecycleRevision: 200,
@@ -828,7 +827,7 @@ describe('CompanionTaskKernel', () => {
     })
   })
 
-  it('keeps ordinary waiting ahead while retaining Plan controls when the Implement Plan request is absent', () => {
+  it('blocks Plan execution during an ordinary wait and allows the current implementation confirmation', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
@@ -845,7 +844,7 @@ describe('CompanionTaskKernel', () => {
     })
     expect(ordinaryWait.tasks[0]).toMatchObject({
       cycleTier: 'attention',
-      capabilities: { pause: true, resume: false, executePlan: true }
+      capabilities: { pause: true, resume: false, executePlan: false }
     })
 
     const exactPlanWait = kernel.publishEvidence(draft([task({
@@ -882,9 +881,9 @@ describe('CompanionTaskKernel', () => {
     })
 
     expect(current.tasks[0]).toMatchObject({
-      phase: 'waiting-input',
-      dynamicGroup: 'input',
-      cycleTier: 'attention',
+      phase: 'completed',
+      dynamicGroup: 'completed',
+      cycleTier: 'none',
       planReady: true,
       capabilities: { pause: true, resume: false, executePlan: true }
     })
@@ -959,10 +958,10 @@ describe('CompanionTaskKernel', () => {
   })
 
   it.each([
-    { turnStartedAt: 200, terminalAt: 260, expected: 'waiting-input' },
-    { turnStartedAt: 300, terminalAt: 360, expected: 'completed' },
-    { turnStartedAt: 0, terminalAt: 360, expected: 'completed' }
-  ])('bounds Plan waiting by the latest Turn without consuming its artifact: %j', ({ turnStartedAt, terminalAt, expected }) => {
+    { turnStartedAt: 200, terminalAt: 260, currentPlan: true },
+    { turnStartedAt: 300, terminalAt: 360, currentPlan: false },
+    { turnStartedAt: 0, terminalAt: 360, currentPlan: false }
+  ])('preserves completed state and the Plan artifact across later Turn evidence: %j', ({ turnStartedAt, terminalAt, currentPlan }) => {
     const kernel = createCompanionTaskKernel()
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     const current = kernel.syncPackage({ lease: receipt.lease, draft: draft([task({
@@ -970,50 +969,51 @@ describe('CompanionTaskKernel', () => {
       turnStartedAt, terminalAt, statusEnteredAt: terminalAt, phaseRevision: terminalAt,
       unreadKnown: true, unread: true
     })], 1, { providers: { codex: true, claude: false } }) })
-    expect(current.tasks[0]).toMatchObject({ phase: expected, planReady: true,
-      planLifecycleRevision: 200, unread: true, planImplementation: false })
+    expect(current.tasks[0]).toMatchObject({ phase: 'completed', planReady: currentPlan,
+      planArtifactState: 'available', planLifecycleRevision: 200, unread: true, planImplementation: false })
   })
 
-  it('returns a consumed Plan to latest completion and waits again only for a new Plan', () => {
+  it('keeps artifact creation, consumption and replacement independent from completed state', () => {
     const kernel = createCompanionTaskKernel()
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     const sync = (value: Record<string, unknown>, revision: number) => kernel.syncPackage({
       lease: receipt.lease, draft: draft([task({ phase: 'completed', unreadKnown: true, unread: true, ...value })],
         revision, { providers: { codex: true, claude: false } })
     })
-    expect(sync({ planReady: true, planLifecycleRevision: 200 }, 1).tasks[0].phase).toBe('waiting-input')
+    expect(sync({ planReady: true, planLifecycleRevision: 200 }, 1).tasks[0].phase).toBe('completed')
     expect(sync({ planLifecycleState: 'cleared', planClearReason: 'execution-start', planLifecycleRevision: 300,
       phaseRevision: 300, statusEnteredAt: 300 }, 2).tasks[0]).toMatchObject({ phase: 'completed', unread: true, planReady: false })
     expect(sync({ planReady: true, planLifecycleRevision: 400, turnMode: 'plan', phaseRevision: 400,
-      statusEnteredAt: 400 }, 3).tasks[0]).toMatchObject({ phase: 'waiting-input', unread: true, planReady: true })
+      statusEnteredAt: 400 }, 3).tasks[0]).toMatchObject({ phase: 'completed', unread: true, planReady: true })
   })
 
-  it.each([false, true])('projects a new unexecuted Plan as waiting-input without clearing unread=%s or inventing interaction', async (unread) => {
+  it.each([false, true])('preserves unread=%s and Plan actions without a current request', async (unread) => {
     const kernel = createCompanionTaskKernel({
       now: () => 10_000_000,
       persistPlanPause: () => true,
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 }
     })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 })
-    const current = kernel.syncPackage({ lease: receipt.lease, draft: draft([task({
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 })
+    const current = kernel.publishEvidence(draft([task({
       phase: 'completed', turnMode: 'plan', planReady: true, planLifecycleRevision: 240,
       unreadKnown: true, unread,
       capabilities: { open: true, archive: true, executePlan: true }
-    })], 1, { providers: { codex: true, claude: false } }) })
-    expect(current.tasks[0]).toMatchObject({ phase: 'waiting-input', unread, unreadKnown: true,
+    })], 1, { providers: { codex: true, claude: false } }))
+    expect(current.tasks[0]).toMatchObject({ phase: 'completed', unread, unreadKnown: true,
       planImplementation: false, planReady: true, dynamicEligible: false,
-      dynamicGroup: 'input', cycleTier: 'attention', capabilities: { pause: true, executePlan: true } })
-    expect(current.views).toMatchObject({ groups: { input: ['codex-a'], stopped: [], unread: [] },
-      counts: { input: 1, unread: 0 }, cycleKeys: ['codex-a'], attentionKeys: { input: ['codex-a'] } })
+      dynamicGroup: unread ? 'unread' : 'none', cycleTier: unread ? 'unread' : 'none',
+      capabilities: { pause: true, executePlan: true } })
+    expect(current.views).toMatchObject({ groups: { input: [], stopped: [], unread: unread ? ['codex-a'] : [] },
+      counts: { input: 0, unread: Number(unread) }, cycleKeys: unread ? ['codex-a'] : [], attentionKeys: { input: [] } })
     await expect(kernel.dispatch({ action: 'pause', key: 'codex-a', planLifecycleRevision: 240 }))
       .resolves.toMatchObject({ outcome: 'paused' })
     expect(kernel.getLatest().views).toMatchObject({ pausedKeys: ['codex-a'], cycleKeys: [], counts: { input: 0 } })
     await expect(kernel.dispatch({ action: 'resume', key: 'codex-a', planLifecycleRevision: 240 }))
       .resolves.toMatchObject({ outcome: 'resumed' })
-    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'waiting-input', unread, planImplementation: false })
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'completed', unread, planImplementation: false })
   })
 
-  it('maps an artifact-only completed Plan to waiting without synthesizing an interaction', () => {
+  it('shows waiting only while the matching Plan request is open', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
@@ -1030,12 +1030,12 @@ describe('CompanionTaskKernel', () => {
       })], 1, { providers: { codex: true, claude: false } })
     })
     expect(artifactOnly.tasks[0]).toMatchObject({
-      phase: 'waiting-input',
+      phase: 'completed',
       planImplementation: false,
       planArtifactState: 'available',
       planArtifactActionable: true
     })
-    expect(artifactOnly.views).toMatchObject({ groups: { input: ['codex-a'], stopped: [] }, counts: { input: 1 } })
+    expect(artifactOnly.views).toMatchObject({ groups: { input: [], completed: ['codex-a'], stopped: [] }, counts: { input: 0 } })
 
     const planChoice = kernel.publishEvidence(draft([task({
       phase: 'completed',
@@ -1060,7 +1060,8 @@ describe('CompanionTaskKernel', () => {
       unread: true,
       planImplementation: true,
       cycleTier: 'attention',
-      dynamicGroup: 'input'
+      dynamicGroup: 'input',
+      capabilities: { executePlan: false }
     })
     expect(planChoice.views).toMatchObject({ groups: { input: ['codex-a'], unread: [] }, counts: { input: 1, unread: 0 } })
 
@@ -1083,7 +1084,7 @@ describe('CompanionTaskKernel', () => {
         requestSetRevision: 102
       })]
     }))
-    expect(resolved.tasks[0]).toMatchObject({ phase: 'waiting-input', unread: true, planImplementation: false, dynamicGroup: 'input' })
+    expect(resolved.tasks[0]).toMatchObject({ phase: 'completed', unread: true, planImplementation: false, dynamicGroup: 'unread' })
   })
 
   it('moves directly between running and every exact current interaction without publishing completed-unread', () => {
@@ -5974,7 +5975,7 @@ describe('Codex verified continuation and closed-machine history', () => {
     ], { relations: relation })
     expect(kernel.getLatest().tasks).toHaveLength(1)
     expect(kernel.getLatest().tasks[0]).toMatchObject({
-      phase: 'waiting-input', planReady: true, topology: { memberCount: 2, liveCount: 0 }
+      phase: 'completed', planReady: true, topology: { memberCount: 2, liveCount: 0 }
     })
     kernel.close()
 
@@ -6134,7 +6135,7 @@ describe('stopped dynamic window exemption', () => {
     const config = { enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 72 }
     const kernel = createCompanionTaskKernel({ now: () => now, initialConfiguration: config, persistPlanPause: () => true })
     const { lease } = kernel.attach(config)
-    kernel.syncPackage({ lease, draft: draft([task({ phase: 'stopped', unread: false, ...extra })], 1, { providers: config.providers }) })
+    kernel.publishEvidence(draft([task({ phase: 'stopped', unread: false, ...extra })], 1, { providers: config.providers }))
     return { kernel, lease }
   }
   it('keeps an old interrupted task visible and cycle reachable without changing its phase or eligibility', () => {
