@@ -509,7 +509,7 @@ function createCompanionTaskActions(dependencies = {}) {
   function continueTask(input = {}) {
     const startedAt = now()
     const target = resolveTarget(input)
-    if (disposed || !enabled || !ready || !target || !target.canContinueTask
+    if (disposed || !enabled || (!ready && input.rootCoverage !== true) || !target || !target.canContinueTask
       || Number(input.revisionAt) !== target.revisionAt) {
       return Promise.resolve({ outcome: 'failed', errorCode: 'state-changed', message: '任务状态已变化，当前不能继续' })
     }

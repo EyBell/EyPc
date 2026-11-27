@@ -1916,20 +1916,24 @@ function createCodexFloatBridge(dependencies = {}) {
           const expectedGroup = CODEX_FLOAT_TASK_GROUPS.has(task.dynamicGroup) ? task.dynamicGroup : ''
           const observedPinSource = row.pinSource === 'none' || row.pinSource === 'local' || row.pinSource === 'native' ? row.pinSource : null
           const observedPinned = typeof row.pinned === 'boolean' ? row.pinned : null
+          const observedContinue = typeof row.continueTask === 'boolean' ? row.continueTask : null
+          const expectedContinue = task.capabilities?.continueTask === true
           const expectedPin = expectedVisiblePin(task)
           const pinMismatch = Boolean(expectedPin) && (observedPinSource !== null || observedPinned !== null) && (
             (observedPinSource !== null && observedPinSource !== expectedPin.pinSource)
             || (observedPinned !== null && observedPinned !== expectedPin.pinned)
           )
+          const continueMismatch = observedContinue !== null && observedContinue !== expectedContinue
           const rowDetails = {
             ...(observedGroup ? { group: observedGroup, expectedGroup } : {}),
             ...(observedPinSource === null ? {} : { pinSource: observedPinSource }),
             ...(expectedPin ? { expectedPinSource: expectedPin.pinSource, expectedPinned: expectedPin.pinned } : {}),
-            ...(observedPinned === null ? {} : { pinned: observedPinned })
+            ...(observedPinned === null ? {} : { pinned: observedPinned }),
+            ...(observedContinue === null ? {} : { continueTask: observedContinue, expectedContinueTask: expectedContinue })
           }
-          if (observedRevision !== task.semanticRevision || observedPhase !== task.phase || pinMismatch
+          if (observedRevision !== task.semanticRevision || observedPhase !== task.phase || pinMismatch || continueMismatch
             || observedGroup && observedGroup !== expectedGroup) {
-            const signature = `${observedPhase}:${observedRevision}:${observedGroup}:${observedPinSource}:${observedPinned}`
+            const signature = `${observedPhase}:${observedRevision}:${observedGroup}:${observedPinSource}:${observedPinned}:${observedContinue}`
             if (codexFloatSemanticMismatches.get(key) === signature) continue
             codexFloatSemanticMismatches.set(key, signature)
             recordTaskPresentation({
@@ -1944,10 +1948,14 @@ function createCodexFloatBridge(dependencies = {}) {
             })
             continue
           }
-          if (expectedPin && (observedPinSource === null || observedPinned === null)) {
-            if (pending.partial) continue
+          const pinPending = Boolean(expectedPin) && (observedPinSource === null || observedPinned === null)
+          const continuePending = observedContinue === null
+          if (!pinPending && !continuePending) codexFloatUnreportedRows.delete(key)
+          else if (pending.partial && pending.continuePending === continuePending) continue
+          else {
             pending.partial = true
-          } else codexFloatUnreportedRows.delete(key)
+            pending.continuePending = continuePending
+          }
           recordTaskPresentation({
             level: 'info', scope: 'float-bridge', event: 'float-task-presented', outcome: 'visible',
             provider: typeof task.provider === 'string' && task.provider ? task.provider : 'codex', taskRef: task.key, phase: observedPhase, turnStartedAt: task.turnStartedAt,

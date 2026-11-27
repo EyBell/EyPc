@@ -43,7 +43,7 @@ declare global {
       ackTaskSnapshot?(stage: 'applied' | 'rejected', revision: number, reason?: 'older-revision' | 'identity-mismatch' | 'invalid-payload'): boolean
       ackTaskSnapshot?(stage: 'visible', revision: number, details: {
         keys: string[]
-        rows?: Array<{ key: string; phase?: string; semanticRevision?: number | null; group?: string; pinSource?: 'none' | 'local' | 'native'; pinned?: boolean }>
+        rows?: Array<{ key: string; phase?: string; semanticRevision?: number | null; group?: string; pinSource?: 'none' | 'local' | 'native'; pinned?: boolean; continueTask?: boolean }>
       }): boolean
       onSnapshot(listener: (snapshot: CodexFloatSnapshotV1) => void): () => void
       onState(listener: (state: CodexFloatWindowState) => void): () => void

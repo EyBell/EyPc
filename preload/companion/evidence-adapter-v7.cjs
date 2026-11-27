@@ -69,7 +69,7 @@ function codexTurnCandidateV7(branch, turn, live, flags) {
   const causalSequence = Number.isSafeInteger(sourceSequence) && sourceSequence > 0 ? sourceSequence : 0
   const startedAt = integer(turn.turnStartedAt)
   const observedAt = integer(branch.observedAt)
-  const terminalAt = running ? 0 : integer(turn.terminalAt) || (inventoryTerminal ? startedAt : 0)
+  const terminalAt = running ? 0 : integer(turn.terminalAt)
   const transitionAt = turn === branch ? integer(branch.transitionAt) : 0
   return {
     kind: running ? 'turn-running' : terminalKind,
@@ -86,9 +86,9 @@ function codexTurnCandidateV7(branch, turn, live, flags) {
     terminalAt,
     turnStartedAtPrecisionMs: turn.turnStartedAtPrecisionMs,
     terminalAtPrecisionMs: turn.terminalAtPrecisionMs,
-    ...(turn === branch && branch.ordinarySideInterruptedAt > 0 && branch.branchKind === 'side'
+    ...(turn === branch && !running && branch.branchKind === 'side'
       && terminalKind === 'turn-interrupted' && exactTerminal && !flags.length && !branch.planImplementationOnly
-      && branch.goalFreshness === 'fresh' && ['none', 'complete'].includes(branch.goalStatus)
+      && startedAt > 0 && integer(branch.ordinarySideInterruptedAt) >= startedAt
       ? { ordinarySideInterruptedAt: integer(branch.ordinarySideInterruptedAt) } : {}),
     ...(inventoryTerminal && branch.branchKind === 'main' && branch.hostExternal !== true && terminalKind === 'turn-completed'
       && turn.turnStartedAtSource === 'inventory' && turn.turnRef && startedAt > 0

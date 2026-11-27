@@ -404,12 +404,16 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
   }
 
   function codexVerifiedInventoryTerminal(turn, { status, live, shadow, pending, turnRef, expectedStatus }) {
-    return Boolean(turn?.id && turn.status === expectedStatus && ['idle', 'notLoaded'].includes(status)
+    const start = timestampMs(turn?.startedAt)
+    const interruptedAt = timestampMs(turn?.interruptedAt)
+    const timedInterruption = interruptedAt > 0
+      && interruptedAt + (codexExplicitTurnPrecision(turn.terminalAtPrecisionMs) || 1) - 1 >= start
+    return Boolean(turn?.id && turn.status === expectedStatus && (['idle', 'notLoaded'].includes(status)
+      || status === 'systemError' && expectedStatus === 'failed')
       && !live && !pending && !shadow?.requests?.length && !shadow?.nativeTurnSubmissions?.some(settled => settled !== true)
       && (!shadow?.currentCanonicalTurn?.turnRef || shadow.ownerDisconnectedAt
         || shadow.currentCanonicalTurn.turnRef === turnRef && shadow.currentCanonicalTurn.status === expectedStatus)
-      && (expectedStatus !== 'interrupted' || timestampMs(turn.startedAt) > 0
-        && timestampMs(turn.interruptedAt) >= timestampMs(turn.startedAt)))
+      && (expectedStatus !== 'interrupted' || timedInterruption))
   }
 
   function codexExplicitTurnPrecision(value) {
@@ -482,16 +486,23 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
       && codexCrossTurnOrder(turn, runtime) !== 'older') {
       return null
     }
+    if (turn?.id && runtime?.turnId === turn.id && turn.status === 'completed'
+      && runtime.edge === 'task-complete' && startedAt > 0 && timestampMs(runtime.edgeAt) >= startedAt) {
+      return turn.completedAt || !runtime.terminalAtPrecisionMs
+        ? turn : { ...turn, completedAt: timestampMs(runtime.edgeAt), terminalAtPrecisionMs: runtime.terminalAtPrecisionMs }
+    }
     if (turn?.id && runtime?.turnId && runtime.turnId !== turn.id && runtime.edge === 'task-complete'
       && abortedStart > 0 && timestampMs(runtime.edgeAt) >= abortedStart) {
       const order = codexCrossTurnOrder(turn, runtime)
-      if (order === 'newer') {
+      if (order === 'newer' && runtime.terminalAtPrecisionMs) {
         if (turn.status === 'inProgress') return null
         return {
           id: runtime.turnId,
           status: 'completed',
           startedAt: abortedStart,
-          completedAt: timestampMs(runtime.edgeAt)
+          completedAt: timestampMs(runtime.edgeAt),
+          turnStartedAtPrecisionMs: runtime.turnStartedAtPrecisionMs,
+          terminalAtPrecisionMs: runtime.terminalAtPrecisionMs
         }
       }
       if (order !== 'older') return null
@@ -546,19 +557,28 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
   }
 
   function codexDesktopBranchInventoryTurn(shadow, inventory, known, main, turnRef = '') {
+    const sideTurn = inventory?.latestTurn?.id && inventory.latestTurn.id === inventory.turnId
+      && inventory.latestTurn.status === inventory.lastTurnStatus ? inventory.latestTurn : null
+    const currentMainTurn = main && known?.lastTurnId && (!known.connectorLastTurnStatus
+      || known.connectorLastTurnId === known.lastTurnId && known.connectorLastTurnStatus === known.lastTurnStatus)
     const candidate = inventory?.lastTurnStatus
       ? { status: inventory.lastTurnStatus, startedAt: inventory.turnStartedAt,
-          turnStartedAtPrecisionMs: inventory.turnStartedAtPrecisionMs }
+          turnStartedAtPrecisionMs: inventory.turnStartedAtPrecisionMs, terminalAt: sideTurn?.completedAt || sideTurn?.interruptedAt,
+          terminalAtPrecisionMs: sideTurn?.terminalAtPrecisionMs }
       : main && known?.connectorLastTurnStatus
         ? { status: known.connectorLastTurnStatus, startedAt: known.connectorLastTurnStartedAt,
-            turnStartedAtPrecisionMs: known.connectorLastTurnStartedAtPrecisionMs }
+            turnStartedAtPrecisionMs: known.connectorLastTurnStartedAtPrecisionMs,
+            terminalAt: currentMainTurn ? known.lastTurnCompletedAt : 0, terminalAtPrecisionMs: known.terminalAtPrecisionMs }
         : main ? { status: known?.lastTurnStatus, startedAt: known?.lastTurnStartedAt,
-            turnStartedAtPrecisionMs: known?.turnStartedAtPrecisionMs } : null
+            turnStartedAtPrecisionMs: known?.turnStartedAtPrecisionMs,
+            terminalAt: currentMainTurn ? known.lastTurnCompletedAt : 0, terminalAtPrecisionMs: known?.terminalAtPrecisionMs } : null
     if (!candidate?.status || codexDesktopTerminalConflictsWithOwner(candidate, shadow, turnRef)) return {}
     // Status and epoch always travel together. Never relabel an old connector
     // interruption with the current canonical/overlay Turn's start time.
     return { lastTurnStatus: candidate.status, lastTurnEvidence: 'inventory',
       turnStartedAt: timestampMs(candidate.startedAt), turnStartedAtPrecisionMs: candidate.turnStartedAtPrecisionMs,
+      terminalAt: timestampMs(candidate.terminalAt),
+      terminalAtPrecisionMs: candidate.terminalAt ? candidate.terminalAtPrecisionMs : undefined,
       terminalEvidenceSequence: 0, idleConfirmed: false }
   }
 
@@ -584,9 +604,9 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
       activeEvidenceSequence: activeSequence,
       idleConfirmed: known.idleConfirmed === true,
       turnStartedAt: Number(known.lastTurnStartedAt) || 0,
-      terminalAt: Number(known.lastTurnCompletedAt) || Number(known.lastTurnStartedAt) || 0,
+      terminalAt: Number(known.lastTurnCompletedAt) || 0,
       turnStartedAtPrecisionMs: known.turnStartedAtPrecisionMs,
-      terminalAtPrecisionMs: known.terminalAtPrecisionMs || known.turnStartedAtPrecisionMs,
+      terminalAtPrecisionMs: known.lastTurnCompletedAt ? known.terminalAtPrecisionMs : undefined,
       observedAt: Number(known.terminalEvidenceSequence) || 0
     }
   }
@@ -636,7 +656,6 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
       turnStartedAtPrecisionMs: terminal.turnStartedAtPrecisionMs,
       terminalAtPrecisionMs: terminal.terminalAtPrecisionMs,
       terminalAt: timestampMs(terminal.terminalAt)
-        || (terminal.lastTurnStatus === 'completed' ? timestampMs(known.lastTurnCompletedAt) : timestampMs(terminal.turnStartedAt))
     } : null
     if (liveTurn?.turnRef && terminalTurn?.turnRef) {
       const causalDomain = options.causalDomain || terminal.causalDomain || 'codex-member'
@@ -656,7 +675,7 @@ function createCodexDesktopActivityResolution(dependencies = {}) {
     if (liveTurn) return liveTurn
     return { ...baseline, activeEvidenceSequence: activeSequence, turnRef: inventoryTurnRef,
       turnPredecessorRef: predecessorFor(inventoryTurnRef), turnStartedAtSource: 'inventory',
-      turnStartedAt: timestampMs(baseline.turnStartedAt), terminalAt: 0 }
+      turnStartedAt: timestampMs(baseline.turnStartedAt), terminalAt: baseline.terminalAt || 0 }
   }
 
   function codexDesktopActivityRebase(branch, previous, causalDomain) {

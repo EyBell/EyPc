@@ -64,6 +64,8 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
     let lineEnd = -1
     let edgeEnd = 0
     let startEnd = -1
+    let itemEnd = -1
+    let itemAt = 0
     let sawTurnBoundary = false
     let identifiedItemAt = 0
     let retainedTerminal = null
@@ -123,6 +125,8 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         sawTurnBoundary = true
         edgeEnd = lineEnd
         startEnd = lineEnd
+        itemEnd = -1
+        itemAt = 0
         state.known = true
         state.phase = 'active'
         state.edge = 'task-started'
@@ -201,6 +205,10 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
         || (source.type === 'response_item' && liveResponseTypes.has(payload.type))
       if (!liveAppend || state.phase === 'completed' || state.phase === 'interrupted'
         || turnId && state.turnId && turnId !== state.turnId) continue
+      if (identifiedItem) {
+        itemEnd = lineEnd
+        itemAt = observedAt
+      }
       edgeEnd = lineEnd
       state.known = true
       state.phase = 'active'
@@ -209,9 +217,15 @@ function createCodexRolloutRuntimeState(dependencies = {}) {
     }
     if (!sawTurnBoundary && identifiedItemAt > 0) state.turnActivityAt = identifiedItemAt
     if (state.edge === 'turn-aborted' && interruptedAt > 0) state.interruptedAt = interruptedAt
+    if (retainedTerminal?.at === state.edgeAt && retainedTerminal?.precision) {
+      state.terminalAtPrecisionMs = retainedTerminal.precision
+    }
     if (state.known && appendedBytes > 0 && Buffer.byteLength(text.slice(edgeEnd)) < appendedBytes) {
       state.appended = true
       if (startEnd >= 0 && Buffer.byteLength(text.slice(startEnd)) < appendedBytes) state.startAppended = true
+      if (state.phase === 'active' && itemEnd >= 0 && Buffer.byteLength(text.slice(itemEnd)) < appendedBytes) {
+        state.appendedTurnItemAt = itemAt
+      }
     }
     return state
   }

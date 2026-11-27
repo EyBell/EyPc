@@ -3441,6 +3441,14 @@ function sampleVisiblePin(row: HTMLElement, viewport: { left: number; top: numbe
   const pinSource: 'local' | 'native' | 'none' = raw === 'local' ? 'local' : raw === 'native' ? 'native' : 'none'
   return { pinSource, pinned: glyph.classList.contains('is-pinned') }
 }
+function sampleVisibleContinue(row: HTMLElement, viewport: { left: number; top: number; right: number; bottom: number }) {
+  const button = row.querySelector<HTMLButtonElement>('button.action-continue')
+  if (!button) return { continueTask: false }
+  const bounds = button.getBoundingClientRect()
+  if (bounds.width <= 0 || bounds.height <= 0 || bounds.bottom <= viewport.top
+    || bounds.top >= viewport.bottom || bounds.right <= viewport.left || bounds.left >= viewport.right) return {}
+  return { continueTask: !button.disabled && button.getAttribute('aria-disabled') !== 'true' }
+}
 function visibleViewportTaskRows() {
   if (!expanded.value || runtimeReloadRequired.value || floatState.value.nativeVisible === false) return null
   if (floatState.value.transition?.phase === 'expanding' || floatState.value.transition?.phase === 'collapsing') return null
@@ -3462,7 +3470,8 @@ function visibleViewportTaskRows() {
       phase: row.dataset.companionPhase || '',
       semanticRevision: Number.isInteger(semanticRevision) ? semanticRevision : null,
       group: row.dataset.companionGroup,
-      ...sampleVisiblePin(row, viewport)
+      ...sampleVisiblePin(row, viewport),
+      ...sampleVisibleContinue(row, viewport)
     }] : []
   }).slice(0, 40)
 }
@@ -3470,7 +3479,7 @@ function acknowledgeVisibleTasks() {
   const revision = renderedTaskRevision.value
   const rows = visibleViewportTaskRows()
   if (!revision || !rows?.length) return
-  const receipt = `${floatState.value.windowGeneration || 0}:${revision}:${rows.map((row) => `${row.key}:${row.phase}:${row.semanticRevision}:${row.group}:${row.pinSource}:${row.pinned}`).join('|')}`
+  const receipt = `${floatState.value.windowGeneration || 0}:${revision}:${rows.map((row) => `${row.key}:${row.phase}:${row.semanticRevision}:${row.group}:${row.pinSource}:${row.pinned}:${row.continueTask}`).join('|')}`
   if (receipt === visibleTaskReceipt) return
   if (window.eypcFloat?.ackTaskSnapshot?.('visible', revision, { keys: rows.map((row) => row.key), rows })) visibleTaskReceipt = receipt
 }

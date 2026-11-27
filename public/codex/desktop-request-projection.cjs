@@ -137,13 +137,15 @@ function createCodexDesktopRequestProjection(dependencies = {}) {
         || codexDesktopRuntimeHasWaitingFlags({ activeFlags: side ? member?.activeFlags : known.connectorActiveFlags })) return null
       return { signature: `${basis}:pending:${pending.value}`, priority: 2, turnStartedAt, turnId, shadow }
     }
-    const closedAt = context.machine && member?.closedSpawnObservedAt
-    if (closedAt > 0 && closedAt > Math.max(member.activeEvidenceSequence || 0,
-      shadow?.activityEventSequence || 0, appLive ? appActivity.appServerLiveSequence || 0 : 0)) return null
+    const waiting = codexDesktopRuntimeHasWaitingFlags({ activeFlags: side ? member?.activeFlags : known.connectorActiveFlags })
+    const currentShadow = shadow && !shadow.ownerDisconnectedAt
+    if (context.machine && turnId && member?.closedSpawnTurnId === turnId && member.spawnEdgeStatus === 'closed'
+      && ownStatus !== 'active' && !appLive && !waiting
+      && !(currentShadow && (shadow.runtime?.type === 'active' || shadow.requests?.length
+        || shadow.nativeTurnSubmissions?.some(settled => settled !== true)))) return null
     const terminal = context.terminal
     const terminalStart = timestampMs(terminal?.turnStartedAt)
     const terminalCurrent = terminalStart > 0 && coversOwnerTurn(turnStartedAt, turnId, terminalStart, terminal.turnRef)
-    const waiting = codexDesktopRuntimeHasWaitingFlags({ activeFlags: side ? member?.activeFlags : known.connectorActiveFlags })
     const ambiguous = ownStatus === 'notLoaded' && ownTurnStatus === 'interrupted' && Boolean(turnStartedAt || turnId)
     const openRollout = ambiguous && context.openRollout === true
     if (terminalCurrent && !appLive && !directRoot && !waiting

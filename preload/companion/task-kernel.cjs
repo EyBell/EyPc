@@ -51,6 +51,7 @@ const COMPANION_PROVIDER_EVIDENCE_BATCH_REVISION = COMPANION_V7_REVISIONS.provid
 const PREFLIGHT_PROGRESS_MS = 600
 const PREFLIGHT_TIMEOUT_MS = 5_000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
+const CODEX_ROLLOUT_WITHDRAWAL_LIMIT = 2_000
 /**
  * RAW222: only the highest non-empty tier enters the generic cycle. Badges and
  * dedicated attention entries keep their independent state-based membership.
@@ -158,6 +159,22 @@ function assignTimestampPrecision(target, source) {
   }
 }
 
+function observedTerminalAt(task, terminal) {
+  if (!terminal) return 0
+  const explicit = finiteInteger(task.terminalAt)
+  if (explicit > 0) return explicit
+  const entered = finiteInteger(task.statusEnteredAt)
+  return entered > finiteInteger(task.turnStartedAt) ? entered : 0
+}
+
+function backfilledTerminalAt(task) {
+  const terminalAt = finiteInteger(task.terminalAt)
+  if (terminalAt <= 0) return 0
+  const precision = timestampPrecisionMs(task.terminalAtPrecisionMs)
+  if (precision === 1 || precision === 1000) return terminalAt
+  return terminalAt > finiteInteger(task.turnStartedAt) ? terminalAt : 0
+}
+
 function taskPhaseObservation(task) {
   const phase = task.activityPhase || task.phase
   const live = isLiveTaskPhase(phase)
@@ -174,7 +191,7 @@ function taskPhaseObservation(task) {
     exactTerminal: terminal,
     turnStartedAt: finiteInteger(task.turnStartedAt),
     turnStartedAtPrecisionMs: timestampPrecisionMs(task.turnStartedAtPrecisionMs) || undefined,
-    terminalAt: terminal ? finiteInteger(task.terminalAt) || finiteInteger(task.statusEnteredAt) : 0,
+    terminalAt: observedTerminalAt(task, terminal),
     terminalAtPrecisionMs: timestampPrecisionMs(task.terminalAtPrecisionMs) || undefined,
     activeEvidenceSequence: live ? sequence : 0,
     terminalEvidenceSequence: terminal ? sequence : 0
@@ -428,8 +445,42 @@ function activityCandidateCausalObservationV7(candidate) {
   }
 }
 
+function codexRolloutWithdrawalKey(memberKey, causalDomain, causalKey) {
+  return JSON.stringify([memberKey, causalDomain, causalKey])
+}
+
+function followsCodexRolloutWithdrawal(boundary, candidate, exact) {
+  if (candidate.authority === 'goal' || candidate.authority === 'goal-verifying') return true
+  if (candidate.causalDomain && candidate.causalDomain !== boundary.causalDomain) return true
+  if (!candidate.causalKey) return false
+  const order = compareCodexTurnOrder(boundary, candidate)
+  if (order !== 'same') return order === 'newer'
+  if (candidate.kind === 'turn-running') return exact && candidate.causalSequence > boundary.causalSequence
+  return exact && candidate.authority === 'terminal' && candidate.causalSequence > 0
+    && isTerminalTaskPhase(ACTIVITY_EVIDENCE_PHASE[candidate.kind])
+}
+
+function codexRolloutCandidates(candidates, memberKey, withdrawals) {
+  if (!withdrawals?.size) return candidates
+  const boundaries = new Map()
+  for (const candidate of candidates) {
+    const sequence = withdrawals.get(codexRolloutWithdrawalKey(memberKey, candidate.causalDomain, candidate.causalKey))
+    if (!sequence) continue
+    const previous = boundaries.get(candidate.causalDomain)
+    if (!previous || compareCodexTurnOrder(previous, candidate) === 'newer') {
+      boundaries.set(candidate.causalDomain, { ...candidate, kind: 'unknown', authority: 'unknown', exact: false,
+        causalSequence: sequence, sequence, terminalAt: 0, rolloutActivityWithdrawn: true })
+    }
+  }
+  if (!boundaries.size) return candidates
+  const first = boundaries.values().next().value
+  const current = candidates.filter(candidate => followsCodexRolloutWithdrawal(
+    boundaries.get(candidate.causalDomain) || first, candidate, candidate.exact))
+  return current.length ? current : [first]
+}
+
 /** Multiple raw Provider candidates are reduced once, inside the Kernel. */
-function reduceActivityCandidatesV7(activity, requireConfirmedInterruption) {
+function reduceActivityCandidatesV7(activity, requireConfirmedInterruption, memberKey, rolloutWithdrawals) {
   const candidates = (Array.isArray(activity.candidates) && activity.candidates.length
     ? activity.candidates
     : [activity]).map(normalizeActivityCandidateV7)
@@ -442,7 +493,7 @@ function reduceActivityCandidatesV7(activity, requireConfirmedInterruption) {
     inventory: 1,
     unknown: 0
   }
-  for (const observed of candidates) {
+  for (const observed of codexRolloutCandidates(candidates, memberKey, rolloutWithdrawals)) {
     const unverifiedInterruption = requireConfirmedInterruption && observed.kind === 'turn-interrupted'
       && observed.authority === 'inventory' && !observed.exact
     const candidate = unverifiedInterruption
@@ -477,10 +528,10 @@ function reduceActivityCandidatesV7(activity, requireConfirmedInterruption) {
       activityCandidateCausalObservationV7(candidate)
     )) selected = candidate
   }
-  return selected || normalizeActivityCandidateV7(activity)
+  return selected
 }
 
-function normalizeEvidenceNode(value, provider, enabledProviders, observationGeneration = 0, hostEvidence = false) {
+function normalizeEvidenceNode(value, provider, enabledProviders, observationGeneration = 0, hostEvidence = false, rolloutWithdrawals) {
   if (!value || typeof value !== 'object' || value.provider !== provider) return null
   const activity = value.activity && typeof value.activity === 'object' ? value.activity : {}
   const unread = value.unread && typeof value.unread === 'object' ? value.unread : {}
@@ -496,7 +547,7 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
   const metadata = value.metadata && typeof value.metadata === 'object' ? value.metadata : {}
   const codexNativePin = hostEvidence && provider === 'codex' && value.role === 'root'
     && typeof metadata.codexNativePin === 'boolean' ? metadata.codexNativePin : undefined
-  const activityCandidate = reduceActivityCandidatesV7(activity, hostEvidence && provider === 'codex')
+  const activityCandidate = reduceActivityCandidatesV7(activity, hostEvidence && provider === 'codex', value.key, rolloutWithdrawals)
   const activityKind = activityCandidate.kind
   const phase = ACTIVITY_EVIDENCE_PHASE[activityKind]
   const capabilityNames = new Set((Array.isArray(value.capabilities) ? value.capabilities : [])
@@ -556,10 +607,22 @@ function normalizeEvidenceNode(value, provider, enabledProviders, observationGen
     }
   }, enabledProviders)
   if (node) assignTimestampPrecision(node, activityCandidate)
+  if (node && hostEvidence && provider === 'codex' && node.role === 'root') {
+    const complete = metadata.relationCoverageComplete
+    const generation = finiteInteger(metadata.relationCoverageGeneration)
+    if ((complete === true || complete === false) && generation > 0) {
+      node.relationCoverageStamp = { complete, generation }
+    }
+  }
   if (node && provider === 'codex') {
     node.codexNativePin = codexNativePin
     node.turnKind = activityKind
     if (hostEvidence) node.codexState = normalizeCodexStateV7(activity.codexState)
+    if (activityCandidate.rolloutActivityWithdrawn) {
+      node.rolloutActivityWithdrawn = true
+      node.activityObserved = false
+      if (node.codexState?.threadStatus === 'active') node.codexState.threadStatus = 'notLoaded'
+    }
   }
   if (node && hostEvidence && provider === 'codex' && node.causalKey && node.causalDomain) {
     const exactTerminal = node.causalAuthority === 'terminal' && node.causalReliable && node.causalSequence > 0
@@ -660,6 +723,8 @@ function publicRootTask(task) {
     machineRunCoverageCurrent: _machineRunCoverageCurrent,
     machineRunInterruptedAt: _machineRunInterruptedAt,
     relationOnly: _relationOnly,
+    relationCoverage: _relationCoverage,
+    relationCoverageStamp: _relationCoverageStamp,
     ordinarySideInterruptedAt: _ordinarySideInterruptedAt,
     turnKind: _turnKind,
     codexState: _codexState,
@@ -674,6 +739,7 @@ function publicRootTask(task) {
     causalSequence: _causalSequence,
     causalAuthority: _causalAuthority,
     activityRebase: _activityRebase,
+    rolloutActivityWithdrawn: _rolloutActivityWithdrawn,
     causalReliable: _causalReliable,
     turnStartedAtPrecisionMs: _turnStartedAtPrecisionMs,
     terminalAtPrecisionMs: _terminalAtPrecisionMs,
@@ -1059,8 +1125,16 @@ function createCompanionTaskKernel(dependencies = {}) {
   let packageSequence = 0
   let topologySequence = 0
   let topologyFingerprint = ''
+  let topologyMemberIndex = null
+  let nodeStructureFence = 0
+  let relationFence = 0
+  let openInteractionsByTask = null
+  const noOpenInteractions = []
   let currentPackage = emptyPackage(providers)
+  let packageContinueReady = false
+  const relationCoverageRestamped = new Set()
   const providerEpochs = Object.fromEntries(PROVIDERS.map((provider) => [provider, 0]))
+  const codexRolloutWithdrawals = new Map()
   const providerCacheStates = new Map()
   let lastReducedEvidence = null
   const taskIncarnations = new Map()
@@ -1412,12 +1486,30 @@ function createCompanionTaskKernel(dependencies = {}) {
     return changed
   }
 
+  function rebuildOpenInteractionIndex() {
+    const index = new Map()
+    for (const interaction of interactionStore.values()) {
+      if (interaction.state !== 'opened') continue
+      const id = `${interaction.provider}\0${interaction.taskKey}`
+      let bucket = index.get(id)
+      if (!bucket) index.set(id, bucket = [])
+      bucket.push(interaction)
+    }
+    openInteractionsByTask = index
+  }
+
   function taskOpenInteractions(task) {
+    if (openInteractionsByTask) return openInteractionsByTask.get(`${task.provider}\0${task.key}`) || noOpenInteractions
     return [...interactionStore.values()].filter((interaction) => (
       interaction.provider === task.provider
       && interaction.taskKey === task.key
       && interaction.state === 'opened'
     ))
+  }
+
+  function sameMemberStatus(task, memberStatus) {
+    if (!memberStatus) return !task.memberStatus
+    return isDeepStrictEqual(task.memberStatus, memberStatus)
   }
 
   function codexGoalForTurn(task) {
@@ -1480,7 +1572,9 @@ function createCompanionTaskKernel(dependencies = {}) {
       const selectedTurnEpoch = Math.max(...interactions.map((interaction) => interaction.turnEpoch), 0)
       if (task.phase === phase
         && task.planImplementation === planImplementation
-        && finiteInteger(task.phaseRevision) >= selectedSequence) return { ...task, memberStatus }
+        && finiteInteger(task.phaseRevision) >= selectedSequence) {
+        return sameMemberStatus(task, memberStatus) ? task : { ...task, memberStatus }
+      }
       return finalizeCanonicalTask({
         ...task,
         phase,
@@ -1490,7 +1584,9 @@ function createCompanionTaskKernel(dependencies = {}) {
         planImplementation
       })
     }
-    if (task.phase === basePhase && task.planImplementation !== true) return memberStatus ? { ...task, memberStatus } : task
+    if (task.phase === basePhase && task.planImplementation !== true) {
+      return sameMemberStatus(task, memberStatus) ? task : { ...task, memberStatus }
+    }
     return finalizeCanonicalTask({
       ...task,
       phase: basePhase,
@@ -1500,7 +1596,15 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   function refreshInteractionProjections() {
-    for (const [key, task] of nodeStore) nodeStore.set(key, applyInteractionProjection(task))
+    rebuildOpenInteractionIndex()
+    try {
+      for (const [key, task] of nodeStore) {
+        const next = applyInteractionProjection(task)
+        if (next !== task) nodeStore.set(key, next)
+      }
+    } finally {
+      openInteractionsByTask = null
+    }
   }
 
   function clearVisibilityTimer() {
@@ -1876,6 +1980,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   function invalidate(reason) {
     clearVisibilityTimer()
     diagnosticActivitySignatures.clear()
+    codexRolloutWithdrawals.clear()
     nodeStore.clear()
     relationStore.clear()
     relationRevocations.clear()
@@ -1910,6 +2015,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     next.packageRevision = ++packageSequence
     next.topologyRevision = ++topologySequence
     topologyFingerprint = ''
+    topologyMemberIndex = null
     currentPackage = next
     lastSemantic = semanticPackage(next)
     retainVisiblePackage(currentPackage)
@@ -1930,7 +2036,10 @@ function createCompanionTaskKernel(dependencies = {}) {
     for (const [key, relation] of relationStore) if (relation.provider === provider) relationStore.delete(key)
     for (const key of relationRevocations.keys()) if (key.startsWith(`${provider}\0`)) relationRevocations.delete(key)
     for (const [key, interaction] of interactionStore) if (interaction.provider === provider) interactionStore.delete(key)
+    nodeStructureFence += 1
+    relationFence += 1
     if (provider === 'codex') {
+      codexRolloutWithdrawals.clear()
       completeCodexRequestSets.clear()
       codexPinMembers.clear()
       codexPinObservation = null
@@ -2080,6 +2189,40 @@ function createCompanionTaskKernel(dependencies = {}) {
     return { known: false, value: false }
   }
 
+  function observedUpper(at, precision) {
+    const value = finiteInteger(at)
+    if (!(value > 0)) return 0
+    if (timestampPrecisionMs(precision) === 1) return value
+    if (timestampPrecisionMs(precision) === 1000 || value % 1000 === 0) return value + 999
+    return value
+  }
+
+  function interruptionUpper(member) {
+    const precision = member?.terminalAtPrecisionMs
+    return Math.max(
+      observedUpper(member?.terminalAt, precision),
+      observedUpper(member?.machineRunInterruptedAt, precision),
+      observedUpper(member?.ordinarySideInterruptedAt, precision)
+    )
+  }
+
+  function verifiedHistoricalMember(root, member, relation) {
+    if (!root || member?.provider !== 'codex' || member.key === root.key) return false
+    if (relation?.exact !== true || relation.parentKey !== root.key || relation.relation !== 'side-thread') return false
+    if (member.causalReliable !== true || !member.causalKey || !member.causalDomain || member.causalDomain !== root.causalDomain) return false
+    if (root.causalAuthority !== 'terminal' || root.causalReliable !== true || !root.causalKey || root.turnKind !== 'turn-completed') return false
+    if (isLiveTaskPhase(member.phase) || isAttentionTaskPhase(member.phase) || taskOpenInteractions(member).length) return false
+    if (member.turnKind !== 'turn-interrupted' || !isTerminalTaskPhase(member.phase)) return false
+    const goal = member.memberStatus?.goal || member.codexState?.goal?.status || ''
+    if (goal && !['none', 'complete', 'unknown'].includes(goal)) return false
+    if (member.memberStatus?.submissionPending || member.codexState?.submissionPending) return false
+    const confirmedEnd = finiteInteger(member.machineRunInterruptedAt) > 0 || finiteInteger(member.ordinarySideInterruptedAt) > 0
+    if (!confirmedEnd) return false
+    const rootStart = finiteInteger(root.turnStartedAt)
+    const endUpper = interruptionUpper(member)
+    return rootStart > 0 && endUpper > 0 && endUpper < rootStart
+  }
+
   /** 根任务聚合：Topology 只给成员图，相位/未读/Plan 只在这里归约。
    * The Kernel is the sole owner of root state aggregation. Topology supplies
    * membership only; it never interprets phase, unread, Plan or capabilities. */
@@ -2092,7 +2235,10 @@ function createCompanionTaskKernel(dependencies = {}) {
     const planReady = hasCurrentPlanArtifact(root)
     const codexRoot = root.provider === 'codex'
     const completedCodexRoot = codexRoot && root.phase === 'completed'
-    const phaseMembers = preserveRootInput ? [root] : !codexRoot ? members : members.filter((member) => {
+    const currentMembers = codexRoot
+      ? members.filter((member) => !verifiedHistoricalMember(root, member, relationsByChild.get(member.key)))
+      : members
+    const phaseMembers = preserveRootInput ? [root] : !codexRoot ? members : currentMembers.filter((member) => {
       const relation = relationsByChild.get(member.key)
       if (member.memberStatus?.turn === 'not-started' && relation?.exact === true
         && relation.relation === 'side-thread' && relation.parentKey === root.key) return false
@@ -2164,13 +2310,27 @@ function createCompanionTaskKernel(dependencies = {}) {
     const planInteractionWaiting = phaseMembers.some((node) => (
       isAttentionTaskPhase(node.phase) && node.planImplementation === true
     ))
-    const phase = confirmedMainStop ? 'stopped'
+    // 成员归约未知时，已验证完成的主轮仍保留已知根显示。真实运行、待答、
+    // 当代明确 stopped 继续走当前相位；缺证只留在 stateWriteBlocked。
+    const contemporaryBlock = phaseMembers.some((member) => (
+      member.key !== root.key
+      && !verifiedHistoricalMember(root, member, relationsByChild.get(member.key))
+      && (isLiveTaskPhase(member.phase) || isAttentionTaskPhase(member.phase) || member.phase === 'stopped')
+    ))
+    const retainKnownRootDisplay = codexRoot
+      && activityPhase === 'unknown'
+      && !contemporaryBlock
+      && !currentInteractionWaiting
+      && !planInteractionWaiting
+      && verifiedTerminalIdentity(root, 'turn-completed')
+    const phase = retainKnownRootDisplay ? 'completed'
+      : confirmedMainStop ? 'stopped'
       : !codexRoot && unread.value && isAttentionTaskPhase(activityPhase) && !currentInteractionWaiting
         ? 'completed' : activityPhase
-    const statusEnteredAt = confirmedMainStop ? root.statusEnteredAt
+    const statusEnteredAt = retainKnownRootDisplay || confirmedMainStop ? root.statusEnteredAt
       : Math.max(0, ...machineFilteredMembers.filter((node) => node.phase === activityPhase)
         .map((node) => finiteInteger(node.statusEnteredAt)))
-    const writeMembers = codexRoot ? members : phaseMembers
+    const writeMembers = codexRoot ? currentMembers : phaseMembers
     const blocked = writeMembers.some((member) => member.memberStatus?.submissionPending
       || member.memberStatus?.threadStatus === 'systemError')
     const stateWriteBlocked = blocked || activityPhase === 'unknown'
@@ -2193,7 +2353,11 @@ function createCompanionTaskKernel(dependencies = {}) {
     const canContinue = root.role === 'root' && root.phase === 'stopped' && phase === 'stopped'
       && !planReady && !currentInteractionWaiting && liveCount === 0 && !stateWriteBlocked && !goalLimited
       && (!root.codexState || ['turn-interrupted', 'turn-failed'].includes(main?.turn) || verifiedGoalCompletion)
-    if (typeof capabilities.continueTask === 'boolean') capabilities.continueTask &&= Boolean(canContinue)
+    const continueReady = codexRoot && root.relationCoverage
+      ? root.relationCoverage.complete === true
+      : packageContinueReady
+    const continueAllowed = Boolean(canContinue) && continueReady && root.freshness === 'fresh'
+    if (typeof capabilities.continueTask === 'boolean') capabilities.continueTask &&= continueAllowed
     // finalizeTask must not restore the provider declaration after aggregation.
     const providerCapabilities = { ...(root.providerCapabilities || root.capabilities) }
     if (root.codexNativePin === true) {
@@ -2203,7 +2367,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     if (stateWriteBlocked) providerCapabilities.archive = false
     if (sideWorkBlocksPlan || rootRequestBlocksPlan) providerCapabilities.executePlan = false
-    if (typeof providerCapabilities.continueTask === 'boolean') providerCapabilities.continueTask &&= canContinue
+    if (typeof providerCapabilities.continueTask === 'boolean') providerCapabilities.continueTask &&= continueAllowed
     return {
       ...root,
       phase,
@@ -2231,6 +2395,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       statusEnteredAt,
       turnStartedAt: root.provider === 'codex' ? root.turnStartedAt : Math.max(...members.map((node) => finiteInteger(node.turnStartedAt)), 0),
       terminalAt: isLiveTaskPhase(phase) ? 0
+        : retainKnownRootDisplay ? finiteInteger(root.terminalAt)
         : Math.max(...machineFilteredMembers.map((node) => finiteInteger(node.terminalAt)), 0),
       capabilities,
       providerCapabilities,
@@ -2244,30 +2409,124 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
   }
 
+  function topologyFence() {
+    return `${nodeStructureFence}:${relationFence}:${PROVIDERS.map((provider) => providers[provider] === true ? 1 : 0).join('')}`
+  }
+
+  function rememberTopologyIndex(topology, fence) {
+    const membersByRoot = new Map()
+    for (const group of topology.rootGroups) membersByRoot.set(group.root.key, group.members.map((member) => member.key))
+    topologyMemberIndex = {
+      fence,
+      fingerprint: topology.fingerprint,
+      membersByRoot,
+      relationsByChild: new Map(topology.acceptedRelations.map((relation) => [relation.childKey, relation]))
+    }
+  }
+
+  function groupsFromTopologyIndex(index) {
+    const groups = []
+    for (const [rootKey, memberKeys] of index.membersByRoot) {
+      const root = nodeStore.get(rootKey)
+      if (!root) return null
+      const members = []
+      for (const key of memberKeys) {
+        const member = nodeStore.get(key)
+        if (!member) return null
+        members.push(member)
+      }
+      members.sort((left, right) => left.key.localeCompare(right.key))
+      groups.push({ root, members })
+    }
+    groups.sort((left, right) => left.root.key.localeCompare(right.root.key))
+    return groups
+  }
+
+  function sameInteractionRefs(left = noOpenInteractions, right = noOpenInteractions) {
+    if (left === right) return true
+    if (left.length !== right.length) return false
+    for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false
+    return true
+  }
+
+  function rootInputsUnchanged(previous, root, members, relationsByChild) {
+    if (!previous || previous.root !== root || previous.continueReady !== (packageContinueReady === true)
+      || previous.members.length !== members.length) return false
+    for (let index = 0; index < members.length; index += 1) {
+      const member = members[index]
+      if (previous.members[index] !== member) return false
+      if (previous.relationByChild.get(member.key) !== (relationsByChild.get(member.key) || null)) return false
+      if ((previous.requestSetByChild.get(member.key) || 0) !== (completeCodexRequestSets.get(member.key) || 0)) return false
+      if (!sameInteractionRefs(previous.openByChild.get(member.key), taskOpenInteractions(member))) return false
+    }
+    return true
+  }
+
   function materializePrivateTopology(previousPublicByKey = new Map(currentPackage.tasks.map((task) => [task.key, task]))) {
     // relationStore already applies generation admission on insert/removal.
     // A newer partial topology lane does not revoke older admitted relations
     // in other families. Only explicit current removal or complete replacement
-    // may retire those edges.
-    const topology = buildCompanionTaskTopology({
-      nodes: [...nodeStore.values()],
-      relations: [...relationStore.values()]
-    })
+    // may retire those edges. Stable structure reuses the member index and
+    // unchanged node references; topology or provider changes rebuild it.
+    rebuildOpenInteractionIndex()
+    try {
+    const fence = topologyFence()
+    let reuseUnchangedRoots = topologyMemberIndex?.fence === fence
+    let rootGroups = reuseUnchangedRoots ? groupsFromTopologyIndex(topologyMemberIndex) : null
+    if (!reuseUnchangedRoots || rootGroups === null) {
+      reuseUnchangedRoots = false
+      const built = buildCompanionTaskTopology({
+        nodes: [...nodeStore.values()],
+        relations: [...relationStore.values()]
+      })
+      rememberTopologyIndex(built, fence)
+      rootGroups = groupsFromTopologyIndex(topologyMemberIndex) || []
+    }
     const nextShortcutInputs = new Map()
-    const admittedRelationsByChild = new Map(topology.acceptedRelations.map((relation) => [relation.childKey, relation]))
+    const admittedRelationsByChild = topologyMemberIndex.relationsByChild
+    const fingerprint = topologyMemberIndex.fingerprint
     protectedPauseGroupKeys.clear()
-    const eligibleGroups = pauseRecoveryPending ? topology.rootGroups.filter(({ root, members }) => {
+    const eligibleGroups = pauseRecoveryPending ? rootGroups.filter(({ root, members }) => {
       if (unavailablePauseKeys && !unavailablePauseKeys.has(root.key)
         && members.every(member => !unavailablePauseKeys.has(member.key))) return true
       protectedPauseGroupKeys.add(root.key)
       for (const member of members) protectedPauseGroupKeys.add(member.key)
       return false
-    }) : topology.rootGroups
+    }) : rootGroups
     const tasks = eligibleGroups.map(({ root, members }) => {
-      const canonical = finalizeCanonicalTask(aggregateKernelRoot(root, members, admittedRelationsByChild))
-      nextShortcutInputs.set(root.key, { task: canonical, members })
+      const previousInputs = shortcutReadInputs.get(root.key)
+      const inputsSame = reuseUnchangedRoots && !pauseRecoveryPending
+        && rootInputsUnchanged(previousInputs, root, members, admittedRelationsByChild)
+      const previousPublic = previousPublicByKey.get(root.key)
+      if (inputsSame && previousPublic) {
+        const projected = shortcutReads.project(previousInputs.task, members)
+        const anchor = visibilityAnchor(previousInputs.aggregate)
+        const eligible = anchor > 0 && anchor + dynamicWindowMs > now()
+        if (projected === previousInputs.task && previousPublic.dynamicEligible === eligible) {
+          nextShortcutInputs.set(root.key, previousInputs)
+          return previousPublic
+        }
+      }
+      const aggregate = inputsSame ? previousInputs.aggregate : aggregateKernelRoot(root, members, admittedRelationsByChild)
+      const canonical = finalizeCanonicalTask(aggregate)
+      const relationByChild = inputsSame ? previousInputs.relationByChild : new Map()
+      const requestSetByChild = inputsSame ? previousInputs.requestSetByChild : new Map()
+      const openByChild = inputsSame ? previousInputs.openByChild : new Map()
+      if (!inputsSame) {
+        for (const member of members) {
+          relationByChild.set(member.key, admittedRelationsByChild.get(member.key) || null)
+          requestSetByChild.set(member.key, completeCodexRequestSets.get(member.key) || 0)
+          openByChild.set(member.key, taskOpenInteractions(member))
+        }
+      }
+      nextShortcutInputs.set(root.key, {
+        task: canonical, members, aggregate, root,
+        continueReady: packageContinueReady === true,
+        relationByChild, requestSetByChild, openByChild
+      })
       const finalized = publicRootTask(finalizeTask(shortcutReads.project(canonical, members), !pauseRecoveryPending))
       const previous = previousPublicByKey.get(finalized.key)
+      if (!inputsSame) {
       // Diagnose the actual admitted topology, not discovery candidates. Never
       // send private keys to the sink; the host supplies its salted ref mapper.
       const memberSignature = JSON.stringify(members.map((member) => {
@@ -2317,6 +2576,7 @@ function createCompanionTaskKernel(dependencies = {}) {
             runningMembers: members.filter((member) => member.phase === 'running').length,
             interactionCount: members.reduce((count, member) => count + taskOpenInteractions(member).length, 0) } })
       }
+      }
       return assignSemanticRevision(previous, finalized).task
     }).sort(compareByLatestQuestion)
     shortcutReadInputs = nextShortcutInputs
@@ -2325,15 +2585,17 @@ function createCompanionTaskKernel(dependencies = {}) {
     shortcutReads.retain(new Set(nextShortcutInputs.keys()))
     let topologyRevision = currentPackage.topologyRevision
     const firstTopology = currentPackage.topologyRevision === 0
-    if (firstTopology || topology.fingerprint !== topologyFingerprint) {
-      topologyFingerprint = topology.fingerprint
+    if (firstTopology || fingerprint !== topologyFingerprint) {
+      topologyFingerprint = fingerprint
       topologyRevision = ++topologySequence
     }
     return {
-      topology,
       tasks,
       topologyRevision,
       freshness: tasks.some((task) => task.freshness === 'verifying') ? 'verifying' : 'fresh'
+    }
+    } finally {
+      openInteractionsByTask = null
     }
   }
 
@@ -2417,7 +2679,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       return currentPackage
     }
     next.packageRevision = ++packageSequence
-    if (!evidenceDraft) next.publishedAt = now()
+    next.publishedAt = now()
     currentPackage = next
     lastSemantic = semantic
     retainVisiblePackage(currentPackage)
@@ -2481,7 +2743,9 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   function reconcileTask(previous, incoming, draft, incomingLanes, currentLanes, activityRebase) {
     if (!previous) {
-      let next = preparePlanLifecycle(null, incoming, incoming, true)
+      let next = { ...preparePlanLifecycle(null, incoming, incoming, true) }
+      applyRelationCoverageStamp(null, incoming, next, incomingLanes[incoming.provider])
+      delete next.relationCoverageStamp
       next = finalizeCanonicalTask(next)
       if (incoming.phase === 'unknown') next.freshness = 'verifying'
       recordActivityDecision(null, incoming, incoming.phase !== 'unknown', incoming.phase === 'unknown' ? 'unknown' : 'accepted')
@@ -2491,10 +2755,20 @@ function createCompanionTaskKernel(dependencies = {}) {
     const provider = incoming.provider
     if (provider === 'codex' && previous.activityPhase === 'running' && incoming.turnKind === 'turn-completed'
       && incoming.causalAuthority === 'terminal' && incoming.causalReliable) {
+      const declaredTerminal = finiteInteger(incoming.terminalAt)
+      const declaredPrecision = timestampPrecisionMs(incoming.terminalAtPrecisionMs)
       incoming = alignCodexCompletedTurn(previous, incoming)
+      if (declaredPrecision === 1000 && declaredTerminal > 0) {
+        incoming = { ...incoming, terminalAt: declaredTerminal, terminalAtPrecisionMs: 1000 }
+      }
     }
+    const previousObservation = taskPhaseObservation(previous)
+    const incomingObservation = taskPhaseObservation(incoming)
+    const turnOrder = compareCodexTurnOrder(previousObservation, incomingObservation)
+    const newerWithdrawnTurn = incoming.rolloutActivityWithdrawn === true && incoming.codexState
+      && previous.causalKey && turnOrder === 'newer'
     const activityUnobserved = provider === 'codex' && incoming.metadataPartial === true
-      && incoming.activityObserved === false
+      && incoming.activityObserved === false && !newerWithdrawnTurn
     const unreadOnly = activityUnobserved && incoming.planLifecycleState === 'unknown'
       && incoming.planLifecycleRevision === 0
     const membershipAdvanced = incomingLanes[provider].membership > currentLanes[provider].membership
@@ -2542,10 +2816,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     const causalComparable = Boolean(previous.causalDomain || incoming.causalDomain)
       || previous.causalReliable === true && incoming.causalReliable === true
     const laneTie = !phaseAdvanced && incoming.phaseRevision === previous.phaseRevision
-    const previousObservation = taskPhaseObservation(previous)
-    const incomingObservation = taskPhaseObservation(incoming)
     const causalDecision = sameTurnEvidenceDecision(previousObservation, incomingObservation)
-    const turnOrder = compareCodexTurnOrder(previousObservation, incomingObservation)
     const authoritativeStart = turnOrder !== 'older'
       && incoming.codexState?.orderedTurnStart === true && incoming.phase === 'running'
       && incoming.turnStartedAt > 0
@@ -2556,7 +2827,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       && previous.turnStartedAt > 0 && previous.turnStartedAt === incoming.turnStartedAt
     let verifying = false
     if (acceptPhase && (causalDecision || causalComparable || laneTie)
-      && !authoritativeStart && !phaseEvidenceSupersedes(previousObservation, incomingObservation)) {
+      && !authoritativeStart && !newerWithdrawnTurn && !phaseEvidenceSupersedes(previousObservation, incomingObservation)) {
       if (provider === 'codex' && causalDecision?.reason === 'sequence-incomparable'
         && previous.causalAuthority === 'inventory' && previous.causalSequence === 0
         && (previous.activityPhase || previous.phase) === incoming.phase && isTerminalTaskPhase(incoming.phase)
@@ -2592,7 +2863,13 @@ function createCompanionTaskKernel(dependencies = {}) {
       activityDecisionReason = 'renderer'
     }
 
-    if (acceptPhase && incoming.phase === 'unknown' && (previous.canonicalPhase || previous.phase) !== 'unknown') {
+    if (incoming.rolloutActivityWithdrawn && !newerWithdrawnTurn || acceptPhase && previous.rolloutActivityWithdrawn
+      && !followsCodexRolloutWithdrawal(previous, incomingObservation, incoming.causalReliable)) {
+      acceptPhase = false
+      activityDecisionReason = 'rollout-activity-stale'
+    }
+
+    if (acceptPhase && incoming.phase === 'unknown' && !newerWithdrawnTurn && (previous.canonicalPhase || previous.phase) !== 'unknown') {
       // Only a later observation can settle an unknown phase.
       acceptPhase = false
       verifying = true
@@ -2668,6 +2945,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       })
     }
     if (acceptPhase) {
+      if (newerWithdrawnTurn) next.rolloutActivityWithdrawn = true
+      else delete next.rolloutActivityWithdrawn
       Object.assign(next, {
         phase: incoming.phase,
         activityPhase: incoming.phase,
@@ -2765,6 +3044,21 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (membershipAdvanced || phaseAdvanced || unreadAdvanced || planArtifactAdvanced || metadataAdvanced) {
       next.observationGeneration = Math.max(next.observationGeneration, incoming.observationGeneration)
     }
+    if (provider === 'codex' && !activityUnobserved && draftProducer(draft.producer) !== 'renderer') {
+      const sameTurn = incoming.causalKey && incoming.causalKey === previous.causalKey
+        && incoming.causalDomain && incoming.causalDomain === previous.causalDomain
+      const sameTerminalKind = incoming.turnKind === previous.turnKind
+        && ['turn-completed', 'turn-interrupted', 'turn-failed'].includes(previous.turnKind)
+      const filledTerminal = backfilledTerminalAt(incoming)
+      if (sameTurn && sameTerminalKind && !finiteInteger(previous.terminalAt) && !finiteInteger(next.terminalAt) && filledTerminal) {
+        next.terminalAt = filledTerminal
+        const precision = timestampPrecisionMs(incoming.terminalAtPrecisionMs)
+        if (precision) next.terminalAtPrecisionMs = precision
+        else delete next.terminalAtPrecisionMs
+      }
+    }
+    applyRelationCoverageStamp(previous, incoming, next, incomingLanes[provider])
+    delete next.relationCoverageStamp
     if (verifying) next.freshness = 'verifying'
     const finalized = finalizeCanonicalTask(next)
     return { ...assignSemanticRevision(previous, finalized), activityAccepted: acceptPhase }
@@ -2802,7 +3096,8 @@ function createCompanionTaskKernel(dependencies = {}) {
           provider,
           enabledProviders,
           incomingLaneGenerations[provider].activity,
-          hostEvidence && ['host-evidence', 'host-preflight'].includes(producer)
+          hostEvidence && ['host-evidence', 'host-preflight'].includes(producer),
+          provider === 'codex' && member.role === 'child' ? codexRolloutWithdrawals : null
         )
         if (!incoming || incomingKeys.has(incoming.key)) continue
         const existing = nodeStore.get(incoming.key)
@@ -2971,13 +3266,29 @@ function createCompanionTaskKernel(dependencies = {}) {
         nextRelationStore.delete(key)
       }
     }
-    const nodesChanged = evidenceMapChanged(nodeStore, nextNodeStore)
+    let nodesChanged = nodeStore.size !== nextNodeStore.size
+    let structureChanged = nodesChanged
+    for (const [key, task] of nextNodeStore) {
+      const prior = nodeStore.get(key)
+      if (!prior) {
+        nodesChanged = true
+        structureChanged = true
+        continue
+      }
+      if (prior.provider !== task.provider || prior.family !== task.family
+        || (prior.standaloneEligible !== false) !== (task.standaloneEligible !== false)) structureChanged = true
+      if (prior === task) continue
+      if (isDeepStrictEqual(prior, task)) nextNodeStore.set(key, prior)
+      else nodesChanged = true
+    }
     if (nodesChanged) {
+      if (structureChanged) nodeStructureFence += 1
       nodeStore.clear()
       for (const [key, task] of nextNodeStore) nodeStore.set(key, task)
     }
     const relationsChanged = evidenceMapChanged(relationStore, nextRelationStore)
     if (relationsChanged) {
+      relationFence += 1
       relationStore.clear()
       for (const [key, relation] of nextRelationStore) relationStore.set(key, relation)
     }
@@ -2987,7 +3298,85 @@ function createCompanionTaskKernel(dependencies = {}) {
         currentLaneGenerations[provider][lane] = Math.max(currentLaneGenerations[provider][lane], incomingLaneGenerations[provider][lane])
       }
     }
-    return nodesChanged || relationsChanged || interactionsChanged
+    const coverageChanged = settleRelationCoverage()
+    return nodesChanged || relationsChanged || interactionsChanged || coverageChanged
+  }
+
+  function relationCoverageIndexes() {
+    const membersByFamily = new Map()
+    const edgesByFamily = new Map()
+    for (const [key, node] of nodeStore) {
+      if (node.provider !== 'codex') continue
+      const family = node.family || ''
+      let members = membersByFamily.get(family)
+      if (!members) membersByFamily.set(family, members = [])
+      members.push(key)
+    }
+    for (const members of membersByFamily.values()) members.sort()
+    for (const relation of relationStore.values()) {
+      if (relation.provider !== 'codex') continue
+      const families = new Set()
+      const parent = nodeStore.get(relation.parentKey)
+      const child = nodeStore.get(relation.childKey)
+      if (parent?.provider === 'codex' && parent.family) families.add(parent.family)
+      if (child?.provider === 'codex' && child.family) families.add(child.family)
+      const edge = [relation.childKey, relation.parentKey, relation.relation || '', relation.exact === true].join('\0')
+      for (const family of families) {
+        let edges = edgesByFamily.get(family)
+        if (!edges) edgesByFamily.set(family, edges = [])
+        edges.push(edge)
+      }
+    }
+    for (const edges of edgesByFamily.values()) edges.sort()
+    return { membersByFamily, edgesByFamily }
+  }
+
+  function applyRelationCoverageStamp(previous, incoming, next, lanes) {
+    const stamp = incoming.relationCoverageStamp
+    if (incoming.provider !== 'codex' || incoming.role !== 'root' || !stamp) return
+    const laneGeneration = finiteInteger(lanes?.topology)
+    const stored = finiteInteger(previous?.relationCoverage?.generation)
+    if (!stamp.generation || stamp.generation !== laneGeneration || stamp.generation < stored) return
+    if (stamp.complete === true) {
+      next.relationCoverage = {
+        complete: true,
+        generation: stamp.generation,
+        signature: previous?.relationCoverage?.signature || ''
+      }
+      relationCoverageRestamped.add(incoming.key)
+      return
+    }
+    next.relationCoverage = { complete: false, generation: stamp.generation }
+    relationCoverageRestamped.delete(incoming.key)
+  }
+
+  function settleRelationCoverage() {
+    const covered = []
+    for (const [key, node] of nodeStore) {
+      if (node.provider === 'codex' && node.role === 'root' && node.relationCoverage?.complete === true) covered.push([key, node])
+    }
+    if (!covered.length) {
+      relationCoverageRestamped.clear()
+      return false
+    }
+    const { membersByFamily, edgesByFamily } = relationCoverageIndexes()
+    let changed = false
+    for (const [key, node] of covered) {
+      const family = node.family || ''
+      const signature = JSON.stringify([membersByFamily.get(family) || [], edgesByFamily.get(family) || []])
+      if (relationCoverageRestamped.has(key)) {
+        if (node.relationCoverage.signature === signature) continue
+        nodeStore.set(key, { ...node, relationCoverage: { ...node.relationCoverage, signature } })
+        changed = true
+      } else if (node.relationCoverage.signature !== signature) {
+        const cleared = { ...node }
+        cleared.relationCoverage = { complete: false, generation: node.relationCoverage.generation }
+        nodeStore.set(key, cleared)
+        changed = true
+      }
+    }
+    relationCoverageRestamped.clear()
+    return changed
   }
 
   function commitDraft(draft, hostEvidence = false, cacheProvider = '', sourceProviders = null) {
@@ -3117,10 +3506,6 @@ function createCompanionTaskKernel(dependencies = {}) {
       try { persistInteractionTombstones([...interactionTombstones.values()].slice(-2_000)) } catch {}
       interactionTombstonesChanged = false
     }
-    const reusedProjection = hostEvidence && Boolean(topologyFingerprint) && !refreshPauses && !graphChanged
-      && (!nextVisibilityTransitionAt || nextVisibilityTransitionAt > now())
-    if (!reusedProjection) refreshInteractionProjections()
-    const materialized = reusedProjection ? currentPackage : materializePrivateTopology()
     let reorder = false
     if (cacheProvider) {
       const recovering = currentPackage.providerHealth[cacheProvider]?.status !== 'ready' && cacheHealth === 'ready'
@@ -3128,6 +3513,16 @@ function createCompanionTaskKernel(dependencies = {}) {
       else if (!cacheWasVerified) providerCacheStates.set(cacheProvider, 'unavailable')
       reorder = cacheAdmitted && (!cacheWasVerified || recovering) || !currentPackage.complete && cacheComplete()
     }
+    const nextComplete = cacheProvider
+      ? cacheWasVerified && !cacheAdmitted ? currentPackage.complete : cacheComplete()
+      : draft.complete === true
+      && (currentPackage.complete || pending !== false && observedProviders.length === enabledProviders.size)
+    const continueReadinessChanged = packageContinueReady !== nextComplete
+    packageContinueReady = nextComplete
+    const reusedProjection = hostEvidence && Boolean(topologyFingerprint) && !refreshPauses && !graphChanged
+      && !continueReadinessChanged && (!nextVisibilityTransitionAt || nextVisibilityTransitionAt > now())
+    if (!reusedProjection) refreshInteractionProjections()
+    const materialized = reusedProjection ? currentPackage : materializePrivateTopology()
     const reuseTaskViews = reusedProjection || materialized.tasks.length === currentPackage.tasks.length
       && materialized.tasks.every((task, index) => {
         const previous = currentPackage.tasks[index]
@@ -3151,10 +3546,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       publishedAt: finiteInteger(draft.acceptedAt, now()),
       enabled,
       providers: { ...providers },
-      complete: cacheProvider
-        ? cacheWasVerified && !cacheAdmitted ? currentPackage.complete : cacheComplete()
-        : draft.complete === true
-        && (currentPackage.complete || pending !== false && observedProviders.length === enabledProviders.size),
+      complete: nextComplete,
       freshness,
       focusedKey,
       sourceGenerations: Object.fromEntries(PROVIDERS.map((provider) => [
@@ -3430,6 +3822,40 @@ function createCompanionTaskKernel(dependencies = {}) {
     return result
   }
 
+  function withdrawCodexRolloutActivity(input) {
+    const { key, causalKey, causalDomain, sequence, epoch } = input || {}
+    if (disposed || !enabled || !providers.codex || epoch !== undefined && epoch !== providerEpochs.codex
+      || typeof key !== 'string' || !key || key.length > 256
+      || typeof causalKey !== 'string' || !causalKey || causalKey.length > 160
+      || typeof causalDomain !== 'string' || !causalDomain || causalDomain.length > 256
+      || !Number.isSafeInteger(sequence) || sequence <= 0) return false
+    const identity = codexRolloutWithdrawalKey(key, causalDomain, causalKey)
+    if (sequence > (codexRolloutWithdrawals.get(identity) || 0)) {
+      codexRolloutWithdrawals.delete(identity)
+      codexRolloutWithdrawals.set(identity, sequence)
+      if (codexRolloutWithdrawals.size > CODEX_ROLLOUT_WITHDRAWAL_LIMIT) {
+        codexRolloutWithdrawals.delete(codexRolloutWithdrawals.keys().next().value)
+      }
+    }
+    const task = nodeStore.get(key)
+    if (task?.provider !== 'codex' || task.role !== 'child' || task.activityPhase !== 'running'
+      || task.causalAuthority !== 'live-turn' || task.causalKey !== causalKey
+      || task.causalDomain !== causalDomain || task.causalSequence !== sequence) return false
+    const withdrawn = applyInteractionProjection({
+      ...task,
+      phase: 'unknown',
+      activityPhase: 'unknown',
+      turnKind: 'unknown',
+      freshness: 'verifying',
+      causalAuthority: 'unknown',
+      causalReliable: false,
+      rolloutActivityWithdrawn: true,
+      ...(task.codexState?.threadStatus === 'active' && { codexState: { ...task.codexState, threadStatus: 'notLoaded' } })
+    })
+    commitLocalTaskState(task, withdrawn, 'codex-rollout-activity-withdrawn')
+    return true
+  }
+
   function commitCodexPinEvidence(input) {
     const { epoch, generation, revision, kind, authority, coverage } = input || {}
     if (disposed || !enabled || !providers.codex || epoch !== providerEpochs.codex
@@ -3484,21 +3910,35 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
   }
 
+  function diagnosticTimestamp(value) {
+    const time = finiteInteger(value)
+    return time > 0 ? time : null
+  }
+
+  function diagnosticPrecision(value) {
+    return timestampPrecisionMs(value) || null
+  }
+
   function getCodexDiagnosticMembers(packageValue) {
     if (packageValue !== currentPackage) return null
     const byRoot = new Map()
     for (const [key, { task, members }] of shortcutReadInputs) {
       if (task.provider !== 'codex') continue
-      byRoot.set(key, members.slice(0, 32).map(member => ({
+      const rows = members.slice(0, 32).map(member => ({
         memberRef: diagnosticTaskRef('codex', member.key),
         turnRef: member.causalKey ? diagnosticTaskRef('codex', `turn:${member.causalKey}`) : '',
         root: member.key === key,
         phase: member.phase,
         turn: member.memberStatus?.turn,
-        turnStartedAt: finiteInteger(member.turnStartedAt),
-        terminalAt: finiteInteger(member.terminalAt),
+        turnStartedAt: diagnosticTimestamp(member.turnStartedAt),
+        turnStartedAtPrecisionMs: diagnosticPrecision(member.turnStartedAtPrecisionMs),
+        terminalAt: diagnosticTimestamp(member.terminalAt),
+        terminalAtPrecisionMs: diagnosticPrecision(member.terminalAtPrecisionMs),
         unread: member.unreadKnown ? member.unread === true : null
-      })))
+      }))
+      rows.totalCount = members.length
+      rows.continueDispatchAllowed = continueDispatchAllowed(key)
+      byRoot.set(key, rows)
     }
     return byRoot
   }
@@ -3558,6 +3998,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       return { outcome: 'archived', removedKeys: [], package: currentPackage }
     }
     for (const key of privateRemovalKeys) nodeStore.delete(key)
+    nodeStructureFence += 1
+    relationFence += 1
     for (const [key, relation] of relationStore) {
       if (!privateRemovalKeys.has(relation.childKey) && !privateRemovalKeys.has(relation.parentKey)) continue
       const generation = Math.max(finiteInteger(relation.generation), finiteInteger(input.membershipRevision), terminalEpoch)
@@ -3675,6 +4117,16 @@ function createCompanionTaskKernel(dependencies = {}) {
     return tasksByKey.get(key) || null
   }
 
+  function continueDispatchAllowed(key) {
+    if (disposed || !enabled || typeof key !== 'string' || !key) return false
+    const task = taskForKey(key)
+    const root = nodeStore.get(key)
+    if (!task || task.provider !== 'codex' || root?.provider !== 'codex') return false
+    if (task.freshness !== 'fresh' || task.phase !== 'stopped' || task.planReady) return false
+    if (task.capabilities?.continueTask !== true) return false
+    return root.relationCoverage ? root.relationCoverage.complete === true : currentPackage.complete
+  }
+
   function ephemeralOpenTarget(key, actionAlias = '') {
     if (typeof key !== 'string' || !key || key.length > 256) return null
     if (pauseRecoveryPending && (!unavailablePauseKeys || unavailablePauseKeys.has(key) || protectedPauseGroupKeys.has(key))) return null
@@ -3758,9 +4210,11 @@ function createCompanionTaskKernel(dependencies = {}) {
       // A previous/next/open operation must never trigger a Provider refresh
       // that also changes phase, unread or topology as a side effect.
       if (['archive', 'pause', 'resume', 'execute-plan', 'continue-task', 'archive-focused'].includes(input.action)) {
-        await ensureReady(targetKey, {
-          action: input.action
-        })
+        if (!(input.action === 'continue-task' && continueDispatchAllowed(targetKey))) {
+          await ensureReady(targetKey, {
+            action: input.action
+          })
+        }
       } else if (!currentPackage.complete && !currentPackage.tasks.length) {
         return { outcome: 'unavailable', errorCode: 'inventory-not-ready', message: '当前没有可用的缓存任务' }
       }
@@ -3863,12 +4317,14 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (input.action === 'continue-task') {
       const task = taskForKey(input.key)
       if (!task?.capabilities.continueTask || task.phase !== 'stopped' || task.planReady
+        || task.provider === 'codex' && !continueDispatchAllowed(task.key)
         || finiteInteger(input.revisionAt) !== task.revisionAt) {
         return { outcome: 'failed', errorCode: 'state-changed', message: '任务状态已变化，当前不能继续' }
       }
       return actions.continueTask({
         key: task.key, revisionAt: task.revisionAt, source: input.source || 'continue-task-button',
-        operationId: input.operationId, target: actionTargetForTask(task)
+        operationId: input.operationId, target: actionTargetForTask(task),
+        rootCoverage: nodeStore.get(task.key)?.relationCoverage?.complete === true
       })
     }
     if (input.action === 'execute-plan') {
@@ -4373,6 +4829,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     shortcutReadInputs.clear()
     clearVisibilityTimer()
     packageListeners.clear()
+    codexRolloutWithdrawals.clear()
     diagnosticActivitySignatures.clear()
     commandInFlight.clear()
     commandResults.clear()
@@ -4400,6 +4857,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     syncPackage,
     /** Host-only provider evidence path; never exposed as a Renderer authority. */
     publishEvidence,
+    withdrawCodexRolloutActivity,
     commitCodexPinEvidence,
     getCodexPinCoverage: () => new Map(codexPinMembers),
     isCurrentCodexPinMember: (key, member) => Boolean(member && codexPinMembers.get(key) === member),
@@ -4409,6 +4867,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     isProviderCached,
     getActivityCheckpoint,
     getCodexDiagnosticMembers,
+    continueDispatchAllowed,
     /** Only a verified Provider archive transaction may call this commit gate. */
     commitArchived,
     detach,

@@ -152,15 +152,20 @@ function createCodexInventoryTurnFields(dependencies = {}) {
 
   function codexTerminalTurnTransition(known, value, predecessorId) {
     if (!['completed', 'interrupted', 'failed'].includes(value?.status)
-      || !normalizedStamp(value, value.startedAt, 'turnStartedAtPrecisionMs')) return null
+      || !value.id && !normalizedStamp(value, value.startedAt, 'turnStartedAtPrecisionMs')) return null
     const candidate = predecessorId && value.id ? { ...value, predecessorId } : value
-    const turn = codexAlignCompletedTurnStart(known, candidate)
-    const order = compareInventoryTurns(known, turn)
     const previous = turnOrderShape(known)
+    let turn = codexAlignCompletedTurnStart(known, candidate)
     const incoming = turnOrderShape(turn)
+    const order = compareInventoryTurns(known, turn)
     if (order === 'older' || order === 'unknown' && previous.causalKey && incoming.causalKey
       && previous.causalKey !== incoming.causalKey
-      || order !== 'newer' && incoming.turnStartedAt < previous.turnStartedAt) return null
+      || order !== 'newer' && order !== 'same' && incoming.turnStartedAt < previous.turnStartedAt) return null
+    if (order === 'same' && previous.turnStartedAt && (!incoming.turnStartedAt
+      || previous.turnStartedAtPrecisionMs === 1 && incoming.turnStartedAtPrecisionMs === 1000
+        && Math.floor(previous.turnStartedAt / 1000) === Math.floor(incoming.turnStartedAt / 1000))) {
+      turn = { ...turn, startedAt: previous.turnStartedAt, turnStartedAtPrecisionMs: previous.turnStartedAtPrecisionMs }
+    }
     return { turn, order }
   }
 
@@ -283,23 +288,16 @@ function createCodexInventoryTurnFields(dependencies = {}) {
     const storedTerminalPrecision = codexExplicitTimestampPrecision(turn.terminalAtPrecisionMs)
     const startedAt = storedStartPrecision ? alreadyMilliseconds(turn.startedAt) : timestampMs(turn.startedAt)
     const completedSource = storedTerminalPrecision ? alreadyMilliseconds(turn.completedAt) : timestampMs(turn.completedAt)
-    const completedAt = status === 'completed' ? completedSource : 0
-    let interruptedAt = 0
-    if (status === 'interrupted' && id && startedAt) {
-      if (Object.prototype.hasOwnProperty.call(turn, 'completedAt')) {
-        interruptedAt = completedSource >= startedAt ? completedSource : 0
-      } else {
-        const retained = alreadyMilliseconds(turn.interruptedAt)
-        interruptedAt = retained >= startedAt ? retained : 0
-      }
-    }
-    const hasTerminal = Boolean(completedAt || interruptedAt)
+    const completedAt = status === 'completed' || status === 'failed' ? completedSource : 0
+    const suppliedCompletion = Object.prototype.hasOwnProperty.call(turn, 'completedAt')
+    const interruption = suppliedCompletion ? completedSource : alreadyMilliseconds(turn.interruptedAt)
     const startedPrecision = startedAt
       ? selectedPrecision('turnStartedAtPrecisionMs', turn, observation, sourcePrecision(turn.startedAt))
       : 0
-    const terminalPrecision = hasTerminal
-      ? selectedPrecision('terminalAtPrecisionMs', turn, observation, sourcePrecision(turn.completedAt))
-      : 0
+    const terminalPrecision = selectedPrecision('terminalAtPrecisionMs', turn, observation,
+      sourcePrecision(status === 'interrupted' && !suppliedCompletion ? turn.interruptedAt : turn.completedAt))
+    const interruptedAt = status === 'interrupted' && id && interruption > 0
+      && interruption + (terminalPrecision || 1) - 1 >= startedAt ? interruption : 0
     const timed = observation && typeof observation === 'object'
     const requestedAt = codexEpochMilliseconds(timed ? observation.statusRequestedAt : turn.statusRequestedAt)
     const receivedAt = codexEpochMilliseconds(timed ? observation.statusReceivedAt : turn.statusReceivedAt)
@@ -308,10 +306,10 @@ function createCodexInventoryTurnFields(dependencies = {}) {
       ...(id ? { id } : {}),
       ...(startedAt ? { startedAt } : {}),
       ...(completedAt ? { completedAt } : {}),
-      ...(interruptedAt > 0 && interruptedAt >= startedAt ? { interruptedAt } : {}),
+      ...(interruptedAt ? { interruptedAt } : {}),
       ...(predecessorId ? { predecessorId } : {}),
       ...(startedPrecision ? { turnStartedAtPrecisionMs: startedPrecision } : {}),
-      ...(terminalPrecision ? { terminalAtPrecisionMs: terminalPrecision } : {}),
+      ...(terminalPrecision && (completedAt || interruptedAt) ? { terminalAtPrecisionMs: terminalPrecision } : {}),
       ...(requestedAt ? { statusRequestedAt: requestedAt } : {}),
       ...(receivedAt ? { statusReceivedAt: receivedAt } : {})
     }

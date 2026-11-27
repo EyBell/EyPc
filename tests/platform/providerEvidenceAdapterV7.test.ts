@@ -212,6 +212,20 @@ describe('CompanionProviderEvidenceAdapterV7', () => {
     expect(observation.candidates).toEqual([expect.objectContaining({ kind: 'turn-completed', authority: 'terminal' })])
   })
 
+  it('keeps an exact side abort when Goal evidence is absent and withholds it while live', () => {
+    const terminal = {
+      branchKind: 'side', status: 'idle', lastTurnStatus: 'interrupted', lastTurnEvidence: 'targeted-after-exit',
+      terminalEvidenceSequence: 40, turnStartedAt: 100, terminalAt: 200, ordinarySideInterruptedAt: 200,
+      goalStatus: 'unknown', goalFreshness: 'verifying'
+    }
+    expect(codexBranchObservationV7(terminal).candidates[0]).toMatchObject({ kind: 'turn-interrupted', ordinarySideInterruptedAt: 200 })
+    expect(codexBranchObservationV7({ ...terminal, ordinarySideInterruptedAt: 90 }).candidates[0].ordinarySideInterruptedAt).toBeUndefined()
+    expect(codexBranchObservationV7({
+      ...terminal, status: 'active', statusAuthority: 'desktop-live', activityEvidence: 'activity-event',
+      activeFlags: ['waitingOnUserInput'], activeEvidenceSequence: 50
+    }).candidates[0].ordinarySideInterruptedAt).toBeUndefined()
+  })
+
   it('treats Host extra-process connector-active as live running', () => {
     expect(codexBranchObservationV7({
       status: 'active',

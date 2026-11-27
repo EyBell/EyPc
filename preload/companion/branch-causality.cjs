@@ -132,18 +132,10 @@ function alignCodexCompletedTurn(previous, incoming) {
     ? retainedStart < incomingStart + incomingPrecision
     : !incomingPrecision && incomingStart === Math.floor(retainedStart / 1000) * 1000
   if (!sameSourceSecond) return incoming
-  const next = {
-    ...incoming,
-    turnStartedAt: retainedStart,
-    terminalAt: terminalAt === incomingStart ? retainedStart : terminalAt
-  }
+  const next = { ...incoming, turnStartedAt: retainedStart }
   if (incomingPrecision === 1000) {
     if (retainedPrecision) next.turnStartedAtPrecisionMs = retainedPrecision
     else delete next.turnStartedAtPrecisionMs
-    if (terminalAt === incomingStart) {
-      if (retainedPrecision) next.terminalAtPrecisionMs = retainedPrecision
-      else delete next.terminalAtPrecisionMs
-    }
   }
   return next
 }

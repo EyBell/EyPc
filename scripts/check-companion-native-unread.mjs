@@ -240,7 +240,7 @@ export function checkCompanionNativeUnread(assetRoot) {
     codexDesktopBridge: { shadows: new Map([[main, ownShadow]]), sideShadows: new Map([[side, member]]) },
     honorHostExternalProjection: (_id, _known, value) => value,
     codexDesktopShadowActivity: activity, codexAppServerActiveDominates: () => false, codexAppServerSideActivity: () => null,
-    codexAllSideRelations: () => new Map([[side, main]]), codexInventorySideBranchEvidence: new Map(),
+    codexInventorySideBranchEvidence: new Map(), codexSideRootsIndex: null, codexInventoryRelationRevision: 0,
     codexInventorySideRelations: new Map(), codexDesktopSideRelations: new Map([[side, main]]),
     codexDesktopUnreadObservation: () => ({ hasUnreadTurn: false, unreadAuthority: 'desktop-live' }),
     codexInventorySnapshotLiveSequence: () => 0, codexhostDiscovery: null,
@@ -251,12 +251,27 @@ export function checkCompanionNativeUnread(assetRoot) {
   const projectionStart = source.indexOf('function codexPrivateBranchEvidence(')
   const projectionEnd = source.indexOf('\nfunction ', projectionStart + 1)
   assert(projectionStart >= 0 && projectionEnd > projectionStart)
-  for (const name of ['codexRetainReferencedThreadIdentities', 'codexPrivateBranchTerminalKey', 'companionCausalKey']) {
+  for (const name of ['codexSideParentThreadId', 'codexAllSideRelations', 'codexSideMembersForRoot',
+    'codexPrivateBranchTerminalKey', 'codexDesktopCompletionEvidence', 'companionCausalKey']) {
     const start = source.indexOf(`function ${name}(`)
     const end = source.indexOf('\nfunction ', start + 1)
     assert(start >= 0 && end > start, `private projection dependency ${name} is available`)
     vm.runInContext(source.slice(start, end), projectionContext)
   }
+  projectionContext.codexTimestampMs = value => Number(value) || 0
+  const completionOf = () => projectionContext.codexDesktopCompletionEvidence(main)
+  const activeRef = projector.codexDesktopRequestCorrelation({ id: 'settled-main' })
+  terminals.set(main, { lastTurnStatus: 'completed', turnRef: activeRef, turnStartedAt: 1056, terminalAt: 2500 })
+  projectionContext.codexThreadTurnStatusCache.set(main, { turn: { id: 'settled-main', status: 'completed', startedAt: 1000 } })
+  const initialCompletion = completionOf()
+  assert.equal(initialCompletion?.turnRef, activeRef)
+  projectionContext.codexThreadTurnStatusCache.set(main, { turn: { id: 'settled-main', status: 'interrupted', startedAt: 1056 } })
+  assert.equal(completionOf()?.instance, initialCompletion?.instance,
+    'the same confirmed completion binds a native read after a coarser or detached history reply')
+  projectionContext.codexThreadTurnStatusCache.set(main, { turn: { id: 'next-turn', status: 'inProgress', startedAt: 2600 } })
+  assert.equal(completionOf(), null, 'the next Turn cannot inherit the previous completion read')
+  projectionContext.codexThreadTurnStatusCache.delete(main)
+  terminals.delete(main)
   vm.runInContext(source.slice(projectionStart, projectionEnd), projectionContext)
   let branches = projectionContext.codexPrivateBranchEvidence(main, known).branches
   assert.equal(branches.find(value => value.branchKind === 'side').turnStartedAt, 0, 'unknown Side epoch cannot borrow the parent epoch')
@@ -319,7 +334,7 @@ export function checkCompanionNativeUnread(assetRoot) {
   assert.equal(queries[0].options.settleSnapshotTerminal, true)
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 0, '', false, true), true, 'exact inactive member terminal can settle at first successful read')
   assert.equal(resolution.codexSnapshotTerminalReady({ startedAt: 100 }, 200, 'inProgress', true, true), false, 'idle cannot authorize an older member epoch')
-  return 47
+  return 50
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

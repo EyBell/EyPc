@@ -690,6 +690,44 @@ describe('CompanionTaskKernel', () => {
     kernel.syncPackage({ lease: receipt.lease, draft: input })
     expect(events.filter(event => event.event === 'root-member-resolution')).toHaveLength(1)
   })
+
+  it('retains a later same-turn millisecond end and distinguishes a missing diagnostic time', () => {
+    const kernel = createCompanionTaskKernel()
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const stamp = (revision: number, terminalAt: number, precision?: number, phase = 'completed') => {
+      const input = draft([task({
+        phase, turnStartedAt: 5_000, statusEnteredAt: 5_000, terminalAt,
+        phaseRevision: 10, causalKey: 'turn-1'
+      })], revision, { providers: { codex: true, claude: false } }) as Record<string, any>
+      const activity = input.evidenceBatches.codex.nodes[0].activity
+      activity.causalDomain = 'native-domain'
+      activity.authority = 'terminal'
+      activity.exact = true
+      if (precision) activity.terminalAtPrecisionMs = precision
+      return input
+    }
+    kernel.publishEvidence(stamp(1, 0))
+    expect(kernel.getPackage().tasks[0].terminalAt).toBe(0)
+    const missing = kernel.getCodexDiagnosticMembers(kernel.getPackage()).get('codex-a')
+    expect(missing.totalCount).toBe(1)
+    expect(missing[0].terminalAt).toBeNull()
+    expect(missing[0].terminalAtPrecisionMs).toBeNull()
+    expect(missing[0].turnStartedAt).toBe(5_000)
+    expect(missing[0].turnStartedAtPrecisionMs).toBeNull()
+
+    kernel.publishEvidence(stamp(2, 5_000))
+    expect(kernel.getPackage().tasks[0].terminalAt).toBe(0)
+    kernel.publishEvidence(stamp(3, 5_000, 1000, 'stopped'))
+    expect(kernel.getPackage().tasks[0].terminalAt).toBe(0)
+
+    kernel.publishEvidence(stamp(4, 5_000, 1000))
+    expect(kernel.getPackage().tasks[0].terminalAt).toBe(5_000)
+    const filled = kernel.getCodexDiagnosticMembers(kernel.getPackage()).get('codex-a')
+    expect(filled.totalCount).toBe(1)
+    expect(filled[0].terminalAt).toBe(5_000)
+    expect(filled[0].terminalAtPrecisionMs).toBe(1000)
+    kernel.close()
+  })
   it('keeps canonical selectors and production fallback ownership inside the V7 Kernel', () => {
     const kernelSource = readFileSync(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'), 'utf8')
     const hostSource = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
@@ -5917,13 +5955,167 @@ describe('Codex verified continuation and closed-machine history', () => {
       }
     })
   }
-  function openKernel() {
+  function openKernel(dependencies: Record<string, any> = {}) {
     const kernel = createCompanionTaskKernel({
+      ...dependencies,
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
     kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     return kernel
   }
+
+  describe('Codex rollout withdrawal', () => {
+    const receipt = { key: 'codex-child:side', causalDomain: 'scope-a', causalKey: 'side-turn', sequence: 17 }
+    function liveSide(overrides: Record<string, any> = {}) {
+      return codexNode({ ...receipt, role: 'child', kind: 'turn-running', authority: 'live-turn',
+        turnStartedAt: 3_000, codexState: { ...goalState('none'), threadStatus: 'active' }, ...overrides })
+    }
+    function inventorySide(overrides: Record<string, any> = {}) {
+      return liveSide({ kind: 'turn-interrupted', authority: 'inventory', exact: false, causalSequence: 0,
+        codexState: { ...goalState('none'), threadStatus: 'notLoaded' }, ...overrides })
+    }
+
+    it('retains the withdrawn Turn through inconclusive inventory and later deliveries', () => {
+      const kernel = openKernel()
+      publish(kernel, 1, [liveSide()])
+      expect(kernel.withdrawCodexRolloutActivity(receipt)).toBe(true)
+      publish(kernel, 2, [inventorySide()])
+      publish(kernel, 3, [liveSide({ causalKey: 'older-turn', turnStartedAt: 2_000, sequence: 30 })])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'unknown', causalKey: receipt.causalKey })
+      publish(kernel, 4, [liveSide({ sequence: 16 })])
+      const repeated = liveSide()
+      delete repeated.activity.candidates
+      publish(kernel, 5, [repeated])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'unknown', causalKey: receipt.causalKey })
+      publish(kernel, 6, [liveSide({ sequence: 18 })])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'running', phaseRevision: 18 })
+      expect(kernel.withdrawCodexRolloutActivity(receipt)).toBe(false)
+      publish(kernel, 7, [liveSide()])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'running', phaseRevision: 18 })
+      kernel.close()
+    })
+
+    it.each(['before', 'after'])('blocks pending live evidence replayed %s the first membership batch', (position) => {
+      const pendingSide = liveSide()
+      pendingSide.metadata.partial = true
+      const batch = createEvidenceBatchV7({ provider: 'codex', nodes: [pendingSide], laneGenerations: { activity: 7 } })
+      const kernel = openKernel({ preparePendingEvidence: () => ({ [position]: [batch] }) })
+      const revision = kernel.getLatest().packageRevision
+      kernel.withdrawCodexRolloutActivity(receipt)
+      expect(kernel.getActivityCheckpoint(receipt.key)).toBeNull()
+      expect(kernel.getLatest().packageRevision).toBe(revision)
+      publish(kernel, 1, [])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toBeNull()
+      publish(kernel, 2, [inventorySide()])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'unknown' })
+      kernel.close()
+    })
+
+    it.each(['before', 'after'])('keeps the newer withdrawn Turn when pending evidence arrives %s an older inventory terminal', (position) => {
+      const older = liveSide({ kind: 'turn-interrupted', authority: 'terminal', causalKey: 'previous-turn',
+        sequence: 12, turnStartedAt: 1_000, terminalAt: 2_000 })
+      const pendingSide = liveSide()
+      pendingSide.activity.candidates.push(older.activity.candidates[0])
+      pendingSide.metadata.partial = true
+      const batch = createEvidenceBatchV7({ provider: 'codex', nodes: [pendingSide], laneGenerations: { activity: 7 } })
+      const kernel = openKernel({ preparePendingEvidence: () => ({ [position]: [batch] }) })
+      kernel.withdrawCodexRolloutActivity(receipt)
+      publish(kernel, 1, [older])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'unknown', causalKey: receipt.causalKey })
+      kernel.close()
+    })
+
+    it('keeps an older Turn behind the first inventory observation of a withdrawn member', () => {
+      const kernel = openKernel()
+      kernel.withdrawCodexRolloutActivity(receipt)
+      publish(kernel, 1, [inventorySide()])
+      publish(kernel, 2, [liveSide({ causalKey: 'older-turn', turnStartedAt: 2_000 })])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'unknown', causalKey: receipt.causalKey })
+      publish(kernel, 3, [liveSide({ causalKey: 'next-turn', turnStartedAt: 4_000 })])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'running', causalKey: 'next-turn' })
+      kernel.close()
+    })
+
+    it('preserves the admitted member and its approval when its underlying running Turn is withdrawn', () => {
+      const kernel = openKernel()
+      const family = 'codex:root'
+      const root = codexNode({ key: 'root', family, kind: 'turn-completed', codexState: goalState('none') })
+      const side = liveSide({ family })
+      const relations = (generation: number) => [{ childKey: receipt.key, parentKey: root.key, provider: 'codex', family,
+        relation: 'side-thread', authority: 'test-provider-fixture', exact: true, generation }]
+      const request = interaction({ taskKey: receipt.key, branchRef: 'side', kind: 'approval', turnEpoch: 3_000 })
+      publish(kernel, 1, [root, side], { relations: relations(1), interactions: [request] })
+      expect(kernel.getLatest().tasks[0].phase).toBe('waiting-approval')
+      expect(kernel.withdrawCodexRolloutActivity(receipt)).toBe(true)
+      const waiting = { phase: 'waiting-approval', topology: { memberCount: 2, attentionCount: 1 },
+        codexStatus: { sides: [{ phase: 'waiting-approval', turn: 'unknown', threadStatus: 'notLoaded' }] } }
+      expect(kernel.getLatest().tasks[0]).toMatchObject(waiting)
+      publish(kernel, 2, [root, side], { relations: relations(2), interactions: [request] })
+      expect(kernel.getLatest().tasks[0]).toMatchObject(waiting)
+      publish(kernel, 3, [root, inventorySide({ family })], { relations: relations(3),
+        interactions: [{ ...request, state: 'resolved', sequence: 101 }] })
+      expect(kernel.getLatest().tasks[0]).toMatchObject({ key: root.key, phase: 'completed', freshness: 'verifying',
+        topology: { memberCount: 2, liveCount: 0 }, capabilities: { continueTask: false } })
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'unknown' })
+      kernel.close()
+    })
+
+    it.each(['first', 'last'])('keeps the withdrawn Turn boundary on admission with an older competing terminal %s', (position) => {
+      const kernel = openKernel()
+      kernel.withdrawCodexRolloutActivity(receipt)
+      const stale = liveSide()
+      const inventory = inventorySide({ terminalAt: 3_000 })
+      const older = liveSide({ kind: 'turn-interrupted', authority: 'terminal', causalKey: 'previous-turn',
+        sequence: 40, turnStartedAt: 1_000, terminalAt: 2_000 })
+      const candidates = [stale, inventory].map(node => node.activity.candidates[0])
+      const earlier = older.activity.candidates[0]
+      stale.activity.candidates = position === 'first' ? [earlier, ...candidates] : [...candidates, earlier]
+      publish(kernel, 1, [stale])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'unknown', causalKey: receipt.causalKey })
+      publish(kernel, 2, [older])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'unknown', causalKey: receipt.causalKey })
+      publish(kernel, 3, [liveSide({ kind: 'turn-interrupted', authority: 'terminal', sequence: 18, terminalAt: 4_000 })])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'stopped', causalKey: receipt.causalKey })
+      kernel.close()
+    })
+
+    it.each(['first', 'last'])('admits an exact terminal with a withdrawn candidate %s in the same batch', (position) => {
+      const kernel = openKernel()
+      kernel.withdrawCodexRolloutActivity(receipt)
+      const stale = liveSide()
+      const terminal = liveSide({ kind: 'turn-completed', authority: 'terminal', sequence: 16, terminalAt: 3_500,
+        codexState: goalState('none') })
+      const batchNode = position === 'first' ? stale : terminal
+      batchNode.activity.candidates.push((position === 'first' ? terminal : stale).activity.candidates[0])
+      publish(kernel, 1, [batchNode])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'completed', phaseRevision: 16 })
+      publish(kernel, 2, [liveSide()])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'completed', phaseRevision: 16 })
+      publish(kernel, 3, [liveSide({ causalKey: 'next-turn', turnStartedAt: 4_000, sequence: 2 })])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'running', causalKey: 'next-turn' })
+      kernel.close()
+    })
+
+    it('isolates pending withdrawals by member, domain and provider epoch', () => {
+      const kernel = openKernel()
+      const epoch = kernel.providerEpoch('codex')
+      kernel.withdrawCodexRolloutActivity({ ...receipt, epoch })
+      const otherKey = 'codex-child:other'
+      publish(kernel, 1, [liveSide({ key: otherKey }), liveSide({ causalDomain: 'scope-b' })])
+      expect(kernel.getActivityCheckpoint(otherKey)).toMatchObject({ phase: 'running' })
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'running', causalDomain: 'scope-b' })
+      publish(kernel, 2, [])
+      kernel.withdrawCodexRolloutActivity({ ...receipt, sequence: 16 })
+      publish(kernel, 3, [liveSide()])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'unknown' })
+      expect(kernel.invalidateProvider('codex')).toBe(true)
+      expect(kernel.providerEpoch('codex')).not.toBe(epoch)
+      expect(kernel.withdrawCodexRolloutActivity({ ...receipt, epoch })).toBe(false)
+      publish(kernel, 4, [liveSide()])
+      expect(kernel.getActivityCheckpoint(receipt.key)).toMatchObject({ phase: 'running' })
+      kernel.close()
+    })
+  })
 
   it.each(['paused', 'blocked'])('continues a %s goal from the same exact completion, including a missing start', (status) => {
     const kernel = openKernel()
@@ -6015,6 +6207,214 @@ describe('Codex verified continuation and closed-machine history', () => {
       phase: 'completed', capabilities: { continueTask: false }, topology: { memberCount: 2, liveCount: 0 }
     })
     kernel.close()
+  })
+
+  it('keeps historical machine and human sides from downgrading a current child', () => {
+    const family = 'codex:root-a'
+    const relation = (childKey: string, parentKey = 'root-a', generation = 1) => ({
+      childKey, parentKey, provider: 'codex', family, relation: 'side-thread', authority: 'test-provider-fixture', exact: true, generation
+    })
+    const root = () => codexNode({
+      key: 'root-a', family, kind: 'turn-completed', causalKey: 'root-turn', turnStartedAt: 10_000, terminalAt: 12_000,
+      turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1, codexState: goalState('none')
+    })
+    const closedMachine = () => {
+      const node = codexNode({
+        key: 'codex-child:machine-closed', family, role: 'child', kind: 'turn-interrupted', causalKey: 'machine-closed',
+        turnStartedAt: 1_000, terminalAt: 2_000, turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1,
+        closedMachineRun: true, codexState: goalState('none', 'verifying')
+      })
+      node.metadata.closedMachineRun = true
+      return node
+    }
+    const openMachine = () => {
+      const node = codexNode({
+        key: 'codex-child:machine-open', family, role: 'child', kind: 'turn-interrupted', causalKey: 'machine-open',
+        turnStartedAt: 3_000, terminalAt: 4_000, turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1,
+        codexState: goalState('none', 'verifying')
+      })
+      node.metadata.closedMachineRun = false
+      node.metadata.machineRunCoverageCurrent = false
+      node.metadata.machineRunInterruptedAt = 4_000
+      return node
+    }
+    const humanSide = () => {
+      const node = codexNode({
+        key: 'codex-child:human', family, role: 'child', kind: 'turn-interrupted', causalKey: 'human-turn',
+        turnStartedAt: 4_500, terminalAt: 5_000, turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1,
+        codexState: goalState('none', 'verifying')
+      })
+      node.activity.ordinarySideInterruptedAt = 5_000
+      node.activity.candidates[0].ordinarySideInterruptedAt = 5_000
+      return node
+    }
+    const history = [closedMachine(), openMachine(), humanSide()]
+    const relations = history.map((node) => relation(node.key))
+    const running = openKernel()
+    const current = codexNode({
+      key: 'codex-child:current', family, role: 'child', kind: 'turn-running', authority: 'live-turn', causalKey: 'current-live',
+      turnStartedAt: 13_000, turnStartedAtPrecisionMs: 1, codexState: { ...goalState('none'), threadStatus: 'active' }
+    })
+    const first = publish(running, 1, [root(), ...history, current], { relations: [...relations, relation(current.key)] })
+    expect(first.tasks[0]).toMatchObject({
+      phase: 'running', capabilities: { continueTask: false }, topology: { memberCount: 5, liveCount: 1 }
+    })
+    const repeated = publish(running, 2, [root(), ...history, current], { relations: [...relations, relation(current.key, 'root-a', 2)] })
+    expect(repeated.packageRevision).toBe(first.packageRevision)
+    expect(repeated.publishedAt).toBe(first.publishedAt)
+    const diagnosed = running.getCodexDiagnosticMembers(running.getLatest()).get('root-a')
+    expect(diagnosed).toHaveLength(5)
+    expect(diagnosed.filter((member: { turn?: string }) => member.turn === 'turn-interrupted').length).toBeGreaterThan(0)
+    running.close()
+
+    const waiting = openKernel()
+    const answer = codexNode({
+      key: 'codex-child:current', family, role: 'child', kind: 'turn-running', authority: 'live-turn', causalKey: 'current-live',
+      turnStartedAt: 13_000, turnStartedAtPrecisionMs: 1, codexState: { ...goalState('none'), threadStatus: 'active' }
+    })
+    const request = createInteractionEvidenceV7({
+      provider: 'codex', taskKey: answer.key, branchRef: 'child', interactionRef: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      kind: 'user-input', state: 'opened', sequence: 4, turnEpoch: 13_000, requestSetRevision: 4, authority: 'provider-live', exact: true
+    })
+    publish(waiting, 1, [root(), ...history, answer], {
+      relations: [...relations, relation(answer.key)],
+      interactions: [request],
+      interactionSets: [createInteractionSetV7({ provider: 'codex', taskKey: answer.key, requestSetRevision: 4, complete: true })]
+    })
+    expect(waiting.getLatest().tasks[0]).toMatchObject({ phase: 'waiting-input', capabilities: { continueTask: false } })
+    waiting.close()
+
+    const ambiguous = openKernel()
+    publish(ambiguous, 1, [
+      root(),
+      codexNode({
+        key: 'codex-child:unknown', family, role: 'child', kind: 'unknown', authority: 'unknown', exact: false,
+        causalKey: '', causalDomain: '', causalSequence: 0, codexState: goalState('none')
+      })
+    ], { relations: [relation('codex-child:unknown')] })
+    expect(ambiguous.getLatest().tasks[0]).toMatchObject({
+      phase: 'completed', freshness: 'verifying', capabilities: { continueTask: false, archive: false }
+    })
+    const ambiguousSide = ambiguous.getCodexDiagnosticMembers(ambiguous.getLatest()).get('root-a')
+      .find((member: { root?: boolean }) => member.root !== true)
+    expect(ambiguousSide).toMatchObject({ phase: 'unknown' })
+    expect(ambiguousSide.turn).not.toBe('turn-completed')
+    ambiguous.close()
+
+    const overlapped = openKernel()
+    const coarse = codexNode({
+      key: 'codex-child:coarse', family, role: 'child', kind: 'turn-interrupted', causalKey: 'coarse-turn',
+      turnStartedAt: 9_000, terminalAt: 10_000, turnStartedAtPrecisionMs: 1000, terminalAtPrecisionMs: 1000,
+      codexState: goalState('none')
+    })
+    coarse.metadata.closedMachineRun = false
+    coarse.metadata.machineRunCoverageCurrent = false
+    coarse.metadata.machineRunInterruptedAt = 10_000
+    coarse.activity.ordinarySideInterruptedAt = 10_000
+    coarse.activity.candidates[0].ordinarySideInterruptedAt = 10_000
+    const preciseRoot = codexNode({
+      key: 'root-a', family, kind: 'turn-completed', causalKey: 'root-turn', turnStartedAt: 10_500, terminalAt: 12_000,
+      turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1, codexState: goalState('none')
+    })
+    publish(overlapped, 1, [preciseRoot, coarse], { relations: [relation(coarse.key)] })
+    expect(overlapped.getLatest().tasks[0].phase).toBe('stopped')
+    overlapped.close()
+
+    const unresolved = openKernel()
+    const coarseAbort = codexNode({
+      key: 'codex-child:second', family, role: 'child', kind: 'turn-interrupted', causalKey: 'second-turn',
+      turnStartedAt: 100, terminalAt: 100, codexState: goalState('none')
+    })
+    coarseAbort.activity.ordinarySideInterruptedAt = 20_000
+    coarseAbort.activity.candidates[0].ordinarySideInterruptedAt = 20_000
+    const subsecondRoot = codexNode({
+      key: 'root-a', family, kind: 'turn-completed', causalKey: 'root-turn', turnStartedAt: 20_050, terminalAt: 20_100,
+      turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1, codexState: goalState('none')
+    })
+    publish(unresolved, 1, [subsecondRoot, coarseAbort], { relations: [relation(coarseAbort.key)] })
+    expect(unresolved.getLatest().tasks[0].phase).toBe('stopped')
+    unresolved.close()
+
+    const moved = openKernel()
+    const child = codexNode({
+      key: 'codex-child:current', family, role: 'child', kind: 'turn-running', authority: 'live-turn', causalKey: 'current-live',
+      turnStartedAt: 13_000, turnStartedAtPrecisionMs: 1, codexState: { ...goalState('none'), threadStatus: 'active' }
+    })
+    const other = codexNode({
+      key: 'root-b', family, kind: 'turn-completed', causalKey: 'root-b-turn',
+      turnStartedAt: 10_000, terminalAt: 12_000, turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1, codexState: goalState('none')
+    })
+    publish(moved, 1, [root(), other, child], { relations: [relation(child.key)] })
+    expect(moved.getLatest().tasks.find((task: { key: string }) => task.key === 'root-a').phase).toBe('running')
+    expect(moved.getLatest().tasks.find((task: { key: string }) => task.key === 'root-b').phase).toBe('completed')
+    publish(moved, 2, [root(), other, child], { relations: [relation(child.key, 'root-b', 2)] })
+    expect(moved.getLatest().tasks.find((task: { key: string }) => task.key === 'root-a').phase).toBe('completed')
+    expect(moved.getLatest().tasks.find((task: { key: string }) => task.key === 'root-b').phase).toBe('running')
+    moved.close()
+  })
+
+
+  it('retains a verified completed root when historical side evidence is missing', () => {
+    const family = 'codex:root-a'
+    const relation = (childKey: string) => [{
+      childKey, parentKey: 'root-a', provider: 'codex', family, relation: 'side-thread',
+      authority: 'test-provider-fixture', exact: true, generation: 1
+    }]
+    const verifiedRoot = () => codexNode({
+      key: 'root-a', family, kind: 'turn-completed', causalKey: 'root-turn',
+      turnStartedAt: 10_000, terminalAt: 12_000, turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1,
+      codexState: goalState('none')
+    })
+    const missing = openKernel()
+    const gap = codexNode({
+      key: 'codex-child:gap', family, role: 'child', kind: 'turn-interrupted', causalKey: 'gap-turn',
+      turnStartedAt: 1_000, terminalAt: 2_000, turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1,
+      codexState: goalState('none', 'verifying')
+    })
+    publish(missing, 1, [verifiedRoot(), gap], { relations: relation(gap.key) })
+    expect(missing.getLatest().tasks[0]).toMatchObject({
+      phase: 'completed', freshness: 'verifying', terminalAt: 12_000,
+      capabilities: { continueTask: false, archive: false }, topology: { memberCount: 2, liveCount: 0 }
+    })
+    const side = missing.getCodexDiagnosticMembers(missing.getLatest()).get('root-a')
+      .find((member: { root?: boolean }) => member.root !== true)
+    expect(side).toMatchObject({ phase: 'unknown', turn: 'turn-interrupted' })
+    expect(side.turn).not.toBe('turn-completed')
+    missing.close()
+
+    const running = openKernel()
+    const current = codexNode({
+      key: 'codex-child:current', family, role: 'child', kind: 'turn-running', authority: 'live-turn',
+      causalKey: 'current-live', turnStartedAt: 13_000, turnStartedAtPrecisionMs: 1,
+      codexState: { ...goalState('none'), threadStatus: 'active' }
+    })
+    publish(running, 1, [verifiedRoot(), current], { relations: relation(current.key) })
+    expect(running.getLatest().tasks[0].phase).toBe('running')
+    running.close()
+
+    const waiting = openKernel()
+    const request = createInteractionEvidenceV7({
+      provider: 'codex', taskKey: current.key, branchRef: 'child', interactionRef: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      kind: 'user-input', state: 'opened', sequence: 4, turnEpoch: 13_000, requestSetRevision: 4,
+      authority: 'provider-live', exact: true
+    })
+    publish(waiting, 1, [verifiedRoot(), current], {
+      relations: relation(current.key),
+      interactions: [request],
+      interactionSets: [createInteractionSetV7({ provider: 'codex', taskKey: current.key, requestSetRevision: 4, complete: true })]
+    })
+    expect(waiting.getLatest().tasks[0].phase).toBe('waiting-input')
+    waiting.close()
+
+    const stopped = openKernel()
+    const explicit = codexNode({
+      key: 'codex-child:now', family, role: 'child', kind: 'turn-interrupted', causalKey: 'now-turn',
+      turnStartedAt: 13_000, terminalAt: 14_000, turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1,
+      codexState: goalState('none')
+    })
+    publish(stopped, 1, [verifiedRoot(), explicit], { relations: relation(explicit.key) })
+    expect(stopped.getLatest().tasks[0].phase).toBe('stopped')
+    stopped.close()
   })
 
   it('does not let a closed flag hide live work, requests, or invent completion', () => {
@@ -6179,5 +6579,57 @@ describe('dynamic window default one week', () => {
     kernel.configure({ lease, enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 72 })
     expect(records.filter(e => e.event === 'root-state-resolution').at(-1).details.dynamicWindowHours).toBe(72)
     kernel.close()
+  })
+})
+
+describe('per-root hot aggregation', () => {
+  it('matches a full recompute after a hot publish, including another provider', () => {
+    const now = 1_800_000_000_000
+    let clock = now
+    const providers = { codex: true, claude: true, cursor: false, orca: false }
+    const open = () => {
+      const kernel = createCompanionTaskKernel({ now: () => clock, initialConfiguration: { enabled: true, providers } })
+      const lease = kernel.attach({ enabled: true, providers }).lease
+      return { kernel, lease }
+    }
+    const row = (key: string, provider: string, phase: string) => task({
+      key, provider, kind: provider === 'claude' ? 'claude-session' : 'codex-thread',
+      phase, unreadKnown: true, unread: false, idleConfirmed: phase !== 'running',
+      turnStartedAt: now - 1_000, terminalAt: phase === 'running' ? 0 : now - 500, statusEnteredAt: now - 500
+    })
+    const publish = (kernel: Record<string, any>, lease: number, revision: number, hotPhase: string) => kernel.syncPackage({
+      lease,
+      draft: draft([
+        row('codex-stable', 'codex', 'completed'),
+        row('codex-hot', 'codex', hotPhase),
+        row('claude-stable', 'claude', 'completed')
+      ], revision, { providers, sourceGenerations: { codex: revision, claude: revision, cursor: 0, orca: 0 } })
+    })
+    const view = (pkg: Record<string, any>) => ({
+      tasks: pkg.tasks.map((item: Record<string, any>) => ({
+        key: item.key, phase: item.phase, freshness: item.freshness, dynamicGroup: item.dynamicGroup,
+        topology: item.topology, capabilities: item.capabilities, unread: item.unread, terminalAt: item.terminalAt
+      })),
+      groups: pkg.views.groups
+    })
+    const incremental = open()
+    const first = publish(incremental.kernel, incremental.lease, 1, 'running')
+    expect(first.publishedAt).toBe(clock)
+    const stableRevision = first.tasks.find((item: { key: string }) => item.key === 'codex-stable').semanticRevision
+    const claudeRevision = first.tasks.find((item: { key: string }) => item.key === 'claude-stable').semanticRevision
+    clock += 40
+    const second = publish(incremental.kernel, incremental.lease, 2, 'stopped')
+    expect(second.publishedAt).toBe(clock)
+    expect(second.tasks.find((item: { key: string }) => item.key === 'codex-hot').phase).toBe('stopped')
+    expect(second.tasks.find((item: { key: string }) => item.key === 'codex-stable').semanticRevision).toBe(stableRevision)
+    expect(second.tasks.find((item: { key: string }) => item.key === 'claude-stable').semanticRevision).toBe(claudeRevision)
+    const repeated = publish(incremental.kernel, incremental.lease, 3, 'stopped')
+    expect(repeated.publishedAt).toBe(second.publishedAt)
+    expect(repeated.packageRevision).toBe(second.packageRevision)
+    const full = open()
+    const once = publish(full.kernel, full.lease, 1, 'stopped')
+    expect(view(second)).toEqual(view(once))
+    incremental.kernel.close()
+    full.kernel.close()
   })
 })

@@ -382,7 +382,8 @@ window.eypcFloat = {
           semanticRevision: Number.isInteger(row.semanticRevision) ? row.semanticRevision : null,
           group: typeof row.group === 'string' ? row.group.slice(0, 20) : '',
           ...(pinSource ? { pinSource } : {}),
-          ...(pinned === undefined ? {} : { pinned })
+          ...(pinned === undefined ? {} : { pinned }),
+          ...(typeof row.continueTask === 'boolean' ? { continueTask: row.continueTask } : {})
         }]
       }).slice(0, 40)
       return keys.length > 0 && sendTaskPackageAck(stage, revision, undefined, keys, rows)

@@ -42,6 +42,9 @@ function createCodexRuntimeDiagnostics(dependencies) {
     const number = (value) => Number.isSafeInteger(value) && value > 0 ? value : 0
     const turnStartedAt = number(details.turnStartedAt)
     const receivedAt = number(details.receivedAt)
+    const targetedRead = stage === 'inventory-targeted-read'
+    const queuedAt = targetedRead ? number(details.queuedAt) : 0
+    const requestedAt = targetedRead ? number(details.requestedAt) : 0
     const phase = SYNC_PHASES.has(details.phase) ? details.phase : 'unknown'
     const memberRef = /^h:[0-9a-f]{16}$/.test(details.memberRef) ? details.memberRef : ''
     const allowedReasons = stage === 'owner-resolved' ? OWNER_RESOLUTION_REASONS
@@ -55,7 +58,7 @@ function createCodexRuntimeDiagnostics(dependencies) {
     }
     const key = `${ownerStage ? 'owner' : stage}:${memberRef}`
     const state = stage === 'stream-received' ? phase : `${details.outcome}:${phase}`
-    const signature = `${stage}:${state}:${turnStartedAt}:${reason}:${priority}`
+    const signature = `${stage}:${state}:${turnStartedAt}:${reason}:${priority}:${queuedAt}:${requestedAt}`
     if (target.stages.get(key) === signature) return
     target.stages.set(key, signature)
     while (target.stages.size > 32) target.stages.delete(target.stages.keys().next().value)
@@ -65,10 +68,13 @@ function createCodexRuntimeDiagnostics(dependencies) {
     runtimeDiagnostics.record({
       level: 'info', scope: 'task-evidence', event: 'codex-task-sync',
       provider: 'codex', taskRef, outcome: details.outcome,
+      ...(targetedRead && Number.isFinite(details.durationMs) && details.durationMs >= 0
+        ? { durationMs: details.durationMs } : {}),
       details: {
         stage, phase, turnStartedAt, ...(memberRef ? { memberRef } : {}), ...(reason ? { reason } : {}),
         ...(priority ? { priority } : {}),
         ...(receivedAt && receivedAt <= observedAt ? { receivedAt } : {}),
+        ...(queuedAt ? { queuedAt } : {}), ...(requestedAt ? { requestedAt } : {}),
         streamRevision: number(details.streamRevision), packageRevision: number(details.packageRevision)
       }
     })

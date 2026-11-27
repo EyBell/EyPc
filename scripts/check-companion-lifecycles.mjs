@@ -292,7 +292,7 @@ async function checkDesktopOwnerDiscovery(require, assetRoot, { helpers, activit
     cold.relations.set(id, 'idle-1')
     cold.machines.add(id)
     cold.members.set(id, { parentThreadId: 'idle-1', status: 'notLoaded', lastTurnStatus: 'interrupted',
-      turnStartedAt: oldStart, closedSpawnObservedAt: 8, activeEvidenceSequence: 3 })
+      turnStartedAt: oldStart, turnId: `closed-turn-${index}`, spawnEdgeStatus: 'closed', closedSpawnTurnId: `closed-turn-${index}` })
   }
   cold.bridge.followAll(true)
   assert.equal(cold.events.length, 0, 'empty inventory, completed roots and closed machine edges enqueue no owner work')
@@ -385,7 +385,7 @@ async function checkDesktopOwnerDiscovery(require, assetRoot, { helpers, activit
   assert.equal(sides.terminals.size, ids.length)
   const abortTimestamp = JSON.parse(abortLine).timestamp
   assert([...sides.terminals.values()].every(turn => turn.lastTurnStatus === 'interrupted' && turn.lastTurnEvidence === 'targeted-after-exit'
-    && turn.ordinarySideInterruptedAt === abortTimestamp && turn.terminalAt === turn.turnStartedAt))
+    && turn.ordinarySideInterruptedAt === abortTimestamp && turn.terminalAt === abortTimestamp))
   assert.equal(sides.timers.size, 0)
 
   for (const afterRetry of [false, true]) {
@@ -771,9 +771,13 @@ async function checkColdAttachedSideInterruption(require, source) {
   const abort = (id, startedAt) => JSON.stringify({ type: 'event_msg', timestamp: 2010,
     payload: { type: 'turn_aborted', turn_id: id, started_at: startedAt } })
   const tails = new Map([
-    ['side', abort('forked-turn', 2000)], ['no-identity', abort(null)], ['pending', abort('pending-turn', 2000)]
+    ['side', abort('forked-turn', 2000)], ['no-identity', abort(null)], ['pending', abort('pending-turn', 2000)],
+    ['cached-side', abort('current-side-turn', 2000)], ['newer-prior', abort('old-side-turn', 2000)]
   ])
-  const cache = new Map()
+  const cache = new Map([
+    ['cached-side', { turn: { id: 'old-side-turn', status: 'completed', startedAt: 1000, turnStartedAtPrecisionMs: 1 } }],
+    ['newer-prior', { turn: { id: 'current-side-turn', status: 'completed', startedAt: 3000, turnStartedAtPrecisionMs: 1 } }]
+  ])
   const read = new Script(`${source.slice(start, end)}\nreadCodexThreadTurnStatuses`).runInNewContext({
     codexRecord: value => value, codexSnapshotScopeCurrent: Boolean, codexThreadTurnStatusDirty: new Map(),
     codexSubagentDiscovery: null,
@@ -798,10 +802,14 @@ async function checkColdAttachedSideInterruption(require, source) {
   const output = await read(rows, new Set(), new Map(rows.map(({ id }) => [id, 'root'])), {})
   const recovered = output.latest.get('side')
   assert.deepEqual({ ...recovered }, { id: 'forked-turn', status: 'interrupted', startedAt: 2000, interruptedAt: 2010,
-    statusRequestedAt: 2021, statusReceivedAt: 2022 })
-  assert.deepEqual([...output.readSucceededIds], ['side'])
+    turnStartedAtPrecisionMs: 1, terminalAtPrecisionMs: 1, statusRequestedAt: 2021, statusReceivedAt: 2022 })
+  assert.equal(output.latest.get('cached-side')?.id, 'current-side-turn',
+    'an exact empty page and a newer native abort supersede an older cached Side Turn')
+  assert.equal(output.latest.get('newer-prior')?.id, 'current-side-turn',
+    'an older abort on an empty page cannot replace a newer known Side Turn')
+  assert.deepEqual(new Set(output.readSucceededIds), new Set(['side', 'cached-side']))
   assert.deepEqual(new Set(output.unresolvedIds), new Set(['no-identity', 'pending']))
-  return 3
+  return 5
 }
 
 async function checkNativeSqliteUnreadStorage(require) {
@@ -1049,19 +1057,26 @@ async function checkNestedSpawnEdgeAdmission(require, source) {
   const replies = []
   const terminals = []
   const emitted = []
+  const stored = new Map()
   let sequence = 2
   const { refresh, confirm } = new Script(`${source.slice(start, end)}\n({
     refresh: codexRefreshSpawnEdgeEvidence, confirm: codexConfirmInventoryBranchTerminal
   })`).runInNewContext({
-    codexSpawnEdgeRead: null, codexCausalDomain: 'source', codexStateSqliteDirectory: () => '/synthetic',
+    codexSpawnEdgeRead: null, codexCausalDomain: 'source', codexNativeInventorySample: null, codexStateSqliteDirectory: () => '/synthetic',
     codexInventorySideRelations: new Map([['machine', 'root']]),
     codexInventorySideBranchEvidence: new Map([['machine', evidence]]),
     codexDesktopBridge: null, codexDesktopActivityResolution: activity, codexDesktopRequestProjection: null,
+    codexTimestampMs: value => Number(value) || 0,
     codexInventoryTurnFieldsModule: fields, codexDesktopRequestCorrelation: ({ id }) => id,
-    codexReadPrivateBranchTerminal: () => null, codexRememberPrivateBranchTerminal: (root, child, value) => {
+    codexReadPrivateBranchTerminal: (_root, child) => stored.get(child), codexRememberPrivateBranchTerminal: (root, child, value) => {
       terminals.push([root, child, value.id])
-      return value
+      const terminal = { ...value, turnRef: value.id, lastTurnStatus: value.status,
+        terminalAt: value.completedAt || value.interruptedAt }
+      stored.set(child, terminal)
+      return terminal
     },
+    companionTaskStateBridge: null, companionCausalKey: () => '', codexThreadKey: value => value,
+    companionDiagnosticTaskRef: (_provider, value) => value, codexPrivateBranchRef: (root, child) => `${root}/${child}`,
     codexSubagentDiscovery: { codexGetThreadSourceIdentity: () => 'machine',
       codexReadSpawnEdges(_directory, pairs) {
         assert.deepEqual(Array.from(pairs, pair => [...pair]), [['machine', 'side']])
@@ -1083,16 +1098,33 @@ async function checkNestedSpawnEdgeAdmission(require, source) {
   replies.shift()(close)
   await new Promise(setImmediate)
   assert.equal(terminals.length, 0, 'late closure from a replaced member observation cannot confirm a Turn')
-  refresh()
+  refresh(['machine'])
+  await new Promise(setImmediate)
+  replies.shift()({ outcome: 'read', edges: [{ childId: 'machine', parentId: 'side', status: 'open' }] })
+  await new Promise(setImmediate)
+  assert.deepEqual(terminals, [['root', 'machine', turn.id]], 'a timed native interruption remains valid while the execution edge is open')
+  assert.equal(evidence.closedSpawnTurnId, '')
+  refresh(['machine'])
+  await new Promise(setImmediate)
+  const delayedClose = replies.shift()
+  refresh(['machine'])
+  await new Promise(setImmediate)
+  replies.shift()({ outcome: 'read', edges: [{ childId: 'machine', parentId: 'side', status: 'open' }] })
+  await new Promise(setImmediate)
+  delayedClose(close)
+  await new Promise(setImmediate)
+  assert.equal(evidence.spawnEdgeStatus, 'open', 'an older read cannot close a newer observation of the same edge')
+  refresh(['machine'])
   await new Promise(setImmediate)
   replies.shift()(close)
   await new Promise(setImmediate)
   assert.deepEqual(terminals, [['root', 'machine', turn.id]])
-  assert.deepEqual(emitted, ['root'], 'the direct parent verifies the native edge and the owning root gets the new evidence')
+  assert.equal(evidence.closedSpawnTurnId, turn.id)
+  assert.deepEqual(emitted, ['root', 'root'], 'the admitted terminal and later closed edge both update the owning root')
   const completed = { id: 'goal-turn', status: 'completed', statusRequestedAt: 201, statusReceivedAt: 202 }
   assert.equal(confirm('root', 'root', completed, { status: 'notLoaded', expectedStatus: 'completed', pending: true }), null)
-  assert.equal(confirm('root', 'root', completed, { status: 'notLoaded', expectedStatus: 'completed' }), completed)
-  return 5
+  assert.equal(confirm('root', 'root', completed, { status: 'notLoaded', expectedStatus: 'completed' })?.id, completed.id)
+  return 9
 }
 
 function checkNativeStatusAcquisition(require) {
@@ -1120,9 +1152,22 @@ function checkNativeStatusAcquisition(require) {
   assert.equal(pair.turn.predecessorId, active.id)
   assert.deepEqual([pair.turn.statusRequestedAt, pair.turn.statusReceivedAt], [readback.statusRequestedAt, readback.statusReceivedAt])
   assert.equal(pair.turn.turnStartedAtPrecisionMs, 1_000)
+  const interrupted = fields.sanitizeCodexTurnStatus({ id: active.id, status: 'interrupted', startedAt: seconds, completedAt: seconds }, readback)
+  const sameTurnStop = fields.codexTerminalTurnTransition(active, interrupted)
+  assert.deepEqual([sameTurnStop.order, sameTurnStop.turn.startedAt, sameTurnStop.turn.interruptedAt,
+    sameTurnStop.turn.terminalAtPrecisionMs], ['same', millisecondStart, seconds * 1_000, 1_000],
+  'the same Turn keeps its precise start and original interval for the native interruption')
   const goalTurn = fields.sanitizeCodexTurnStatus({ id: 'confirmed-goal-turn', status: 'completed' }, readback)
   assert.deepEqual([goalTurn.id, goalTurn.startedAt, fields.codexTurnReadIsCurrent(goalTurn)], ['confirmed-goal-turn', undefined, true])
-  return 12
+  const sameSecond = fields.sanitizeCodexTurnStatus({ id: active.id, status: 'completed', startedAt: seconds, completedAt: seconds }, readback)
+  const aligned = fields.codexAlignCompletedTurnStart(active, sameSecond)
+  assert.deepEqual([aligned.startedAt, aligned.completedAt, aligned.terminalAtPrecisionMs], [millisecondStart, seconds * 1_000, 1_000],
+    'same-second alignment preserves the original terminal timestamp and precision')
+  const observation = require('./companion/evidence-adapter-v7.cjs').codexBranchObservationV7
+  const branch = { branchKind: 'side', lastTurnStatus: 'completed', lastTurnEvidence: 'inventory', turnStartedAt: millisecondStart }
+  assert.equal(observation(branch).candidates[0].terminalAt, 0, 'inventory admission preserves a missing native end')
+  assert.equal(observation({ ...branch, terminalAt: millisecondStart + 20 }).candidates[0].terminalAt, millisecondStart + 20)
+  return 16
 }
 
 async function checkColdRolloutAdmission(require, source, fixture) {
@@ -1307,7 +1352,7 @@ async function checkColdUnreadRefresh(require, source) {
     { name: 'idle-interruption', expected: 'interrupted' },
     { name: 'same Turn at second precision', expected: 'completed', turn: completion },
     { name: 'same Turn completes within its first second', expected: 'completed',
-      turn: { ...completion, completedAt: completion.startedAt }, expectedCompletedAt: 300_420 },
+      turn: { ...completion, completedAt: completion.startedAt }, expectedCompletedAt: completion.startedAt },
     { name: 'older start in a different second', turn: { ...completion, startedAt: 299_000 } },
     { name: 'older precise start', turn: { ...completion, startedAt: 300_100 } },
     { name: 'different Turn in the same second', turn: { ...completion, id: 'older-turn' } }
@@ -1453,6 +1498,7 @@ async function checkVerifiedInventorySharing(require, source) {
   assert(membershipStart >= 0 && membershipEnd > membershipStart && watcherEnd > membershipEnd && scanStart >= 0 && readStart > scanStart
     && listStart >= 0 && listEnd > listStart)
   const listReads = []
+  const foregroundReads = new Map()
   const indexModes = []
   const recovered = []
   let attachedSample = null
@@ -1466,19 +1512,24 @@ async function checkVerifiedInventorySharing(require, source) {
   let nativeActiveRows = [{ id: 'root-1' }, { id: 'root-2' }]
   let nativeArchivedRows = [{ id: 'archived' }]
   const endOfRoster = new Error('roster verified')
-  const { reconcile, scan, rotate, setMembershipPending, advanceArchive, trackSnapshot, readPinned, readActive } = new Script(`${source.slice(snapshotStart, scopeEnd)}
+  const { reconcile, scan, rotate, setMembershipPending, advanceArchive, trackSnapshot, readPinned, readActive, markCold,
+    readArchive } = new Script(`${source.slice(snapshotStart, scopeEnd)}
     ${source.slice(captureStart, captureEnd)}
     ${source.slice(membershipStart, membershipEnd)}
     ${source.slice(listStart, listEnd)}
     ${source.slice(scanStart, readStart)}
     ({
-      reconcile: () => reconcileCodexInventoryMembership('watcher-event', false, currentCodexInventoryScope()),
+      reconcile: (force = false) => reconcileCodexInventoryMembership('watcher-event', force, currentCodexInventoryScope()),
       scan: scanVerifiedCodexInventory,
       readActive: (ids) => {
         codexVerifiedOfficialThreadIds = new Set(ids)
+        codexVerifiedOfficialRosterScope = { ...currentCodexInventoryScope(), listVersion: null,
+          archiveRevision: codexInventoryArchiveRevision, directory: '/synthetic' }
         return readCodexActiveInventoryPages({}, currentCodexInventoryScope())
       },
       readPinned: () => readCodexPinnedSection(() => true, Date.now() + 1000),
+      readArchive: () => listAllCodexThreads(true, { fresh: true, background: true }),
+      markCold: () => { codexVerifiedOfficialThreadIds = null },
       rotate: () => { codexDesktopBridge.streamGeneration += 1 },
       setMembershipPending: value => { codexInventoryMembershipReconcilePending = value },
       advanceArchive: () => { codexInventoryArchiveRevision += 1 },
@@ -1492,14 +1543,16 @@ async function checkVerifiedInventorySharing(require, source) {
     codexInventoryMembershipEnabled: () => true,
     codexActivityInventory: new Map(), codexLocalArchiveRecoverySuppressions: new Set(),
     codexVerifiedOfficialThreadIds: new Set(['root-1']), codexRosterForPreflight: null, codexDesktopSideRelations: new Map(),
-    codexIndexedInventoryRows: new WeakSet(), codexInventoryRelationRevision: 0, codexInventoryArchiveRevision: 0,
+    codexVerifiedOfficialRosterScope: null, codexNativeInventorySample: null, codexNativeInventoryPrimed: 1,
+    codexInventorySideRelations: new Map(), codexInventoryRelationRevision: 0, codexInventoryArchiveRevision: 0,
     codexSnapshotScopes: new WeakMap(), codexSideParentThreadId: () => '',
     codexVerifiedInventoryInFlight: null,
     codexInventoryRefreshPending: false, codexInventoryMembershipReconcilePending: false, codexInventoryMembershipForcePending: false,
-    codexInventoryMembershipCoveragePending: false,
-    companionTaskKernel: { isProviderCached: () => true }, codexThreadTurnStatusDirty: new Map(),
+    companionTaskKernel: { isProviderCached: () => false }, codexThreadTurnStatusDirty: new Map(),
     codexThreadListVersion: 0, codexThreadListSamples: new Map(), codexRetiredThreadIds: new Map(),
     codexWatchedRolloutCandidates: new Map(), CODEX_THREAD_TURN_STATUS_TIMEOUT_MS: 1000,
+    codexTargetedInventoryReads: foregroundReads, CODEX_INVENTORY_RECHECK_DEADLINE_MS: 1000,
+    setTimeout(callback) { queueMicrotask(callback) },
     codexRestoreDesktopSideRelationHints() {}, codexRuntimeDiagnostics: null, codexPinObserver: null,
     codexStateSqliteDirectory: () => '/synthetic', readCodexAttachedSides: () => attachedSample,
     codexInventoryThreadTopologyModule: inventoryTopology, codexSubagentDiscovery: null,
@@ -1541,17 +1594,17 @@ async function checkVerifiedInventorySharing(require, source) {
   assert.equal(queued, 1, 'the membership observation owns one reconciliation')
   assert.equal(emitted[0][4].scheduleInventory, false, 'the membership delta does not queue the same work again')
   await assert.rejects(scan(), error => error === endOfRoster)
-  assert.deepEqual(listReads, [false, true], 'the downstream preflight shares the verified lists')
+  assert.deepEqual(listReads, [false, true, false], 'the downstream preflight shares the single native verification')
   assert.equal(recovered[0][0], 'root-1')
   assert.deepEqual(Array.from(recovered[0][1]), ['archived'])
   await assert.rejects(scan(), error => error === endOfRoster)
-  assert.deepEqual(listReads, [false, true], 'the same version still shares completed list samples')
+  assert.deepEqual(listReads, [false, true, false], 'the same version still shares completed list samples')
   assert.equal((await readPinned()).length, 0, 'an ordered, independent partition accepts a complete empty page')
-  assert.deepEqual(listReads, [false, true, 'pinned'])
+  assert.deepEqual(listReads, [false, true, false, 'pinned'])
   await reconcile()
   rotate()
   await assert.rejects(scan(), error => error === endOfRoster)
-  assert.deepEqual(listReads, [false, true, 'pinned', false, true], 'a new stream reads its own active and archived lists')
+  assert.deepEqual(listReads.slice(-2), [false, false], 'a new stream verifies its own active scope')
   const queuesBefore = queued
   const superseded = reconcile()
   setMembershipPending(true)
@@ -1568,7 +1621,21 @@ async function checkVerifiedInventorySharing(require, source) {
   setMembershipPending(false)
   const readsBefore = listReads.length
   await assert.rejects(scan(), error => error === endOfRoster)
-  assert.deepEqual(listReads.slice(readsBefore), [false, true], 'a new archive revision cannot join older list samples')
+  assert.deepEqual(listReads.slice(readsBefore), [false, false], 'a new archive revision cannot join older list samples')
+  rotate()
+  const overlapStart = listReads.length
+  const coldRead = assert.rejects(scan(), error => error === endOfRoster)
+  const coverageRead = reconcile(true)
+  await Promise.all([coldRead, coverageRead])
+  assert.deepEqual(listReads.slice(overlapStart), [false, true, false],
+    'a concurrent forced projection joins the cold activity roster and the one archive read')
+  rotate()
+  markCold()
+  const coldArchiveStart = listReads.length
+  await assert.rejects(scan(), error => error === endOfRoster)
+  await assert.rejects(scan(), error => error === endOfRoster)
+  assert.deepEqual(listReads.slice(coldArchiveStart), [false, false, true],
+    'cold startup verifies archive coverage once and a follow-up projection reuses it')
   pinPages = [{ data: [{ id: 'second' }], nextCursor: 'next' }, { data: [{ id: 'first' }], nextCursor: null }]
   assert.deepEqual(Array.from(await readPinned(), row => row.id), ['second', 'first'], 'the partition retains native page order')
   pinPages = [{ data: [] }]
@@ -1577,7 +1644,11 @@ async function checkVerifiedInventorySharing(require, source) {
   await assert.rejects(readPinned(), { code: 'protocol-error' }, 'a duplicated row invalidates the partition')
   pinPages = Array.from({ length: 5 }, (_, index) => ({ data: [], nextCursor: `cursor-${index}` }))
   await assert.rejects(readPinned(), { code: 'protocol-error' }, 'a continuation beyond the page bound cannot clear pins')
-  assert(indexModes.every(Boolean), 'a covering index uses only the fast active inventory')
+  activeIndexRows = [{ id: 'root-1' }, { id: 'root-2' }]
+  const coveredBefore = listReads.length
+  assert.equal((await readActive(['root-1', 'root-2'])).length, 2)
+  assert.deepEqual(listReads.slice(coveredBefore), [false], 'verified active coverage reuses the index without an archived list')
+  assert.equal(indexModes.at(-1), true, 'active coverage is independent of the full provider cache')
   activeIndexRows = [{ id: 'root-1' }, { id: 'index-only', path: '/synthetic/current', recencyAt: 100 },
     { id: 'missing-file', path: '/synthetic/missing' }]
   assert.deepEqual(Array.from(await readActive(['root-1', 'root-2']), thread => thread.id),
@@ -1585,8 +1656,9 @@ async function checkVerifiedInventorySharing(require, source) {
   assert.deepEqual(indexModes.slice(-2), [true, false], 'coverage loss invokes native scan-and-repair')
   nativeArchivedRows = [{ id: 'archived' }, { id: 'root-2' }]
   rotate()
+  nativeActiveRows = [{ id: 'root-1' }]
   assert.equal((await readActive(['root-1', 'root-2'])).some(thread => thread.id === 'root-2'), false,
-    'confirmed archive absence permits the fast active inventory')
+    'a roster change falls back to the current native scope')
   nativeArchivedRows.push({ id: 'index-only' })
   rotate()
   assert.equal((await readActive(['root-1', 'root-2'])).some(thread => thread.id === 'index-only'), false,
@@ -1596,6 +1668,30 @@ async function checkVerifiedInventorySharing(require, source) {
   attachedSample = { parents: new Map([['late-side', 'late-root']]), retired: new Set() }
   await assert.rejects(scan(), error => error === endOfRoster)
   assert.deepEqual(additionalTargets, ['late-side'], 'a recovered root unlocks its attached Side in the same inventory scan')
+  let finishForeground
+  const foreground = new Promise(resolve => { finishForeground = resolve })
+  foregroundReads.set(foreground, new Map([['foreground', { background: false }]]))
+  const beforeArchiveRead = listReads.length
+  const backgroundArchive = readArchive()
+  assert.equal(listReads.length, beforeArchiveRead, 'background pagination yields to a targeted foreground read')
+  foregroundReads.delete(foreground)
+  finishForeground()
+  await backgroundArchive
+  assert.equal(listReads.length, beforeArchiveRead + 1, 'background pagination resumes once the foreground makes progress')
+  const accountStart = source.indexOf('function handleCodexServerMessage(')
+  const accountEnd = source.indexOf('\nfunction onCodexProcessEnd(', accountStart)
+  const sourceInvalidations = []
+  const pinReconciliations = []
+  const notification = new Script(`${source.slice(accountStart, accountEnd)}\nhandleCodexServerMessage`).runInNewContext({
+    codexRecord: value => value ?? {},
+    invalidateCompanionCodexSource: reason => sourceInvalidations.push(reason),
+    requestCodexPinReconciliation: (reason, options) => pinReconciliations.push([reason, options?.fence])
+  })
+  notification({ method: 'account/updated', params: { reason: 'workspaceRoutingReady' } })
+  assert.equal(sourceInvalidations.length, 0, 'routing readiness cannot evict the in-flight roster or live evidence')
+  assert.deepEqual(pinReconciliations.at(-1), ['app-server-connected', false])
+  notification({ method: 'account/updated', params: { reason: 'authChanged' } })
+  assert.deepEqual(sourceInvalidations, ['account-updated'], 'an auth change still invalidates the old source')
   const sessions = '/synthetic/sessions'
   const archivedSessions = '/synthetic/archived_sessions'
   const fresh = 'b3345678-1234-4234-8234-123456789abc'
@@ -1621,15 +1717,16 @@ async function checkVerifiedInventorySharing(require, source) {
     codexWakeWatchedRolloutCandidates() {},
     codexSubagentDiscovery: discovery, path: { basename: value => value.split('/').at(-1), resolve },
     fs: { watch(root, _options, listener) { listeners.set(root, listener); return {} } },
-    requestCodexInventoryMembershipReconciliation(reason, options) { requests.push([reason, options?.forceTasksOnly === true]) }
+    codexRolloutProof: () => null,
+    codexWakeNativeInventory() { requests.push('native-index') }
   })
   watch({ reconcile: false })
   listeners.get(sessions)('rename', filename(fresh))
   listeners.get(sessions)('rename', filename(known))
   listeners.get(archivedSessions)('rename', filename(fresh))
   listeners.get(sessions)('change', filename(fresh))
-  assert.deepEqual(requests, [['watcher-event', false], ['watcher-event', false]],
-    'an unknown rollout reads its exact member without invalidating the full list')
+  assert.deepEqual(requests, ['native-index', 'native-index'],
+    'an exact or unscoped wake uses the target or native index without invalidating the full list')
   assert.deepEqual(targeted, [fresh])
   assert.deepEqual([...hints.keys()], [fresh], 'an active rollout wake retains its exact identity')
   assert.equal(hints.get(fresh).path, `${sessions}/${filename(fresh)}`)
@@ -1646,9 +1743,10 @@ async function checkVerifiedInventorySharing(require, source) {
     codexWatchedRolloutWakeTimer: null, codexWatchedRolloutCandidates: hints,
     CODEX_WATCHED_ROLLOUT_WAKE_DELAYS_MS: [300, 1000, 3000], CODEX_MISSING_ACTIVITY_MAPPING_RETENTION_MS: 120000,
     codexInventoryMembershipEnabled: () => true, Date: { now: () => now },
+    codexNativeInventorySample: { rows: new Map() }, codexRolloutProof: hint => hint,
     setTimeout(callback, delay) { timer = () => { now += delay; callback() }; return {} },
     queueCodexTargetedInventoryRead(id) { wakeRequests.push(id) },
-    scheduleCodexNativeInventoryCoverage() { wakeRequests.push('coverage') }
+    scheduleCodexNativeInventoryCoverage(rosterChanged) { wakeRequests.push(rosterChanged) }
   })
   wake()
   timer()
@@ -1659,21 +1757,45 @@ async function checkVerifiedInventorySharing(require, source) {
   hints.delete(fresh)
   timer()
   assert.equal(wakeRequests.length, 2, 'a listed or archived candidate cannot be retried by a queued wake')
+  hints.set(fresh, { observedAt: now, wakes: 2, nextWakeAt: now })
+  wake()
+  timer()
+  assert.deepEqual(wakeRequests.slice(-2), [fresh, true], 'an exhausted unindexed rollout requests one roster recovery')
 
   const nativeWakeStart = source.indexOf('function scheduleCodexNativeInventoryCoverage(')
   const nativeWakeEnd = source.indexOf('\nfunction queueCodexTargetedInventoryRead(', nativeWakeStart)
   const nativeTimers = []
   const samples = []
   const fallbackReads = []
+  const projectionRequests = []
+  const rosterInvalidations = []
   const recoveredIds = []
+  const archivedIds = []
+  const retired = new Map()
+  const targetFences = new Map()
   const nativeWake = new Script(`${source.slice(nativeWakeStart, nativeWakeEnd)}\ncodexWakeNativeInventory`).runInNewContext({
-    codexNativeInventoryCoverageWake: null, codexLastNativeInventoryCoverageAt: now, codexNativeInventoryWake: null,
-    codexNativeInventoryWakePending: false, CODEX_MISSING_ACTIVITY_MAPPING_RETENTION_MS: 4000, CODEX_WATCHED_ROLLOUT_LIMIT: 100,
-    codexInventoryMembershipEnabled: () => true, currentCodexInventoryScope: () => ({}), codexSnapshotScopeCurrent: Boolean,
-    codexCompleteInventoryThreadIds: new Set(), codexVerifiedOfficialThreadIds: new Set(), codexActivityInventory: new Map(),
-    codexInventorySideRelations: new Map(), codexRetiredThreadIds: new Map(), codexWatchedRolloutCandidates: hints,
+    codexNativeInventoryCoverageWake: null, codexNativeRosterRefreshVersion: null,
+    codexLastNativeInventoryCoverageAt: now, codexNativeInventoryWake: null,
+    codexNativeInventoryWakePending: false, CODEX_MISSING_ACTIVITY_MAPPING_RETENTION_MS: 4000, CODEX_NATIVE_INDEX_WAKE_DELAY_MS: 80,
+    codexThreadListVersion: 0, codexVerifiedInventoryInFlight: null, codexInventoryRefreshPending: false,
+    codexInventoryMembershipEnabled: () => true, currentCodexInventoryScope: () => ({ session: 1 }), codexSnapshotScopeCurrent: Boolean,
+    codexNativeInventoryPrimed: 1, codexNativeInventorySample: { identity: 'db', rows: new Map([[known, { archived: 0 }]]) },
+    codexVerifiedOfficialRosterScope: null, codexTargetedInventoryFences: targetFences,
+    codexLocalArchiveRecoverySuppressions: new Set(), codexSideParentThreadId: () => '',
+    codexWakeNativeSideRecovery() {}, noteCodexInventorySample() {},
+    codexCompleteInventoryThreadIds: new Set(), codexVerifiedOfficialThreadIds: new Set(), codexActivityInventory: new Map([[known, {}]]),
+    codexInventorySideRelations: new Map(), codexRetiredThreadIds: retired, codexWatchedRolloutCandidates: hints,
+    codexInventoryRelationRevision: 0, emitCodexActivityDelta() {},
     codexStateSqliteDirectory: () => '/synthetic', Date: { now: () => now },
-    codexSubagentDiscovery: { codexReadRecentInventoryTargets: () => new Promise(resolve => samples.push(resolve)) },
+    codexSubagentDiscovery: { codexReadInventoryIndex: () => new Promise(resolve => samples.push(resolve)) },
+    codexForgetExternallyArchivedThread(id, archive) {
+      retired.set(id, 'archive-inventory-confirmed')
+      archive.archivedKeys.add(id)
+    },
+    publishCodexInventoryArchive(archive) { archivedIds.push(...archive.archivedKeys) },
+    restoreCodexThreadMapping(id) { retired.delete(id) },
+    invalidateCodexThreadList(reason) { rosterInvalidations.push(reason) },
+    queueCompanionHostReconciliation(provider) { projectionRequests.push(provider) },
     requestCodexInventoryMembershipReconciliation(reason, options) { fallbackReads.push({ reason, ...options }); return true },
     queueCodexTargetedInventoryRead(id) { recoveredIds.push(id); return true },
     setTimeout(callback, delay) { nativeTimers.push({ callback, at: now + delay }); return {} }
@@ -1687,17 +1809,137 @@ async function checkVerifiedInventorySharing(require, source) {
   nativeWake()
   const firstSample = runNextTimer()
   nativeWake()
-  samples.shift()({ ids: [], truncated: false })
+  const sample = rows => ({ complete: true, identity: 'db', rows: new Map(rows) })
+  samples.shift()(sample([[known, { archived: 0 }]]))
   await firstSample
-  assert.equal(fallbackReads.length, 0, 'coverage waits out its cooldown')
+  assert.equal(fallbackReads.length, 0, 'an unchanged index schedules no full read')
   const trailingSample = runNextTimer()
-  samples.shift()({ ids: [fresh], truncated: false })
+  samples.shift()(sample([[known, { archived: 0 }], [fresh, { archived: 0 }]]))
   await trailingSample
   assert.deepEqual(recoveredIds, [fresh], 'a WAL wake during the prior read gets a trailing read without another write')
+  assert.equal(fallbackReads.length, 0, 'a changed roster still publishes the new member through the targeted lane first')
+  nativeWake()
+  const archive = runNextTimer()
+  samples.shift()(sample([[known, { archived: 1 }], [fresh, { archived: 0 }]]))
+  await archive
+  assert.deepEqual(archivedIds, [known], 'an existing member archives with its unchanged update timestamp')
+  nativeWake()
+  const restore = runNextTimer()
+  samples.shift()(sample([[known, { archived: 0 }], [fresh, { archived: 0 }]]))
+  await restore
+  assert.deepEqual(recoveredIds, [fresh, known], 'restoration recovers only the affected member')
+  targetFences.set(known, {})
+  nativeWake()
+  const attachment = runNextTimer()
+  samples.shift()(sample([[known, { archived: 0, attachedParent: fresh }], [fresh, { archived: 0 }]]))
+  await attachment
+  assert.equal(targetFences.has(known), false, 'a changed native parent invalidates the old member fence before rereading')
+  assert.deepEqual(recoveredIds, [fresh, known, known])
+  nativeWake()
+  const gap = runNextTimer()
+  samples.shift()(null)
+  await gap
   runNextTimer()
-  assert.deepEqual(fallbackReads, [{ reason: 'state-file', forceTasksOnly: true, verifyCoverage: true, preserveCurrentList: true }],
-    'the retained coverage request runs once even after the WAL goes quiet')
-  return 39
+  assert.deepEqual(fallbackReads, [{ reason: 'state-file', forceTasksOnly: true, preserveCurrentList: true }],
+    'genuine membership changes coalesce into one shared roster reconciliation')
+  assert.deepEqual(rosterInvalidations, ['state-file'])
+  nativeWake()
+  const incompleteIndex = runNextTimer()
+  samples.shift()(null)
+  await incompleteIndex
+  runNextTimer()
+  assert.deepEqual(projectionRequests, ['codex'], 'an evidence gap only requests a new projection over the retained list')
+  assert.equal(fallbackReads.length, 1, 'an evidence gap does not restart activity or archive pagination')
+  return 49
+}
+
+async function checkColdIndexedRosterCoverage(require, source) {
+  const { createCodexSubagentDiscovery } = require('./codex/subagent-discovery.cjs')
+  const path = require('node:path').posix
+  const sessions = '/synthetic/sessions'
+  const archive = '/synthetic/archived_sessions'
+  const root = 'a3345678-1234-4234-8234-123456789abc'
+  const newRoot = 'b3345678-1234-4234-8234-123456789abc'
+  const machineSide = 'c3345678-1234-4234-8234-123456789abc'
+  const rolloutName = id => `rollout-2026-11-26T10-00-00-${id}.jsonl`
+  const rollout = `${sessions}/${rolloutName(root)}`
+  const start = source.indexOf('async function codexInventoryRosterProof(')
+  const end = source.indexOf('\nasync function readCodexThreadListPages(', start)
+  assert(start >= 0 && end > start)
+  const script = new Script(`${source.slice(start, end)}\nreadCodexActiveInventoryPages`)
+  const run = async ({ backfilled = true, moved = false, unindexed = false,
+    changed = '', unresolvedPath = false } = {}) => {
+    let directoryRevision = 1
+    let recency = 2000
+    let sideRecency = 2000
+    let databaseIdentity = 'db'
+    let nativeRows = [{ id: root, path: unresolvedPath ? `${sessions}/${rolloutName(newRoot)}` : rollout }]
+    const reads = []
+    const receipts = []
+    const file = name => ({ name, isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false })
+    const discovery = createCodexSubagentDiscovery({ path, validThreadId: Boolean, fs: {
+      lstatSync: () => ({ isDirectory: () => true, dev: 1, ino: 2, mtimeMs: directoryRevision }),
+      readdirSync: directory => directory === sessions
+        ? [file(`${rolloutName(root)}.zst`), ...(unindexed ? [file(rolloutName(newRoot))] : [])] : []
+    } })
+    const read = script.runInNewContext({
+      crypto: require('node:crypto'), codexSubagentDiscovery: discovery,
+      codexAppServerRosterIdentity: 'app-server', codexVerifiedOfficialRosterScope: null,
+      codexInventoryMembershipRoots: () => [sessions, archive], codexStateSqliteDirectory: () => '/synthetic',
+      codexSnapshotScopeCurrent: () => true, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS: 5000,
+      CODEX_INVENTORY_RECHECK_DEADLINE_MS: 1000,
+      codexRetiredThreadIds: new Map(), codexThreadRolloutCandidate: () => false,
+      noteCodexInventorySample(_reason, _outcome, details) { receipts.push(details) },
+      readCodexNativeInventoryIndex: async (_scope, _directory, options) => ({
+        identity: databaseIdentity, complete: true, rows: new Map(options?.rosterWitness && !backfilled ? [] : [
+          [root, { archived: moved ? 1 : 0, kind: 'user', visible: 1, rolloutPath: rollout, recency }],
+          [machineSide, { archived: 0, kind: 'subagent', visible: 1, recency: sideRecency }]
+        ])
+      }),
+      async readCodexThreadListPages(_archived, options) {
+        reads.push(options.stateDbOnly === true)
+        const rows = nativeRows
+        if (options.stateDbOnly) {
+          if (changed === 'file') directoryRevision += 1
+          if (changed === 'recency') recency += 1
+          if (changed === 'side-recency') sideRecency += 1
+          if (changed === 'recency-once' && reads.length === 1) recency += 1
+          if (changed === 'database') {
+            databaseIdentity = 'new-db'
+            directoryRevision += 1
+          }
+          if (unindexed) nativeRows = [...rows, { id: newRoot, path: `${sessions}/${rolloutName(newRoot)}` }]
+        }
+        return rows
+      }
+    })
+    const rows = await read({}, {})
+    return { rows, reads, receipt: receipts.at(-1) }
+  }
+  const cold = await run()
+  assert.deepEqual(cold.reads, [true], 'a cold host can verify the index without a persisted proof or full filesystem query')
+  assert.equal(cold.receipt.disposition, 'verified-index')
+  assert.equal(cold.receipt.coverage, 'complete')
+  for (const options of [{ backfilled: false }, { moved: true }, { unresolvedPath: true }, { changed: 'database' }]) {
+    const fallback = await run(options)
+    assert.deepEqual(fallback.reads, [true, false], `an invalidated witness still verifies the native roster: ${JSON.stringify(options)}`)
+    assert.equal(fallback.receipt.disposition, 'fallback')
+  }
+  const missing = await run({ unindexed: true })
+  assert.deepEqual(missing.reads, [true, false], 'a file missing from the state DB cannot be hidden by a fast proof')
+  assert.equal(missing.rows.at(-1).id, newRoot)
+  const stabilized = await run({ changed: 'recency-once' })
+  assert.deepEqual(stabilized.reads, [true, true], 'one recency shift uses a bounded second index sample')
+  assert.equal(stabilized.receipt.disposition, 'verified-index')
+  for (const changed of ['recency', 'file']) {
+    const ambiguous = await run({ changed })
+    assert.deepEqual(ambiguous.reads, [true, true, false], 'repeated concurrent changes still require native verification')
+    assert.equal(ambiguous.receipt.disposition, 'fallback')
+  }
+  const duringSideProgress = await run({ changed: 'side-recency' })
+  assert.deepEqual(duringSideProgress.reads, [true], 'a machine Side update does not reorder the native root roster')
+  assert.equal(duringSideProgress.receipt.disposition, 'verified-index')
+  return 21
 }
 
 async function checkColdInventoryTopologyFence(require, source) {
@@ -1724,6 +1966,8 @@ scanVerifiedCodexInventory`)
       codexRosterForPreflight: null, codexVerifiedInventoryInFlight: null,
       codexDesktopBridge: null, runtimeDiagnostics: { record() {} },
       codexThreadTurnStatusDirty: new Map(), codexIndexedInventoryRows: new WeakSet(),
+      codexVerifiedOfficialRosterScope: null, codexNativeInventorySample: null, codexNativeInventoryPrimed: -1,
+      codexInventorySideRelations: new Map(), codexThreadListSamples: new Map(),
       codexWatchedRolloutCandidates: new Map(), codexDesktopSideRelations: new Map(),
       codexRetiredThreadIds: retired,
       codexVerifiedOfficialThreadIds: new Set(['root']), codexActivityInventory: new Map(),
@@ -1828,15 +2072,23 @@ async function checkHotTargetedInventory(require, source) {
   const sideRelations = new Map([['side', 'old-root'], ['nested', 'old-root'], ['unrelated', 'old-root']])
   const fences = new Map()
   const reads = []
+  const sentTurns = []
   const emissions = []
+  const queuedDescendants = []
+  const running = []
   let release
+  let attach
   let held = false
   let coverage = 0
   const recover = new Script(`${source.slice(start, end)}\nrecoverCodexTargetedInventory`).runInNewContext({
     codexStateSqliteDirectory: () => '/synthetic', readCodexNativeRegistry: () => ({ fingerprint: 'current' }),
     codexActivitySourceFingerprint: 'current', codexSnapshotScopeCurrent: Boolean, codexInventoryMembershipEnabled: () => true,
-    readCodexAttachedSides: () => sample, codexSubagentDiscovery: { codexCurrentAttachedSides: () => sample },
-    codexSideParentThreadId: id => sideRelations.get(id), codexRetiredThreadIds: new Map(), codexTargetedInventoryFences: fences,
+    codexDesktopBridge: null, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS: 5_000,
+    async requestCodexRpc(method, params) { sentTurns.push([method, params.threadId]); return { data: [] } },
+    readCodexAttachedSides: () => attach ? new Promise(resolve => { attach = resolve }) : sample,
+    codexSubagentDiscovery: { codexCurrentAttachedSides: () => sample },
+    codexSideParentThreadId: id => sideRelations.get(id), codexAllSideRelations: () => sideRelations,
+    codexRetiredThreadIds: new Map(), codexTargetedInventoryFences: fences,
     codexLocalArchiveRecoverySuppressions: new Set(), codexWatchedRolloutCandidates: new Map(),
     codexInventorySideBranchEvidence: new Map(), codexDesktopSideRelations: new Map(),
     codexRolloutProof: ({ path }) => ({ candidate: path, dev: 1, ino: 2 }),
@@ -1849,14 +2101,16 @@ async function checkHotTargetedInventory(require, source) {
     codexThreadTurnStatusDirty: new Map(), codexThreadTurnStatusCache: new Map(),
     async readCodexThreadTurnStatuses(members) {
       if (held) await new Promise(resolve => { release = resolve })
-      const latest = new Map(members.map(row => [row.id, { id: `${row.id}-turn`, status: 'completed' }]))
+      const latest = new Map(members.map(row => [row.id, { id: `${row.id}-turn`,
+        status: row.id.endsWith('-running') ? 'inProgress' : 'completed' }]))
       return { latest, readSucceededIds: new Set(latest.keys()), unresolvedIds: new Set() }
     },
     codexProbeColdRolloutActivity: async () => null, codexRolloutDecisionTrackers: new Map(),
     codexActivityInventory: inventory, codexActivityThreadIds: new Map(),
-    sanitizeCodexThreads: members => members.map(row => ({ key: row.id, name: row.id, activeFlags: [], status: 'idle' })),
+    sanitizeCodexThreads: members => members.map(row => ({ key: row.id, name: row.id, activeFlags: [], status: row.status.type })),
     sanitizeCodexActivityStatus: input => ({ status: input.type, activeFlags: [] }),
     codexMergedInventoryTurnFields: () => ({}), codexObserveThreadMembership() {},
+    codexMarkAppServerLiveActive(activity) { running.push(activity.key) },
     codexArchivedActivityKey: () => '', codexPrivateBranchRef: (parent, child) => `${parent}/${child}`,
     codexSyncInventorySideTopology(relations, _depths, _rows, _turns, _unread, _orphan, _sample, complete) {
       assert.equal(complete, false)
@@ -1865,11 +2119,17 @@ async function checkHotTargetedInventory(require, source) {
     codexSyncRolloutDecisionTrackers() {}, emitCodexActivityDelta(...args) { emissions.push(args) },
     companionTaskKernel: { getActivityCheckpoint: key => emissions.at(-1)?.[4]?.targetedMembership.parents.has(key),
       getPackage: () => ({ packageRevision: emissions.length }) },
-    recordCodexTaskSync() {}, codexThreadGoalCache: new Map(), codexThreadGoalRpcAvailable: false,
+    recordCodexTaskSync() {}, noteCodexInventorySample() {}, codexThreadGoalCache: new Map(), codexThreadGoalRpcAvailable: false,
+    queueCodexTargetedInventoryRead(id, _hint, _queuedAt, background) { queuedDescendants.push([id, background]) },
     scheduleCodexNativeInventoryCoverage() { coverage += 1 }
   })
   held = true
-  const stale = recover(new Map([['nested', undefined]]), {})
+  attach = true
+  const stale = recover(new Map([['nested', { queuedAt: 1 }]]), {})
+  assert.deepEqual(sentTurns, [['thread/turns/list', 'nested']], 'the targeted Turn RPC starts while attachment evidence is still pending')
+  const attached = attach
+  attach = null
+  attached(sample)
   for (let attempt = 0; !release && attempt < 20; attempt++) await Promise.resolve()
   assert.equal(typeof release, 'function')
   fences.delete('side')
@@ -1879,7 +2139,7 @@ async function checkHotTargetedInventory(require, source) {
   assert.equal(coverage, 1, 'the invalidated chain schedules a bounded recheck')
   held = false
   const priorEmissions = emissions.length
-  await recover(new Map([['nested', undefined]]), {})
+  await recover(new Map([['nested', { queuedAt: 1 }]]), {})
   assert(reads.includes('new-root') && reads.includes('side') && reads.includes('nested'), 'a single ID recovers its missing native ancestors')
   assert.equal(sideRelations.get('nested'), 'new-root')
   assert.equal(sideRelations.get('side'), 'new-root')
@@ -1893,7 +2153,17 @@ async function checkHotTargetedInventory(require, source) {
   assert.deepEqual(Array.from(membership.replacements, ([key, replacement]) => [key, replacement]).sort(), [
     ['codex-child:old-root/nested', 'codex-child:new-root/nested'], ['codex-child:old-root/side', 'codex-child:new-root/side']
   ])
-  return 11
+  sample.parents.set('unrelated-side', 'new-root')
+  await recover(new Map([['nested', { queuedAt: 1, background: false }]]), {})
+  assert.deepEqual(queuedDescendants, [['unrelated-side', true]], 'pending siblings move off the live member’s read')
+  assert(!reads.includes('unrelated-side'), 'an unrelated Side cannot block the foreground sample')
+  rows.set('stored-running', { id: 'stored-running', path: '/synthetic/stored', status: { type: 'notLoaded' } })
+  rows.set('loaded-running', { id: 'loaded-running', path: '/synthetic/loaded', status: { type: 'active' } })
+  await recover(new Map([['stored-running', { queuedAt: 1, background: false }]]), {})
+  await recover(new Map([['loaded-running', { queuedAt: 1, background: false }]]), {})
+  assert.equal(inventory.get('stored-running')?.status, 'notLoaded', 'persisted inProgress cannot prove current execution')
+  assert.deepEqual(running, ['loaded-running'], 'a loaded active thread and exact running Turn establish live activity')
+  return 15
 }
 
 async function checkCompressedSideHistory(require, source) {
@@ -1970,6 +2240,67 @@ async function checkCompressedSideHistory(require, source) {
   assert.equal(await inspect(), false, 'a persisted first Turn contradicts the old empty page')
   assert.equal(cache.size, 0)
   return 8
+}
+
+function checkHotUpdateModeEvidence(source) {
+  const declarations = ['codexHotUpdateConnectionEvidence', 'recordCodexHotUpdateEvidence', 'recordCodexStreamSync']
+    .map(name => {
+      const start = source.indexOf(`function ${name}(`)
+      const end = source.indexOf('\nfunction ', start + 1)
+      assert(start >= 0 && end > start, name)
+      return source.slice(start, end)
+    })
+  const samples = []
+  let watching = true
+  const host = new Script(`${declarations.join('\n')}
+    ({ connection: codexHotUpdateConnectionEvidence, stream: recordCodexStreamSync })`).runInNewContext({
+    companionTaskStateBridge: { isWatching: () => watching },
+    validCodexThreadId: Boolean,
+    codexThreadKey: id => id,
+    codexPrivateBranchRef: (parent, child) => `${parent}/${child}`,
+    companionDiagnosticTaskRef: (_provider, key) => `ref:${key}`,
+    companionCausalKey: (_provider, key, turn) => `${key}/${turn}`,
+    codexTimestampMs: Number,
+    recordCodexTaskSync() {},
+    noteCodexInventorySample(reason, _outcome, sample) { samples.push({ reason, ...sample }) }
+  })
+  const shadow = {
+    ownerClientId: 'current-owner', revision: 4, sideConversation: true, parentThreadId: 'main',
+    currentCanonicalTurn: { turnRef: 'same-turn', status: 'completed', startedAt: 500 },
+    hasUnreadTurn: false
+  }
+  const previous = { ...shadow, hasUnreadTurn: true }
+  const profile = { available: true, generation: 2, ownerClientId: 'current-owner', trustedRevision: 4, trustedSince: 470 }
+  const bridge = { state: 'connected', connectionStateSince: 450, streamGeneration: 2, streamProtocolFor: () => profile }
+  const observe = (next = shadow, before = previous) => host.stream('side', next, 'patches', 900, bridge, before)
+  observe()
+  assert.equal(samples[0].reason, 'stream-evidence')
+  assert.equal(samples[0].emittedAt, 900)
+  assert.equal(samples[0].taskRef, 'ref:main')
+  const member = samples[0].members[0]
+  assert.equal(member.memberRef, 'ref:codex-child:main/side')
+  assert.equal(member.turnRef, 'ref:turn:codex-child:main/side/same-turn')
+  assert.equal(member.connectionMode, 'normal')
+  assert.equal(member.connectionSince, 470)
+  observe(shadow, shadow)
+  observe({ ...shadow, ownerDisconnectedAt: 850 })
+  observe({ ...shadow, revision: 3 })
+  bridge.streamGeneration = 3
+  observe()
+  assert.equal(samples.length, 1, 'same state, retired owner and stale generation do not report a transition')
+  bridge.state = 'failed'
+  bridge.connectionStateSince = 880
+  const fallback = host.connection(bridge, 'side', shadow)
+  assert.equal(fallback.connectionMode, 'disconnected')
+  assert.equal(fallback.connectionSince, 880)
+  bridge.state = 'connecting'
+  assert.equal(host.connection(bridge, 'side', shadow), undefined)
+  watching = false
+  bridge.state = 'connected'
+  bridge.streamGeneration = profile.generation
+  observe()
+  assert.equal(samples.length, 1, 'inactive live verification does not record hot evidence')
+  return 12
 }
 
 function checkRolloutFileWatcher(source) {
@@ -2055,6 +2386,7 @@ function checkNativePinStateWatcher(require) {
   const timers = new Set()
   const files = ['state_5.sqlite', 'goals_1.sqlite', 'state_5.sqlite-shm']
   let wakes = 0
+  let inventoryWakes = 0
   const watcher = createCodexPinStateWatcher({
     watch(target, options, receive) {
       assert.equal(options.persistent, false)
@@ -2064,6 +2396,7 @@ function checkNativePinStateWatcher(require) {
     },
     readDirectory: () => files,
     onChange: () => { wakes += 1 },
+    onWake: () => { inventoryWakes += 1 },
     schedule: callback => (timers.add(callback), callback),
     cancel: callback => timers.delete(callback)
   })
@@ -2077,8 +2410,11 @@ function checkNativePinStateWatcher(require) {
   assert.deepEqual([...handles.keys()], [directory, database])
   handles.get(directory).receive('change', 'goals_1.sqlite')
   assert.equal(timers.size, 0, 'unrelated databases cannot wake the pin observer')
+  assert.equal(inventoryWakes, 0)
   files.push('state_5.sqlite-wal')
   handles.get(directory).receive('rename', 'state_5.sqlite-wal')
+  assert.equal(inventoryWakes, 1, 'the inventory wake does not wait for the pin throttle')
+  assert.equal(wakes, 0)
   const firstWal = handles.get(wal)
   assert(firstWal, 'directory discovery watches a newly created WAL')
   settle()
@@ -2715,6 +3051,12 @@ function checkRolloutSideCompletion(require, source, fixture) {
   const sideActivities = new Map()
   const published = []
   const refreshes = []
+  const targeted = []
+  const timers = new Map()
+  const scenario = fixture()
+  const sideActivityMaxAge = 120_000
+  let clock = 0
+  let targetedAvailable = false
   const bridge = { sideShadows: new Map(), hasOtherActiveBranch: () => false, cancelLatestTurnRefreshByKey() {},
     emitParentActivity: id => published.push(id),
     scheduleLatestTurnRefresh: (parent, options) => refreshes.push({ parent, ...options }) }
@@ -2729,7 +3071,8 @@ function checkRolloutSideCompletion(require, source, fixture) {
   const declarations = ['codexAppServerSideActivity', 'codexObserveAppServerSideActivity',
     'codexPrivateBranchTerminalKey', 'codexRememberPrivateBranchTerminal',
     'codexForgetPrivateBranchTerminal', 'codexReadPrivateBranchTerminal', 'codexApplySideTerminalNotification',
-    'codexApplyRolloutSideRuntime', 'codexApplyRolloutDecisionState', 'codexRestoreRolloutFallback', 'codexSyncInventorySideTopology']
+    'codexArmRolloutSideActivityExpiry', 'codexApplyRolloutSideRuntime', 'codexApplyRolloutDecisionState',
+    'codexRestoreRolloutFallback', 'codexConfirmInventoryBranchTerminal', 'codexSyncInventorySideTopology']
     .map(name => {
       const start = source.indexOf(`function ${name}(`)
       const end = source.indexOf('\nfunction ', start + 1)
@@ -2743,6 +3086,23 @@ function checkRolloutSideCompletion(require, source, fixture) {
       codexCausalDomain: domain, validCodexThreadId: Boolean, codexRecord: utilities.record,
       codexTimestampMs: utilities.timestampMs, codexActivityInventory: new Map([[parentThreadId, {}]]),
       codexRetiredThreadIds: new Map(), codexInventorySideRelations: parents, codexInventorySideBranchEvidence: inventory,
+      codexRolloutDecisionTrackers: new Map([[threadId, tracker]]), codexRefreshRolloutDecisionTracker() {},
+      CODEX_ROLLOUT_SIDE_ACTIVITY_MAX_AGE_MS: sideActivityMaxAge, Date: { now: () => clock },
+      setTimeout(callback, delay) {
+        const timer = {}
+        timers.set(timer, { callback, dueAt: clock + delay })
+        return timer
+      },
+      clearTimeout(timer) { timers.delete(timer) },
+      codexPrivateBranchRef: () => 'side',
+      companionCausalKey: (_provider, _key, turnId) => turnId,
+      queueCodexTargetedInventoryRead(id) {
+        if (targetedAvailable) targeted.push(id)
+        return targetedAvailable
+      },
+      companionTaskKernel: {
+        withdrawCodexRolloutActivity(input) { return scenario.kernel.withdrawCodexRolloutActivity({ ...input, key: 'side' }) }
+      },
       codexTargetedInventoryFences: new Map(), codexInventoryRelationRevision: 0,
       codexSideParentThreadId: id => parents.get(id), codexDesktopSideRelations: new Map(), codexDesktopBridge: bridge,
       codexEnsureDesktopBridge: () => bridge, codexThreadTurnStatusCache: turnCache, codexAppServerSideActivities: sideActivities,
@@ -2756,22 +3116,22 @@ function checkRolloutSideCompletion(require, source, fixture) {
       recordCodexTaskSync() {},
       codexPrivateBranchIdleConfirmed: () => false, codexClearStalePreCompletionLiveUnread() {},
       codexThreadGoalNeedsTerminalRefresh: () => false, codexPrivateThreadGoalEvidence: () => ({}),
+      codexThreadPersistedInputEvidence: () => null, codexAppServerActiveDominates: () => false,
       codexLegacySideActive: false, codexRejectInternalReviewThread: () => false, codexThreadActions: new Map(),
       codexCompleteInventoryThreadIds: null, codexThreadPersistedPlanLifecycle: () => ({}),
       codexReconcileInventorySideOpenedReadWithTurn() {}, codexRefreshSpawnEdgeEvidence() {},
       codexInventoryThreadTopologyModule: null
     })
-  const scenario = fixture()
   let revision = 0
-  const child = { id: threadId, status: { type: 'notLoaded' } }
-  function inventoryResult(turn) {
+  function inventoryResult(turn, type = 'notLoaded') {
+    const child = { id: threadId, status: { type } }
     host.sync(new Map([[threadId, parentThreadId]]), new Map(), new Map([[threadId, child]]),
       { latest: new Map([[threadId, turn]]), readSucceededIds: new Set([threadId]) })
   }
-  function publish(expected) {
+  function publish(expected, retainedMember) {
     const side = inventory.get(threadId)
     const terminal = host.terminal(parentThreadId, threadId)
-    const member = sideActivities.get(threadId)
+    const member = retainedMember || sideActivities.get(threadId)
     const activeSequence = member?.appServerLiveSequence || side.activeEvidenceSequence
     const activity = member || side
     const fields = resolution.codexDesktopBranchTurnFields({ inventoryEvidence: side, activity,
@@ -2782,12 +3142,17 @@ function checkRolloutSideCompletion(require, source, fixture) {
     })
     scenario.publish([{ key: 'main', epoch: 1000, branch: {} }, {
       key: 'side', epoch: fields.turnStartedAt, branch: { ...side, ...fields, status: activity.status,
+        causalKey: fields.turnRef, causalDomain: domain,
+        ...(fields.competingTurn ? { competingTurn: {
+          ...fields.competingTurn, causalKey: fields.competingTurn.turnRef, causalDomain: domain
+        } } : {}),
         ...(member ? { statusAuthority: 'app-server-live', activityEvidence: 'activity-event' } : {}) }
     }], ++revision, { complete: revision === 1, hostEvidence: true })
     scenario.expectRoot(expected, false, 2)
   }
   function observe(event, turnId, at, { emit = true, sourceTracker = tracker, writable = false,
     appended = false, pending = false } = {}) {
+    clock = Math.max(clock, at)
     const line = `${JSON.stringify({ type: 'event_msg', timestamp: at, payload: { type: event, turn_id: turnId } })}\n`
     const runtime = rollout.codexRolloutRuntimeStateText(line, appended ? Buffer.byteLength(line) : 0)
     return host.apply(sourceTracker, { runtime, input: { pending } }, emit, { observeRuntime: true, writable, appended })
@@ -2795,6 +3160,9 @@ function checkRolloutSideCompletion(require, source, fixture) {
   try {
     const turn = { id: 'side-first', status: 'inProgress', startedAt: 1500 }
     inventoryResult(turn)
+    assert.equal(inventory.get(threadId).status, 'notLoaded',
+      'a durable machine Turn without a live or rollout witness cannot assert running')
+    inventoryResult(turn, 'active')
     publish('running')
     assert.equal(observe('task_complete', 'previous-turn', 1700), false)
     assert.equal(observe('task_complete', turn.id, 1400), false)
@@ -2810,7 +3178,7 @@ function checkRolloutSideCompletion(require, source, fixture) {
     inventoryResult(turn)
     publish('completed')
     const next = { ...turn, id: 'side-next', startedAt: 1800 }
-    inventoryResult(next)
+    inventoryResult(next, 'active')
     publish('running')
     assert.equal(observe('task_complete', next.id, 1900, { emit: false }), true)
     assert.deepEqual(published, [parentThreadId], 'cold Side completion joins the inventory package')
@@ -2822,12 +3190,17 @@ function checkRolloutSideCompletion(require, source, fixture) {
     assert.equal(observe('task_started', detached.id, 3916), false, 'an unchanged start requires a writable owner')
     assert.equal(observe('task_started', detached.id, 3916, { appended: true }), false,
       'an append before the current inventory request still needs a writer')
+    assert.equal(observe('item_completed', 'previous-turn', 3917, { appended: true }), false,
+      'an identified append from another Turn cannot enable the current member')
     assert.equal(observe('task_started', 'previous-turn', 3916, { writable: true }), false, 'another Turn cannot supply activity')
     assert.equal(observe('task_started', detached.id, 3916, { writable: true, pending: true }), false, 'an outstanding decision wins')
     assert.equal(observe('task_started', detached.id, 3916, { writable: true, emit: false }), true)
     const member = sideActivities.get(threadId)
     assert.equal(member.turn.id, detached.id)
     assert.equal(member.turn.turnStartedAtPrecisionMs, 1000, 'the live observation preserves the original coarse start')
+    assert.equal(host.observe(parentThreadId, threadId, { status: 'active', activeFlags: [] }), null,
+      'an unpaired native activity hint cannot relabel the rollout inference as authoritative')
+    assert.equal(sideActivities.get(threadId), member)
     publish('running')
     inventoryResult(detached)
     publish('running')
@@ -2838,7 +3211,19 @@ function checkRolloutSideCompletion(require, source, fixture) {
     assert.equal(observe('task_started', detached.id, 3916, { appended: true }), false, 'confirmed terminal cannot reopen')
     const following = { ...detached, id: 'following-turn', startedAt: 5000, statusRequestedAt: 5080, statusReceivedAt: 5090 }
     inventoryResult(following)
-    assert.equal(observe('task_started', following.id, 5110, { appended: true, emit: false }), true, 'a later same-member start can resume')
+    clock = following.statusReceivedAt
+    const event = (type, time) => `${JSON.stringify({
+      type: 'event_msg', timestamp: time, payload: { type, turn_id: following.id }
+    })}\n`
+    const beforeRequest = event('task_started', 5020)
+    const appended = event('item_completed', 5050) + event('agent_reasoning', 5070)
+    const runtime = rollout.codexRolloutRuntimeStateText(beforeRequest + appended, Buffer.byteLength(appended))
+    assert.equal(runtime.appendedTurnItemAt, 5050)
+    const unchanged = rollout.codexRolloutRuntimeStateText(beforeRequest + appended, Buffer.byteLength(event('agent_reasoning', 5070)))
+    assert.equal(unchanged.appendedTurnItemAt, undefined, 'an old item cannot authorize a newer generic append')
+    assert.equal(host.apply(tracker, { runtime: unchanged }, false, { observeRuntime: true, appended: true }), false)
+    assert.equal(host.apply(tracker, { runtime }, false, { observeRuntime: true, appended: true }), true,
+      'a new exact same-Turn item survives a later provisional interrupted read')
     publish('running')
     assert.equal(observe('turn_aborted', following.id, 5300), false, 'an unchanged abort cannot end a live turn')
     assert.equal(observe('turn_aborted', following.id, 5300, { appended: true, emit: false }), true)
@@ -2859,8 +3244,61 @@ function checkRolloutSideCompletion(require, source, fixture) {
     assert.equal(received.fromRollout, undefined)
     assert.equal(host.restore(tracker, false), false, 'writer loss cannot delete the replacement owner')
     assert.equal(sideActivities.get(threadId), received)
+    assert.equal(host.observe(parentThreadId, threadId, { status: 'active', activeFlags: [] }), received,
+      'a known exact native running Turn still accepts consecutive activity observations')
+
+    sideActivities.delete(threadId)
+    const quiet = { ...detached, id: 'quiet-side', startedAt: 7000 }
+    inventoryResult(quiet)
+    clock = quiet.startedAt + sideActivityMaxAge
+    assert.equal(observe('task_started', quiet.id, quiet.startedAt, { writable: true }), false,
+      'an old same-Turn start and a writable handle do not prove cold activity')
+    assert.equal(sideActivities.has(threadId), false)
+    const progressAt = clock + 50
+    assert.equal(observe('item_completed', quiet.id, progressAt, { appended: true }), true,
+      'a fresh exact same-Turn append proves activity')
+    publish('running')
+    const initialDue = timers.get(tracker.rolloutActivityTimer).dueAt
+    assert.equal(observe('item_completed', quiet.id, progressAt, { writable: true }), false)
+    assert.equal(timers.get(tracker.rolloutActivityTimer).dueAt, initialDue, 'a repeat of the same writable file does not renew activity')
+    observe('item_completed', quiet.id, progressAt + 500, { appended: true })
+    const timer = tracker.rolloutActivityTimer
+    const deadline = timers.get(timer)
+    assert.equal(deadline.dueAt, initialDue + 500, 'new same-Turn progress renews the expiry')
+    const retainedMember = sideActivities.get(threadId)
+    const retainedTerminal = host.terminal(parentThreadId, threadId)
+    targetedAvailable = true
+    clock = deadline.dueAt
+    timers.delete(timer)
+    deadline.callback()
+    assert.equal(sideActivities.has(threadId), false)
+    const lostActivity = scenario.expectRoot('completed', false, 2)
+    assert.equal(lostActivity.freshness, 'verifying')
+    assert.equal(lostActivity.codexStatus.sides[0].turn, 'unknown')
+    assert.equal(host.terminal(parentThreadId, threadId), retainedTerminal, 'expiry supplies no terminal result')
+    assert.deepEqual(targeted, [threadId], 'expiry schedules a fresh read of the exact member')
+    assert.equal(host.observe(parentThreadId, threadId, { status: 'active', activeFlags: [] }), null,
+      'an unpaired activity hint cannot borrow the withdrawn Turn after expiry')
+    publish('completed')
+    publish('completed', retainedMember)
+    assert.equal(observe('task_complete', quiet.id, clock + 10, { appended: true }), true,
+      'a later exact completion settles the withdrawn Turn')
+    publish('completed')
+    const replacement = { ...detached, id: 'replaced-rollout', startedAt: clock + 100 }
+    inventoryResult(replacement)
+    const start = replacement.startedAt + 50
+    assert.equal(observe('task_started', replacement.id, start, { writable: true, emit: false }), true)
+    publish('running')
+    const publishedCount = published.length
+    assert.equal(host.restore(tracker, false), true)
+    assert.equal(published.length, publishedCount, 'a tracker swap can defer the Host delta')
+    assert.equal(scenario.expectRoot('completed', false, 2).freshness, 'verifying')
+    assert.equal(observe('task_started', replacement.id, start, { writable: true }), false,
+      'the superseded file proof cannot reopen the same Turn')
+    assert.equal(observe('item_completed', replacement.id, start + 100, { appended: true }), true)
+    publish('running')
   } finally { scenario.kernel.close() }
-  return 24
+  return 51
 }
 
 function checkCodexPartialInventoryUpdates(require, source) {
@@ -3308,11 +3746,11 @@ export async function checkCompanionLifecycles(assetRoot) {
   const providers = { codex: true, claude: false, cursor: false, orca: false }
   const lanes = ['membership', 'activity', 'interaction', 'unread', 'planArtifact', 'metadata', 'topology']
   let checked = 0
-  function fixture(open = async () => ({ outcome: 'dispatched', confirmsRead: false })) {
+  function fixture(open = async () => ({ outcome: 'dispatched', confirmsRead: false }), continueTask) {
     const events = []
     const kernel = createCompanionTaskKernel({ record: event => events.push(event), now: () => 1000, coalesceMs: 0,
       setTimeout: () => 0, clearTimeout: () => {}, initialConfiguration: { enabled: true, providers },
-      adapters: { codex: { open } } })
+      adapters: { codex: { open, continueTask } } })
     const lease = kernel.attach({ enabled: true, providers }).lease
     let transport = 0
     function publishRequests(interactions, interactionSets, generation) {
@@ -3325,11 +3763,11 @@ export async function checkCompanionLifecycles(assetRoot) {
         evidenceBatches: { codex: batch } })
     }
     function publish(rows, generation, { complete = false, remove = [], unreadGeneration = generation,
-      activityGeneration = generation, hostEvidence = false, independent = false } = {}) {
+      activityGeneration = generation, hostEvidence = false, independent = false, packageComplete = true } = {}) {
       const family = 'codex:lifecycle'
       const nodes = rows.map(({ key, phase = 'completed', epoch = 100, unread = false, known = true, branch, lastQuestionAt = 100,
         closedMachineRun, machineRunCoverageCurrent, machineRunInterruptedAt, relationOnly, goalVerifying, capabilities,
-        codexNativePin, providerPin, providerPinAuthority, localPin,
+        codexNativePin, providerPin, providerPinAuthority, localPin, relationCoverageComplete,
         turnStartedAt = phase === 'unknown' ? 0 : epoch }) => {
         const root = independent || key === 'main'
         return createEvidenceNodeV7({
@@ -3341,6 +3779,7 @@ export async function checkCompanionLifecycles(assetRoot) {
           revisionAt: epoch, membershipRevision: generation, visibilityRevision: generation, metadataRevision: generation,
           lastQuestionAt, createdAt: 50, closedMachineRun, machineRunCoverageCurrent, machineRunInterruptedAt, relationOnly,
           codexNativePin, providerPin, providerPinAuthority, localPin,
+          ...(typeof relationCoverageComplete === 'boolean' ? { relationCoverageComplete, relationCoverageGeneration: generation } : {}),
           idleConfirmed: branch?.idleConfirmed === true },
         observation: branch ? codexBranchObservationV7({ branchKind: root ? 'main' : 'side',
           status: 'idle', lastTurnStatus: phase === 'unknown' ? undefined : phase === 'stopped' ? 'interrupted' : 'completed',
@@ -3379,11 +3818,11 @@ export async function checkCompanionLifecycles(assetRoot) {
       batch.removedRelationChildKeys = remove
       const draft = { schema: 'companion-task-evidence-draft-v7', producer: 'host-evidence',
         sourceTaskStateRevision: 'task-state-v12', draftRevision: ++transport, acceptedAt: 1000,
-        enabled: true, complete: true, providers, sourceGenerations: { codex: generation },
+        enabled: true, complete: packageComplete, providers, sourceGenerations: { codex: generation },
         sourceLaneGenerations: { codex: laneGenerations }, evidenceBatches: { codex: batch } }
       return hostEvidence ? kernel.publishEvidence(draft) : kernel.syncPackage({ lease, draft })
     }
-    function expectRoot(phase, unread, count, unreadEntry = phase === 'completed' && unread) {
+    function expectRoot(phase, unread, count, unreadEntry = phase === 'completed' && unread, name) {
       const snapshot = kernel.getLatest()
       for (const event of events.filter(event => event.event === 'phase-transition' && event.taskRef)) {
         assert.equal(event.provider, 'codex', 'root phase diagnostics share the Provider namespace with Side topology diagnostics')
@@ -3391,7 +3830,7 @@ export async function checkCompanionLifecycles(assetRoot) {
       }
       assert.equal(snapshot.tasks.length, 1, 'only the original root is public')
       assert.equal(snapshot.tasks[0].key, 'main')
-      assert.equal(snapshot.tasks[0].phase, phase)
+      assert.equal(snapshot.tasks[0].phase, phase, name)
       assert.equal(snapshot.tasks[0].unread, unread)
       assert.equal(snapshot.tasks[0].topology.memberCount, count)
       assert.equal(snapshot.views.counts.unread, unreadEntry ? 1 : 0)
@@ -3404,6 +3843,31 @@ export async function checkCompanionLifecycles(assetRoot) {
     return { kernel, publish, publishRequests, expectRoot, events }
   }
   const main = { key: 'main' }
+  let continueCalls = 0
+  const continuation = fixture(undefined, async () => {
+    continueCalls += 1
+    return { outcome: 'dispatched' }
+  })
+  try {
+    const stopped = { ...main, phase: 'stopped', epoch: 100, branch: {}, relationCoverageComplete: true }
+    const first = continuation.publish([stopped], 1, { hostEvidence: true, packageComplete: false })
+    assert.equal(first.complete, false)
+    assert.equal(first.tasks[0].capabilities.continueTask, true)
+    assert.equal(continuation.kernel.continueDispatchAllowed('main'), true)
+    const action = { action: 'continue-task', key: 'main', revisionAt: first.tasks[0].revisionAt }
+    await continuation.kernel.dispatch(action)
+    assert.equal(continueCalls, 1, 'the exact root can dispatch without whole-package readiness')
+    continuation.publish([{ key: 'unrelated', phase: 'running' }], 2, { hostEvidence: true, independent: true, packageComplete: false })
+    assert.equal(continuation.kernel.continueDispatchAllowed('main'), true, 'unrelated topology does not clear root coverage')
+    continuation.publish([{ key: 'side', branch: {}, epoch: 90 }], 3, { hostEvidence: true, packageComplete: false })
+    assert.equal(continuation.kernel.continueDispatchAllowed('main'), false, 'an unverified change to this root invalidates continue')
+    await continuation.kernel.dispatch(action)
+    assert.equal(continueCalls, 1)
+    continuation.publish([{ ...stopped, relationCoverageComplete: false }], 4, { hostEvidence: true, complete: true })
+    assert.equal(continuation.kernel.getPackage().tasks.find(task => task.key === 'main').capabilities.continueTask, false,
+      'explicit root coverage loss remains blocked with a complete roster')
+    checked += 8
+  } finally { continuation.kernel.close() }
   const side = { key: 'side' }
   const completedMain = { ...main, epoch: 300, branch: {} }
   const endedSide = { ...side, phase: 'stopped', epoch: 100, branch: { ordinarySideInterruptedAt: 200 } }
@@ -3572,7 +4036,7 @@ export async function checkCompanionLifecycles(assetRoot) {
     const scenario = fixture()
     try {
       scenario.publish([rootRow, childRow], 1, { hostEvidence: trusted })
-      const root = scenario.expectRoot(phase, Boolean(rootRow.unread || childRow.unread), 2, phase === 'completed' && Boolean(rootRow.unread))
+      const root = scenario.expectRoot(phase, Boolean(rootRow.unread || childRow.unread), 2, phase === 'completed' && Boolean(rootRow.unread), name)
       assert.equal(root.capabilities.continueTask, false, name)
       assert.equal(Object.hasOwn(root, 'ordinarySideInterruptedAt'), false, name)
       if (childRow === endedSide && trusted) assert.equal(scenario.kernel.getActivityCheckpoint('side').phase, 'stopped', name)
@@ -3613,8 +4077,8 @@ export async function checkCompanionLifecycles(assetRoot) {
     ['exact interruption earlier than this main Turn', oldMachine, 'completed'],
     ['exact interruption in its start second', { ...oldMachine, machineRunInterruptedAt: 10_000,
       branch: { ...clearedPlan, terminalAt: 10_000 } }, 'completed'],
-    ['request coverage lost', { ...oldMachine, machineRunCoverageCurrent: false }, 'stopped'],
-    ['incomplete request set', { ...oldMachine, requestCoverage: false }, 'stopped'],
+    ['native interruption remains historical after the owner disconnects', { ...oldMachine, machineRunCoverageCurrent: false }, 'completed'],
+    ['a missing request receipt does not discard a verified historical interruption', { ...oldMachine, requestCoverage: false }, 'completed'],
     ['start without an actual end', { ...oldMachine, machineRunInterruptedAt: undefined,
       branch: { ...clearedPlan, terminalAt: 10_000 } }, 'stopped'],
     ['potential overlap within second precision', { ...oldMachine, machineRunInterruptedAt: 30_000,
@@ -3624,12 +4088,12 @@ export async function checkCompanionLifecycles(assetRoot) {
     const scenario = fixture()
     try {
       scenario.publish([settledRoot, machine], 1, { hostEvidence: true })
-      const root = scenario.expectRoot(phase, true, 2, phase !== 'running')
+      const root = scenario.expectRoot(phase, true, 2, phase !== 'running', label)
       assert.equal(root.capabilities.continueTask, false, label)
       if (phase === 'completed') {
         assert.equal(scenario.kernel.getActivityCheckpoint('side').phase, 'stopped', 'old machine activity stays in member history')
         scenario.publish([settledRoot, { ...machine, machineRunCoverageCurrent: false }], 2, { hostEvidence: true, activityGeneration: 1 })
-        scenario.expectRoot('stopped', true, 2, true)
+        scenario.expectRoot('completed', true, 2, true)
         scenario.publish([settledRoot, machine], 3, { hostEvidence: true, activityGeneration: 1 })
         scenario.expectRoot('completed', true, 2, true)
       }
@@ -3799,7 +4263,10 @@ export async function checkCompanionLifecycles(assetRoot) {
     const empty = { ...side, phase: 'unknown', relationOnly: true, epoch: 100, known: false,
       branch: { ...noTurn, emptyTurnHistory: true } }
     emptySideHistory.publish([completedRoot, { ...empty, branch: noTurn }], 1, { hostEvidence: true })
-    emptySideHistory.expectRoot('unknown', true, 2, true)
+    const unresolved = emptySideHistory.expectRoot('completed', true, 2)
+    assert.equal(unresolved.freshness, 'verifying')
+    assert.equal(unresolved.codexStatus.sides[0].turn, 'unknown')
+    assert.equal(unresolved.capabilities.archive, false)
     emptySideHistory.publish([completedRoot, empty], 2, { hostEvidence: true })
     const settled = emptySideHistory.expectRoot('completed', true, 2)
     assert.equal(settled.capabilities.continueTask, false)
@@ -3808,13 +4275,13 @@ export async function checkCompanionLifecycles(assetRoot) {
     emptySideHistory.publish([{ ...completedRoot, unread: false }, empty], 3, { hostEvidence: true })
     emptySideHistory.expectRoot('completed', false, 2)
     emptySideHistory.publish([{ ...empty, branch: noTurn }], 4, { hostEvidence: true })
-    emptySideHistory.expectRoot('unknown', false, 2)
+    assert.equal(emptySideHistory.expectRoot('completed', false, 2).freshness, 'verifying')
     emptySideHistory.publish([empty], 5, { hostEvidence: true })
     emptySideHistory.expectRoot('completed', false, 2)
     emptySideHistory.publish([{ ...empty, phase: 'waiting-input' }], 6, { hostEvidence: true })
     emptySideHistory.expectRoot('waiting-input', false, 2)
     emptySideHistory.publish([{ ...empty, branch: noTurn, interactionState: 'resolved' }], 7, { hostEvidence: true })
-    emptySideHistory.expectRoot('unknown', false, 2)
+    assert.equal(emptySideHistory.expectRoot('completed', false, 2).freshness, 'verifying')
     emptySideHistory.publish([{ ...side, phase: 'running', epoch: 500, branch: { status: 'active', lastTurnStatus: 'inProgress',
       lastTurnEvidence: 'turn-started', statusAuthority: 'app-server-live', activityEvidence: 'activity-event',
       activeEvidenceSequence: 501 } }], 8, { hostEvidence: true })
@@ -3907,8 +4374,10 @@ export async function checkCompanionLifecycles(assetRoot) {
   checked += await checkColdRolloutAdmission(require, source, fixture)
   checked += await checkColdUnreadRefresh(require, source)
   checked += await checkVerifiedInventorySharing(require, source)
+  checked += await checkColdIndexedRosterCoverage(require, source)
   checked += await checkColdInventoryTopologyFence(require, source)
   checked += await checkHotTargetedInventory(require, source)
+  checked += checkHotUpdateModeEvidence(source)
   checked += checkRolloutFileWatcher(source)
   checked += checkNativePinStateWatcher(require)
   checked += await checkNativePinLifecycle(require, fixture)

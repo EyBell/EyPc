@@ -395,12 +395,16 @@ async function confirmCodexPinnedSection(request, isCurrent, deadlineAt) {
   return false
 }
 
-function createCodexPinStateWatcher({ watch, readDirectory, onChange, schedule = setTimeout, cancel = clearTimeout }) {
+function createCodexPinStateWatcher({
+  watch, watchFile, unwatchFile, statInterval, readDirectory, onChange, onWake, schedule = setTimeout, cancel = clearTimeout
+}) {
   const activeDirectories = new Map()
   const watchers = new Map()
+  const statListeners = new Map()
   let timer = null
 
   function wake() {
+    onWake?.()
     if (timer !== null) return
     timer = schedule(() => {
       timer = null
@@ -415,6 +419,27 @@ function createCodexPinStateWatcher({ watch, readDirectory, onChange, schedule =
     try { watcher?.close() } catch {}
   }
 
+  function stopWatching(target) {
+    close(target)
+    const listener = statListeners.get(target)
+    if (!listener) return
+    statListeners.delete(target)
+    try { unwatchFile(target, listener) } catch {}
+  }
+
+  function poll(target, receive) {
+    if (typeof watchFile !== 'function' || typeof unwatchFile !== 'function' || statListeners.has(target)) return
+    const listener = (current, previous) => {
+      if (statListeners.get(target) !== listener) return
+      if (current.ino !== previous.ino) close(target)
+      receive()
+    }
+    try {
+      watchFile(target, { persistent: false, interval: statInterval }, listener)?.unref?.()
+      statListeners.set(target, listener)
+    } catch {}
+  }
+
   function listen(target, receive) {
     if (watchers.has(target)) return
     try {
@@ -423,7 +448,9 @@ function createCodexPinStateWatcher({ watch, readDirectory, onChange, schedule =
       })
       watchers.set(target, watcher)
       watcher.on?.('error', () => {
-        if (watchers.get(target) === watcher) close(target)
+        if (watchers.get(target) !== watcher) return
+        close(target)
+        wake()
       })
     } catch {}
   }
@@ -435,7 +462,7 @@ function createCodexPinStateWatcher({ watch, readDirectory, onChange, schedule =
     try {
       files = new Set(readDirectory(directory).filter(name => CODEX_PIN_STATE_FILE.test(name)).map(name => join(directory, name)))
     } catch { return }
-    for (const file of previous) if (!files.has(file)) close(file)
+    for (const file of previous) if (!files.has(file)) stopWatching(file)
     activeDirectories.set(directory, files)
     for (const file of files) {
       listen(file, (event) => {
@@ -445,6 +472,10 @@ function createCodexPinStateWatcher({ watch, readDirectory, onChange, schedule =
         }
         wake()
       })
+      poll(file, () => {
+        refreshFiles(directory)
+        wake()
+      })
     }
   }
 
@@ -452,8 +483,8 @@ function createCodexPinStateWatcher({ watch, readDirectory, onChange, schedule =
     const targets = new Set(directories.filter(Boolean))
     for (const [directory, files] of activeDirectories) {
       if (targets.has(directory)) continue
-      close(directory)
-      for (const file of files) close(file)
+      stopWatching(directory)
+      for (const file of files) stopWatching(file)
       activeDirectories.delete(directory)
     }
     for (const directory of targets) {
@@ -468,9 +499,13 @@ function createCodexPinStateWatcher({ watch, readDirectory, onChange, schedule =
         if (!file || !watchers.has(file)) refreshFiles(directory)
         wake()
       })
+      poll(directory, () => {
+        refreshFiles(directory)
+        wake()
+      })
       if (needsDiscovery) refreshFiles(directory)
     }
-    if (!watchers.size && timer !== null) {
+    if (!activeDirectories.size && timer !== null) {
       cancel(timer)
       timer = null
     }
