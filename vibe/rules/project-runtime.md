@@ -35,3 +35,20 @@
 5. 任务数和展示验收只采用脚本及同包回执。截图、无障碍树、人工数行均不作为取数或通过依据。若发现差异，沿原专题处理，F1 本身只核验现有展示。[同包实测凭证](../specs/261114/codex-state-sync/status-read-investigation-261116.md#script-display-f1-261124)
 
 Codex、Orca、Cursor 和 Claude Code 的原生状态按[项目状态对账入口](local-context.md#project-skills)逐来源核验。2026-11-16 的开发收尾 F1 走[构建主本](documentation.md#build-and-core-version-sync-required)。
+
+<a id="companion-incremental-sync-acceptance"></a>
+
+## Codex 增量同步验收
+
+```bash
+node scripts/read-eypc-task-state.mjs --check-version
+node scripts/read-eypc-task-state.mjs --summary
+node scripts/read-eypc-task-state.mjs --watch
+node scripts/read-eypc-task-state.mjs --check-transitions --expect=manifest.json --replay=events.ndjson
+```
+
+1. 用 `--check-version` 固定实载身份。从 `--summary` 和 `--watch` 分别读活动名单、归档名单、父子关系和轮次覆盖，再看全来源 `firstComplete`。覆盖回执核对 `sourceGeneration` 和 `readGeneration`，`deferred` 记为后台待补。`firstReadbackAt` 记录首个成功定向回读。首批可用的时间以样本首次全部出现在正确包内为准。活动名单回执的 `verified-index` 表示原生库与落盘文件已对齐，`verified-cache` 表示复用已核实覆盖。重读次数以 `listReads` 的分段增量为准。
+2. 先从独立原生记录取得匿名根与成员、Turn、时间精度和预期状态，写入 `manifest.json`。用 `--check-transitions` 核对当前一帧，热更新验收加 `--replay` 对照事前开始的 `--watch` 记录。秒级观察保留原秒。超出诊断成员上限时看 `codexMemberTotal`。只有诊断覆盖已证明包含该范围，才判定目标漏收。
+3. 正常和有持久证据的断线热更新分别验 P95 ≤ 2 秒和 ≤ 5 秒。每组至少 20 条匹配的独立原生事件才可判通过。冷启从宿主握手计时，首批有缓存 ≤ 3 秒、无缓存 ≤ 5 秒，Codex 全量核清 ≤ 15 秒，全启用来源可取证时 ≤ 20 秒。冷启超时期间，动态更新继续按自身证据发布。重复通知目标 P95 ≤ 1 秒，活动普通分页、归档分页和活动快索引分页的增量均为 0。歧义补读按每条实发回执核 1 秒截止。
+4. Main 角标与 Float 的相位、分组、图钉和按钮沿[同包回执](#companion-task-count-acceptance)配对。继续资格还需核对应根组的只读派发门。实载、统计样本、来源失联和窗口可见各记自己的核验结果。[实施与回执](../specs/261114/codex-state-sync/delivery.md#incremental-state-sync-261126)
+5. 热更新回放在清单加入 `"hotUpdate": true`。每项带 `memberRef`、`turnRef` 和 `connectionMode`。`normal` 对应事件发生时该成员已有可信订阅，`disconnected` 对应桥失联且有独立持久证据。先启动 `--watch`，订阅和落盘事件的模式回执随流输出为 `inventory.hotUpdateEvidence`。可提供匿名 `nativeEventRef` 区分同轮的多次事件。脚本按前帧和首个正确包的 `publishedAt` 打分，分别报两组样本不足、漏收、错包和超时。歧义补读用 `queuedAt` 从原成员的 `targeted-dispatch` 回执核实际发出。长时监听可用 `--watch --task-refs=<匿名根引用,匿名根引用>` 只保留目标任务行和全包统计，宿主换代后需更新引用。冷启动另轮核验时可单独运行首批和分段覆盖检查。[架构交付](../specs/261114/codex-state-sync/delivery.md#v7-hot-sync-architecture-261126)

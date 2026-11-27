@@ -1,5 +1,22 @@
 # EyPc Project Status Hub
 
+<a id="v7-hot-sync-architecture-build-261126"></a>
+
+- 2026-11-26 20:12:37.439，北京时间。Codex 定向补证、V7 按根增量归约和配套验收脚本通过 `closeout`。产物为 `V7` / `host-bad0020f30bd39d9900f` / `renderer-e3ce089d0e5d04078982`，builtAt `2026-11-26T12:12:37.439Z`。107 组预加载资源与当前输入一致。统一脚本仍确认实载 15:18 版。新版状态、两窗同包可见和两组 P95 待重载复验。[实施与验收](261114/codex-state-sync/delivery.md#v7-hot-sync-architecture-261126)
+
+<a id="dynamic-update-priority-build-261126"></a>
+
+- 2026-11-26 15:18:51.898，北京时间。Codex 动态更新优先、同轮追加回退和库存延期通过 `closeout`。产物为 `V7` / `host-4d49d77a1a11140c22a9` / `renderer-bacf6639d014538b8b38`，builtAt `2026-11-26T07:18:51.898Z`。构建后首次回读为 14:27:49.991 版。[实施与现场基线](261114/codex-state-sync/delivery.md#dynamic-update-priority-261126)
+- 15:34:26.977，uTools 握手确认实载 15:18 版。CT 主子轮与 Float 同包可见已对账，Main 隐藏。断线取得 3 个配对样本，冷启全量核清超时，热更新 P95 待验。[实载与分段耗时](261114/codex-state-sync/delivery.md#dynamic-update-live-1534-261126)
+
+<a id="inventory-and-stale-side-build-261126"></a>
+
+- 2026-11-26 14:27:49.991，冷启活动快索引核清、同代名单复用、首个完整包及机器子轮旧运行证据撤回通过 `closeout`。候选为 `V7` / `host-8c0a2d150e02cfe66eb1` / `renderer-2ca938b55369ead2dfc0`，源码及随包各通过 621 个生命周期检查点。构建后统一脚本仍读到 13:29 版，新版首轮核清和 CT 归组待重载复验。[根因与回放](261114/codex-state-sync/delivery.md#inventory-and-stale-side-repair-261126)
+
+<a id="incremental-state-sync-build-261126"></a>
+
+- 2026-11-26 12:36:37.106，Codex 增量同步、同轮终态和根组继续资格通过前置 `closeout`。本地候选为 `V7` / `host-a838296dd3001d746858` / `renderer-bd8afb0183e634640e69`。107 组预加载资源一致。统一脚本仍确认 uTools 实载 09:26 版。[变更、测量与待验](261114/codex-state-sync/delivery.md#incremental-state-sync-261126)
+
 <a id="core-version-check-build-261125"></a>
 
 - 2026-11-25 22:33:53.864，实载核心版本核对与未读静态基线对齐通过 `closeout`。当前产物为 `V7` / `host-1cba7a032dd778b17e3d` / `renderer-d21ced80ac84d428030c`，builtAt `2026-11-25T14:33:53.864Z`。静态未读通路和提交基线 107 对通过。uTools 仍实载 22:16:18.380。[现场、门禁与宿主限度](261114/codex-state-sync/delivery.md#native-question-card-261125)
